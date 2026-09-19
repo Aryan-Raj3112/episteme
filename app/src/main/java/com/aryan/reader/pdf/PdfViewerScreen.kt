@@ -7339,6 +7339,11 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                             return (allAnnotations[page] ?: emptyList()).filter { it.id in ids }
                         }
 
+                        // Live angle of an in-progress rotate drag (null otherwise)
+                        // for the degree pill. Plain local state: only the
+                        // reader canvas reads it.
+                        var selectionActiveRotation by remember { mutableStateOf<Float?>(null) }
+
                         val onSelectionTapResult = { pageIndex: Int, annotationId: String? ->
                             inkSelection = if (annotationId == null) {
                                 PdfInkSelection()
@@ -7347,6 +7352,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                             }
                             selectionTransformSnapshot = null
                             selectionStyleSnapshot = null
+                            selectionActiveRotation = null
                         }
 
                         val onSelectionLassoResult = { pageIndex: Int, annotationIds: Set<String> ->
@@ -7357,16 +7363,20 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                             }
                             selectionTransformSnapshot = null
                             selectionStyleSnapshot = null
+                            selectionActiveRotation = null
                         }
 
                         val onSelectionTransformStart = { pageIndex: Int ->
                             selectionTransformSnapshot =
                                 (allAnnotations[pageIndex] ?: emptyList()).toList()
+                            selectionActiveRotation = null
                         }
 
                         val onSelectionTransformUpdate =
                             { pageIndex: Int, transform: PdfSelectionTransform ->
                                 val snapshot = selectionTransformSnapshot
+                                selectionActiveRotation =
+                                    (transform as? PdfSelectionTransform.Rotate)?.angleDegrees
                                 if (snapshot != null && !inkSelection.isEmpty) {
                                     allAnnotations = allAnnotations + (pageIndex to applyPdfSelectionTransform(
                                         snapshot,
@@ -7380,6 +7390,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                         val onSelectionTransformEnd = { commit: Boolean ->
                             val snapshot = selectionTransformSnapshot
                             selectionTransformSnapshot = null
+                            selectionActiveRotation = null
                             if (commit && snapshot != null && !inkSelection.isEmpty) {
                                 val page = inkSelection.pageIndex ?: -1
                                 if (page >= 0) {
@@ -7528,6 +7539,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                             inkSelection = PdfInkSelection()
                             selectionTransformSnapshot = null
                             selectionStyleSnapshot = null
+                            selectionActiveRotation = null
                         }
 
                         // The lasso UI is driven by selection state, not by mode
@@ -7711,6 +7723,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 isEditMode = isDrawingActive,
                                 inkSelection = inkSelection,
                                 isSelectionTransformActive = selectionTransformSnapshot != null,
+                                activeSelectionRotationDegrees = selectionActiveRotation,
                                 onSelectionTapResult = onSelectionTapResult,
                                 onSelectionLassoResult = onSelectionLassoResult,
                                 onSelectionTransformStart = onSelectionTransformStart,

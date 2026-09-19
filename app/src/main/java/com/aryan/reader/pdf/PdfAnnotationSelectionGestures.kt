@@ -185,6 +185,16 @@ private suspend fun AwaitPointerEventScope.runSelectionTransformSession(
                             pivotNorm.x, pivotNorm.y, startNorm, currentNorm, aspect
                         ),
                     )
+                } else if (handle.isEdgeHandle) {
+                    val (scaleX, scaleY) = pdfScaleXYForEdgeDrag(
+                        handle, pivotNorm, startNorm, currentNorm
+                    )
+                    PdfSelectionTransform.ScaleNonUniform(
+                        pivotX = pivotNorm.x,
+                        pivotY = pivotNorm.y,
+                        scaleX = scaleX,
+                        scaleY = scaleY,
+                    )
                 } else {
                     PdfSelectionTransform.Scale(
                         pivotX = pivotNorm.x,
@@ -278,6 +288,11 @@ private suspend fun AwaitPointerEventScope.runLassoSession(
     var cancelled = false
     var startScreen = Offset.Zero
     var hasStart = false
+    // Pinch cancels the session, so zoom is fixed: the start camera gives a
+    // stable screen-px -> normalized tolerance for the touch rule.
+    val startCamera = cameraProvider()
+    val touchToleranceNorm =
+        14f / (page.width.coerceAtLeast(1f) * startCamera.zoom.coerceAtLeast(0.01f))
     try {
         do {
             val event = awaitPointerEvent()
@@ -316,10 +331,12 @@ private suspend fun AwaitPointerEventScope.runLassoSession(
     } finally {
         onLassoProgress(null)
         if (!cancelled) {
-            if (isLasso && trail.size >= 3) {
+            if (isLasso && trail.size >= 2) {
                 val lassoNorm = trail.map { docToNorm(page, it) }
                     .map { PdfPoint(it.x, it.y) }
-                val ids = findPdfLassoSelectionHits(pageAnnotations, lassoNorm)
+                val ids = findPdfLassoSelectionHits(
+                    pageAnnotations, lassoNorm, touchToleranceNorm
+                )
                 onLassoResult(page.index, ids)
             } else if (!isLasso) {
                 onTapResult(page.index, null)

@@ -344,6 +344,7 @@ internal fun PdfVerticalReader(
     // Ink selection editing (SELECT tool).
     inkSelection: PdfInkSelection = PdfInkSelection(),
     isSelectionTransformActive: Boolean = false,
+    activeSelectionRotationDegrees: Float? = null,
     onSelectionTapResult: (pageIndex: Int, annotationId: String?) -> Unit = { _, _ -> },
     onSelectionLassoResult: (pageIndex: Int, annotationIds: Set<String>) -> Unit = { _, _ -> },
     onSelectionTransformStart: (pageIndex: Int) -> Unit = {},
@@ -2919,6 +2920,7 @@ internal fun PdfVerticalReader(
                                             pageHeightDoc = overlayPage.heightPx,
                                             lassoDocPoints = selectLassoDocPoints ?: emptyList(),
                                             cameraZoom = cameraZoom,
+                                            activeRotationDegrees = activeSelectionRotationDegrees,
                                             modifier = Modifier.fillMaxSize(),
                                         )
                                     }

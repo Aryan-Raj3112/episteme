@@ -1,10 +1,12 @@
 // PdfAnnotationSelectionOverlay.kt
 //
-// Ink selection rendering: dashed bounding box + small corner/rotate handles,
-// lasso path, and the floating style/action edit bar. Handles are drawn very
-// small; the generous (28dp) touch slop in the gesture detector keeps them
-// easy to grab. Selected strokes are NOT re-tinted: only the box shows.
-// Lasso loops draw as a dashed outline with no area fill.
+// Ink selection rendering: dashed bounding box + small corner/mid-side/sync
+// handles, lasso polyline, and the floating style/action edit bar. Handles
+// are drawn very small; the generous (28dp) touch slop in the gesture
+// detector keeps them easy to grab. Selected strokes are NOT re-tinted: only
+// the box shows. While a rotation drag runs, the box + handles hide and a
+// small degree pill shows centered on the ink instead. Lasso loops draw as
+// plain open polylines with no area fill and no auto-closing segment.
 package com.aryan.reader.pdf
 
 import androidx.compose.foundation.Canvas
@@ -36,11 +38,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
@@ -50,7 +56,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.R
 import com.aryan.reader.pdf.data.PdfAnnotation
+import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 internal val PdfSelectionBoxColor = Color(0xFF64B5F6)
 
@@ -67,6 +76,8 @@ internal val PdfSelectionBoxColor = Color(0xFF64B5F6)
  * @param pageWidthDoc page width in doc px for path building
  * @param lassoDocPoints in-progress lasso in doc coords, or empty
  * @param cameraZoom current zoom so handles keep constant screen size
+ * @param activeRotationDegrees snapped angle of an in-progress rotate drag,
+ *   or null. While set, the box + handles hide and a degree pill shows.
  */
 @Composable
 internal fun PdfInkSelectionCanvas(
@@ -76,19 +87,21 @@ internal fun PdfInkSelectionCanvas(
     pageHeightDoc: Int,
     lassoDocPoints: List<Offset>,
     cameraZoom: Float,
+    activeRotationDegrees: Float? = null,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
     val zoom = cameraZoom.coerceAtLeast(0.5f)
     val handleRadiusDoc = remember(density, zoom) { with(density) { 5.dp.toPx() / zoom } }
+    val pillTextPx = remember(density, zoom) { with(density) { 13.sp.toPx() / zoom } }
+    val pillPadHPx = remember(density, zoom) { with(density) { 10.dp.toPx() / zoom } }
+    val pillPadVPx = remember(density, zoom) { with(density) { 6.dp.toPx() / zoom } }
     val rotateOffsetNorm = 0.06f
 
     Canvas(modifier = modifier) {
         if (selectionPage != null && selectedAnnotations.isNotEmpty()) {
             // Union bounds in normalized coords for the box + handles.
             val union = pdfSelectionUnionBounds(selectedAnnotations)
-            // Dashed bounding box + small handles. The selected strokes
-            // themselves are drawn untouched (no glow/tint).
             if (union != null) {
                 val box = Rect(
                     union.left * pageWidthDoc,
@@ -96,70 +109,76 @@ internal fun PdfInkSelectionCanvas(
                     union.right * pageWidthDoc,
                     union.bottom * pageHeightDoc,
                 )
-                val dash = PathEffect.dashPathEffect(floatArrayOf(12f / zoom, 8f / zoom), 0f)
-                drawRect(
-                    color = PdfSelectionBoxColor,
-                    topLeft = box.topLeft,
-                    size = box.size,
-                    style = Stroke(width = 2f / zoom, pathEffect = dash),
-                )
-                val normHandles = pdfSelectionHandlePositions(
-                    Rect(union.left, union.top, union.right, union.bottom),
-                    rotateOffsetNorm = rotateOffsetNorm,
-                )
-                fun toDoc(norm: PdfPoint): Offset = Offset(
-                    norm.x * pageWidthDoc,
-                    norm.y * pageHeightDoc,
-                )
-                // Rotate stem.
-                val rotatePos = toDoc(normHandles.getValue(PdfSelectionHandle.ROTATE))
-                val boxTopCenter = Offset(box.center.x, box.top)
-                drawLine(
-                    color = PdfSelectionBoxColor,
-                    start = boxTopCenter,
-                    end = rotatePos,
-                    strokeWidth = 2f / zoom,
-                )
-                for ((handle, norm) in normHandles) {
-                    if (handle == PdfSelectionHandle.ROTATE) {
-                        val center = toDoc(norm)
-                        drawCircle(color = Color.White, radius = handleRadiusDoc, center = center)
-                        drawCircle(
-                            color = PdfSelectionBoxColor,
-                            radius = handleRadiusDoc,
-                            center = center,
-                            style = Stroke(width = 2.5f / zoom),
-                        )
-                        // Rotate glyph: small arc arrow approximated by inner dot ring.
-                        drawCircle(
-                            color = PdfSelectionBoxColor,
-                            radius = handleRadiusDoc * 0.45f,
-                            center = center,
-                            style = Stroke(width = 2f / zoom),
-                        )
-                    } else {
-                        val center = toDoc(norm)
-                        drawCircle(color = Color.White, radius = handleRadiusDoc, center = center)
-                        drawCircle(
-                            color = Color(0xFF616161),
-                            radius = handleRadiusDoc,
-                            center = center,
-                            style = Stroke(width = 2f / zoom),
-                        )
+                if (activeRotationDegrees != null) {
+                    // Rotation in progress: chrome hides, degree pill shows
+                    // centered on the ink. Strokes themselves keep drawing
+                    // live from the page layer underneath.
+                    drawRotationDegreePill(
+                        box.center,
+                        activeRotationDegrees,
+                        pillTextPx,
+                        pillPadHPx,
+                        pillPadVPx,
+                    )
+                } else {
+                    val dash = PathEffect.dashPathEffect(floatArrayOf(12f / zoom, 8f / zoom), 0f)
+                    drawRect(
+                        color = PdfSelectionBoxColor,
+                        topLeft = box.topLeft,
+                        size = box.size,
+                        style = Stroke(width = 2f / zoom, pathEffect = dash),
+                    )
+                    val normHandles = pdfSelectionHandlePositions(
+                        Rect(union.left, union.top, union.right, union.bottom),
+                        rotateOffsetNorm = rotateOffsetNorm,
+                    )
+                    fun toDoc(norm: PdfPoint): Offset = Offset(
+                        norm.x * pageWidthDoc,
+                        norm.y * pageHeightDoc,
+                    )
+                    // Rotate stem.
+                    val rotatePos = toDoc(normHandles.getValue(PdfSelectionHandle.ROTATE))
+                    val boxTopCenter = Offset(box.center.x, box.top)
+                    drawLine(
+                        color = PdfSelectionBoxColor,
+                        start = boxTopCenter,
+                        end = rotatePos,
+                        strokeWidth = 2f / zoom,
+                    )
+                    for ((handle, norm) in normHandles) {
+                        if (handle == PdfSelectionHandle.ROTATE) {
+                            val center = toDoc(norm)
+                            drawCircle(color = Color.White, radius = handleRadiusDoc, center = center)
+                            drawCircle(
+                                color = PdfSelectionBoxColor,
+                                radius = handleRadiusDoc,
+                                center = center,
+                                style = Stroke(width = 2f / zoom),
+                            )
+                            drawSyncGlyph(center, handleRadiusDoc, zoom)
+                        } else {
+                            val center = toDoc(norm)
+                            drawCircle(color = Color.White, radius = handleRadiusDoc, center = center)
+                            drawCircle(
+                                color = Color(0xFF616161),
+                                radius = handleRadiusDoc,
+                                center = center,
+                                style = Stroke(width = 2f / zoom),
+                            )
+                        }
                     }
                 }
             }
         }
-        // In-progress lasso loop: dashed outline only, no area fill
-        // (doc coords shifted to page-local).
-        if (lassoDocPoints.size >= 2) {
+        // In-progress lasso: plain open polyline, never auto-closed and no
+        // area fill (doc coords shifted to page-local).
+        if (activeRotationDegrees == null && lassoDocPoints.size >= 2) {
             val pageTop = selectionPage?.topDoc ?: 0f
             val path = Path().apply {
                 moveTo(lassoDocPoints.first().x, lassoDocPoints.first().y - pageTop)
                 for (i in 1 until lassoDocPoints.size) {
                     lineTo(lassoDocPoints[i].x, lassoDocPoints[i].y - pageTop)
                 }
-                close()
             }
             drawPath(
                 path = path,
@@ -170,6 +189,89 @@ internal fun PdfInkSelectionCanvas(
                 ),
             )
         }
+    }
+}
+
+/**
+ * Sync-style circular-arrows glyph for the rotate handle: an almost-closed
+ * arc with an arrowhead at each end of the gap.
+ */
+private fun DrawScope.drawSyncGlyph(center: Offset, radius: Float, zoom: Float) {
+    val arcR = radius * 0.55f
+    val stroke = 2f / zoom
+    val startAngle = 40f
+    val sweep = 280f
+    drawArc(
+        color = PdfSelectionBoxColor,
+        startAngle = startAngle,
+        sweepAngle = sweep,
+        useCenter = false,
+        topLeft = Offset(center.x - arcR, center.y - arcR),
+        size = Size(arcR * 2f, arcR * 2f),
+        style = Stroke(width = stroke),
+    )
+    fun arrowHead(angleDeg: Float, forward: Boolean) {
+        val rad = angleDeg * PI.toFloat() / 180f
+        val px = center.x + arcR * cos(rad)
+        val py = center.y + arcR * sin(rad)
+        var tx = -sin(rad)
+        var ty = cos(rad)
+        if (!forward) {
+            tx = -tx
+            ty = -ty
+        }
+        val nx = cos(rad)
+        val ny = sin(rad)
+        val s = 4.5f / zoom
+        val tipX = px + tx * s * 0.9f
+        val tipY = py + ty * s * 0.9f
+        val backX = px - tx * s * 0.15f
+        val backY = py - ty * s * 0.15f
+        val w = s * 0.55f
+        drawPath(
+            Path().apply {
+                moveTo(tipX, tipY)
+                lineTo(backX + nx * w, backY + ny * w)
+                lineTo(backX - nx * w, backY - ny * w)
+                close()
+            },
+            PdfSelectionBoxColor,
+        )
+    }
+    arrowHead(startAngle + sweep, forward = true)
+    arrowHead(startAngle, forward = false)
+}
+
+/** Small white-on-black degree pill, constant screen size at any zoom. */
+private fun DrawScope.drawRotationDegreePill(
+    center: Offset,
+    degrees: Float,
+    textPx: Float,
+    padHPx: Float,
+    padVPx: Float,
+) {
+    val label = "${degrees.roundToInt()}°"
+    drawIntoCanvas { canvas ->
+        val native = canvas.nativeCanvas
+        val textPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.WHITE
+            textSize = textPx
+            textAlign = android.graphics.Paint.Align.CENTER
+            isAntiAlias = true
+        }
+        val metrics = textPaint.fontMetrics
+        val pillW = textPaint.measureText(label) + padHPx * 2f
+        val pillH = (metrics.descent - metrics.ascent) + padVPx * 2f
+        val left = center.x - pillW / 2f
+        val top = center.y - pillH / 2f
+        val bgPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.argb(217, 0, 0, 0)
+            isAntiAlias = true
+        }
+        native.drawRoundRect(
+            left, top, left + pillW, top + pillH, pillH / 2f, pillH / 2f, bgPaint
+        )
+        native.drawText(label, center.x, center.y - (metrics.ascent + metrics.descent) / 2f, textPaint)
     }
 }
 

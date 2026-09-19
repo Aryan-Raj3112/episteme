@@ -11,35 +11,53 @@ import androidx.compose.ui.geometry.Rect
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
-import com.aryan.reader.shared.pdf.isPdfPointInPolygon
 import com.aryan.reader.shared.pdf.movedPdfPointsBy
 import com.aryan.reader.shared.pdf.pdfAngleAroundCenterDegrees
+import com.aryan.reader.shared.pdf.pdfCappedNonUniformScale
 import com.aryan.reader.shared.pdf.pdfCappedUniformScale
 import com.aryan.reader.shared.pdf.pdfClampedMoveDelta
 import com.aryan.reader.shared.pdf.pdfDistSqToSegment
 import com.aryan.reader.shared.pdf.pdfInkPointsBounds
 import com.aryan.reader.shared.pdf.pdfInkUnionBounds
-import com.aryan.reader.shared.pdf.pdfIsLassoSelected
 import com.aryan.reader.shared.pdf.pdfIsStrokeTapHit
+import com.aryan.reader.shared.pdf.pdfIsStrokeTouchedByPolyline
 import com.aryan.reader.shared.pdf.pdfSnappedRotationDegrees
 import com.aryan.reader.shared.pdf.pdfUniformScaleForCornerDrag
 import com.aryan.reader.shared.pdf.rotatedPdfPointsAround
 import com.aryan.reader.shared.pdf.scaledPdfPointsAround
+import kotlin.math.abs
 import kotlin.math.sqrt
 
-/** Corner + rotate handles of the selection bounding box. */
+/** Corner + mid-side + rotate handles of the selection bounding box. */
 enum class PdfSelectionHandle {
     TOP_LEFT,
     TOP_RIGHT,
     BOTTOM_LEFT,
     BOTTOM_RIGHT,
+    TOP_MIDDLE,
+    BOTTOM_MIDDLE,
+    LEFT_MIDDLE,
+    RIGHT_MIDDLE,
     ROTATE,
 }
+
+/** Mid-side handles stretch one axis; corners scale uniformly. */
+internal val PdfSelectionHandle.isEdgeHandle: Boolean
+    get() = this == PdfSelectionHandle.TOP_MIDDLE ||
+        this == PdfSelectionHandle.BOTTOM_MIDDLE ||
+        this == PdfSelectionHandle.LEFT_MIDDLE ||
+        this == PdfSelectionHandle.RIGHT_MIDDLE
 
 /** Absolute transform recomputed from the gesture-start snapshot (no drift). */
 sealed interface PdfSelectionTransform {
     data class Move(val totalDx: Float, val totalDy: Float) : PdfSelectionTransform
     data class Scale(val pivotX: Float, val pivotY: Float, val scale: Float) : PdfSelectionTransform
+    data class ScaleNonUniform(
+        val pivotX: Float,
+        val pivotY: Float,
+        val scaleX: Float,
+        val scaleY: Float,
+    ) : PdfSelectionTransform
     data class Rotate(val centerX: Float, val centerY: Float, val angleDegrees: Float) : PdfSelectionTransform
 }
 
@@ -82,6 +100,30 @@ fun PdfAnnotation.scaledSelectionAround(pivotX: Float, pivotY: Float, scale: Flo
             .scaledPdfPointsAround(pivotX, pivotY, scale, scale)
             .map { it.toAndroid() },
         strokeWidth = (strokeWidth * scale).coerceIn(
+            pdfSelectionStrokeWidthRangeFor(inkType).start,
+            pdfSelectionStrokeWidthRangeFor(inkType).endInclusive,
+        ),
+    )
+}
+
+/**
+ * One-axis stretch from a mid-side handle. Stroke width follows the geometric
+ * mean: a pure horizontal 2x stretch widens strokes ~1.4x instead of leaving
+ * them hairline or doubling them.
+ */
+fun PdfAnnotation.scaledSelectionAroundXY(
+    pivotX: Float,
+    pivotY: Float,
+    scaleX: Float,
+    scaleY: Float,
+): PdfAnnotation {
+    if (scaleX == 1f && scaleY == 1f) return this
+    val widthFactor = sqrt(scaleX * scaleY)
+    return copy(
+        points = points.map { it.toShared() }
+            .scaledPdfPointsAround(pivotX, pivotY, scaleX, scaleY)
+            .map { it.toAndroid() },
+        strokeWidth = (strokeWidth * widthFactor).coerceIn(
             pdfSelectionStrokeWidthRangeFor(inkType).start,
             pdfSelectionStrokeWidthRangeFor(inkType).endInclusive,
         ),
@@ -138,6 +180,17 @@ fun applyPdfSelectionTransform(
                 transform
             }
         }
+        is PdfSelectionTransform.ScaleNonUniform -> {
+            if (unionBounds != null) {
+                val (scaleX, scaleY) = pdfCappedNonUniformScale(
+                    transform.pivotX, transform.pivotY, unionBounds,
+                    transform.scaleX, transform.scaleY,
+                )
+                transform.copy(scaleX = scaleX, scaleY = scaleY)
+            } else {
+                transform
+            }
+        }
         is PdfSelectionTransform.Rotate -> transform
     }
     return annotations.map { annotation ->
@@ -146,6 +199,9 @@ fun applyPdfSelectionTransform(
             is PdfSelectionTransform.Move -> annotation.movedSelectionBy(resolved.totalDx, resolved.totalDy)
             is PdfSelectionTransform.Scale -> annotation.scaledSelectionAround(
                 resolved.pivotX, resolved.pivotY, resolved.scale
+            )
+            is PdfSelectionTransform.ScaleNonUniform -> annotation.scaledSelectionAroundXY(
+                resolved.pivotX, resolved.pivotY, resolved.scaleX, resolved.scaleY
             )
             is PdfSelectionTransform.Rotate -> annotation.rotatedSelectionAround(
                 resolved.centerX, resolved.centerY, resolved.angleDegrees, pageAspectRatio
@@ -205,43 +261,60 @@ fun findPdfTopmostSelectionHit(
     return null
 }
 
-/** Ids of annotations meeting the lasso contain rule for [lassoNormPoints]. */
+/**
+ * Ids of annotations touched by the lasso polyline. The lasso is an open
+ * freehand line (never auto-closed): any stroke the line touches — within
+ * [touchToleranceNorm] plus half its width — is selected, like Samsung Notes.
+ */
 fun findPdfLassoSelectionHits(
     annotations: List<PdfAnnotation>,
     lassoNormPoints: List<PdfPoint>,
-    containThreshold: Float = 0.5f,
+    touchToleranceNorm: Float = 0.02f,
 ): Set<String> {
-    if (lassoNormPoints.size < 3) return emptySet()
-    val polygon = lassoNormPoints.map { it.toShared() }
+    if (lassoNormPoints.size < 2) return emptySet()
+    val polyline = lassoNormPoints.map { it.toShared() }
     return annotations.filter { annotation ->
         annotation.points.isNotEmpty() &&
-            pdfIsLassoSelected(annotation.points.map { it.toShared() }, polygon, containThreshold)
+            pdfIsStrokeTouchedByPolyline(
+                points = annotation.points.map { it.toShared() },
+                polyline = polyline,
+                toleranceNorm = touchToleranceNorm,
+                strokeWidthNorm = annotation.strokeWidth,
+            )
     }.map { it.id }.toSet()
 }
 
 /** Handle centers in normalized page coords for [bounds] (rotate floats above). */
 fun pdfSelectionHandlePositions(bounds: Rect, rotateOffsetNorm: Float = 0.06f): Map<PdfSelectionHandle, PdfPoint> {
     val centerX = (bounds.left + bounds.right) / 2f
+    val centerY = (bounds.top + bounds.bottom) / 2f
     return mapOf(
         PdfSelectionHandle.TOP_LEFT to PdfPoint(bounds.left, bounds.top),
         PdfSelectionHandle.TOP_RIGHT to PdfPoint(bounds.right, bounds.top),
         PdfSelectionHandle.BOTTOM_LEFT to PdfPoint(bounds.left, bounds.bottom),
         PdfSelectionHandle.BOTTOM_RIGHT to PdfPoint(bounds.right, bounds.bottom),
+        PdfSelectionHandle.TOP_MIDDLE to PdfPoint(centerX, bounds.top),
+        PdfSelectionHandle.BOTTOM_MIDDLE to PdfPoint(centerX, bounds.bottom),
+        PdfSelectionHandle.LEFT_MIDDLE to PdfPoint(bounds.left, centerY),
+        PdfSelectionHandle.RIGHT_MIDDLE to PdfPoint(bounds.right, centerY),
         PdfSelectionHandle.ROTATE to PdfPoint(centerX, bounds.top - rotateOffsetNorm),
     )
 }
 
-/** Opposite corner pivot for a corner drag. */
+/** Opposite corner/middle pivot for a handle drag. */
 fun pdfPivotForHandle(handle: PdfSelectionHandle, bounds: Rect): PdfPoint {
+    val centerX = (bounds.left + bounds.right) / 2f
+    val centerY = (bounds.top + bounds.bottom) / 2f
     return when (handle) {
         PdfSelectionHandle.TOP_LEFT -> PdfPoint(bounds.right, bounds.bottom)
         PdfSelectionHandle.TOP_RIGHT -> PdfPoint(bounds.left, bounds.bottom)
         PdfSelectionHandle.BOTTOM_LEFT -> PdfPoint(bounds.right, bounds.top)
         PdfSelectionHandle.BOTTOM_RIGHT -> PdfPoint(bounds.left, bounds.top)
-        PdfSelectionHandle.ROTATE -> PdfPoint(
-            (bounds.left + bounds.right) / 2f,
-            (bounds.top + bounds.bottom) / 2f,
-        )
+        PdfSelectionHandle.TOP_MIDDLE -> PdfPoint(centerX, bounds.bottom)
+        PdfSelectionHandle.BOTTOM_MIDDLE -> PdfPoint(centerX, bounds.top)
+        PdfSelectionHandle.LEFT_MIDDLE -> PdfPoint(bounds.right, centerY)
+        PdfSelectionHandle.RIGHT_MIDDLE -> PdfPoint(bounds.left, centerY)
+        PdfSelectionHandle.ROTATE -> PdfPoint(centerX, centerY)
     }
 }
 
@@ -282,7 +355,38 @@ fun pdfScaleForCornerDrag(
     pageAspectRatio = pageAspectRatio,
 )
 
-/** Snapped rotation delta for a rotate-handle drag. */
+/**
+ * One-axis stretch for a mid-side handle drag: the dragged axis scales by the
+ * finger's distance ratio from the pivot, the other axis stays at 1.
+ * Degenerate spans (zero-size selections) hold at 1 instead of exploding.
+ */
+fun pdfScaleXYForEdgeDrag(
+    handle: PdfSelectionHandle,
+    pivot: PdfPoint,
+    startNorm: PdfPoint,
+    currentNorm: PdfPoint,
+): Pair<Float, Float> {
+    fun axisScale(start: Float, current: Float, pivotValue: Float): Float {
+        val span = start - pivotValue
+        if (abs(span) < 1e-6f) return 1f
+        return ((current - pivotValue) / span).coerceIn(0.1f, 10f)
+    }
+    return when (handle) {
+        PdfSelectionHandle.LEFT_MIDDLE,
+        PdfSelectionHandle.RIGHT_MIDDLE,
+        -> axisScale(startNorm.x, currentNorm.x, pivot.x) to 1f
+        PdfSelectionHandle.TOP_MIDDLE,
+        PdfSelectionHandle.BOTTOM_MIDDLE,
+        -> 1f to axisScale(startNorm.y, currentNorm.y, pivot.y)
+        else -> 1f to 1f
+    }
+}
+
+/**
+ * Snapped rotation delta for a rotate-handle drag. Snaps to the cardinals
+ * (0/90/180/270) within a 10-degree window — e.g. 85..95 settles on 90 —
+ * and stays free everywhere else.
+ */
 fun pdfRotationForDrag(
     centerX: Float,
     centerY: Float,
@@ -295,7 +399,7 @@ fun pdfRotationForDrag(
     var delta = currentAngle - startAngle
     while (delta > 180f) delta -= 360f
     while (delta < -180f) delta += 360f
-    return pdfSnappedRotationDegrees(delta)
+    return pdfSnappedRotationDegrees(delta, snapDegrees = 90f, thresholdDegrees = 10f)
 }
 
 /** Aspect-corrected distance check: is ([x],[y]) within [radiusNorm] of segment a-b. */

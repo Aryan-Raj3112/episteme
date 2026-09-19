@@ -103,16 +103,70 @@ class SharedPdfSelectionGeometryTest {
     }
 
     @Test
-    fun lassoContainRule() {
-        val square = listOf(pt(0f, 0f), pt(1f, 0f), pt(1f, 1f), pt(0f, 1f))
-        val inside = listOf(pt(0.2f, 0.2f), pt(0.3f, 0.3f), pt(0.4f, 0.4f))
-        assertTrue(pdfIsLassoSelected(inside, square))
-        val outside = listOf(pt(2f, 2f), pt(3f, 3f))
-        assertFalse(pdfIsLassoSelected(outside, square))
-        // Half inside meets the 0.5 majority threshold.
-        val half = listOf(pt(0.5f, 0.5f), pt(5f, 5f))
-        assertTrue(pdfIsLassoSelected(half, square))
-        assertFalse(pdfIsLassoSelected(inside, emptyList()))
+    fun segSegDistance() {
+        // Crossing segments touch.
+        assertEquals(
+            0f,
+            pdfSegSegDistSq(0f, 0f, 1f, 1f, 0f, 1f, 1f, 0f),
+            1e-6f,
+        )
+        // Parallel offset by 1.
+        assertEquals(
+            1f,
+            pdfSegSegDistSq(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f),
+            1e-6f,
+        )
+        // Endpoint to segment.
+        assertEquals(
+            1f,
+            pdfSegSegDistSq(2f, 0f, 3f, 0f, 0f, 0f, 1f, 0f),
+            1e-6f,
+        )
+        // Degenerate point to segment.
+        assertEquals(
+            0.25f,
+            pdfSegSegDistSq(0.5f, 0.5f, 0.5f, 0.5f, 0f, 0f, 1f, 0f),
+            1e-6f,
+        )
+    }
+
+    @Test
+    fun strokeTouchedByPolyline() {
+        val stroke = listOf(pt(0.2f, 0.2f), pt(0.4f, 0.4f))
+        // Lasso line crossing the stroke selects it.
+        assertTrue(
+            pdfIsStrokeTouchedByPolyline(
+                stroke,
+                listOf(pt(0.1f, 0.4f), pt(0.5f, 0.1f)),
+                toleranceNorm = 0.01f,
+            )
+        )
+        // Distant line does not.
+        assertFalse(
+            pdfIsStrokeTouchedByPolyline(
+                stroke,
+                listOf(pt(0.7f, 0.7f), pt(0.9f, 0.9f)),
+                toleranceNorm = 0.01f,
+            )
+        )
+        // Near-miss within tolerance still counts (finger slop).
+        assertTrue(
+            pdfIsStrokeTouchedByPolyline(
+                stroke,
+                listOf(pt(0.3f, 0.32f), pt(0.5f, 0.32f)),
+                toleranceNorm = 0.05f,
+            )
+        )
+        // Enclosing without touching does NOT select (no contain rule).
+        assertFalse(
+            pdfIsStrokeTouchedByPolyline(
+                stroke,
+                listOf(pt(0f, 0f), pt(0.6f, 0f), pt(0.6f, 0.6f), pt(0f, 0.6f), pt(0f, 0f)),
+                toleranceNorm = 0.01f,
+            )
+        )
+        assertFalse(pdfIsStrokeTouchedByPolyline(emptyList(), stroke, 0.01f))
+        assertFalse(pdfIsStrokeTouchedByPolyline(stroke, emptyList(), 0.01f))
     }
 
     @Test
@@ -170,5 +224,18 @@ class SharedPdfSelectionGeometryTest {
         assertEquals(2.5f, pdfCappedUniformScale(0f, 0f, bounds, 10f), 1e-5f)
         // Pass-through drags keep existing behavior.
         assertEquals(-1f, pdfCappedUniformScale(0f, 0f, bounds, -1f), 1e-6f)
+    }
+
+    @Test
+    fun cappedNonUniformScaleCapsAxesIndependently() {
+        val bounds = PdfPageBounds(0.2f, 0.2f, 0.4f, 0.4f)
+        // X would hit the edge at 2.5x, Y is free at 1.5x.
+        val (sx, sy) = pdfCappedNonUniformScale(0f, 0f, bounds, 10f, 1.5f)
+        assertEquals(2.5f, sx, 1e-5f)
+        assertEquals(1.5f, sy, 1e-6f)
+        // Shrinking passes through on both axes.
+        val (sx2, sy2) = pdfCappedNonUniformScale(0f, 0f, bounds, 0.5f, 0.5f)
+        assertEquals(0.5f, sx2, 1e-6f)
+        assertEquals(0.5f, sy2, 1e-6f)
     }
 }

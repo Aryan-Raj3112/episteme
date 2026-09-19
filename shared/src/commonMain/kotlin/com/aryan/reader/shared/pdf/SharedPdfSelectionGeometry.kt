@@ -158,7 +158,12 @@ fun pdfSnappedRotationDegrees(
     return if (abs(angleDegrees - snapped) <= thresholdDegrees) snapped else angleDegrees
 }
 
-/** Ray-casting point-in-polygon test on normalized coords. */
+/**
+ * Ray-casting point-in-polygon test on normalized coords.
+ *
+ * Kept for polygon utilities; the lasso tool itself now uses the touch rule
+ * ([pdfIsStrokeTouchedByPolyline]) like Samsung Notes / Concepts.
+ */
 fun isPdfPointInPolygon(point: PdfPagePoint, polygon: List<PdfPagePoint>): Boolean {
     if (polygon.size < 3) return false
     var inside = false
@@ -178,26 +183,144 @@ fun isPdfPointInPolygon(point: PdfPagePoint, polygon: List<PdfPagePoint>): Boole
 }
 
 /**
- * Fraction of [points] inside [polygon]. Lasso selection keeps strokes whose
- * fraction meets [containThreshold] (default majority = GoodNotes behavior).
+ * Squared distance between segments a-b and c-d (Ericson 5.1.9 closest-point
+ * formulation; handles parallel and degenerate segments).
  */
-fun pdfLassoContainFraction(points: List<PdfPagePoint>, polygon: List<PdfPagePoint>): Float {
-    if (points.isEmpty() || polygon.size < 3) return 0f
-    var inside = 0
-    for (point in points) {
-        if (isPdfPointInPolygon(point, polygon)) inside++
+fun pdfSegSegDistSq(
+    ax: Float, ay: Float, bx: Float, by: Float,
+    cx: Float, cy: Float, dx: Float, dy: Float,
+): Float {
+    val ux = bx - ax
+    val uy = by - ay
+    val vx = dx - cx
+    val vy = dy - cy
+    val wx = ax - cx
+    val wy = ay - cy
+    val a = ux * ux + uy * uy
+    val b = ux * vx + uy * vy
+    val c = vx * vx + vy * vy
+    val d = ux * wx + uy * wy
+    val e = vx * wx + vy * wy
+    val denom = a * c - b * b
+    var sN = denom
+    var sD = denom
+    var tN = denom
+    var tD = denom
+    if (denom < 1e-8f) {
+        // Parallel (or degenerate): pin s to the a-endpoint, solve t.
+        sN = 0f
+        sD = 1f
+        tN = e
+        tD = c
+    } else {
+        sN = b * e - c * d
+        tN = a * e - b * d
+        if (sN < 0f) {
+            sN = 0f
+            tN = e
+            tD = c
+        } else if (sN > sD) {
+            sN = sD
+            tN = e + b
+            tD = c
+        }
     }
-    return inside.toFloat() / points.size
+    if (tN < 0f) {
+        tN = 0f
+        if (-d < 0f) {
+            sN = 0f
+        } else if (-d > a) {
+            sN = sD
+        } else {
+            sN = -d
+            sD = a
+        }
+    } else if (tN > tD) {
+        tN = tD
+        if ((-d + b) < 0f) {
+            sN = 0f
+        } else if ((-d + b) > a) {
+            sN = sD
+        } else {
+            sN = -d + b
+            sD = a
+        }
+    }
+    val sc = if (abs(sN) < 1e-8f || sD < 1e-8f) 0f else sN / sD
+    val tc = if (abs(tN) < 1e-8f || tD < 1e-8f) 0f else tN / tD
+    val ox = wx + sc * ux - tc * vx
+    val oy = wy + sc * uy - tc * vy
+    return ox * ox + oy * oy
 }
 
-/** Whether a stroke counts as lasso-selected under the contain rule. */
-fun pdfIsLassoSelected(
+/**
+ * Whether a freehand lasso polyline touches a stroke: any stroke segment
+ * comes within [toleranceNorm] (+ half [strokeWidthNorm]) of any lasso
+ * segment. Open polylines need no closure; single-point strokes and
+ * single-point lassos degrade to point tests. Y is aspect-corrected via
+ * [pageAspectRatio] so the tolerance is visually uniform.
+ */
+fun pdfIsStrokeTouchedByPolyline(
     points: List<PdfPagePoint>,
-    polygon: List<PdfPagePoint>,
-    containThreshold: Float = 0.5f,
+    polyline: List<PdfPagePoint>,
+    toleranceNorm: Float,
+    strokeWidthNorm: Float = 0f,
+    pageAspectRatio: Float = 1f,
 ): Boolean {
-    if (points.isEmpty() || polygon.size < 3) return false
-    return pdfLassoContainFraction(points, polygon) >= containThreshold
+    if (points.isEmpty() || polyline.isEmpty()) return false
+    val safeAspect = pageAspectRatio.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val threshold = toleranceNorm + strokeWidthNorm / 2f
+    val thresholdSq = threshold * threshold
+    // Cheap reject: expanded bounding boxes must overlap.
+    var sLeft = Float.MAX_VALUE
+    var sTop = Float.MAX_VALUE
+    var sRight = -Float.MAX_VALUE
+    var sBottom = -Float.MAX_VALUE
+    for (p in points) {
+        if (p.x < sLeft) sLeft = p.x
+        if (p.y < sTop) sTop = p.y
+        if (p.x > sRight) sRight = p.x
+        if (p.y > sBottom) sBottom = p.y
+    }
+    var lLeft = Float.MAX_VALUE
+    var lTop = Float.MAX_VALUE
+    var lRight = -Float.MAX_VALUE
+    var lBottom = -Float.MAX_VALUE
+    for (p in polyline) {
+        if (p.x < lLeft) lLeft = p.x
+        if (p.y < lTop) lTop = p.y
+        if (p.x > lRight) lRight = p.x
+        if (p.y > lBottom) lBottom = p.y
+    }
+    if (sRight + threshold < lLeft || lRight + threshold < sLeft ||
+        sBottom + threshold < lTop || lBottom + threshold < sTop
+    ) {
+        return false
+    }
+    fun ynorm(y: Float): Float = y / safeAspect
+    var i = 0
+    while (i < points.size) {
+        val a = points[i]
+        val b = if (i + 1 < points.size) points[i + 1] else a
+        var j = 0
+        while (j < polyline.size) {
+            val c = polyline[j]
+            val d = if (j + 1 < polyline.size) polyline[j + 1] else c
+            if (pdfSegSegDistSq(
+                    a.x, ynorm(a.y), b.x, ynorm(b.y),
+                    c.x, ynorm(c.y), d.x, ynorm(d.y),
+                ) < thresholdSq
+            ) {
+                return true
+            }
+            j++
+        }
+        // Single-point strokes test one degenerate segment; multi-point
+        // strokes advance per segment (last point re-tests as degenerate,
+        // which is harmless).
+        i++
+    }
+    return false
 }
 
 /** Squared distance from point ([px], [py]) to segment a-b (aspect-corrected y via caller). */
@@ -288,4 +411,30 @@ fun pdfCappedUniformScale(
     val topSpan = bounds.top - pivotY
     if (topSpan < 0f) maxScale = minOf(maxScale, (0f - pivotY) / topSpan)
     return scale.coerceAtMost(maxScale)
+}
+
+/**
+ * Cap a non-uniform ([scaleX], [scaleY]) stretch around ([pivotX], [pivotY])
+ * so [bounds] stays inside the 0..1 page. Each axis is capped independently
+ * by its own edges; shrinking and pass-through drags keep existing behavior.
+ * Used by the mid-side resize handles.
+ */
+fun pdfCappedNonUniformScale(
+    pivotX: Float,
+    pivotY: Float,
+    bounds: PdfPageBounds,
+    scaleX: Float,
+    scaleY: Float,
+): Pair<Float, Float> {
+    var maxX = Float.MAX_VALUE
+    val rightSpan = bounds.right - pivotX
+    if (rightSpan > 0f) maxX = minOf(maxX, (1f - pivotX) / rightSpan)
+    val leftSpan = bounds.left - pivotX
+    if (leftSpan < 0f) maxX = minOf(maxX, (0f - pivotX) / leftSpan)
+    var maxY = Float.MAX_VALUE
+    val bottomSpan = bounds.bottom - pivotY
+    if (bottomSpan > 0f) maxY = minOf(maxY, (1f - pivotY) / bottomSpan)
+    val topSpan = bounds.top - pivotY
+    if (topSpan < 0f) maxY = minOf(maxY, (0f - pivotY) / topSpan)
+    return scaleX.coerceAtMost(maxX) to scaleY.coerceAtMost(maxY)
 }

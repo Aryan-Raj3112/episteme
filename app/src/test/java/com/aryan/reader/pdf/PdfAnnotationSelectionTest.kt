@@ -128,14 +128,22 @@ class PdfAnnotationSelectionTest {
     }
 
     @Test
-    fun `lasso selects contained strokes`() {
+    fun `lasso selects touched strokes`() {
+        val touched = line("in")
+        val far = annotation("out", listOf(PdfPoint(0.8f, 0.8f), PdfPoint(0.9f, 0.9f)))
+        // Open polyline crossing the "in" stroke, nowhere near "out".
+        val lasso = listOf(PdfPoint(0.1f, 0.4f), PdfPoint(0.5f, 0.1f))
+        val ids = findPdfLassoSelectionHits(listOf(touched, far), lasso, touchToleranceNorm = 0.01f)
+        assertEquals(setOf("in"), ids)
+    }
+
+    @Test
+    fun `lasso enclosing without touching selects nothing`() {
         val inside = line("in")
-        val outside = annotation("out", listOf(PdfPoint(0.8f, 0.8f), PdfPoint(0.9f, 0.9f)))
-        val lasso = listOf(
+        val loop = listOf(
             PdfPoint(0f, 0f), PdfPoint(0.6f, 0f), PdfPoint(0.6f, 0.6f), PdfPoint(0f, 0.6f)
         )
-        val ids = findPdfLassoSelectionHits(listOf(inside, outside), lasso)
-        assertEquals(setOf("in"), ids)
+        assertTrue(findPdfLassoSelectionHits(listOf(inside), loop, touchToleranceNorm = 0.01f).isEmpty())
     }
 
     @Test
@@ -156,15 +164,96 @@ class PdfAnnotationSelectionTest {
     }
 
     @Test
-    fun `handle positions include four corners plus rotate`() {
+    fun `handle positions include corners plus mid-sides plus rotate`() {
         val bounds = Rect(0.2f, 0.2f, 0.6f, 0.6f)
         val handles = pdfSelectionHandlePositions(bounds)
-        assertEquals(5, handles.size)
+        assertEquals(9, handles.size)
         assertEquals(PdfPoint(0.2f, 0.2f), handles[PdfSelectionHandle.TOP_LEFT])
         assertEquals(PdfPoint(0.6f, 0.6f), handles[PdfSelectionHandle.BOTTOM_RIGHT])
+        assertEquals(PdfPoint(0.4f, 0.2f), handles[PdfSelectionHandle.TOP_MIDDLE])
+        assertEquals(PdfPoint(0.4f, 0.6f), handles[PdfSelectionHandle.BOTTOM_MIDDLE])
+        assertEquals(PdfPoint(0.2f, 0.4f), handles[PdfSelectionHandle.LEFT_MIDDLE])
+        assertEquals(PdfPoint(0.6f, 0.4f), handles[PdfSelectionHandle.RIGHT_MIDDLE])
         val rotate = handles.getValue(PdfSelectionHandle.ROTATE)
         assertEquals(0.4f, rotate.x, 1e-5f)
         assertTrue(rotate.y < 0.2f)
+    }
+
+    @Test
+    fun `edge pivots are opposite middles`() {
+        val bounds = Rect(0f, 0f, 1f, 1f)
+        assertEquals(PdfPoint(0.5f, 1f), pdfPivotForHandle(PdfSelectionHandle.TOP_MIDDLE, bounds))
+        assertEquals(PdfPoint(0.5f, 0f), pdfPivotForHandle(PdfSelectionHandle.BOTTOM_MIDDLE, bounds))
+        assertEquals(PdfPoint(1f, 0.5f), pdfPivotForHandle(PdfSelectionHandle.LEFT_MIDDLE, bounds))
+        assertEquals(PdfPoint(0f, 0.5f), pdfPivotForHandle(PdfSelectionHandle.RIGHT_MIDDLE, bounds))
+    }
+
+    @Test
+    fun `edge drag stretches one axis`() {
+        val pivot = PdfPoint(0.2f, 0.4f)
+        // Right-middle drag doubling the x distance: x scales, y holds.
+        val (sx, sy) = pdfScaleXYForEdgeDrag(
+            PdfSelectionHandle.RIGHT_MIDDLE,
+            pivot,
+            startNorm = PdfPoint(0.6f, 0.4f),
+            currentNorm = PdfPoint(1.0f, 0.9f),
+        )
+        assertEquals(2f, sx, 1e-5f)
+        assertEquals(1f, sy, 1e-6f)
+        // Top-middle drag: y only.
+        val (sx2, sy2) = pdfScaleXYForEdgeDrag(
+            PdfSelectionHandle.TOP_MIDDLE,
+            PdfPoint(0.4f, 0.6f),
+            startNorm = PdfPoint(0.4f, 0.2f),
+            currentNorm = PdfPoint(0.9f, 0.4f),
+        )
+        assertEquals(1f, sx2, 1e-6f)
+        assertEquals(0.5f, sy2, 1e-5f)
+        // Corners are not edge drags.
+        assertEquals(1f to 1f, pdfScaleXYForEdgeDrag(
+            PdfSelectionHandle.BOTTOM_RIGHT, pivot, pivot, pivot
+        ))
+    }
+
+    @Test
+    fun `non-uniform scale stretches x only and grows width by geometric mean`() {
+        val annotations = listOf(line("a"))
+        val scaled = applyPdfSelectionTransform(
+            annotations,
+            setOf("a"),
+            PdfSelectionTransform.ScaleNonUniform(pivotX = 0f, pivotY = 0f, scaleX = 2f, scaleY = 1f),
+            pageAspectRatio = 0.7f,
+        )
+        val points = scaled.first().points
+        assertEquals(0.4f, points.first().x, 1e-5f)
+        assertEquals(0.2f, points.first().y, 1e-5f)
+        assertEquals(0.008f * kotlin.math.sqrt(2f), scaled.first().strokeWidth, 1e-6f)
+    }
+
+    @Test
+    fun `rotation snaps to cardinals within ten degrees`() {
+        // ~87-degree drag settles on 90.
+        assertEquals(
+            90f,
+            pdfRotationForDrag(
+                centerX = 0.5f, centerY = 0.5f,
+                startNorm = PdfPoint(0.6f, 0.5f),
+                currentNorm = PdfPoint(0.5052f, 0.5999f),
+                pageAspectRatio = 1f,
+            ),
+            0.5f,
+        )
+        // 45 degrees stays free.
+        assertEquals(
+            45f,
+            pdfRotationForDrag(
+                centerX = 0.5f, centerY = 0.5f,
+                startNorm = PdfPoint(0.6f, 0.5f),
+                currentNorm = PdfPoint(0.5707f, 0.5707f),
+                pageAspectRatio = 1f,
+            ),
+            0.5f,
+        )
     }
 
     @Test
