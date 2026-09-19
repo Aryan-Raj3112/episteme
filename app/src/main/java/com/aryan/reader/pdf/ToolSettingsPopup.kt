@@ -428,7 +428,7 @@ fun ToolSettingsPopup(
 }
 
 @Composable
-private fun ColorPickerDialog(
+internal fun ColorPickerDialog(
     initialColor: Color,
     onDismiss: () -> Unit,
     onColorSelected: (Color) -> Unit

@@ -135,4 +135,40 @@ class SharedPdfSelectionGeometryTest {
         // Point directly below center reads 90 degrees.
         assertEquals(90f, abs(pdfAngleAroundCenterDegrees(0.5f, 0.5f, 0.5f, 1f)), 1e-4f)
     }
+
+    @Test
+    fun moveDeltaPassesThroughWhenInBounds() {
+        val bounds = PdfPageBounds(0.2f, 0.2f, 0.4f, 0.4f)
+        val (dx, dy) = pdfClampedMoveDelta(bounds, 0.1f, -0.1f)
+        assertEquals(0.1f, dx, 1e-6f)
+        assertEquals(-0.1f, dy, 1e-6f)
+    }
+
+    @Test
+    fun moveDeltaStopsAtPageEdges() {
+        val bounds = PdfPageBounds(0.7f, 0.1f, 0.9f, 0.3f)
+        // Over-drag right: clamped so the union right edge lands on 1.
+        val (dx, _) = pdfClampedMoveDelta(bounds, 0.5f, 0f)
+        assertEquals(0.1f, dx, 1e-6f)
+        // Over-drag left/top: clamped so the union stays >= 0.
+        val (dx2, dy2) = pdfClampedMoveDelta(bounds, -2f, -2f)
+        assertEquals(-0.7f, dx2, 1e-6f)
+        assertEquals(-0.1f, dy2, 1e-6f)
+    }
+
+    @Test
+    fun cappedScalePassesThroughShrink() {
+        val bounds = PdfPageBounds(0.2f, 0.2f, 0.4f, 0.4f)
+        assertEquals(0.5f, pdfCappedUniformScale(0f, 0f, bounds, 0.5f), 1e-6f)
+        assertEquals(1f, pdfCappedUniformScale(0f, 0f, bounds, 1f), 1e-6f)
+    }
+
+    @Test
+    fun cappedScaleStopsGrowthAtPageEdge() {
+        val bounds = PdfPageBounds(0.2f, 0.2f, 0.4f, 0.4f)
+        // Growing around origin would push right/bottom to 0.4 * s <= 1.
+        assertEquals(2.5f, pdfCappedUniformScale(0f, 0f, bounds, 10f), 1e-5f)
+        // Pass-through drags keep existing behavior.
+        assertEquals(-1f, pdfCappedUniformScale(0f, 0f, bounds, -1f), 1e-6f)
+    }
 }

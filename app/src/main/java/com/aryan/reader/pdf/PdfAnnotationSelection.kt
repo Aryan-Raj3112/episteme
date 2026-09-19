@@ -1,7 +1,7 @@
 // PdfAnnotationSelection.kt
 //
 // Ink selection editing: tap-to-select, bounding box + handles, move / scale /
-// rotate transforms, lasso multi-select, style editing, clipboard.
+// rotate transforms, lasso multi-select, style editing, duplicate-in-place.
 //
 // Geometry lives shared-first in SharedPdfSelectionGeometry.kt; this file adapts
 // it to the Android PdfAnnotation model and hosts selection session helpers.
@@ -9,10 +9,13 @@ package com.aryan.reader.pdf
 
 import androidx.compose.ui.geometry.Rect
 import com.aryan.reader.pdf.data.PdfAnnotation
+import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.isPdfPointInPolygon
 import com.aryan.reader.shared.pdf.movedPdfPointsBy
 import com.aryan.reader.shared.pdf.pdfAngleAroundCenterDegrees
+import com.aryan.reader.shared.pdf.pdfCappedUniformScale
+import com.aryan.reader.shared.pdf.pdfClampedMoveDelta
 import com.aryan.reader.shared.pdf.pdfDistSqToSegment
 import com.aryan.reader.shared.pdf.pdfInkPointsBounds
 import com.aryan.reader.shared.pdf.pdfInkUnionBounds
@@ -107,15 +110,45 @@ fun applyPdfSelectionTransform(
     pageAspectRatio: Float,
 ): List<PdfAnnotation> {
     if (ids.isEmpty()) return annotations
+    // Clamp against the gesture-start union bounds so over-dragging past a
+    // page edge stops the selection at the edge instead of smushing points.
+    val union = pdfSelectionUnionBounds(annotations.filter { it.id in ids })
+    val unionBounds = union?.let {
+        PdfPageBounds(it.left, it.top, it.right, it.bottom)
+    }
+    val resolved: PdfSelectionTransform = when (transform) {
+        is PdfSelectionTransform.Move -> {
+            if (unionBounds != null) {
+                val (dx, dy) = pdfClampedMoveDelta(
+                    unionBounds, transform.totalDx, transform.totalDy
+                )
+                PdfSelectionTransform.Move(dx, dy)
+            } else {
+                transform
+            }
+        }
+        is PdfSelectionTransform.Scale -> {
+            if (unionBounds != null) {
+                transform.copy(
+                    scale = pdfCappedUniformScale(
+                        transform.pivotX, transform.pivotY, unionBounds, transform.scale
+                    )
+                )
+            } else {
+                transform
+            }
+        }
+        is PdfSelectionTransform.Rotate -> transform
+    }
     return annotations.map { annotation ->
         if (annotation.id !in ids) return@map annotation
-        when (transform) {
-            is PdfSelectionTransform.Move -> annotation.movedSelectionBy(transform.totalDx, transform.totalDy)
+        when (resolved) {
+            is PdfSelectionTransform.Move -> annotation.movedSelectionBy(resolved.totalDx, resolved.totalDy)
             is PdfSelectionTransform.Scale -> annotation.scaledSelectionAround(
-                transform.pivotX, transform.pivotY, transform.scale
+                resolved.pivotX, resolved.pivotY, resolved.scale
             )
             is PdfSelectionTransform.Rotate -> annotation.rotatedSelectionAround(
-                transform.centerX, transform.centerY, transform.angleDegrees, pageAspectRatio
+                resolved.centerX, resolved.centerY, resolved.angleDegrees, pageAspectRatio
             )
         }
     }

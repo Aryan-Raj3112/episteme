@@ -103,12 +103,14 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -349,17 +351,13 @@ internal fun PdfVerticalReader(
     onSelectionTransformEnd: (commit: Boolean) -> Unit = {},
     onSelectionDelete: () -> Unit = {},
     onSelectionDuplicate: () -> Unit = {},
-    onSelectionCopy: () -> Unit = {},
-    onSelectionPaste: (pageIndex: Int) -> Unit = {},
     onSelectionColor: (androidx.compose.ui.graphics.Color) -> Unit = {},
     onSelectionThickness: (Float) -> Unit = {},
     onSelectionThicknessFinished: () -> Unit = {},
     onSelectionClear: () -> Unit = {},
-    selectionEditColors: List<androidx.compose.ui.graphics.Color> = emptyList(),
     selectionEditColor: androidx.compose.ui.graphics.Color? = null,
     selectionEditThickness: Float = 0.008f,
     selectionThicknessRange: ClosedFloatingPointRange<Float> = 0.001f..0.015f,
-    canSelectionPaste: Boolean = false,
 ) {
     DisposableEffect(state) {
         onDispose {
@@ -374,6 +372,14 @@ internal fun PdfVerticalReader(
     var isStylusEraserOverride by remember { mutableStateOf(false) }
     // In-progress SELECT lasso in document px (null when idle).
     var selectLassoDocPoints by remember { mutableStateOf<List<Offset>?>(null) }
+    // Measured size of the floating selection edit bar, so it can be kept
+    // fully on-screen when the selection sits near a screen edge.
+    var editBarSizePx by remember { mutableStateOf(IntSize.Zero) }
+    // A lasso abandoned by leaving annotation mode (back nav, toolbar
+    // toggle) must not linger into the next session.
+    LaunchedEffect(isEditMode) {
+        if (!isEditMode) selectLassoDocPoints = null
+    }
     val isDarkMode = activeTheme.isDark || activeTheme.id == "reverse"
     val effectiveReverseColorMode = if (activeTheme.id == "reverse") {
         reverseColorMode
@@ -2870,7 +2876,10 @@ internal fun PdfVerticalReader(
                         // the zoom/pan transform so doc px == local px. Sized to a
                         // single page (never the full document: an 800-page doc is
                         // ~1.2M px tall and cannot be represented in Constraints).
-                        if (selectedTool == InkType.SELECT) {
+                        // Hidden whenever annotation mode is off (back nav, toolbar
+                        // toggle, minimized dock) so stale selection state can
+                        // never leave orphan UI on screen.
+                        if (isEditMode && selectedTool == InkType.SELECT) {
                             val selectionPageIndex = inkSelection.pageIndex
                             val lassoPageIndex = selectLassoDocPoints?.firstOrNull()?.let { docPoint ->
                                 layoutInfo.firstOrNull { page ->
@@ -3300,8 +3309,9 @@ internal fun PdfVerticalReader(
             }
         }
 
-        // Ink selection floating edit bar (SELECT tool only, hidden mid-gesture).
-        if (selectedTool == InkType.SELECT && !inkSelection.isEmpty &&
+        // Ink selection floating edit bar (SELECT tool only, hidden mid-gesture
+        // and whenever annotation mode is off).
+        if (isEditMode && selectedTool == InkType.SELECT && !inkSelection.isEmpty &&
             selectLassoDocPoints == null && !isSelectionTransformActive
         ) {
             val editPageIndex = inkSelection.pageIndex
@@ -3327,19 +3337,28 @@ internal fun PdfVerticalReader(
                     (editPage.y + editBounds.bottom * editPage.height) * zoom + cameraPanY
                 // Keep clear of the rotate handle floating above the box.
                 val aboveY = screenTop - with(density) { 108.dp.toPx() }
-                val barTopY = if (aboveY > headerHeightPx) {
+                val preferredTopY = if (aboveY > headerHeightPx) {
                     aboveY
                 } else {
                     screenBottom + with(density) { 12.dp.toPx() }
                 }
+                // Keep the whole bar on-screen: clamp horizontally by the
+                // measured bar width and vertically by the measured height.
+                // (First frame measures at Zero size; the clamp tightens on
+                // the remeasure pass.)
+                val edgeMarginPx = with(density) { 8.dp.toPx() }
                 val halfScreen = screenWidth / 2f
                 val maxShift =
-                    (halfScreen - with(density) { 8.dp.toPx() }).coerceAtLeast(0f)
+                    (halfScreen - editBarSizePx.width / 2f - edgeMarginPx)
+                        .coerceAtLeast(0f)
                 val xShift = (((screenLeft + screenRight) / 2f) - halfScreen)
                     .coerceIn(-maxShift, maxShift)
+                val topMin = headerHeightPx + edgeMarginPx
+                val topMax = (screenHeight - editBarSizePx.height - edgeMarginPx)
+                    .coerceAtLeast(topMin)
+                val barTopY = preferredTopY.coerceIn(topMin, topMax)
                 Box(modifier = Modifier.fillMaxSize()) {
                     PdfInkSelectionEditBar(
-                        colors = selectionEditColors,
                         selectedColor = selectionEditColor,
                         onColorSelected = onSelectionColor,
                         thickness = selectionEditThickness,
@@ -3348,15 +3367,11 @@ internal fun PdfVerticalReader(
                         onThicknessChangeFinished = onSelectionThicknessFinished,
                         canDuplicate = editSelected.isNotEmpty(),
                         onDuplicate = onSelectionDuplicate,
-                        onCopy = onSelectionCopy,
-                        canPaste = canSelectionPaste,
-                        onPaste = {
-                            onSelectionPaste(editPageIndex ?: state.currentPage)
-                        },
                         onDelete = onSelectionDelete,
                         onClose = onSelectionClear,
                         modifier = Modifier
                             .align(Alignment.TopCenter)
+                            .onSizeChanged { editBarSizePx = it }
                             .offset {
                                 IntOffset(
                                     xShift.roundToInt(),

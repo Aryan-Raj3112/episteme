@@ -186,4 +186,38 @@ class PdfAnnotationSelectionTest {
         assertFalse(PdfInkSelection(0, setOf("a")).isEmpty)
         assertTrue(PdfInkSelection(null, setOf("a")).isEmpty)
     }
+
+    @Test
+    fun `move overdrag stops at edge without smushing`() {
+        val annotations = listOf(
+            annotation("a", listOf(PdfPoint(0.7f, 0.2f), PdfPoint(0.9f, 0.2f)))
+        )
+        val moved = applyPdfSelectionTransform(
+            annotations,
+            setOf("a"),
+            PdfSelectionTransform.Move(0.5f, 0f),
+            pageAspectRatio = 0.7f,
+        )
+        val points = moved.first().points
+        // Union right edge lands exactly on 1, shape preserved (no pile-up).
+        assertEquals(1f, points.maxOf { it.x }, 1e-5f)
+        assertEquals(0.8f, points.minOf { it.x }, 1e-5f)
+        assertEquals(0.2f, points[1].x - points[0].x, 1e-5f)
+    }
+
+    @Test
+    fun `scale overdrag caps growth at edge`() {
+        val annotations = listOf(line("a"))
+        val scaled = applyPdfSelectionTransform(
+            annotations,
+            setOf("a"),
+            PdfSelectionTransform.Scale(pivotX = 0f, pivotY = 0f, scale = 10f),
+            pageAspectRatio = 0.7f,
+        )
+        val points = scaled.first().points
+        // 0.4 * 2.5 = 1: capped, every point still in-bounds.
+        assertEquals(1f, points.maxOf { it.x }, 1e-5f)
+        assertTrue(points.all { it.x in 0f..1f && it.y in 0f..1f })
+        assertEquals(0.5f, points[0].x, 1e-5f)
+    }
 }

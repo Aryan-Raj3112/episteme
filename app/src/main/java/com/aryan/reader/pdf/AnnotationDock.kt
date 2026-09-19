@@ -198,7 +198,7 @@ fun AnnotationDock(
                     // Select / Edit
                     val isSelectActive = !isMinimized && selectedTool == InkType.SELECT
                     DockIcon(
-                        iconRes = R.drawable.select_all,
+                        iconRes = R.drawable.lasso_select,
                         isActive = isSelectActive,
                         tintColor = if (isMinimized) Color.Gray else Color.White,
                         description = stringResource(R.string.content_desc_select_mode),

@@ -113,8 +113,7 @@ fun List<PdfPagePoint>.rotatedPdfPointsAround(
     }
 }
 
-/** Uniform scale factor from a corner drag: current distance / start distance from the pivot. */
-fun pdfUniformScaleForCornerDrag(
+/** Uniform scale factor from a corner drag: current distance / start distance from the pivot. */fun pdfUniformScaleForCornerDrag(
     pivotX: Float,
     pivotY: Float,
     startX: Float,
@@ -253,4 +252,40 @@ fun pdfIsStrokeTapHit(
         }
     }
     return false
+}
+
+/**
+ * Clamp a selection move so [bounds] — the gesture-start union bounds of the
+ * selection — stays inside the 0..1 page. Clamping the delta instead of every
+ * moved point keeps the stroke shape intact when the user over-drags past a
+ * page edge: the selection slides to the edge and stops instead of smushing
+ * against it. The selection stays on its page of origin by design.
+ */
+fun pdfClampedMoveDelta(bounds: PdfPageBounds, dx: Float, dy: Float): Pair<Float, Float> {
+    return dx.coerceIn(-bounds.left, 1f - bounds.right) to
+        dy.coerceIn(-bounds.top, 1f - bounds.bottom)
+}
+
+/**
+ * Cap a uniform [scale] around ([pivotX], [pivotY]) so [bounds] stays inside
+ * the 0..1 page. Only growth is capped — shrinking toward the pivot is always
+ * in-bounds — and pass-through drags (non-positive scale) keep their existing
+ * behavior.
+ */
+fun pdfCappedUniformScale(
+    pivotX: Float,
+    pivotY: Float,
+    bounds: PdfPageBounds,
+    scale: Float,
+): Float {
+    var maxScale = Float.MAX_VALUE
+    val rightSpan = bounds.right - pivotX
+    if (rightSpan > 0f) maxScale = minOf(maxScale, (1f - pivotX) / rightSpan)
+    val leftSpan = bounds.left - pivotX
+    if (leftSpan < 0f) maxScale = minOf(maxScale, (0f - pivotX) / leftSpan)
+    val bottomSpan = bounds.bottom - pivotY
+    if (bottomSpan > 0f) maxScale = minOf(maxScale, (1f - pivotY) / bottomSpan)
+    val topSpan = bounds.top - pivotY
+    if (topSpan < 0f) maxScale = minOf(maxScale, (0f - pivotY) / topSpan)
+    return scale.coerceAtMost(maxScale)
 }

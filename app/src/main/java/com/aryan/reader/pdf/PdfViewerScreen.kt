@@ -1014,7 +1014,6 @@ private fun PdfViewerScreenContent(
     val erasedAnnotationsFromStroke = surfaceState.erasedAnnotationsFromStroke
     var lastEraserPoint by surfaceState.lastEraserPoint
     var inkSelection by surfaceState.inkSelection
-    var selectionClipboard by surfaceState.selectionClipboard
     var selectionTransformSnapshot by surfaceState.selectionTransformSnapshot
     var selectionStyleSnapshot by surfaceState.selectionStyleSnapshot
     var annotationSession by surfaceState.annotationSession
@@ -2292,7 +2291,6 @@ private fun PdfViewerScreenContent(
         )
         selectedTextBoxId = null
         inkSelection = PdfInkSelection()
-        selectionClipboard = emptyList()
         selectionTransformSnapshot = null
         selectionStyleSnapshot = null
         undoStack.clear()
@@ -5971,7 +5969,6 @@ private fun PdfViewerDocumentSetup(
 
     // Ink selection editing (tap-to-edit + lasso). Single-page scope on mobile.
     var inkSelection by remember { mutableStateOf(PdfInkSelection()) }
-    var selectionClipboard by remember { mutableStateOf<List<PdfAnnotation>>(emptyList()) }
     var selectionTransformSnapshot by remember { mutableStateOf<List<PdfAnnotation>?>(null) }
     var selectionStyleSnapshot by remember { mutableStateOf<List<PdfAnnotation>?>(null) }
 
@@ -6442,7 +6439,6 @@ private fun PdfViewerDocumentSetup(
     surfaceState.erasedAnnotationsFromStroke = erasedAnnotationsFromStroke
     surfaceState.lastEraserPoint = pdfViewerMutableValue({ lastEraserPoint }, { lastEraserPoint = it })
     surfaceState.inkSelection = pdfViewerMutableValue({ inkSelection }, { inkSelection = it })
-    surfaceState.selectionClipboard = pdfViewerMutableValue({ selectionClipboard }, { selectionClipboard = it })
     surfaceState.selectionTransformSnapshot =
         pdfViewerMutableValue({ selectionTransformSnapshot }, { selectionTransformSnapshot = it })
     surfaceState.selectionStyleSnapshot =
@@ -6661,7 +6657,6 @@ private class PdfViewerSurfaceState {
     lateinit var allAnnotations: PdfViewerMutableValue<Map<Int, List<PdfAnnotation>>>
     lateinit var lastEraserPoint: PdfViewerMutableValue<PdfPoint?>
     lateinit var inkSelection: PdfViewerMutableValue<PdfInkSelection>
-    lateinit var selectionClipboard: PdfViewerMutableValue<List<PdfAnnotation>>
     lateinit var selectionTransformSnapshot: PdfViewerMutableValue<List<PdfAnnotation>?>
     lateinit var selectionStyleSnapshot: PdfViewerMutableValue<List<PdfAnnotation>?>
     var currentIsHighlighter: Boolean by androidx.compose.runtime.mutableStateOf(false)
@@ -7020,7 +7015,6 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     var allAnnotations by surfaceState.allAnnotations
     var lastEraserPoint by surfaceState.lastEraserPoint
     var inkSelection by surfaceState.inkSelection
-    var selectionClipboard by surfaceState.selectionClipboard
     var selectionTransformSnapshot by surfaceState.selectionTransformSnapshot
     var selectionStyleSnapshot by surfaceState.selectionStyleSnapshot
     val currentIsHighlighter = surfaceState.currentIsHighlighter
@@ -7463,42 +7457,6 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                             }
                         }
 
-                        val onSelectionCopy = {
-                            selectionClipboard = currentSelectedAnnotations().map { it.copy() }
-                        }
-
-                        val onSelectionPaste = { targetPage: Int ->
-                            val clipboard = selectionClipboard
-                            if (clipboard.isNotEmpty() && targetPage >= 0) {
-                                val pasteCount = undoStack.count { it is HistoryAction.AddMany }
-                                val offset = 0.03f * ((pasteCount % 5) + 1)
-                                val copies = clipboard.map { annotation ->
-                                    annotation.copy(
-                                        id = java.util.UUID.randomUUID().toString(),
-                                        pageIndex = targetPage,
-                                        points = annotation.points.map { point ->
-                                            point.copy(
-                                                x = (point.x + offset).coerceIn(0f, 1f),
-                                                y = (point.y + offset).coerceIn(0f, 1f),
-                                            )
-                                        },
-                                    )
-                                }
-                                allAnnotations = allAnnotations + (targetPage to (
-                                    (allAnnotations[targetPage] ?: emptyList()) + copies
-                                    ))
-                                undoStack.add(HistoryAction.AddMany(targetPage, copies))
-                                redoStack.clear()
-                                persistInkAnnotationsNow(
-                                    allAnnotations,
-                                    emptyList(),
-                                    "selection_paste"
-                                )
-                                inkSelection =
-                                    PdfInkSelection(targetPage, copies.map { it.id }.toSet())
-                            }
-                        }
-
                         val onSelectionColor = { color: androidx.compose.ui.graphics.Color ->
                             val page = inkSelection.pageIndex
                             val selected = currentSelectedAnnotations()
@@ -7572,12 +7530,14 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                             selectionStyleSnapshot = null
                         }
 
-                        val selectionEditColors = remember(
-                            surfaceState.penPalette,
-                            surfaceState.highlighterPalette
-                        ) {
-                            (surfaceState.penPalette + surfaceState.highlighterPalette).distinct()
+                        // The lasso UI is driven by selection state, not by mode
+                        // visibility: leaving annotation mode (back nav, toolbar
+                        // toggle, dock close) must drop it, or the box/handles/
+                        // edit bar linger over the reader.
+                        LaunchedEffect(isEditMode) {
+                            if (!isEditMode) onSelectionClear()
                         }
+
                         val selectionEditState = remember(inkSelection, allAnnotations) {
                             val selected = currentSelectedAnnotations()
                             val color = selected.map { it.color.toArgb() and 0x00FFFFFF }.distinct()
@@ -7758,13 +7718,10 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 onSelectionTransformEnd = onSelectionTransformEnd,
                                 onSelectionDelete = onSelectionDelete,
                                 onSelectionDuplicate = onSelectionDuplicate,
-                                onSelectionCopy = onSelectionCopy,
-                                onSelectionPaste = onSelectionPaste,
                                 onSelectionColor = onSelectionColor,
                                 onSelectionThickness = onSelectionThickness,
                                 onSelectionThicknessFinished = onSelectionThicknessFinished,
                                 onSelectionClear = onSelectionClear,
-                                selectionEditColors = selectionEditColors,
                                 selectionEditColor = selectionEditState.first,
                                 selectionEditThickness = selectionEditState.second,
                                 selectionThicknessRange = if (selectionEditState.third) {
@@ -7772,7 +7729,6 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 } else {
                                     0.001f..0.015f
                                 },
-                                canSelectionPaste = selectionClipboard.isNotEmpty(),
                                 textBoxes = visibleTextBoxes,
                                 textBoxesByPage = visibleTextBoxesByPage,
                                 selectedTextBoxId = selectedTextBoxId,
