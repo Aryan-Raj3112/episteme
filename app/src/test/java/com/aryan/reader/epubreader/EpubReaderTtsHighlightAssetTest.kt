@@ -46,9 +46,13 @@ class EpubReaderTtsHighlightAssetTest {
         val js = epubReaderAsset().readText()
 
         // Parent-relative max-height (100%/60% in Standard Ebooks local.css) resolves
-        // to 0 against a not-yet-laid-out figure; viewport-relative caps cannot.
+        // to 0 against a not-yet-laid-out figure; CSS vh units also resolve to 0 in
+        // some Android WebViews, so the cap is a JS-measured px value with a `none`
+        // fallback that can never collapse. Svg covers that ask for 100% width keep it.
         assertTrue(js.contains("max-height: none !important;"))
-        assertTrue(js.contains("max-height: 92vh !important;"))
+        assertTrue(js.contains("max-height: var(--reader-image-max-h, none) !important;"))
+        assertTrue(js.contains("--reader-image-max-h"))
+        assertTrue(js.contains("body svg[width=\"100%\"]"))
         assertTrue(js.contains("body figure {"))
         assertTrue(js.contains("body figure img {"))
     }

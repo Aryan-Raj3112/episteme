@@ -400,6 +400,22 @@ internal fun readerDocumentStyles(
               height: auto !important;
             }
             /*
+             * Placeholder for figures whose image file is missing from the archive
+             * (Gutenberg img_ marker spans). Keeps the caption visible instead of a gap.
+             */
+            .reader-content figure.reader-missing-figure {
+              display: block;
+              width: auto !important;
+              margin: 1.2em auto !important;
+              padding: 1em 1.2em !important;
+              border: 1px dashed color-mix(in srgb, var(--reader-fg) 35%, transparent) !important;
+              border-radius: 8px;
+              text-align: center !important;
+              font-style: italic;
+              color: color-mix(in srgb, var(--reader-fg) 82%, var(--reader-bg));
+              background: color-mix(in srgb, var(--reader-fg) 4%, transparent);
+            }
+            /*
              * Shoulder-note headings (Standard Ebooks div.aside: print-style
              * float-right sidebars) cannot survive virtualized chunks: the float
              * context breaks across chunk attach/detach and the headings drop

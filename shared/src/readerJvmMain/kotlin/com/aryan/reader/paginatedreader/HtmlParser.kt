@@ -613,7 +613,9 @@ private class SemanticHtmlParser(
                     val children = parseContainer(element, childStyle, inheritedLinkHref)
                     listOf(SemanticFlexContainer(children, elementStyle, elementId, cfi, blockIndex = nextBlockIndex++))
                 } else {
-                    parseContainer(element, elementStyle, inheritedLinkHref)
+                    val children = parseContainer(element, elementStyle, inheritedLinkHref)
+                    foldMissingFigureContainer(element, elementStyle, elementId, cfi, children)
+                        ?: children
                 }
             }
             "svg" -> parseSvgElementToSemantic(element, elementStyle)?.let { listOf(it) } ?: emptyList()
@@ -1326,6 +1328,44 @@ private class SemanticHtmlParser(
     private fun resolveImagePath(src: String): String? {
         if (src.isBlank()) return null
         return resourceResolver.resolvePath(chapterAbsPath, extractionBasePath, src)
+    }
+
+    /**
+     * Folds an image-less figure (ebookmaker `<span id="img_...">` marker, no `<img>`) into a
+     * single missing-figure placeholder. The placeholder borrows the first text block's
+     * source offset so page clipping and text-range locators keep working, and replaces the
+     * container's caption/page-ref paragraphs so the caption does not render twice.
+     * Returns null when this is not a missing-figure container.
+     */
+    private fun foldMissingFigureContainer(
+        element: Element,
+        elementStyle: CssStyle,
+        elementId: String?,
+        cfi: String?,
+        children: List<SemanticBlock>
+    ): List<SemanticBlock>? {
+        val tag = element.tagName().lowercase()
+        if (tag != "figure" && !element.hasClass("figcenter")) return null
+        if (element.select("img").isNotEmpty()) return null
+        val marker = element.select("span[id]").firstOrNull { it.id().isEbookmakerImageMarkerId() }
+            ?: return null
+        if (children.any { it is SemanticTable || it is SemanticImage || it is SemanticList || it is SemanticFlexContainer }) {
+            return null
+        }
+        val caption = element.select("span.caption").firstOrNull()?.text()?.takeIf { it.isNotBlank() }
+            ?: marker.text().takeIf { it.isNotBlank() }
+        val anchor = children.filterIsInstance<SemanticTextBlock>().firstOrNull()
+        return listOf(
+            SemanticParagraph(
+                text = readerMissingFigureText(caption),
+                spans = emptyList(),
+                style = elementStyle.withReaderMissingFigure(),
+                elementId = elementId ?: marker.id().ifBlank { null },
+                cfi = cfi,
+                startCharOffsetInSource = anchor?.startCharOffsetInSource ?: 0,
+                blockIndex = nextBlockIndex++
+            )
+        )
     }
 
     private fun parseListElementToSemantic(

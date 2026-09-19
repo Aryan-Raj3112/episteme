@@ -59,6 +59,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
@@ -671,7 +672,10 @@ internal fun PaginatedReaderContent(
                 Box(modifier = Modifier.fillMaxSize().padding(
                     horizontal = horizontalPadding,
                     vertical = verticalPadding
-                ), contentAlignment = Alignment.TopStart) {
+                // Paginated pages own their breaks: never let an oversize block
+                // (forced whole-table placement, unclamped indents) paint into
+                // neighboring pages or under system bars.
+                ).clipToBounds(), contentAlignment = Alignment.TopStart) {
                     if (themedPageContent != null) {
                         val displayPage = themedPageContent
 

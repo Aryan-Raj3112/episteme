@@ -50,10 +50,14 @@ class SharedContentStyler(
 
         return when (block) {
             is SemanticParagraph -> {
-                val computedTextAlign = resolvePaginatedReaderTextAlign(
-                    cssTextAlign = themedStyle.paragraphStyle.textAlign,
-                    userTextAlign = userTextAlign
-                )
+                val computedTextAlign = if (block.style.isReaderMissingFigure()) {
+                    TextAlign.Center
+                } else {
+                    resolvePaginatedReaderTextAlign(
+                        cssTextAlign = themedStyle.paragraphStyle.textAlign,
+                        userTextAlign = userTextAlign
+                    )
+                }
 
                 ParagraphBlock(
                     content = buildAnnotatedString(block, themedStyle),

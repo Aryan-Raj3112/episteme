@@ -115,6 +115,141 @@ data class MobileEpubLogicalSectionRange<T>(
 )
 
 /**
+ * Minimum plain-text length for a TOC split to stand as its own chapter. Sections below
+ * this with no media are front-matter crumbs (title-page lines) or half-titles, not chapters.
+ */
+const val MOBILE_EPUB_MIN_SPLIT_SECTION_TEXT_CHARS = 400
+
+data class MobileEpubMergedSection<T>(
+    val entry: T,
+    val startChildIndex: Int,
+    val endChildIndexExclusive: Int,
+    /** TOC entries absorbed into this section; they stay in the TOC and navigate by fragment. */
+    val absorbedEntries: List<T>,
+    val materializationIndex: Int
+)
+
+/**
+ * Good-split policy over [mobileEpubLogicalSectionRanges].
+ *
+ * Raw ranges are kept verbatim except for two tiny-section cases (a section is tiny when
+ * its plain text is below [MOBILE_EPUB_MIN_SPLIT_SECTION_TEXT_CHARS] and it holds no media):
+ * - a leading run of 2+ tiny sections is folded into one section starting at the first
+ *   entry (Gutenberg title pages: LOST IN THE JUNGLE. + 3 one-line h4s + ...). The run stops
+ *   at the first substantial section or depth-0 parent. A single leading tiny section is
+ *   kept, and an all-tiny file is never folded.
+ * - a tiny section whose entry is a TOC parent of the entries following it in the same
+ *   file is folded forward into the next section (half-titles such as the reprinted
+ *   LOST IN THE JUNGLE. before CHAPTER I.).
+ *
+ * Collision/id-priority semantics of [mobileEpubLogicalSectionRanges] are preserved: this
+ * only drops split points, never reorders or remaps anchors.
+ */
+fun <T> mobileEpubMergedChapterSections(
+    entries: List<T>,
+    bodyChildCount: Int,
+    fragmentId: (T) -> String?,
+    idChildIndex: (String) -> Int?,
+    nameChildIndex: (String) -> Int?,
+    depthOf: (T) -> Int,
+    sectionTextLength: (startChild: Int, endChildExclusive: Int) -> Int,
+    sectionHasMedia: (startChild: Int, endChildExclusive: Int) -> Boolean
+): List<MobileEpubMergedSection<T>> {
+    val raw = mobileEpubLogicalSectionRanges(
+        entries = entries,
+        bodyChildCount = bodyChildCount,
+        fragmentId = fragmentId,
+        idChildIndex = idChildIndex,
+        nameChildIndex = nameChildIndex
+    )
+    if (raw.size < 2) {
+        return raw.mapIndexed { index, range ->
+            MobileEpubMergedSection(range.entry, range.startChildIndex, range.endChildIndexExclusive, emptyList(), index)
+        }
+    }
+    fun isTiny(range: MobileEpubLogicalSectionRange<T>): Boolean =
+        sectionTextLength(range.startChildIndex, range.endChildIndexExclusive) < MOBILE_EPUB_MIN_SPLIT_SECTION_TEXT_CHARS &&
+            !sectionHasMedia(range.startChildIndex, range.endChildIndexExclusive)
+
+    fun isParentOfFollowing(entry: T, entryIndexInEntries: Int): Boolean {
+        val depth = depthOf(entry)
+        for (i in entryIndexInEntries + 1 until entries.size) {
+            val laterDepth = depthOf(entries[i])
+            if (laterDepth > depth) return true
+            if (laterDepth <= depth) return false
+        }
+        return false
+    }
+    // Map each raw range back to its position in `entries` for the parent test. Raw ranges
+    // hold the winning entry per start; entries are distinct by fragment upstream.
+    fun entryIndex(entry: T): Int = entries.indexOfFirst { fragmentId(it) == fragmentId(entry) }
+
+    val working = raw.toMutableList()
+    // Leading tiny run folds into one section starting at the first entry (Gutenberg title
+    // pages). The run stops at the first substantial section or at a depth-0 parent, which
+    // opens its own group (e.g. a half-title before its chapter). A single leading tiny
+    // section is kept, and an all-tiny file is never folded.
+    var runEnd = 0
+    while (runEnd < working.size && isTiny(working[runEnd]) &&
+        (runEnd == 0 || !(depthOf(working[runEnd].entry) == 0 && isParentOfFollowing(working[runEnd].entry, entryIndex(working[runEnd].entry))))
+    ) {
+        runEnd++
+    }
+    if (runEnd >= 2 && runEnd < working.size) {
+        val head = working[0]
+        val mergedHead = MobileEpubMergedSection(
+            entry = head.entry,
+            startChildIndex = head.startChildIndex,
+            endChildIndexExclusive = working[runEnd - 1].endChildIndexExclusive,
+            absorbedEntries = working.subList(1, runEnd).map { it.entry },
+            materializationIndex = 0
+        )
+        val rest = working.subList(runEnd, working.size).toList()
+        val out = mutableListOf(mergedHead)
+        out.addAll(foldParentRanges(rest, ::isTiny, ::isParentOfFollowing, ::entryIndex, startIndex = 1))
+        return out
+    }
+    return foldParentRanges(working, ::isTiny, ::isParentOfFollowing, ::entryIndex, startIndex = 0)
+}
+
+private fun <T> foldParentRanges(
+    working: List<MobileEpubLogicalSectionRange<T>>,
+    isTiny: (MobileEpubLogicalSectionRange<T>) -> Boolean,
+    isParentOfFollowing: (T, Int) -> Boolean,
+    entryIndex: (T) -> Int,
+    startIndex: Int
+): List<MobileEpubMergedSection<T>> {
+    val out = mutableListOf<MobileEpubMergedSection<T>>()
+    var index = 0
+    var materializationIndex = startIndex
+    while (index < working.size) {
+        val current = working[index]
+        val isLast = index == working.lastIndex
+        if (!isLast && isTiny(current) && isParentOfFollowing(current.entry, entryIndex(current.entry))) {
+            val next = working[index + 1]
+            out += MobileEpubMergedSection(
+                entry = current.entry,
+                startChildIndex = current.startChildIndex,
+                endChildIndexExclusive = next.endChildIndexExclusive,
+                absorbedEntries = listOf(next.entry),
+                materializationIndex = materializationIndex++
+            )
+            index += 2
+        } else {
+            out += MobileEpubMergedSection(
+                entry = current.entry,
+                startChildIndex = current.startChildIndex,
+                endChildIndexExclusive = current.endChildIndexExclusive,
+                absorbedEntries = emptyList(),
+                materializationIndex = materializationIndex++
+            )
+            index += 1
+        }
+    }
+    return out
+}
+
+/**
  * Android's exact fragment-section ordering and collision policy after a platform HTML adapter
  * maps fragment IDs/names to direct body-child indices.
  */

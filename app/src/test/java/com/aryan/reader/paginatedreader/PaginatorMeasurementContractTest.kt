@@ -240,6 +240,124 @@ class PaginatorMeasurementContractTest {
         assertEquals(0.dp, normalized[1].style.margin.bottom)
     }
 
+    @Test
+    fun tocStyleTablesStackRowsForNarrowPagination() {
+        val table = TableBlock(
+            rows = listOf(
+                listOf(tableCell("CHAPTER I.")),
+                listOf(
+                    tableCell("Paul's letter to his young friends, in which he prepares them for being lost in the jungle."),
+                    tableCell("11")
+                ),
+                listOf(tableCell("CHAPTER II.")),
+                listOf(
+                    tableCell("A queer canoe on the Rembo and a deserted village with many strange happenings."),
+                    tableCell("14")
+                ),
+                listOf(tableCell("CHAPTER III.")),
+                listOf(
+                    tableCell("Harpooning a manga, a great prize, and the description of the curious beast."),
+                    tableCell("23")
+                )
+            ),
+            blockIndex = 4
+        )
+
+        assertTrue(table.shouldStackTocRowsForNarrowPagination())
+        assertTrue(table.shouldStackRowsForNarrowPagination())
+
+        val stacked = table.rowsForNarrowPaginationLayout()
+        assertEquals(9, stacked.size)
+        // TOC stacking stays plain: page cells must not gain drama speaker gaps.
+        stacked.forEach { row ->
+            assertEquals(0.dp, row.single().style.blockStyle.padding.top)
+        }
+    }
+
+    @Test
+    fun illustrationsStyleTablesWithFrontispieceRefStackRowsForNarrowPagination() {
+        val table = TableBlock(
+            rows = listOf(
+                listOf(
+                    TableCell(
+                        content = listOf(
+                            ParagraphBlock(
+                                content = AnnotatedString("PAGE"),
+                                blockIndex = 100
+                            )
+                        ),
+                        colspan = 2
+                    )
+                ),
+                listOf(
+                    tableCell("Shooting a Leopard with a long descriptive caption for the plate."),
+                    tableCell("Frontispiece.")
+                ),
+                listOf(tableCell("The Royal Canoe on the river at dawn."), tableCell("15")),
+                listOf(tableCell("The Manga and the great prize of the hunt."), tableCell("25")),
+                listOf(tableCell("The Mpano near the forest clearing."), tableCell("29")),
+                listOf(tableCell("Felling Ebony-Trees with the whole party."), tableCell("31")),
+                listOf(tableCell("Bringing in the Wounded after the fight."), tableCell("43"))
+            ),
+            blockIndex = 6
+        )
+
+        assertTrue(table.shouldStackTocRowsForNarrowPagination())
+        assertTrue(table.shouldStackRowsForNarrowPagination())
+    }
+
+    @Test
+    fun splitTocTableFragmentsStackWithoutDramaGaps() {
+        // Shape of a split head of a stacked TOC table: single-column rows (headings,
+        // entries, page refs). Must keep the plain TOC layout — drama speaker gaps would
+        // make the fragment remeasure taller than estimated and get it rejected.
+        // Page cells are end-aligned like the real `align="right"` cells, which is what
+        // trips the drama single-column fallback.
+        val endAligned = CssStyle(paragraphStyle = ParagraphStyle(textAlign = TextAlign.End))
+        val fragment = TableBlock(
+            rows = listOf(
+                listOf(tableCell("CHAPTER I.")),
+                listOf(tableCell("Paul's letter to his young friends, in which he prepares them for being lost in the jungle.")),
+                listOf(tableCell("11", endAligned)),
+                listOf(tableCell("CHAPTER II.")),
+                listOf(tableCell("A queer canoe on the Rembo and a deserted village with many strange happenings.")),
+                listOf(tableCell("14", endAligned)),
+                listOf(tableCell("CHAPTER III.")),
+                listOf(tableCell("Harpooning a manga, a great prize, and the description of the curious beast.")),
+                listOf(tableCell("23", endAligned)),
+                listOf(tableCell("CHAPTER IV.")),
+                listOf(tableCell("We go into the forest and hunt for ebony trees with the whole party.")),
+                listOf(tableCell("28", endAligned)),
+                listOf(tableCell("CHAPTER V."))
+            ),
+            blockIndex = 7
+        )
+
+        assertTrue(fragment.shouldStackRowsForNarrowPagination())
+
+        val stacked = fragment.rowsForNarrowPaginationLayout()
+        assertEquals(13, stacked.size)
+        stacked.forEach { row ->
+            assertEquals(0.dp, row.single().style.blockStyle.padding.top)
+        }
+    }
+
+    @Test
+    fun longTwoColumnTablesWithoutPageRefsDoNotStackAsToc() {
+        val table = TableBlock(
+            rows = List(8) {
+                listOf(
+                    tableCell("Left column entry number $it with a fair amount of descriptive text inside."),
+                    tableCell("Right column entry number $it with a fair amount of descriptive text inside.")
+                )
+            },
+            blockIndex = 5
+        )
+
+        assertFalse(table.shouldStackTocRowsForNarrowPagination())
+        assertFalse(table.shouldStackRowsForNarrowPagination())
+    }
+
     private fun dialogueRow(speaker: String, dialogue: String): List<TableCell> {
         return listOf(speakerCell(speaker), tableCell(dialogue))
     }

@@ -517,7 +517,21 @@ class SuspendingAndroidBlockMeasurementProvider(
     }
 
     override suspend fun split(block: TableBlock, availableHeight: Int): Pair<TableBlock, TableBlock>? {
-        return splitTableAt(contentConstraints = constraints, block = block, availableHeight = availableHeight)
+        return splitTableAt(contentConstraints = tableSplitMeasureConstraints(block, constraints), block = block, availableHeight = availableHeight)
+    }
+
+    /**
+     * Width budget for table measure/split/render agreement. This must be the width the
+     * table actually renders at: a specified width (e.g. the CONTENTS table's 60%) in a
+     * centered box, otherwise the full incoming width. Stacked tables are no exception —
+     * render lays their rows out inside the same width-constrained box (fillMaxWidth fills
+     * the parent, not the page), so measuring them at page width budgets half the real
+     * height and every fragment overruns its page. Split and measure must both use this
+     * budget or split heads remeasure taller than estimated and get rejected, force-placing
+     * the whole table on one page.
+     */
+    private fun tableSplitMeasureConstraints(block: TableBlock, base: Constraints): Constraints {
+        return computeBlockBoxMetrics(block, base, density).contentConstraints
     }
 
     /**
@@ -549,13 +563,14 @@ class SuspendingAndroidBlockMeasurementProvider(
         currentHeight += decorationTop
 
         val stackRows = block.shouldStackRowsForNarrowPagination()
+        val tableConstraints = tableSplitMeasureConstraints(block, contentConstraints)
         val rowsForSplit = if (stackRows) block.rowsForNarrowPaginationLayout() else block.rows
         for (i in rowsForSplit.indices) {
             coroutineContext.ensureActive()
             val rowHeight = measureTableRowHeight(
                 row = rowsForSplit[i],
                 textMeasurer = textMeasurer,
-                constraints = contentConstraints,
+                constraints = tableConstraints,
                 defaultStyle = textStyle,
                 headerStyle = textStyle.copy(fontWeight = FontWeight.Bold),
                 density = density,
@@ -574,7 +589,7 @@ class SuspendingAndroidBlockMeasurementProvider(
                             row = rowsForSplit[i],
                             availableHeight = availableForRow,
                             textMeasurer = textMeasurer,
-                            constraints = contentConstraints,
+                            constraints = tableConstraints,
                             defaultStyle = textStyle,
                             headerStyle = textStyle.copy(fontWeight = FontWeight.Bold),
                             density = density,
@@ -599,7 +614,7 @@ class SuspendingAndroidBlockMeasurementProvider(
                 } else if (availableForRow > 0) {
                     // Fragment the overflowing row itself so layout tables (publisher callout
                     // boxes with a single tall cell) span pages instead of overflowing them.
-                    splitTableRowCells(row = rowsForSplit[i], availableHeight = availableForRow, contentConstraints = contentConstraints)?.let { (part1Row, part2Row) ->
+                    splitTableRowCells(row = rowsForSplit[i], availableHeight = availableForRow, contentConstraints = tableConstraints)?.let { (part1Row, part2Row) ->
                         logAndroidEpubCutoff(
                             "cutoff_probe layer=android_table_row_fragmentation_success block=${block.blockIndex} " +
                                 "rowIndex=$i availableForRowPx=$availableForRow rowCells=${part1Row.size}"
@@ -911,12 +926,16 @@ private suspend fun measureBlockHeight(
         }
         is TableBlock -> {
             val stackRows = block.shouldStackRowsForNarrowPagination()
+            // Same budget as split/render (see tableSplitMeasureConstraints): the table's
+            // own content box, so stacked rows wrap exactly as they will on the page.
+            // (Duplicated here because this is a top-level function outside the class.)
+            val tableConstraints = computeBlockBoxMetrics(block, constraints, density).contentConstraints
             val rowsForMeasure = if (stackRows) block.rowsForNarrowPaginationLayout() else block.rows
             rowsForMeasure.sumOf { row ->
                 measureTableRowHeight(
                     row = row,
                     textMeasurer = textMeasurer,
-                    constraints = adjustedConstraints,
+                    constraints = tableConstraints,
                     defaultStyle = defaultStyle,
                     headerStyle = headerStyle,
                     density = density,

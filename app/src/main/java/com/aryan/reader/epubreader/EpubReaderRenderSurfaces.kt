@@ -647,18 +647,23 @@ internal fun EpubReaderRenderSurfaces(
                                 AnimatedContent(
                                     targetState = currentChapterIndex,
                                     transitionSpec = {
+                                        // WebViews paint opaquely: any fade (crossfade or
+                                        // slide+fade) turns the outgoing/incoming overlap
+                                        // into a see-through beat that reads as a flash.
+                                        // Directional slides stay; fades go.
                                         if (motionPolicy.reduceMotion) {
                                             androidx.compose.animation.EnterTransition.None togetherWith
                                                 androidx.compose.animation.ExitTransition.None
                                         } else if (!prefs.pullToTurnEnabled) {
-                                            fadeIn(animationSpec = tween(150)) togetherWith fadeOut(animationSpec = tween(150))
+                                            androidx.compose.animation.EnterTransition.None togetherWith
+                                                androidx.compose.animation.ExitTransition.None
                                         } else {
                                             if (targetState > initialState) {
-                                                (slideInVertically { height -> height } + fadeIn())
-                                                    .togetherWith(slideOutVertically { height -> -height } + fadeOut())
+                                                slideInVertically { height -> height }
+                                                    .togetherWith(slideOutVertically { height -> -height })
                                             } else {
-                                                (slideInVertically { height -> -height } + fadeIn())
-                                                    .togetherWith(slideOutVertically { height -> height } + fadeOut())
+                                                slideInVertically { height -> -height }
+                                                    .togetherWith(slideOutVertically { height -> height })
                                             }
                                         }
                                     },
@@ -711,11 +716,25 @@ internal fun EpubReaderRenderSurfaces(
                                                 }
                                             }
                                         }
+                                        // First-paint theme: the runtime applier (window.applyReaderTheme)
+                                        // only runs after load, so without this the page first paints
+                                        // with the publication stylesheet (white in pgepub.css) and then
+                                        // visibly flips to the selected theme. Bake the current theme
+                                        // class + background/text into the initial HTML; the runtime
+                                        // call reuses #readerThemeStyle by id and upgrades it (links,
+                                        // texture, contrast) without a repaint flash.
+                                        val initialThemeClass = if (isDarkTheme) "dark-theme" else "light-theme"
+                                        val initialBgHex = String.format("#%06X", (0xFFFFFF and effectiveBg.toArgb()))
+                                        val initialTextHex = String.format("#%06X", (0xFFFFFF and effectiveText.toArgb()))
                                         val initialHtml = """
                                             <!DOCTYPE html>
-                                            <html>
+                                            <html class="$initialThemeClass">
                                             <head>
                                                 $chapterHead
+                                                <style id="readerThemeStyle">
+                                                    :root{--reader-bg:$initialBgHex;--reader-text:$initialTextHex;}
+                                                    html.$initialThemeClass,html.$initialThemeClass body{background-color:$initialBgHex!important;color:$initialTextHex!important;}
+                                                </style>
                                             </head>
                                             <body>
                                                 <div id="content-top-sentinel" style="height: 1px; width: 100%;"></div>

@@ -140,12 +140,19 @@ class EpubParserUnitTest {
             extractionDirOverride = temp.newFolder("extract-fragment-toc")
         )
 
-        assertEquals(listOf("Book title", "Nested section", "Later section"), book.chapters.map { it.title })
-        assertEquals(listOf(0, 1, 0), book.chapters.map { it.depth })
+        // The one-word "Book title" section folds forward into its nested child instead of
+        // standing as its own chapter; titles, TOC rows and depths are preserved.
+        assertEquals(listOf("Book title", "Later section"), book.chapters.map { it.title })
+        assertEquals(listOf(0, 0), book.chapters.map { it.depth })
         assertTrue(book.chapters.all { File(book.extractionBasePath, it.htmlFilePath).isFile })
+        assertTrue(book.chapters[0].plainTextContent.contains("Nested"))
         assertEquals(listOf("Book title", "Nested section", "Later section"), book.tableOfContents.map { it.label })
         assertEquals(listOf(0, 1, 0), book.tableOfContents.map { it.depth })
-        assertEquals(book.chapters.map { it.absPath }, book.tableOfContents.map { it.absolutePath })
+        // Absorbed rows remap to their merged section file so TOC taps keep working.
+        assertEquals(
+            listOf(book.chapters[0].absPath, book.chapters[0].absPath, book.chapters[1].absPath),
+            book.tableOfContents.map { it.absolutePath }
+        )
     }
 
     @Test

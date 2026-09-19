@@ -14,6 +14,7 @@ import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.paginatedreader.BorderStyle
 import com.aryan.reader.paginatedreader.CssStyle
+import com.aryan.reader.paginatedreader.isReaderMissingFigure
 import com.aryan.reader.shared.ReaderTexture
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.unit.TextUnit
@@ -210,6 +211,13 @@ internal fun List<SemanticBlock>.styleSummary(): String {
 }
 
 internal fun SemanticBlock.toHtml(searchQuery: String, searchOptions: ReaderSearchOptions): String {
+    if (style.isReaderMissingFigure() && this is SemanticTextBlock) {
+        return "<figure class=\"reader-missing-figure\"${textOffsetAttributes()}>${textHtml(searchQuery, searchOptions)}</figure>"
+    }
+    return semanticBlockToHtml(searchQuery, searchOptions)
+}
+
+private fun SemanticBlock.semanticBlockToHtml(searchQuery: String, searchOptions: ReaderSearchOptions): String {
     return when (this) {
         is SemanticHeader -> "<h${level.coerceIn(1, 6)}${textOffsetAttributes()}${styleAttribute(preservedWhitespaceStyle())}>${textHtml(searchQuery, searchOptions)}</h${level.coerceIn(1, 6)}>"
         is SemanticParagraph -> "<p${textOffsetAttributes()}${styleAttribute(preservedWhitespaceStyle())}>${textHtml(searchQuery, searchOptions)}</p>"

@@ -64,6 +64,96 @@ class MobileEpubPackageModelsTest {
     }
 
     @Test
+    fun `merged chapter sections fold leading crumbs and tiny parents like Android`() {
+        data class Entry(val fragment: String, val label: String, val depth: Int)
+        // Jungle h-0 shape: title page crumbs, 1875, CONTENTS, ILLUS, half-title, chapters.
+        val entries = listOf(
+            Entry("t", "Title", 0),
+            Entry("a", "Line A", 1),
+            Entry("b", "Line B", 1),
+            Entry("c", "Line C", 1),
+            Entry("s", "Substantial", 1),
+            Entry("half", "Half title", 0),
+            Entry("ch", "Chapter", 1)
+        )
+        val childIndex = mapOf("t" to 8, "a" to 14, "b" to 16, "c" to 18, "s" to 19, "half" to 45, "ch" to 47)
+        // Plain-text length of each raw range, keyed by range start child.
+        val lengthByStart = mapOf(8 to 76, 14 to 131, 16 to 25, 18 to 57, 19 to 847, 45 to 19, 47 to 3970)
+
+        val merged = mobileEpubMergedChapterSections(
+            entries = entries,
+            bodyChildCount = 103,
+            fragmentId = Entry::fragment,
+            idChildIndex = childIndex::get,
+            nameChildIndex = { null },
+            depthOf = Entry::depth,
+            sectionTextLength = { start, _ -> lengthByStart.getValue(start) },
+            sectionHasMedia = { _, _ -> false }
+        )
+
+        assertEquals(3, merged.size)
+        // Title crumbs folded into one section starting at the title entry.
+        assertEquals("t", merged[0].entry.fragment)
+        assertEquals(8, merged[0].startChildIndex)
+        assertEquals(19, merged[0].endChildIndexExclusive)
+        assertEquals(listOf("a", "b", "c"), merged[0].absorbedEntries.map { it.fragment })
+        // Substantial section untouched.
+        assertEquals("s", merged[1].entry.fragment)
+        assertEquals(19, merged[1].startChildIndex)
+        assertEquals(45, merged[1].endChildIndexExclusive)
+        assertEquals(emptyList(), merged[1].absorbedEntries)
+        // Tiny parent half-title folded forward into its chapter.
+        assertEquals("half", merged[2].entry.fragment)
+        assertEquals(45, merged[2].startChildIndex)
+        assertEquals(103, merged[2].endChildIndexExclusive)
+        assertEquals(listOf("ch"), merged[2].absorbedEntries.map { it.fragment })
+        assertEquals(listOf(0, 1, 2), merged.map { it.materializationIndex })
+    }
+
+    @Test
+    fun `merged chapter sections keep single tiny leaders and all-tiny files intact`() {
+        data class Entry(val fragment: String, val depth: Int)
+        // Single tiny leader stays split (existing Android contract).
+        val single = mobileEpubMergedChapterSections(
+            entries = listOf(Entry("x", 0), Entry("y", 0)),
+            bodyChildCount = 3,
+            fragmentId = Entry::fragment,
+            idChildIndex = { mapOf("x" to 1, "y" to 2)[it] },
+            nameChildIndex = { null },
+            depthOf = Entry::depth,
+            sectionTextLength = { s, _ -> if (s == 1) 13 else 5000 },
+            sectionHasMedia = { _, _ -> false }
+        )
+        assertEquals(listOf("x", "y"), single.map { it.entry.fragment })
+
+        // All-tiny file is never folded into one chapter.
+        val poems = mobileEpubMergedChapterSections(
+            entries = listOf(Entry("p1", 1), Entry("p2", 1), Entry("p3", 1)),
+            bodyChildCount = 4,
+            fragmentId = Entry::fragment,
+            idChildIndex = { mapOf("p1" to 0, "p2" to 1, "p3" to 2)[it] },
+            nameChildIndex = { null },
+            depthOf = Entry::depth,
+            sectionTextLength = { _, _ -> 60 },
+            sectionHasMedia = { _, _ -> false }
+        )
+        assertEquals(listOf("p1", "p2", "p3"), poems.map { it.entry.fragment })
+
+        // Tiny section with media (illustration plate) is kept.
+        val plate = mobileEpubMergedChapterSections(
+            entries = listOf(Entry("cover", 0), Entry("plate", 0), Entry("ch", 0)),
+            bodyChildCount = 6,
+            fragmentId = Entry::fragment,
+            idChildIndex = { mapOf("cover" to 0, "plate" to 2, "ch" to 4)[it] },
+            nameChildIndex = { null },
+            depthOf = Entry::depth,
+            sectionTextLength = { s, _ -> if (s == 4) 3000 else 40 },
+            sectionHasMedia = { s, _ -> s == 2 }
+        )
+        assertEquals(listOf("cover", "plate", "ch"), plate.map { it.entry.fragment })
+    }
+
+    @Test
     fun `extraction lifecycle preserves Android directory cache and cleanup policy`() {
         assertEquals(
             MobileEpubExtractionLifecycle(MobileEpubExtractionDirectoryMode.OVERRIDE, false, false, false),

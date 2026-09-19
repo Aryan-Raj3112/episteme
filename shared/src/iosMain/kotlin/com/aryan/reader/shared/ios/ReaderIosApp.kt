@@ -6786,6 +6786,21 @@ private fun ReaderIosApp(
             confirmLabel = readerString("action_delete_account", "Delete account"),
             onConfirm = {
                 showDeleteAccountFinalConfirmation = false
+                // Drop back to home immediately; the native deletion pipeline
+                // (Apple re-auth + worker release + cleanup) continues in the
+                // background with a persistent banner until it completes and
+                // replaces the banner with the result.
+                settingsDestination = SharedSettingsDestination.ROOT
+                utilityScreen = null
+                selectMainPage(SharedMobileMainDestination.HOME)
+                state = state.reduce(
+                    AppAction.BannerShown(
+                        BannerMessage(
+                            message = "Deleting your account...",
+                            isPersistent = true,
+                        ),
+                    ),
+                )
                 bridge.requestAccountDeletion()
             },
             onDismiss = { showDeleteAccountFinalConfirmation = false },

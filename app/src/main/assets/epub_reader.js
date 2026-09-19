@@ -1171,6 +1171,12 @@
         var newVerticalMargin = parseFloat(verticalMargin);
         var newFontWeight = parseInt(fontWeight, 10);
         var newLetterSpacing = parseFloat(letterSpacing);
+        // CSS vh units resolve to 0 in some Android WebViews (loadDataWithBaseURL +
+        // fixed documentElement height), which turned every `max-height: 92vh` image cap
+        // into a 0px collapse (cover appears, then vanishes once styles apply). Measure
+        // the viewport in JS instead; fall back to no cap rather than a bogus one.
+        var viewportHPx = window.innerHeight || document.documentElement.clientHeight || 0;
+        var newImageMaxHPx = viewportHPx > 0 ? Math.round(viewportHPx * 0.92) : 0;
 
         if (isNaN(newFontSize) || newFontSize < 0.5 || newFontSize > 5.0) newFontSize = 1.0;
         if (isNaN(newLineHeight) || newLineHeight < 1.0 || newLineHeight > 3.0) newLineHeight = 1.0;
@@ -1356,6 +1362,7 @@
         var imageCss = `
             :root {
                 --reader-image-size: ${newImageSize};
+                --reader-image-max-h: ${newImageMaxHPx > 0 ? newImageMaxHPx + "px" : "none"};
             }
             body img,
             body svg,
@@ -1369,10 +1376,10 @@
                    parent-relative max-height (100%/60%). When the figure has no definite
                    height yet (0px during first layout) that resolves to 0 and collapses
                    the image to 0x0 even though the bitmap decoded (naturalWidth > 0).
-                   Viewport-relative caps never collapse: none first so vh-less WebViews
-                   still get a definite non-zero cap, then 92vh where supported. */
+                   Cap via the JS-measured viewport instead of vh (vh is 0 in some
+                   WebViews): none first so images never collapse, then the px cap. */
                 max-height: none !important;
-                max-height: 92vh !important;
+                max-height: var(--reader-image-max-h, none) !important;
                 min-width: 0 !important;
                 min-height: 0 !important;
                 display: block !important;
@@ -1382,6 +1389,14 @@
                 object-fit: contain !important;
                 visibility: visible !important;
                 opacity: 1 !important;
+            }
+            /* An svg that asks for 100% width (Gutenberg SVG covers) has no intrinsic
+               dimensions, so width:auto above collapses it to 0x0. Honor the author
+               width; height stays auto (aspect from viewBox), still capped by the
+               max-width/max-height above. Fixed-size svgs (math) keep width:auto. */
+            body svg[width="100%"],
+            body .x-ebookmaker-cover svg {
+                width: 100%;
             }
             body p:has(> img:only-child),
             body div:has(> img:only-child),
@@ -1400,7 +1415,7 @@
             }
             body figure img {
                 max-height: none !important;
-                max-height: 92vh !important;
+                max-height: var(--reader-image-max-h, none) !important;
             }
         `;
 
@@ -2415,8 +2430,8 @@
                 // Standard Ebooks figure collapse where the image is fully 0x0 while
                 // the bitmap decoded (naturalWidth>0). Parent-relative max-height
                 // (100%/60% in local.css) resolving against a 0-height figure is the
-                // usual cause; the imageCss cap (none then 92vh) plus this band-aid
-                // recovers paint even if a publication rule still wins.
+                // usual cause; the imageCss cap (none then the JS-measured px cap) plus
+                // this band-aid recovers paint even if a publication rule still wins.
                 var collapsedHeightOnly = img.complete && img.naturalWidth > 0 && img.clientWidth > 0 && img.clientHeight === 0;
                 var collapsedFully = img.complete && img.naturalWidth > 0 && img.naturalHeight > 0 && img.clientWidth === 0 && img.clientHeight === 0;
                 if (collapsedHeightOnly || collapsedFully) {

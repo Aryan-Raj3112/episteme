@@ -1496,9 +1496,42 @@ object CssParser {
             backgroundImage = backgroundImage
         )
         return CssStyle(
-            spanStyle, paragraphStyle, blockStyle, fontFamilies, display, fontSize, textTransform, boxSizing, content, hyphens, fontVariantNumeric, textEmphasis,
+            spanStyle, clampedReaderParagraphStyle(paragraphStyle, padding, baseFontSizeSp, density), blockStyle, fontFamilies, display, fontSize, textTransform, boxSizing, content, hyphens, fontVariantNumeric, textEmphasis,
             wordSpacing, textDecorationStyle, textDecorationColor, textUnderlineOffset, whiteSpace, verticalAlign, customProperties
         )
+    }
+
+    /**
+     * Pages clip horizontally, so a negative first-line indent without a compensating
+     * rest-line indent or left padding (Gutenberg `blockquote { text-indent: -2em }`) paints
+     * off the page. Clamp the first line to the padded content box while preserving the
+     * legitimate hanging-indent idiom (`text-indent: -2em; padding-left: 2em` stays intact).
+     */
+    private fun clampedReaderParagraphStyle(
+        paragraphStyle: ParagraphStyle,
+        padding: BoxBorders,
+        baseFontSizeSp: Float,
+        density: Float
+    ): ParagraphStyle {
+        val indent = paragraphStyle.textIndent ?: return paragraphStyle
+        val firstPx = indent.firstLine.toReaderPxOrNull(baseFontSizeSp, density) ?: return paragraphStyle
+        if (firstPx >= 0f) return paragraphStyle
+        val restPx = indent.restLine.toReaderPxOrNull(baseFontSizeSp, density) ?: 0f
+        val paddingLeftPx = if (padding.left.isSpecified) {
+            padding.left.value.coerceAtLeast(0f) * density
+        } else {
+            0f
+        }
+        val minFirstPx = -(restPx + paddingLeftPx)
+        if (firstPx >= minFirstPx) return paragraphStyle
+        return paragraphStyle.copy(textIndent = indent.copy(firstLine = (minFirstPx / density).sp))
+    }
+
+    private fun TextUnit.toReaderPxOrNull(baseFontSizeSp: Float, density: Float): Float? = when {
+        !isSpecified -> null
+        isEm -> value * baseFontSizeSp * density
+        isSp -> value * density
+        else -> null
     }
 
     private fun parseShorthand4(value: String, baseFontSize: Float, density: Float, containerWidth: Int): List<Dp> {

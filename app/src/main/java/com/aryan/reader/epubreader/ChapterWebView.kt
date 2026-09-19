@@ -24,7 +24,6 @@ import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.Rect
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
@@ -961,6 +960,7 @@ fun ChapterWebView(
         LaunchedEffect(isDarkTheme, effectiveBg, effectiveText, textureBase64, activeTextureAlpha) {
             val bgHex = String.format("#%06X", (0xFFFFFF and effectiveBg.toArgb()))
             val textHex = String.format("#%06X", (0xFFFFFF and effectiveText.toArgb()))
+            localWebViewRef?.setBackgroundColor(effectiveBg.toArgb())
             localWebViewRef?.evaluateJavascript("javascript:window.applyReaderTheme($isDarkTheme, '$bgHex', '$textHex', ${textureBase64?.let { "'$it'" } ?: "null"}, ${activeTextureAlpha.coerceIn(0f, 1f)});", null)
         }
 
@@ -1550,7 +1550,10 @@ fun ChapterWebView(
                     }
                     isVerticalScrollBarEnabled = false
                     isHorizontalScrollBarEnabled = false
-                    this.setBackgroundColor(Color.TRANSPARENT)
+                    // Opaque reader background from the first frame: a transparent
+                    // WebView shows the window behind it during every chapter
+                    // reload, which reads as a white flash.
+                    this.setBackgroundColor(effectiveBg.toArgb())
                     Timber.d(
                         "WebView loading initial data with base URL: $baseUrl (Key: $key)"
                     )
