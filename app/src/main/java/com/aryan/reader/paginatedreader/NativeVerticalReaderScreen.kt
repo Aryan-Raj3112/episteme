@@ -3249,6 +3249,15 @@ internal fun TextWithEmphasis(
         lines
     }
 
+    val rubyDraws = rememberHorizontalRubyDraws(
+        layoutResult = textLayoutResult,
+        rubies = block.rubies,
+        baseColor = style.color.takeIf { it.isSpecified } ?: themeTextColor,
+        baseFontFamily = style.fontFamily,
+        baseFontSize = textLayoutResult?.layoutInput?.style?.fontSize?.takeIf { it.isSpecified }
+            ?: style.fontSize
+    )
+
     val customDrawer = Modifier.drawBehind {
         val drawStartTime = System.currentTimeMillis()
 
@@ -3295,6 +3304,8 @@ internal fun TextWithEmphasis(
             cachedEmphasisMarks.forEach { mark ->
                 drawCircle(mark.color, mark.radius, mark.center, style = Stroke(1f))
             }
+
+            drawRubyDraws(rubyDraws)
 
             cachedUnderlines.forEach { line ->
                 when (line.decoStyle) {

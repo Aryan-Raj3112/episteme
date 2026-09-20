@@ -1729,6 +1729,27 @@ internal fun computeImageRenderSizePx(
     return scaledWidth to scaledHeight
 }
 
+/**
+ * Upper bound for image rendering when the layout constraints are unbounded
+ * (paginated pages measure content in an unbounded column). The paginator
+ * stores the contain-fit height in [ImageBlock.expectedHeight]; using it here
+ * keeps render identical to measurement so tall images fit the screen instead
+ * of overflowing the page.
+ */
+internal fun boundedImageMaxHeightDp(
+    boxMaxHeight: Dp,
+    density: Density,
+    expectedHeightPx: Int
+): Dp {
+    if (boxMaxHeight.isSpecified && boxMaxHeight != Dp.Infinity && boxMaxHeight > 0.dp) {
+        return boxMaxHeight
+    }
+    if (expectedHeightPx > 0) {
+        return with(density) { expectedHeightPx.toFloat().toDp() }
+    }
+    return Dp.Unspecified
+}
+
 internal fun computeImageRenderSizeDp(
     block: ImageBlock,
     density: Density,

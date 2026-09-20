@@ -66,7 +66,8 @@ class SharedContentStyler(
                     elementId = block.elementId,
                     cfi = block.cfi,
                     startCharOffsetInSource = block.startCharOffsetInSource,
-                    blockIndex = block.blockIndex
+                    blockIndex = block.blockIndex,
+                    rubies = block.rubies.map { it.toRubyAnnotation() }
                 )
             }
 
@@ -78,7 +79,8 @@ class SharedContentStyler(
                 elementId = block.elementId,
                 cfi = block.cfi,
                 startCharOffsetInSource = block.startCharOffsetInSource,
-                blockIndex = block.blockIndex
+                blockIndex = block.blockIndex,
+                rubies = block.rubies.map { it.toRubyAnnotation() }
             )
 
             is SemanticImage -> {
@@ -152,7 +154,7 @@ class SharedContentStyler(
                 onUnsupportedBlock(block)
                 null
             }
-        }
+        }?.withPublicationWritingMode(themedStyle.writingMode)
     }
 
     private fun styleChantScore(block: SemanticFlexContainer, themedStyle: CssStyle): ChantScoreBlock {
@@ -243,6 +245,10 @@ class SharedContentStyler(
                             addStyle(SpanStyle(letterSpacing = ws), offset, offset + 1)
                         }
 
+                        if (themedSpanStyle.isTateChuYoko() && spanStart < spanEnd) {
+                            addStringAnnotation("TateChuYoko", "all", spanStart, spanEnd)
+                        }
+
                         span.linkHref?.takeIf { it.isNotBlank() }?.let { linkHref ->
                             if (spanStart < spanEnd) {
                                 addStringAnnotation("URL", linkHref, spanStart, spanEnd)
@@ -268,7 +274,9 @@ class SharedContentStyler(
                 }
             }
         }
+        val rubyFontSize = blockStyle.fontSize.takeIf { it.isSpecified } ?: baseTextStyle.fontSize
         val adjusted = builtString.adjustReaderLineHeightForEmphasis()
+            .adjustReaderLineHeightForRuby(rubyFontSize, block.rubies.isNotEmpty())
         onStyledText(block, adjusted)
         return adjusted
     }
@@ -294,7 +302,8 @@ class SharedContentStyler(
                 elementId = item.elementId,
                 cfi = item.cfi,
                 startCharOffsetInSource = item.startCharOffsetInSource,
-                blockIndex = item.blockIndex
+                blockIndex = item.blockIndex,
+                rubies = item.rubies.map { it.toRubyAnnotation() }
             )
         }
         return FlexContainerBlock(items, listStyle.blockStyle, list.elementId, list.cfi, list.blockIndex)

@@ -918,6 +918,9 @@ object CssParser {
         var backgroundImage: String? = null
         var whiteSpace: String? = null
         var verticalAlign: String? = null
+        var writingMode: String? = null
+        var textCombine: String? = null
+        var wordBreak: String? = null
         var hyphens: String? = null
         var fontVariantNumeric: String? = null
         var textEmphasisStyleString: String? = null
@@ -1362,6 +1365,24 @@ object CssParser {
                     "widows" -> widows = valueLower.toIntOrNull()?.coerceAtLeast(1) ?: widows
                     "orphans" -> orphans = valueLower.toIntOrNull()?.coerceAtLeast(1) ?: orphans
                     "vertical-align" -> verticalAlign = valueLower
+                    "writing-mode", "-webkit-writing-mode", "-epub-writing-mode", "-moz-writing-mode" -> {
+                        writingMode = when (valueLower) {
+                            "vertical-rl", "vertical-lr", "horizontal-tb", "sideways-rl", "sideways-lr" -> valueLower
+                            else -> null
+                        }
+                    }
+                    "text-combine-upright", "-webkit-text-combine-upright", "-epub-text-combine-upright" -> {
+                        textCombine = rawValue.trim().takeIf { it.isNotBlank() }?.lowercase()
+                    }
+                    "-webkit-text-combine" -> {
+                        // Legacy alias used by this book's `.tcy` (`-webkit-text-combine: horizontal`).
+                        if (valueLower == "horizontal") textCombine = "all"
+                    }
+                    "word-break", "-webkit-word-break", "-epub-word-break", "-moz-word-break" -> {
+                        if (valueLower in listOf("normal", "break-all", "keep-all", "break-word", "auto-phrase")) {
+                            wordBreak = valueLower
+                        }
+                    }
                     "object-fit" -> objectFit = valueLower
                     "object-position" -> objectPosition = rawValue
                     "clear" -> {
@@ -1497,7 +1518,8 @@ object CssParser {
         )
         return CssStyle(
             spanStyle, clampedReaderParagraphStyle(paragraphStyle, padding, baseFontSizeSp, density), blockStyle, fontFamilies, display, fontSize, textTransform, boxSizing, content, hyphens, fontVariantNumeric, textEmphasis,
-            wordSpacing, textDecorationStyle, textDecorationColor, textUnderlineOffset, whiteSpace, verticalAlign, customProperties
+            wordSpacing, textDecorationStyle, textDecorationColor, textUnderlineOffset, whiteSpace, verticalAlign, customProperties,
+            writingMode, textCombine, wordBreak
         )
     }
 

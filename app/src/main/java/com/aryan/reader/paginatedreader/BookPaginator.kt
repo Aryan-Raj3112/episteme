@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.isSpecified
 import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.applyBookReplacementsToHtmlDocument
 import com.aryan.reader.epub.EpubChapter
@@ -1429,11 +1430,10 @@ class BookPaginator(
             hideImages = hideImages
         )
         Timber.d("paginateChapter: Calling PaginatorLogic for chapter $chapterIndex.")
-        val pages = paginate(
+        val pages = paginateChapterBlocks(
             blocks = blocks,
-            pageHeight = constraints.maxHeight,
-            measurementProvider = measurementProvider,
-            density = density
+            chapterIndex = chapterIndex,
+            measurementProvider = measurementProvider
         )
         coroutineContext.ensureActive()
         if (isDisposed()) return null
@@ -1452,6 +1452,98 @@ class BookPaginator(
         }
         Timber.d("paginateChapter: Chapter $chapterIndex pages stored in L1 pageCache.")
         return pages
+    }
+
+    /**
+     * Routes chapter blocks through the horizontal or vertical paginator by
+     * publication writing mode. Mode switches break pages; each engine stays
+     * exact for its own mode instead of one engine approximating both.
+     */
+    private suspend fun paginateChapterBlocks(
+        blocks: List<ContentBlock>,
+        chapterIndex: Int,
+        measurementProvider: SuspendingAndroidBlockMeasurementProvider
+    ): List<Page> {
+        val segments = segmentBlocksByWritingMode(blocks, ContentBlock::isVerticalContentBlock)
+        if (segments.size <= 1 && segments.firstOrNull()?.isVertical == false) {
+            return paginate(
+                blocks = blocks,
+                pageHeight = constraints.maxHeight,
+                measurementProvider = measurementProvider,
+                density = density
+            )
+        }
+        Timber.d("paginateChapter: chapter $chapterIndex has ${segments.size} writing-mode segments.")
+        val pages = mutableListOf<Page>()
+        for (segment in segments) {
+            if (!segment.isVertical) {
+                pages += paginate(
+                    blocks = segment.blocks,
+                    pageHeight = constraints.maxHeight,
+                    measurementProvider = measurementProvider,
+                    density = density
+                )
+                continue
+            }
+            val defaultLineSpacing = defaultVerticalLineSpacing(textStyle)
+            val ctx = VerticalContentMeasureContext(
+                textMeasurer = textMeasurer,
+                density = density,
+                baseStyle = textStyle,
+                pageWidthPx = constraints.maxWidth,
+                pageHeightPx = constraints.maxHeight,
+                imageSizeMultiplier = imageSizeMultiplier,
+                hideImages = hideImages,
+                defaultLineSpacing = defaultLineSpacing
+            )
+            pages += paginateVerticalContentBlocks(
+                blocks = segment.blocks,
+                ctx = ctx,
+                preSplitFallback = { block -> preSplitVerticalFallback(block, measurementProvider) }
+            )
+        }
+        return pages
+    }
+
+    /**
+     * Fragments oversize horizontal fallback blocks (tables, lists, …) with
+     * the tested horizontal splitter so each owns a fitting page segment
+     * inside vertical flow.
+     */
+    private suspend fun preSplitVerticalFallback(
+        block: ContentBlock,
+        measurementProvider: SuspendingAndroidBlockMeasurementProvider
+    ): List<ContentBlock> {
+        val out = mutableListOf<ContentBlock>()
+        val queue = ArrayDeque(listOf(block))
+        var guard = 0
+        while (queue.isNotEmpty() && guard++ < 64) {
+            coroutineContext.ensureActive()
+            val current = queue.removeFirst()
+            if (measurementProvider.measure(current) <= constraints.maxHeight) {
+                out += current
+                continue
+            }
+            val split: List<ContentBlock>? = when (current) {
+                is TableBlock -> measurementProvider.split(current, constraints.maxHeight)
+                    ?.let { listOf(it.first, it.second) }
+                is FlexContainerBlock -> measurementProvider.split(current, constraints.maxHeight)
+                    ?.let { listOf(it.first, it.second) }
+                is ChantScoreBlock -> measurementProvider.split(current, constraints.maxHeight)
+                    ?.let { listOf(it.first, it.second) }
+                is WrappingContentBlock -> measurementProvider.split(current, constraints.maxHeight)
+                    ?.let { listOf(it.first) + it.second }
+                else -> null
+            }
+            if (split.isNullOrEmpty()) {
+                out += current
+            } else {
+                out += split.first()
+                split.drop(1).asReversed().forEach { queue.addFirst(it) }
+            }
+        }
+        out.addAll(queue)
+        return out.ifEmpty { listOf(block) }
     }
 
     private fun triggerPagination(chapterIndex: Int, priority: Int) {

@@ -679,17 +679,46 @@ internal fun PaginatedReaderContent(
                     if (themedPageContent != null) {
                         val displayPage = themedPageContent
 
+                            val searchHighlightColor =
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                            val ttsHighlightColor =
+                                MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
+
+                        // Vertical-rl pages render with the native tategaki engine
+                        // (VerticalPageContent): same layout code pagination measures
+                        // with, columns stacking right-to-left. Everything else
+                        // keeps the horizontal Compose rendering below.
+                        val isVerticalPage = displayPage.content.isVerticalReaderPage()
+                        if (isVerticalPage) {
+                            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                                VerticalPageContent(
+                                    blocks = displayPage.content,
+                                    textStyle = textStyle,
+                                    pageHeightPx = constraints.maxHeight.coerceAtLeast(1),
+                                    contentWidthPx = constraints.maxWidth.coerceAtLeast(1).toFloat(),
+                                    imageSizeMultiplier = imageSizeMultiplier,
+                                    hideImages = hideImages,
+                                    searchQuery = searchQuery,
+                                    searchHighlightColor = searchHighlightColor,
+                                    ttsHighlightInfo = ttsHighlightInfo,
+                                    ttsHighlightColor = ttsHighlightColor,
+                                    pageUserHighlights = pageUserHighlights,
+                                    fallbackTextColor = effectiveText,
+                                    onLinkClick = onLinkClickCallback,
+                                    onGeneralTap = onGeneralTapCallback,
+                                    onHighlightClick = { highlight ->
+                                        onNoteRequested(highlight.cfi)
+                                        activeSelection = null
+                                    }
+                                )
+                            }
+                        } else {
                         // Measure page blocks at their natural height; pagination, not Column, owns page breaks.
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .wrapContentHeight(unbounded = true)
                         ) {
-                            val searchHighlightColor =
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-                            val ttsHighlightColor =
-                                MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
-
                             displayPage.content.forEach { block ->
                                 val marginModifier = Modifier.padding(
                                     top = block.style.margin.top.coerceAtLeast(0.dp),
@@ -1708,7 +1737,11 @@ internal fun PaginatedReaderContent(
                                                     density = density,
                                                     maxWidthDp = maxWidth,
                                                     imageSizeMultiplier = imageSizeMultiplier,
-                                                    maxHeightDp = maxHeight
+                                                    maxHeightDp = boundedImageMaxHeightDp(
+                                                        boxMaxHeight = maxHeight,
+                                                        density = density,
+                                                        expectedHeightPx = block.expectedHeight
+                                                    )
                                                 )
                                                 val finalImageModifier = Modifier
                                                     .then(
@@ -2060,6 +2093,7 @@ internal fun PaginatedReaderContent(
                                     }
                                 }
                             }
+                        }
                         }
                     } else {
                         var chapterInfo by remember {
@@ -2968,7 +3002,11 @@ internal fun RenderFlexChildBlock(
                     density = density,
                     maxWidthDp = maxWidth,
                     imageSizeMultiplier = imageSizeMultiplier,
-                    maxHeightDp = maxHeight
+                    maxHeightDp = boundedImageMaxHeightDp(
+                        boxMaxHeight = maxHeight,
+                        density = density,
+                        expectedHeightPx = childBlock.expectedHeight
+                    )
                 )
                 val imageModifier = Modifier
                     .then(

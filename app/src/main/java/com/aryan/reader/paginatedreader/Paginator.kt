@@ -874,12 +874,17 @@ private suspend fun measureBlockHeight(
             if (hideImages) {
                 0
             } else {
+                // adjustedConstraints carries an unbounded maxHeight (content
+                // boxes measure vertically unbounded); bound images by the
+                // page instead so tall images contain-fit to the screen.
+                val pageBoundHeightPx = (constraints.maxHeight - verticalPaddingPx - verticalBorderPx)
+                    .coerceAtLeast(0f)
                 val measuredHeight = measureScaledImageHeightPx(
                     block = block,
                     density = density,
                     contentMaxWidth = adjustedConstraints.maxWidth.toFloat(),
                     imageSizeMultiplier = imageSizeMultiplier,
-                    maxHeightPx = adjustedConstraints.maxHeight.toFloat()
+                    maxHeightPx = pageBoundHeightPx.toFloat()
                 ) ?: with(density) { 250.dp.toPx() }
 
                 val finalHeight = measuredHeight.coerceAtMost(constraints.maxHeight.toFloat()).roundToInt()
@@ -956,7 +961,8 @@ private suspend fun measureBlockHeight(
                     density = density,
                     maxWidthPx = adjustedConstraints.maxWidth.toFloat(),
                     imageSizeMultiplier = imageSizeMultiplier,
-                    maxHeightPx = adjustedConstraints.maxHeight.toFloat()
+                    maxHeightPx = (constraints.maxHeight - verticalPaddingPx - verticalBorderPx)
+                        .coerceAtLeast(0f)
                 )
             }
 
@@ -1458,7 +1464,8 @@ private suspend fun splitTextContentBlock(
         startCharOffsetInSource = block.startCharOffsetInSource,
         endCharOffsetInSource = block.endCharOffsetInSource,
         blockIndex = block.blockIndex,
-        expectedHeight = block.expectedHeight
+        expectedHeight = block.expectedHeight,
+        rubies = block.rubies
     )
     val split = splitParagraphBlock(
         block = paragraph,
@@ -1488,28 +1495,32 @@ private fun TextContentBlock.copyFromPaginationSplit(part: ParagraphBlock): Cont
             style = part.style,
             startCharOffsetInSource = part.startCharOffsetInSource,
             endCharOffsetInSource = part.endCharOffsetInSource,
-            expectedHeight = part.expectedHeight
+            expectedHeight = part.expectedHeight,
+            rubies = part.rubies
         )
         is HeaderBlock -> copy(
             content = part.content,
             style = part.style,
             startCharOffsetInSource = part.startCharOffsetInSource,
             endCharOffsetInSource = part.endCharOffsetInSource,
-            expectedHeight = part.expectedHeight
+            expectedHeight = part.expectedHeight,
+            rubies = part.rubies
         )
         is QuoteBlock -> copy(
             content = part.content,
             style = part.style,
             startCharOffsetInSource = part.startCharOffsetInSource,
             endCharOffsetInSource = part.endCharOffsetInSource,
-            expectedHeight = part.expectedHeight
+            expectedHeight = part.expectedHeight,
+            rubies = part.rubies
         )
         is ListItemBlock -> copy(
             content = part.content,
             style = part.style,
             startCharOffsetInSource = part.startCharOffsetInSource,
             endCharOffsetInSource = part.endCharOffsetInSource,
-            expectedHeight = part.expectedHeight
+            expectedHeight = part.expectedHeight,
+            rubies = part.rubies
         )
         else -> part
     }
@@ -2010,6 +2021,9 @@ private suspend fun splitParagraphBlock(
         availableTextHeight = availableTextHeight
     )
 
+    // Ruby runs are atomic: never break between a base character and its reading.
+    splitOffset = adjustPaginationSplitForRubies(block.rubies, splitOffset) ?: return null
+
     if (splitOffset <= 0 || splitOffset >= text.length) {
         return null
     }
@@ -2026,6 +2040,8 @@ private suspend fun splitParagraphBlock(
         trimStartIndex++
     }
     val part2Text = initialPart2.subSequence(trimStartIndex, initialPart2.length)
+    val part1Rubies = sliceRubyAnnotations(block.rubies, 0, part1End)
+    val part2Rubies = sliceRubyAnnotations(block.rubies, splitOffset + trimStartIndex, text.length)
 
     if (part1Text.isEmpty() || part2Text.isEmpty()) {
         return null
@@ -2068,14 +2084,16 @@ private suspend fun splitParagraphBlock(
 
     val part1 = block.copy(
         content = part1Text,
-        endCharOffsetInSource = part1EndOffset
+        endCharOffsetInSource = part1EndOffset,
+        rubies = part1Rubies
     )
     val part2Style = block.style.copy(margin = block.style.margin.copy(top = 0.dp))
     val part2 = block.copy(
         content = part2TextWithoutIndent,
         style = part2Style,
         startCharOffsetInSource = part1EndOffset,
-        endCharOffsetInSource = block.endCharOffsetInSource
+        endCharOffsetInSource = block.endCharOffsetInSource,
+        rubies = part2Rubies
     )
 
     if (DEBUG_PAGINATION_LOGS) {

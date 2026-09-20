@@ -58,6 +58,18 @@ data class SemanticSpan(
 /** Object replacement character used as the inline placeholder for math. */
 const val MATH_PLACEHOLDER_CHAR = "￼"
 
+/**
+ * One furigana reading parsed from `<ruby>`. [baseStart]/[baseEnd] are offsets
+ * into the owning block's text (which holds base characters only); [reading]
+ * holds the `<rt>` text and is never part of [SemanticTextBlock.text].
+ */
+@Serializable
+data class SemanticRuby(
+    @ProtoNumber(1) val baseStart: Int,
+    @ProtoNumber(2) val baseEnd: Int,
+    @ProtoNumber(3) val reading: String
+)
+
 fun SemanticBlock.withElementId(id: String): SemanticBlock {
     if (this.elementId != null) return this
     return when (this) {
@@ -79,6 +91,7 @@ interface SemanticTextBlock : SemanticBlock {
     val text: String
     val spans: List<SemanticSpan>
     val startCharOffsetInSource: Int
+    val rubies: List<SemanticRuby>
 }
 
 @Serializable
@@ -89,7 +102,8 @@ data class SemanticParagraph(
     @ProtoNumber(4) override val elementId: String?,
     @ProtoNumber(5) override val cfi: String?,
     @ProtoNumber(6) override val startCharOffsetInSource: Int = 0,
-    @ProtoNumber(7) override val blockIndex: Int = 0
+    @ProtoNumber(7) override val blockIndex: Int = 0,
+    @ProtoNumber(8) override val rubies: List<SemanticRuby> = emptyList()
 ) : SemanticTextBlock
 
 @Serializable
@@ -101,7 +115,8 @@ data class SemanticHeader(
     @ProtoNumber(5) override val elementId: String?,
     @ProtoNumber(6) override val cfi: String?,
     @ProtoNumber(7) override val startCharOffsetInSource: Int = 0,
-    @ProtoNumber(8) override val blockIndex: Int = 0
+    @ProtoNumber(8) override val blockIndex: Int = 0,
+    @ProtoNumber(9) override val rubies: List<SemanticRuby> = emptyList()
 ) : SemanticTextBlock
 
 @Serializable
@@ -114,7 +129,8 @@ data class SemanticListItem(
     @ProtoNumber(6) override val startCharOffsetInSource: Int = 0,
     @ProtoNumber(7) val itemMarkerImage: String?,
     @ProtoNumber(8) override val blockIndex: Int = 0,
-    @ProtoNumber(9) val markerText: String? = null
+    @ProtoNumber(9) val markerText: String? = null,
+    @ProtoNumber(10) override val rubies: List<SemanticRuby> = emptyList()
 ) : SemanticTextBlock
 
 @Serializable

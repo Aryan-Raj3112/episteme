@@ -67,3 +67,22 @@ fun ContentBlock.withReaderBlockStyle(newStyle: BlockStyle): ContentBlock = when
     is ChantScoreBlock -> copy(style = newStyle)
     is MathBlock -> copy(style = newStyle)
 }
+
+/**
+ * Stamps the publication writing mode onto a styled block. Content blocks
+ * otherwise only carry box metrics; pagination and rendering read this to
+ * route vertical-rl content through the vertical engine.
+ */
+fun ContentBlock.withPublicationWritingMode(writingMode: String?): ContentBlock {
+    if (writingMode == null || style.writingMode == writingMode) return this
+    val newStyle = style.copy(writingMode = writingMode)
+    return withReaderBlockStyle(newStyle)
+}
+
+/** True when this content block requests vertical Japanese layout. */
+fun ContentBlock.isVerticalContentBlock(): Boolean =
+    style.writingMode == "vertical-rl" || style.writingMode == "vertical-lr"
+
+/** True when this semantic block requests vertical Japanese layout. */
+fun SemanticBlock.isVerticalSemanticBlock(): Boolean =
+    style.isVerticalWriting()
