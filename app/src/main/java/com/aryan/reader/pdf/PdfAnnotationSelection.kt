@@ -26,6 +26,7 @@ import com.aryan.reader.shared.pdf.pdfUniformScaleForCornerDrag
 import com.aryan.reader.shared.pdf.rotatedPdfPointsAround
 import com.aryan.reader.shared.pdf.scaledPdfPointsAround
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /** Corner + mid-side + rotate handles of the selection bounding box. */
@@ -384,7 +385,7 @@ fun pdfScaleXYForEdgeDrag(
 
 /**
  * Snapped rotation delta for a rotate-handle drag. Snaps to the cardinals
- * (0/90/180/270) within a 10-degree window — e.g. 85..95 settles on 90 —
+ * (0/90/180/270) within a 5-degree window — e.g. 85..95 settles on 90 —
  * and stays free everywhere else.
  */
 fun pdfRotationForDrag(
@@ -399,8 +400,12 @@ fun pdfRotationForDrag(
     var delta = currentAngle - startAngle
     while (delta > 180f) delta -= 360f
     while (delta < -180f) delta += 360f
-    return pdfSnappedRotationDegrees(delta, snapDegrees = 90f, thresholdDegrees = 10f)
+    return pdfSnappedRotationDegrees(delta, snapDegrees = 90f, thresholdDegrees = 5f)
 }
+
+/** Pill display angle: normalized to 0..359, so -90 reads 270 and 360 reads 0. */
+fun pdfNormalizeRotationDisplay(angleDegrees: Float): Int =
+    ((angleDegrees.roundToInt() % 360) + 360) % 360
 
 /** Aspect-corrected distance check: is ([x],[y]) within [radiusNorm] of segment a-b. */
 internal fun pdfPointNearSegmentNorm(

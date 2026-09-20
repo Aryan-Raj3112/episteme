@@ -231,7 +231,7 @@ class PdfAnnotationSelectionTest {
     }
 
     @Test
-    fun `rotation snaps to cardinals within ten degrees`() {
+    fun `rotation snaps to cardinals within five degrees`() {
         // ~87-degree drag settles on 90.
         assertEquals(
             90f,
@@ -239,6 +239,17 @@ class PdfAnnotationSelectionTest {
                 centerX = 0.5f, centerY = 0.5f,
                 startNorm = PdfPoint(0.6f, 0.5f),
                 currentNorm = PdfPoint(0.5052f, 0.5999f),
+                pageAspectRatio = 1f,
+            ),
+            0.5f,
+        )
+        // 80 degrees is outside the window and stays free.
+        assertEquals(
+            80f,
+            pdfRotationForDrag(
+                centerX = 0.5f, centerY = 0.5f,
+                startNorm = PdfPoint(0.6f, 0.5f),
+                currentNorm = PdfPoint(0.5174f, 0.5985f),
                 pageAspectRatio = 1f,
             ),
             0.5f,
@@ -254,6 +265,15 @@ class PdfAnnotationSelectionTest {
             ),
             0.5f,
         )
+    }
+
+    @Test
+    fun `rotation display normalizes to 0 to 359`() {
+        assertEquals(48, pdfNormalizeRotationDisplay(48.4f))
+        assertEquals(270, pdfNormalizeRotationDisplay(-90f))
+        assertEquals(180, pdfNormalizeRotationDisplay(-180f))
+        assertEquals(0, pdfNormalizeRotationDisplay(359.6f))
+        assertEquals(0, pdfNormalizeRotationDisplay(0f))
     }
 
     @Test

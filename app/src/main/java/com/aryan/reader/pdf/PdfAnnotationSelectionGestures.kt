@@ -130,6 +130,27 @@ internal suspend fun PointerInputScope.detectPdfInkSelectionGestures(
             return@awaitEachGesture
         }
 
+        // 2b. Inside the selection box but not on a stroke: drag moves the
+        // selection, tap keeps it (standard tldraw behavior — only tapping
+        // outside the box clears).
+        if (selectionBounds != null &&
+            selectionBounds.contains(Offset(startNorm.x, startNorm.y))
+        ) {
+            runTapOrMoveSession(
+                page = page,
+                hitId = "",
+                startNorm = startNorm,
+                downId = down.id,
+                touchSlopPx = touchSlopPx,
+                cameraProvider = cameraProvider,
+                onTapResult = { _, _ -> },
+                onTransformStart = onTransformStart,
+                onTransformUpdate = onTransformUpdate,
+                onTransformEnd = onTransformEnd,
+            )
+            return@awaitEachGesture
+        }
+
         // 3. Empty space: tap clears, drag lassos.
         runLassoSession(
             page = page,

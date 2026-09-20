@@ -41,11 +41,13 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -56,10 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.R
 import com.aryan.reader.pdf.data.PdfAnnotation
-import kotlin.math.PI
-import kotlin.math.cos
 import kotlin.math.roundToInt
-import kotlin.math.sin
 
 internal val PdfSelectionBoxColor = Color(0xFF64B5F6)
 
@@ -96,6 +95,7 @@ internal fun PdfInkSelectionCanvas(
     val pillTextPx = remember(density, zoom) { with(density) { 13.sp.toPx() / zoom } }
     val pillPadHPx = remember(density, zoom) { with(density) { 10.dp.toPx() / zoom } }
     val pillPadVPx = remember(density, zoom) { with(density) { 6.dp.toPx() / zoom } }
+    val syncPainter = painterResource(id = R.drawable.sync)
     val rotateOffsetNorm = 0.06f
 
     Canvas(modifier = modifier) {
@@ -155,7 +155,19 @@ internal fun PdfInkSelectionCanvas(
                                 center = center,
                                 style = Stroke(width = 2f / zoom),
                             )
-                            drawSyncGlyph(center, handleRadiusDoc, zoom)
+                            // Sync glyph from sync.xml, tinted selection blue.
+                            val glyphSize = handleRadiusDoc * 1.6f
+                            translate(
+                                center.x - glyphSize / 2f,
+                                center.y - glyphSize / 2f,
+                            ) {
+                                with(syncPainter) {
+                                    draw(
+                                        size = Size(glyphSize, glyphSize),
+                                        colorFilter = ColorFilter.tint(PdfSelectionBoxColor),
+                                    )
+                                }
+                            }
                         } else {
                             val center = toDoc(norm)
                             drawCircle(color = Color.White, radius = handleRadiusDoc, center = center)
@@ -192,56 +204,6 @@ internal fun PdfInkSelectionCanvas(
     }
 }
 
-/**
- * Sync-style circular-arrows glyph for the rotate handle: an almost-closed
- * arc with an arrowhead at each end of the gap.
- */
-private fun DrawScope.drawSyncGlyph(center: Offset, radius: Float, zoom: Float) {
-    val arcR = radius * 0.55f
-    val stroke = 2f / zoom
-    val startAngle = 40f
-    val sweep = 280f
-    drawArc(
-        color = PdfSelectionBoxColor,
-        startAngle = startAngle,
-        sweepAngle = sweep,
-        useCenter = false,
-        topLeft = Offset(center.x - arcR, center.y - arcR),
-        size = Size(arcR * 2f, arcR * 2f),
-        style = Stroke(width = stroke),
-    )
-    fun arrowHead(angleDeg: Float, forward: Boolean) {
-        val rad = angleDeg * PI.toFloat() / 180f
-        val px = center.x + arcR * cos(rad)
-        val py = center.y + arcR * sin(rad)
-        var tx = -sin(rad)
-        var ty = cos(rad)
-        if (!forward) {
-            tx = -tx
-            ty = -ty
-        }
-        val nx = cos(rad)
-        val ny = sin(rad)
-        val s = 4.5f / zoom
-        val tipX = px + tx * s * 0.9f
-        val tipY = py + ty * s * 0.9f
-        val backX = px - tx * s * 0.15f
-        val backY = py - ty * s * 0.15f
-        val w = s * 0.55f
-        drawPath(
-            Path().apply {
-                moveTo(tipX, tipY)
-                lineTo(backX + nx * w, backY + ny * w)
-                lineTo(backX - nx * w, backY - ny * w)
-                close()
-            },
-            PdfSelectionBoxColor,
-        )
-    }
-    arrowHead(startAngle + sweep, forward = true)
-    arrowHead(startAngle, forward = false)
-}
-
 /** Small white-on-black degree pill, constant screen size at any zoom. */
 private fun DrawScope.drawRotationDegreePill(
     center: Offset,
@@ -250,7 +212,7 @@ private fun DrawScope.drawRotationDegreePill(
     padHPx: Float,
     padVPx: Float,
 ) {
-    val label = "${degrees.roundToInt()}°"
+    val label = "${pdfNormalizeRotationDisplay(degrees)}°"
     drawIntoCanvas { canvas ->
         val native = canvas.nativeCanvas
         val textPaint = android.graphics.Paint().apply {
