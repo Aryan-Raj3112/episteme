@@ -276,7 +276,11 @@ class SharedContentStyler(
         }
         val rubyFontSize = blockStyle.fontSize.takeIf { it.isSpecified } ?: baseTextStyle.fontSize
         val adjusted = builtString.adjustReaderLineHeightForEmphasis()
-            .adjustReaderLineHeightForRuby(rubyFontSize, block.rubies.isNotEmpty())
+            .adjustReaderLineHeightForRuby(
+                rubyFontSize,
+                block.rubies.isNotEmpty(),
+                block.style.isVerticalWriting()
+            )
         onStyledText(block, adjusted)
         return adjusted
     }

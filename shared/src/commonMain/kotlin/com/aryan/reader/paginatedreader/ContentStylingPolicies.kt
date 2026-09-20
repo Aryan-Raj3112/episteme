@@ -150,7 +150,12 @@ fun readerContentBlockStyle(
 }
 
 fun SemanticRuby.toRubyAnnotation(): RubyAnnotation =
-    RubyAnnotation(baseStart = baseStart, baseEnd = baseEnd, reading = reading)
+    RubyAnnotation(
+        baseStart = baseStart,
+        baseEnd = baseEnd,
+        reading = reading,
+        readingScale = readingScale
+    )
 
 /**
  * Moves a pagination split offset out of any ruby base range. Ruby runs are
@@ -208,12 +213,17 @@ fun sliceSemanticRubies(rubies: List<SemanticRuby>, start: Int, end: Int): List<
 }
 
 /**
- * Extra line height reserved for furigana. Browsers expand the line box when a
- * line carries ruby; without the reserve, readings would collide with the
- * previous line. Only grows the height, never shrinks publication spacing.
+ * Extra line height reserved for furigana in vertical (`tategaki`) layout,
+ * where readings consume real column pitch beside their base.
+ *
+ * Horizontal text intentionally reserves nothing: browsers never grow the
+ * paragraph pitch for `<rt>` (measured: pitch stays exactly `line-height`
+ * even at 1.2, the annotation overhangs into the leading), and our overlay
+ * readings do the same. Only grows the height, never shrinks publication
+ * spacing.
  */
-fun lineHeightWithRubyReserve(lineHeight: androidx.compose.ui.unit.TextUnit, fontSize: androidx.compose.ui.unit.TextUnit, hasRuby: Boolean): androidx.compose.ui.unit.TextUnit {
-    if (!hasRuby) return lineHeight
+fun lineHeightWithRubyReserve(lineHeight: androidx.compose.ui.unit.TextUnit, fontSize: androidx.compose.ui.unit.TextUnit, hasRuby: Boolean, isVertical: Boolean): androidx.compose.ui.unit.TextUnit {
+    if (!hasRuby || !isVertical) return lineHeight
     if (!lineHeight.isSpecified || !fontSize.isSpecified) return lineHeight
     val minimum = fontSize.value * RubyReserveLineHeightEm
     if (lineHeight.isEm) {
@@ -299,13 +309,16 @@ fun readerChantUnits(
 }
 
 /**
- * Reserves headroom for furigana the same way browsers expand the line box
- * for ruby: lines carrying readings need at least [RubyReserveLineHeightEm].
- * Only ever grows the height, so publication spacing and reader overrides are
- * preserved whenever they already leave room.
+ * Reserves headroom for furigana in vertical (`tategaki`) paragraphs, where
+ * readings consume real column pitch beside their base and need at least
+ * [RubyReserveLineHeightEm]. Horizontal paragraphs are left alone: browsers
+ * never grow the pitch for `<rt>`, so neither do we; the overlay readings
+ * overhang into the leading exactly like the reference rendering. Only ever
+ * grows the height, so publication spacing and reader overrides are preserved
+ * whenever they already leave room.
  */
-fun AnnotatedString.adjustReaderLineHeightForRuby(fontSize: androidx.compose.ui.unit.TextUnit, hasRuby: Boolean): AnnotatedString {
-    if (!hasRuby) return this
+fun AnnotatedString.adjustReaderLineHeightForRuby(fontSize: androidx.compose.ui.unit.TextUnit, hasRuby: Boolean, isVertical: Boolean): AnnotatedString {
+    if (!hasRuby || !isVertical) return this
     if (!fontSize.isSpecified || fontSize.value <= 0f) return this
     val currentLineHeight = paragraphStyles.firstOrNull()?.item?.lineHeight
         ?: androidx.compose.ui.unit.TextUnit.Unspecified

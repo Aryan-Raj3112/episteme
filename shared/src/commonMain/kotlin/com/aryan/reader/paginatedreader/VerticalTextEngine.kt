@@ -149,17 +149,91 @@ private fun codePointWidthClass(codePoint: Int): Float = when {
 }
 
 /**
- * Vertical orientation per UTR50-style rules, simplified: CJK scripts stay
- * upright, ASCII/halfwidth forms rotate. Callers draw ROTATED runs with a
- * 90-degree clockwise transform.
+ * Vertical orientation per UTR50, simplified: CJK scripts stay upright,
+ * ASCII/halfwidth forms rotate. Callers draw ROTATED runs with a 90-degree
+ * clockwise transform.
+ *
+ * Beyond the ASCII/halfwidth sets, two UTR50 groups rotate:
+ *  - `R` classes (hyphens/dashes, curly quotes, dot leaders) always rotate.
+ *  - `Tr` classes whose vertical variants have no encoded presentation form
+ *    (prolonged sound mark `ー`, wave dashes `〜`/`～`, fullwidth colon `：`,
+ *    wavy dash `〰`) rotate per the Tr fallback. The variants in CJK fonts
+ *    are the rotated designs themselves (verified against NotoSansCJK
+ *    outlines), so rotation reproduces them exactly.
+ *
+ * `Tr`/`Tu` punctuation with encoded vertical forms (`「` `（` `、` …) stays
+ * upright: the engine substitutes those through
+ * [VERTICAL_PRESENTATION_FORMS], matching the font's own `vert` feature.
  */
 fun verticalOrientationForChar(char: Char): VerticalCellOrientation = when {
     char.isWhitespace() -> VerticalCellOrientation.GAP
     char < '\u0080' -> VerticalCellOrientation.ROTATED
     char in '｡'..'ﾟ' -> VerticalCellOrientation.ROTATED
     char in '￠'..'￦' && char != '￮' -> VerticalCellOrientation.ROTATED
+    char in '\u2010'..'\u2015' -> VerticalCellOrientation.ROTATED // hyphens, dashes
+    char in '\u2018'..'\u201D' -> VerticalCellOrientation.ROTATED // curly quotes
+    char == '\u2024' || char == '\u2025' || char == '\u2027' -> VerticalCellOrientation.ROTATED // dot leaders
+    char == '\u30FC' || char == '\u301C' || char == '\uFF5E' ||
+        char == '\uFF1A' || char == '\u3030' -> VerticalCellOrientation.ROTATED // Tr without encoded forms
     else -> VerticalCellOrientation.UPRIGHT
 }
+
+/**
+ * Encoded vertical presentation forms for CJK punctuation drawn upright in
+ * `tategaki`, e.g. `「` (U+300C) is drawn as `﹁` (U+FE41).
+ *
+ * Browsers select these via the font's `vert` GSUB feature; the targets here
+ * are exactly the glyphs the device CJK font substitutes for `vert` (verified
+ * against NotoSansCJK's GSUB: every entry maps to the same glyph its `vert`
+ * lookup produces, so the substitution is idempotent when the feature does
+ * apply). The native pipeline substitutes explicitly because feature
+ * application through `TextMeasurer` proved unreliable on-device (brackets
+ * rendered with horizontal glyphs while Blink on the same fonts renders the
+ * vertical forms).
+ *
+ * Characters whose vertical variant has no encoded presentation form
+ * (prolonged sound mark `ー`, fullwidth colon `：`, em/en dashes, wave dash)
+ * are intentionally absent: [verticalOrientationForChar] rotates them per
+ * the UTR50 Tr/R fallback instead.
+ *
+ * The mapping is strictly 1:1, so base-text offsets, ruby ranges, tcy
+ * ranges, kinsoku checks and highlight rects are unaffected: only the drawn
+ * glyph changes.
+ */
+internal val VERTICAL_PRESENTATION_FORMS: Map<Char, Char> = mapOf(
+    '\u3001' to '\uFE11', // 、 ideographic comma -> vertical comma
+    '\u3002' to '\uFE12', // 。 ideographic full stop -> vertical full stop
+    '\u300C' to '\uFE41', // 「 left corner bracket -> vertical form
+    '\u300D' to '\uFE42', // 」 right corner bracket -> vertical form
+    '\u300E' to '\uFE43', // 『 left white corner bracket -> vertical form
+    '\u300F' to '\uFE44', // 』 right white corner bracket -> vertical form
+    '\u3010' to '\uFE3B', // 【 left black lenticular -> vertical form
+    '\u3011' to '\uFE3C', // 】 right black lenticular -> vertical form
+    '\u3014' to '\uFE39', // 〔 left tortoise shell -> vertical form
+    '\u3015' to '\uFE3A', // 〕 right tortoise shell -> vertical form
+    '\u3008' to '\uFE3F', // 〈 left angle bracket -> vertical form
+    '\u3009' to '\uFE40', // 〉 right angle bracket -> vertical form
+    '\u300A' to '\uFE3D', // 《 left double angle -> vertical form
+    '\u300B' to '\uFE3E', // 》 right double angle -> vertical form
+    '\uFF08' to '\uFE35', // （ fullwidth left parenthesis -> vertical form
+    '\uFF09' to '\uFE36', // ） fullwidth right parenthesis -> vertical form
+    '\uFF3B' to '\uFE47', // ［ fullwidth left square bracket -> vertical form
+    '\uFF3D' to '\uFE48', // ］ fullwidth right square bracket -> vertical form
+    '\uFF5B' to '\uFE37', // ｛ fullwidth left curly bracket -> vertical form
+    '\uFF5D' to '\uFE38', // ｝ fullwidth right curly bracket -> vertical form
+    '\u2026' to '\uFE19', // … horizontal ellipsis -> vertical ellipsis
+    '\uFF01' to '\uFE15', // ！ fullwidth exclamation -> vertical form
+    '\uFF1F' to '\uFE16', // ？ fullwidth question mark -> vertical form
+    '\uFF1B' to '\uFE14', // ； fullwidth semicolon -> vertical form
+    '\uFF0C' to '\uFE10', // ， fullwidth comma -> vertical comma
+    '\uFF3F' to '\uFE33', // ＿ fullwidth low line -> vertical low line
+)
+
+/**
+ * Glyph to draw for [this] inside an upright vertical cell: the vertical
+ * presentation form for CJK punctuation, the character itself otherwise.
+ */
+fun Char.verticalPresentationForm(): Char = VERTICAL_PRESENTATION_FORMS[this] ?: this
 
 private data class VerticalSegment(
     val startOffset: Int,
@@ -298,10 +372,16 @@ fun layoutVerticalParagraph(
             cells = column.cells.map { cell ->
                 val centeredX = baseCenterX - cell.widthPx / 2f
                 val reading = cell.reading?.let { reading ->
-                    // Reading sits right of the base em box, inside the pitch.
-                    reading.copy(
-                        xPx = baseCenterX + emPx / 2f + emPx * RUBY_GAP_EM
-                    )
+                    // Reading sits right of the base em box, clamped inside
+                    // this column's pitch slot. Browsers let ruby overhang
+                    // freely; paginated pages own their bounds, so a
+                    // first-column reading must never paint into the
+                    // neighboring block (an image, typically). When the
+                    // pitch is tight the reading overhangs its own base
+                    // instead, like a line-height-constrained browser.
+                    val desiredX = baseCenterX + emPx / 2f + emPx * RUBY_GAP_EM
+                    val maxX = columnLeft + pitchPx - reading.widthPx
+                    reading.copy(xPx = minOf(desiredX, maxX))
                 }
                 cell.copy(xPx = centeredX, reading = reading)
             }
@@ -464,8 +544,13 @@ private fun segmentVerticalText(
                 offset = end
             }
             else -> {
+                // Upright cells draw the vertical presentation form for CJK
+                // punctuation (see verticalPresentationForm). Offsets and
+                // advances are unchanged: the mapping is 1:1 and every
+                // presentation form is a fullwidth em like its source.
+                val display = char.verticalPresentationForm()
                 segments.add(
-                    VerticalSegment(offset, offset + 1, char.toString(), VerticalCellOrientation.UPRIGHT, rubyByStart[offset])
+                    VerticalSegment(offset, offset + 1, display.toString(), VerticalCellOrientation.UPRIGHT, rubyByStart[offset])
                 )
                 offset++
             }
@@ -545,7 +630,7 @@ private fun layoutVerticalReading(
     measurer: VerticalGlyphMeasurer,
     cache: MutableMap<VerticalGlyphCacheKey, Size>
 ): VerticalReading {
-    val readingSizePx = (emPx * RubyReadingFontScale).coerceAtLeast(1f)
+    val readingSizePx = (emPx * ruby.effectiveReadingScale()).coerceAtLeast(1f)
     // Vertical span of the base range inside this column.
     var topPx: Float? = null
     var bottomPx: Float? = null

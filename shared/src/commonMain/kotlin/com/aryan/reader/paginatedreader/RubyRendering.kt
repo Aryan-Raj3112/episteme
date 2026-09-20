@@ -21,9 +21,9 @@ import androidx.compose.ui.unit.isSpecified
  *
  * Readings are painted as decorations (like emphasis marks): the base text
  * stays the real selectable/searchable content, and the small reading is
- * drawn above it (horizontal) using the headroom reserved by
- * [adjustReaderLineHeightForRuby]. Pagination measurement never sees the
- * readings, so measure and render agree by construction.
+ * drawn hugging its base (horizontal), exactly like browsers place `<rt>`
+ * (annotation bottom == base top, no extra gap). Pagination measurement never
+ * sees the readings, so measure and render agree by construction.
  */
 data class RubyDraw(
     val layout: TextLayoutResult,
@@ -54,13 +54,14 @@ fun rememberHorizontalRubyDraws(
         if (textLength <= 0) return@remember emptyList()
         val basePx = with(density) { baseFontSize.toPx() }
         if (basePx <= 0f) return@remember emptyList()
-        val readingFontSize = with(density) { (basePx * RubyReadingFontScale).toSp() }
-        val gapPx = basePx * 0.12f
         val draws = mutableListOf<RubyDraw>()
         for (ruby in rubies) {
             val start = ruby.baseStart.coerceIn(0, textLength)
             val end = ruby.baseEnd.coerceIn(start, textLength)
             if (start >= end || ruby.reading.isBlank()) continue
+            // EPUB-specified `<rt>` size wins; otherwise the browser default.
+            val readingFontSize =
+                with(density) { (basePx * ruby.effectiveReadingScale()).toSp() }
             try {
                 val firstLine = layout.getLineForOffset(start.coerceAtMost(textLength - 1))
                 val lineStart = layout.getLineStart(firstLine)
@@ -87,7 +88,9 @@ fun rememberHorizontalRubyDraws(
                     )
                 )
                 val x = (left + right) / 2f - readingLayout.size.width / 2f
-                val y = top - readingLayout.size.height - gapPx
+                // Browsers place `<rt>` flush against the base (annotation
+                // bottom == base top); any extra gap reads as detached.
+                val y = top - readingLayout.size.height
                 draws.add(RubyDraw(readingLayout, Offset(x, y)))
             } catch (_: Exception) {
                 continue

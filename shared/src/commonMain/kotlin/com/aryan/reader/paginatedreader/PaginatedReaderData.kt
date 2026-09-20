@@ -200,8 +200,17 @@ sealed interface TextContentBlock : ContentBlock {
 data class RubyAnnotation(
     @ProtoNumber(1) val baseStart: Int,
     @ProtoNumber(2) val baseEnd: Int,
-    @ProtoNumber(3) val reading: String
-)
+    @ProtoNumber(3) val reading: String,
+    /**
+     * EPUB-specified `<rt>` font size as a fraction of the base size (null
+     * means the browser default). Threaded through splits/copies unchanged.
+     */
+    @ProtoNumber(4) val readingScale: Float? = null
+) {
+    /** Effective reading size fraction: EPUB value or the browser default. */
+    fun effectiveReadingScale(): Float =
+        readingScale?.takeIf { it.isFinite() && it > 0f } ?: RubyReadingFontScale
+}
 
 @Serializable
 data class ParagraphBlock(

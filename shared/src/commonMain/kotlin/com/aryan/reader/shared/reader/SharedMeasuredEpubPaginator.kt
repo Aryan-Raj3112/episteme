@@ -50,6 +50,7 @@ import com.aryan.reader.paginatedreader.isTateChuYoko
 import com.aryan.reader.paginatedreader.isVerticalSemanticBlock
 import com.aryan.reader.paginatedreader.segmentBlocksByWritingMode
 import com.aryan.reader.paginatedreader.layoutVerticalParagraph
+import com.aryan.reader.paginatedreader.isVerticalWriting
 import com.aryan.reader.paginatedreader.lineHeightWithRubyReserve
 import com.aryan.reader.paginatedreader.paginateVerticalFlow
 import com.aryan.reader.paginatedreader.planPaginationStackFragmentation
@@ -57,6 +58,7 @@ import com.aryan.reader.paginatedreader.sliceSemanticRubies
 import com.aryan.reader.paginatedreader.verticalGlyphCache
 import com.aryan.reader.paginatedreader.verticalPitchPx
 import com.aryan.reader.paginatedreader.RubyAnnotation
+import com.aryan.reader.paginatedreader.toRubyAnnotation
 import com.aryan.reader.paginatedreader.VerticalGlyphMeasurer
 import androidx.compose.ui.geometry.Size
 import kotlinx.coroutines.CoroutineScope
@@ -1175,7 +1177,7 @@ class SharedMeasuredEpubPaginator(
         }
 
     private fun SemanticTextBlock.toVerticalRubies(): List<RubyAnnotation> =
-        rubies.map { RubyAnnotation(it.baseStart, it.baseEnd, it.reading) }
+        rubies.map { it.toRubyAnnotation() }
 
     private suspend fun measureVerticalSemanticText(
         block: SemanticTextBlock,
@@ -1709,12 +1711,15 @@ private fun SemanticTextBlock.textStyle(baseStyle: TextStyle, settings: ReaderSe
         } else {
             baseStyle.lineHeight
         }
-    // Furigana needs headroom above the base line; reserve it in measurement
-    // exactly as the renderer does so pages never mismatch.
+    // Vertical furigana consumes real column pitch beside its base; reserve
+    // it in measurement exactly as the renderer does so pages never mismatch.
+    // Horizontal ruby overhangs into the leading like browsers, with no
+    // reserved growth.
     val rubyAwareLineHeight = lineHeightWithRubyReserve(
         lineHeight,
         if (fontSize.isSpecified) fontSize else baseStyle.fontSize,
-        rubies.isNotEmpty()
+        rubies.isNotEmpty(),
+        style.isVerticalWriting()
     )
     return baseStyle.copy(
         fontSize = fontSize,

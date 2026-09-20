@@ -138,4 +138,108 @@ class VerticalTextEngineTest {
         assertEquals(2, result.offsetAt(inside))
         assertEquals(null, result.offsetAt(Offset(-1000f, -1000f)))
     }
+
+    @Test
+    fun `punctuation maps to encoded vertical presentation forms`() {
+        assertEquals('\uFE41', '「'.verticalPresentationForm())
+        assertEquals('\uFE42', '」'.verticalPresentationForm())
+        assertEquals('\uFE35', '（'.verticalPresentationForm())
+        assertEquals('\uFE36', '）'.verticalPresentationForm())
+        assertEquals('\uFE11', '、'.verticalPresentationForm())
+        assertEquals('\uFE12', '。'.verticalPresentationForm())
+        assertEquals('\uFE15', '！'.verticalPresentationForm())
+        assertEquals('\uFE16', '？'.verticalPresentationForm())
+        assertEquals('\uFE19', '…'.verticalPresentationForm())
+        // No encoded vertical form: prolonged sound mark and ASCII stay as-is.
+        assertEquals('ー', 'ー'.verticalPresentationForm())
+        assertEquals('あ', 'あ'.verticalPresentationForm())
+        assertEquals('A', 'A'.verticalPresentationForm())
+    }
+
+    @Test
+    fun `mapped presentation forms stay upright and fullwidth`() {
+        for ((source, mapped) in VERTICAL_PRESENTATION_FORMS) {
+            assertEquals(
+                VerticalCellOrientation.UPRIGHT, verticalOrientationForChar(mapped),
+                "mapped U+${mapped.code.toString(16)} must draw upright"
+            )
+            assertEquals(
+                VerticalCellOrientation.UPRIGHT, verticalOrientationForChar(source)
+            )
+        }
+    }
+
+    @Test
+    fun `segments draw mapped punctuation with original offsets`() {
+        val result = layout("「あ」", columnHeightPx = 100f)
+        val cells = result.columns.single().cells
+        assertEquals(listOf("﹁", "あ", "﹂"), cells.map { it.text })
+        assertEquals(listOf(0, 1, 2), cells.map { it.charOffset })
+        assertEquals(
+            VerticalCellOrientation.UPRIGHT,
+            cells.first().orientation
+        )
+        // Advances match the unmapped layout: pagination breaks are unchanged.
+        val mappedWidth = result.widthPx
+        val plainWidth = layout("﹁あ﹂", columnHeightPx = 100f).widthPx
+        assertEquals(plainWidth, mappedWidth)
+        // Every mapped cell still advances exactly one em.
+        for (cell in cells) {
+            assertEquals(10f, cell.heightPx)
+            assertEquals(10f, cell.widthPx)
+        }
+    }
+
+    @Test
+    fun `rotated runs and tcy never map`() {
+        val latin = layout("ABC!?", columnHeightPx = 100f)
+        val run = latin.columns.single().cells.single()
+        assertEquals(VerticalCellOrientation.ROTATED, run.orientation)
+        assertEquals("ABC!?", run.text)
+        val tcy = layout("パフェ!?", tcyRanges = listOf(3..4), columnHeightPx = 100f)
+        assertEquals("!?", tcy.columns.single().cells.last().text)
+    }
+
+    @Test
+    fun `utr50 rotate classes draw rotated`() {
+        // R classes: dashes, curly quotes, dot leaders.
+        for (c in "\u2013\u2014\u2015\u2018\u2019\u201C\u201D\u2024\u2025\u2027") {
+            assertEquals(VerticalCellOrientation.ROTATED, verticalOrientationForChar(c))
+        }
+        // Tr classes whose vertical variants are unencoded: the variants are
+        // the rotated designs, so the Tr fallback (rotate) reproduces them.
+        for (c in "ー〜～：〰") {
+            assertEquals(VerticalCellOrientation.ROTATED, verticalOrientationForChar(c))
+        }
+        // Encoded-form punctuation stays upright (substituted at segmentation).
+        for (c in "、。「」『』（）〈〉《》【】〔〕［］｛｝！？…，＿；") {
+            assertEquals(VerticalCellOrientation.UPRIGHT, verticalOrientationForChar(c))
+        }
+    }
+
+    @Test
+    fun `rotated punctuation becomes rotated cells beside upright kana`() {
+        val result = layout("あーき", columnHeightPx = 100f)
+        val cells = result.columns.single().cells
+        assertEquals(
+            listOf(VerticalCellOrientation.UPRIGHT, VerticalCellOrientation.ROTATED, VerticalCellOrientation.UPRIGHT),
+            cells.map { it.orientation }
+        )
+        assertEquals(listOf("あ", "ー", "き"), cells.map { it.text })
+        assertEquals(listOf(0, 1, 2), cells.map { it.charOffset })
+    }
+
+    @Test
+    fun `ruby readings stay inside the column pitch`() {
+        // pitch = max(1.75, ruby reserve 1.55) * 10px em = 17.5px. The
+        // unclamped reading would reach x = 8.75 + 5 + 0.8 + 5 = 19.55px,
+        // past the slot; it must clamp to the slot's right edge instead so
+        // first-column readings never paint into the neighboring block.
+        val result = layout("昼下がり", rubies = listOf(RubyAnnotation(0, 1, "ひる")))
+        val pitch = result.pitchPx
+        assertEquals(17.5f, pitch)
+        val reading = result.columns.single().cells.first().reading!!
+        assertTrue(reading.xPx > 0f)
+        assertTrue(reading.xPx + reading.widthPx <= pitch + 0.01f)
+    }
 }

@@ -63,16 +63,55 @@ class HtmlParserRubyTest {
         assertTrue("rt" !in tags)
     }
 
-    private fun parse(html: String): List<SemanticBlock> {
+    @Test
+    fun `author rt font size becomes per-ruby scale`() {
+        val blocks = parse(
+            "<p>あ<ruby><rb>漢</rb><rt>かん</rt></ruby>い</p>",
+            css = "rt { font-size: 70%; }"
+        )
+        val paragraph = blocks.single() as SemanticParagraph
+        assertEquals(1, paragraph.rubies.size)
+        val ruby = paragraph.rubies.single()
+        assertEquals(1, ruby.baseStart)
+        assertEquals(2, ruby.baseEnd)
+        assertEquals("かん", ruby.reading)
+        assertEquals(0.7f, ruby.readingScale ?: Float.NaN, 0.0001f)
+    }
+
+    @Test
+    fun `missing rt sizing leaves scale null for browser default`() {
+        val blocks = parse("<p>あ<ruby><rb>漢</rb><rt>かん</rt></ruby>い</p>")
+        val paragraph = blocks.single() as SemanticParagraph
+        assertEquals(listOf(SemanticRuby(1, 2, "かん", null)), paragraph.rubies)
+    }
+
+    private fun parse(html: String, css: String? = null): List<SemanticBlock> {
+        val density = Density(1f)
+        val constraints = Constraints(maxWidth = 400, maxHeight = 800)
+        val cssRules = if (css == null) {
+            OptimizedCssRules()
+        } else {
+            OptimizedCssRules().merge(
+                CssParser.parse(
+                    cssContent = css,
+                    cssPath = null,
+                    baseFontSizeSp = 16f,
+                    density = density.density,
+                    constraints = constraints,
+                    isDarkTheme = false,
+                    adaptThemeColors = false
+                ).rules
+            )
+        }
         return htmlToSemanticBlocks(
             html = html,
-            cssRules = OptimizedCssRules(),
+            cssRules = cssRules,
             textStyle = TextStyle(fontSize = 16.sp),
             chapterAbsPath = "OEBPS/chapter1.xhtml",
             extractionBasePath = "",
-            density = Density(1f),
+            density = density,
             fontFamilyMap = emptyMap(),
-            constraints = Constraints(maxWidth = 400, maxHeight = 800)
+            constraints = constraints
         )
     }
 }

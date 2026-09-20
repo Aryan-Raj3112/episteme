@@ -213,6 +213,55 @@ class ContentStylingPoliciesTest {
     }
 
     @Test
+    fun horizontalRubyNeverForcesLineGrowthLikeBrowsers() {
+        // Browsers keep paragraph pitch exactly at line-height for `<rt>`
+        // (probed: 19.2px pitch at 1.2); only vertical layout reserves pitch.
+        assertEquals(
+            1.2.em,
+            lineHeightWithRubyReserve(1.2.em, 16.sp, hasRuby = true, isVertical = false)
+        )
+        assertEquals(
+            16.sp,
+            lineHeightWithRubyReserve(16.sp, 16.sp, hasRuby = true, isVertical = false)
+        )
+        val plain = buildAnnotatedString { append("あいう") }
+        assertEquals(
+            plain,
+            plain.adjustReaderLineHeightForRuby(16.sp, hasRuby = true, isVertical = false)
+        )
+    }
+
+    @Test
+    fun verticalRubyReservesPitchHeadroom() {
+        assertEquals(
+            (16f * RubyReserveLineHeightEm).em,
+            lineHeightWithRubyReserve(1.2.em, 16.sp, hasRuby = true, isVertical = true)
+        )
+        val grown = buildAnnotatedString { append("あいう") }
+            .adjustReaderLineHeightForRuby(16.sp, hasRuby = true, isVertical = true)
+        assertEquals(RubyReserveLineHeightEm.em, grown.paragraphStyles.single().item.lineHeight)
+    }
+
+    @Test
+    fun rubyReadingScaleFallsBackToBrowserDefault() {
+        assertEquals(RubyReadingFontScale, RubyAnnotation(0, 1, "かん", null).effectiveReadingScale())
+        assertEquals(0.7f, RubyAnnotation(0, 1, "かん", 0.7f).effectiveReadingScale())
+        assertEquals(RubyReadingFontScale, RubyAnnotation(0, 1, "かん", -1f).effectiveReadingScale())
+        assertEquals(
+            RubyReadingFontScale,
+            RubyAnnotation(0, 1, "かん", Float.NaN).effectiveReadingScale()
+        )
+    }
+
+    @Test
+    fun semanticRubyScaleSurvivesConversion() {
+        assertEquals(
+            RubyAnnotation(2, 4, "かん", 0.6f),
+            SemanticRuby(2, 4, "かん", 0.6f).toRubyAnnotation()
+        )
+    }
+
+    @Test
     fun floatedImageWrapsFollowingParagraphsUntilClearOrNonParagraph() {
         val image = ImageBlock("image.png", null, style = BlockStyle(float = "left"), blockIndex = 1)
         val first = ParagraphBlock(AnnotatedString("first"), blockIndex = 2)

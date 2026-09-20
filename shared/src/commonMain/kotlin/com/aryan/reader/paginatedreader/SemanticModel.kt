@@ -62,12 +62,15 @@ const val MATH_PLACEHOLDER_CHAR = "￼"
  * One furigana reading parsed from `<ruby>`. [baseStart]/[baseEnd] are offsets
  * into the owning block's text (which holds base characters only); [reading]
  * holds the `<rt>` text and is never part of [SemanticTextBlock.text].
+ * [readingScale] carries an EPUB-specified `<rt>` font size as a fraction of
+ * the base size (browsers honor it); null means the browser default applies.
  */
 @Serializable
 data class SemanticRuby(
     @ProtoNumber(1) val baseStart: Int,
     @ProtoNumber(2) val baseEnd: Int,
-    @ProtoNumber(3) val reading: String
+    @ProtoNumber(3) val reading: String,
+    @ProtoNumber(4) val readingScale: Float? = null
 )
 
 fun SemanticBlock.withElementId(id: String): SemanticBlock {

@@ -425,6 +425,17 @@ private class SemanticHtmlParser(
             fontVariantNumeric = elementOwnStyle.fontVariantNumeric ?: inheritedStyle.fontVariantNumeric,
             textEmphasis = elementOwnStyle.textEmphasis ?: inheritedStyle.textEmphasis,
             whiteSpace = elementOwnStyle.whiteSpace ?: inheritedStyle.whiteSpace,
+            // CSS-inherited properties browsers propagate from ancestors
+            // (body/html writing modes, word breaking, word spacing). Without
+            // these, vertical chapters lose their mode on plain paragraphs
+            // and paginate/render as horizontal fallbacks.
+            writingMode = elementOwnStyle.writingMode ?: inheritedStyle.writingMode,
+            wordBreak = elementOwnStyle.wordBreak ?: inheritedStyle.wordBreak,
+            wordSpacing = if (elementOwnStyle.wordSpacing.isSpecified) {
+                elementOwnStyle.wordSpacing
+            } else {
+                inheritedStyle.wordSpacing
+            },
             customProperties = inheritedStyle.customProperties + elementOwnStyle.customProperties
         ).resolveFontSizeAgainst(inheritedStyle).withResolvedFontFamily()
 
@@ -543,6 +554,23 @@ private class SemanticHtmlParser(
             .firstOrNull()
             ?: return this
         return copy(spanStyle = spanStyle.copy(fontFamily = resolvedFontFamily))
+    }
+
+    /**
+     * EPUB-specified `<rt>` font size as a fraction of the ruby base size.
+     * Browsers honor author `rt` sizing; when the author specifies nothing
+     * (or nothing resolvable) this returns null so renderers fall back to the
+     * browser default scale instead of guessing.
+     */
+    private fun readingScaleForRt(rtOwnStyle: CssStyle, rubyStyle: CssStyle): Float? {
+        if (!rtOwnStyle.fontSize.isSpecified) return null
+        val resolved = rubyStyle.merge(rtOwnStyle).resolveFontSizeAgainst(rubyStyle)
+        val rtSize = resolved.fontSize.takeIf { it.isSpecified && it.type != TextUnitType.Em }
+            ?: return null
+        val baseSize = rubyStyle.fontSize.takeIf { it.isSpecified && it.type != TextUnitType.Em }
+            ?: textStyle.fontSize
+        if (!baseSize.isSpecified || baseSize.value <= 0f) return null
+        return (rtSize.value / baseSize.value).takeIf { it.isFinite() && it > 0f }
     }
 
     private fun CssStyle.resolveFontSizeAgainst(parent: CssStyle): CssStyle {
@@ -1294,7 +1322,7 @@ private class SemanticHtmlParser(
             activeSpans.add(rubySpan)
             appendGeneratedContent(element, rubyStyle, "before")
             val pendingBases = mutableListOf<IntRange>()
-            fun commitReading(reading: String) {
+            fun commitReading(reading: String, readingScale: Float? = null) {
                 if (reading.isBlank() || pendingBases.isEmpty()) {
                     pendingBases.clear()
                     return
@@ -1302,7 +1330,14 @@ private class SemanticHtmlParser(
                 val start = pendingBases.first().first
                 val end = pendingBases.last().last + 1
                 if (start < end) {
-                    rubyRuns.add(SemanticRuby(baseStart = start, baseEnd = end, reading = reading))
+                    rubyRuns.add(
+                        SemanticRuby(
+                            baseStart = start,
+                            baseEnd = end,
+                            reading = reading,
+                            readingScale = readingScale
+                        )
+                    )
                 }
                 pendingBases.clear()
             }
@@ -1317,7 +1352,13 @@ private class SemanticHtmlParser(
                         }
                     }
                     child is Element && child.tagName().lowercase() == "rt" -> {
-                        commitReading(child.text())
+                        val rtOwnStyle = getElementStyle(child, rubyStyle.customProperties)
+                        if (rtOwnStyle.blockStyle.display == "none") {
+                            // Hidden readings contribute nothing; bases stay plain text.
+                            pendingBases.clear()
+                        } else {
+                            commitReading(child.text(), readingScaleForRt(rtOwnStyle, rubyStyle))
+                        }
                     }
                     child is Element && child.tagName().lowercase() == "rp" -> {
                         // Fallback parens for non-ruby agents; skipped, not rendered.
