@@ -54,6 +54,12 @@ FOLDER_TO_TAG = {
     "values-zh-rCN": "zh-CN",
 }
 
+# CLDR plural-rule exceptions: languages whose plural systems have no 'one' category
+# (isolating languages: Vietnamese, Indonesian, Japanese, Korean, Chinese; Thai if added
+# later). Omitting English's 'one' quantity there is expected, not drift — only 'other'
+# is required. Slavic/Arabic languages REQUIRE all base quantities (default rule).
+OTHER_ONLY_PLURAL_LANGS = {"id", "vi", "ja", "ko", "zh-CN", "th"}
+
 MAX_EXAMPLES = 5
 
 # Positional placeholders: %1$s, %2$d, %1$.2f, ...
@@ -268,6 +274,7 @@ def check_plurals_file(
     rep: Report,
     plurals: dict[str, dict[str, str]],
     base_plurals: dict[str, dict[str, str]],
+    lang: str = "en",
 ) -> None:
     for name in plurals:
         if name not in base_plurals:
@@ -281,6 +288,8 @@ def check_plurals_file(
             rep.error(f"plurals.xml '{name}': missing required 'other' quantity")
         for qty in base_items:
             if qty not in items:
+                if lang in OTHER_ONLY_PLURAL_LANGS and qty != "other":
+                    continue  # expected: these languages have no such plural category (CLDR)
                 rep.warn(f"plurals.xml '{name}': missing quantity '{qty}' (base provides it)")
         for qty, value in items.items():
             base_value = base_items.get(qty)
@@ -406,7 +415,7 @@ def check_language(
 
     if folder != "values":
         check_xml_file(rep, xml_strings, base_strings, base_translatable_false)
-        check_plurals_file(rep, xml_plurals, base_plurals)
+        check_plurals_file(rep, xml_plurals, base_plurals, tag)
         if not skip_coverage:
             missing_strings = set(base_strings) - set(xml_strings) - base_translatable_false
             if missing_strings:
@@ -487,6 +496,18 @@ def _self_test() -> int:
     check_plurals_file(rep, {"books": {"one": "%1$d libro"}}, {"books": {"one": "%1$d libro", "other": "%1$d libros"}})
     expect(any("missing required 'other'" in e for e in rep.errors), "missing 'other' should fire")
     expect(not any("missing plurals key" in e for e in rep.errors), "present key must not be flagged")
+
+    # CLDR exception: other-only languages (vi/id/ja/ko/zh) may omit 'one' without warning.
+    rep = Report(lang="t")
+    check_plurals_file(
+        rep, {"books": {"other": "%1$d books"}}, {"books": {"one": "%1$d book", "other": "%1$d books"}}, "vi"
+    )
+    expect(not any("missing quantity" in w for w in rep.warnings), "other-only language may omit 'one'")
+    rep = Report(lang="t")
+    check_plurals_file(
+        rep, {"books": {"other": "%1$d books"}}, {"books": {"one": "%1$d book", "other": "%1$d books"}}, "de"
+    )
+    expect(any("missing quantity 'one'" in w for w in rep.warnings), "non-exception language still warns")
 
     # Raw XML apostrophe check via a temp fixture.
     with tempfile.TemporaryDirectory() as tmp:
