@@ -148,12 +148,27 @@ internal fun readRichParagraphListType(
 
 /** Paragraph attributes for every '\n'-paragraph in [annotated]. */
 fun readRichParagraphs(annotated: AnnotatedString, contentOffset: Int = 0): List<SharedPdfRichParagraph> {
-    return richParagraphBounds(annotated.text).mapIndexed { index, bound ->
+    val bounds = richParagraphBounds(annotated.text)
+    val attrs = bounds.mapIndexed { index, bound ->
         SharedPdfRichParagraph(
             alignment = readRichParagraphAlignment(annotated, bound.start, contentOffset, index == 0),
             listType = readRichParagraphListType(annotated, bound.start, bound.end, contentOffset, index == 0),
         )
+    }.toMutableList()
+    // A trailing empty paragraph ([N,N)) cannot carry its own style range,
+    // so it inherits the previous paragraph's alignment (dock display and
+    // Enter/type inheritance). List type is deliberately NOT inherited:
+    // marker presence governs lists (exit-list semantics stay intact).
+    // Explicitly clearing to LEFT on a trailing empty line is not
+    // representable and keeps the inherited value.
+    val lastIndex = bounds.size - 1
+    if (lastIndex > 0) {
+        val last = bounds[lastIndex]
+        if (last.start == last.end && last.start == annotated.length) {
+            attrs[lastIndex] = attrs[lastIndex].copy(alignment = attrs[lastIndex - 1].alignment)
+        }
     }
+    return attrs
 }
 
 /**

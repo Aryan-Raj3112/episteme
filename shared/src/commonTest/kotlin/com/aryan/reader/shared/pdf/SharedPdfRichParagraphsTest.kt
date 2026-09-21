@@ -246,6 +246,67 @@ class SharedPdfRichParagraphsTest {
     }
 
     @Test
+    fun `trailing empty paragraph inherits previous alignment`() {
+        // "abc\n" with CENTER on [0,3): the trailing [4,4) cannot carry a
+        // range, so it reads back CENTER (dock + Enter/type inheritance).
+        // List type is NOT inherited (marker presence governs lists).
+        val annotated = AnnotatedString.Builder("abc\n").apply {
+            addStyle(
+                ParagraphStyle(textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+                0,
+                3,
+            )
+        }.toAnnotatedString()
+        val attrs = readRichParagraphs(annotated)
+        assertEquals(SharedPdfRichTextAlign.CENTER, attrs[0].alignment)
+        assertEquals(SharedPdfRichTextAlign.CENTER, attrs[1].alignment)
+        assertEquals(SharedPdfRichListType.NONE, attrs[1].listType)
+        assertEquals(SharedPdfRichTextAlign.CENTER, richParagraphUiState(annotated, TextRange(4)).alignment)
+    }
+
+    @Test
+    fun `typing on trailing line reattaches inherited alignment`() {
+        val annotated = AnnotatedString.Builder("abc\n").apply {
+            addStyle(
+                ParagraphStyle(textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+                0,
+                3,
+            )
+        }.toAnnotatedString()
+        val result = applyRichParagraphKeystroke(
+            old = annotated,
+            newText = "abc\nx",
+            newSelection = TextRange(5),
+        )
+        assertEquals("abc\nx", result.text)
+        assertEquals(SharedPdfRichTextAlign.CENTER, result.paragraphs[1].alignment)
+        val builder = AnnotatedString.Builder(result.text)
+        applyRichParagraphsToBuilder(builder, result.text, result.paragraphs)
+        assertEquals(
+            SharedPdfRichTextAlign.CENTER,
+            readRichParagraphs(builder.toAnnotatedString())[1].alignment,
+        )
+    }
+
+    @Test
+    fun `enter on trailing line inherits alignment for the next line`() {
+        val annotated = AnnotatedString.Builder("abc\n").apply {
+            addStyle(
+                ParagraphStyle(textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+                0,
+                3,
+            )
+        }.toAnnotatedString()
+        val result = applyRichParagraphKeystroke(
+            old = annotated,
+            newText = "abc\n\n",
+            newSelection = TextRange(5),
+        )
+        assertEquals(SharedPdfRichTextAlign.CENTER, result.paragraphs[1].alignment)
+        assertEquals(SharedPdfRichTextAlign.CENTER, result.paragraphs[2].alignment)
+    }
+
+    @Test
     fun `marker length matches digits`() {
         assertEquals(2, richMarkerLengthAt("• x", 0))
         assertEquals(3, richMarkerLengthAt("1. x", 0))
