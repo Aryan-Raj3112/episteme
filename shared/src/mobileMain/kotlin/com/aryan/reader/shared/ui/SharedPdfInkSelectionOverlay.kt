@@ -78,7 +78,7 @@ internal val SharedPdfSelectionBoxColor = Color(0xFF64B5F6)
  * small handles and the open lasso polyline all divide by [zoom] to keep a
  * constant screen size. Selected strokes are NOT re-tinted: only the box
  * shows. While a rotation drag runs, the box + handles hide and a small
- * degree pill shows centered on the ink instead.
+ * degree pill shows pinned to the rotation-start center.
  *
  * @param selectedAnnotations currently selected strokes (box follows live data)
  * @param pageSizePx page size in page px for norm→px mapping
@@ -121,6 +121,21 @@ internal fun SharedPdfInkSelectionCanvas(
     }
     val syncPainter = rememberVectorPainter(syncVector)
     val rotateOffsetNorm = 0.06f
+    // Frozen pill anchor: the live union box breathes as the ink turns
+    // (axis-aligned bounds of a rotating shape), so centering the pill on
+    // it every frame makes it fly around. Capture the pre-rotation center
+    // on the first frame and hold it until the drag ends.
+    var rotationAnchorNorm by remember { mutableStateOf<Offset?>(null) }
+    if (activeRotationDegrees == null) {
+        if (rotationAnchorNorm != null) rotationAnchorNorm = null
+    } else if (rotationAnchorNorm == null) {
+        sharedPdfSelectionUnionBounds(selectedAnnotations)?.let { union ->
+            rotationAnchorNorm = Offset(
+                (union.left + union.right) / 2f,
+                (union.top + union.bottom) / 2f,
+            )
+        }
+    }
 
     Canvas(modifier = modifier) {
         if (selectedAnnotations.isNotEmpty() && pageSizePx.width > 0 && pageSizePx.height > 0) {
@@ -133,8 +148,14 @@ internal fun SharedPdfInkSelectionCanvas(
                     union.bottom * pageSizePx.height,
                 )
                 if (activeRotationDegrees != null) {
+                    val anchor = rotationAnchorNorm?.let { anchorNorm ->
+                        Offset(
+                            anchorNorm.x * pageSizePx.width,
+                            anchorNorm.y * pageSizePx.height,
+                        )
+                    } ?: box.center
                     drawSharedRotationDegreePill(
-                        center = box.center,
+                        center = anchor,
                         degrees = activeRotationDegrees,
                         textMeasurer = textMeasurer,
                         textSize = pillTextSize,

@@ -5,7 +5,7 @@
 // are drawn very small; the generous (28dp) touch slop in the gesture
 // detector keeps them easy to grab. Selected strokes are NOT re-tinted: only
 // the box shows. While a rotation drag runs, the box + handles hide and a
-// small degree pill shows centered on the ink instead. Lasso loops draw as
+// small degree pill shows pinned to the rotation-start center. Lasso loops draw as
 // plain open polylines with no area fill and no auto-closing segment.
 package com.aryan.reader.pdf
 
@@ -99,6 +99,16 @@ internal fun PdfInkSelectionCanvas(
     val pillPadVPx = remember(density, zoom) { with(density) { 6.dp.toPx() / zoom } }
     val syncPainter = painterResource(id = R.drawable.sync)
     val rotateOffsetNorm = 0.06f
+    // Frozen pill anchor: the live union box breathes as the ink turns
+    // (axis-aligned bounds of a rotating shape), so centering the pill on
+    // it every frame makes it fly around. Capture the pre-rotation center
+    // on the first frame and hold it until the drag ends.
+    var rotationAnchorNorm by remember { mutableStateOf<Offset?>(null) }
+    if (activeRotationDegrees == null) {
+        if (rotationAnchorNorm != null) rotationAnchorNorm = null
+    } else if (rotationAnchorNorm == null) {
+        pdfSelectionUnionBounds(selectedAnnotations)?.let { rotationAnchorNorm = it.center }
+    }
 
     Canvas(modifier = modifier) {
         if (selectionPage != null && selectedAnnotations.isNotEmpty()) {
@@ -113,10 +123,16 @@ internal fun PdfInkSelectionCanvas(
                 )
                 if (activeRotationDegrees != null) {
                     // Rotation in progress: chrome hides, degree pill shows
-                    // centered on the ink. Strokes themselves keep drawing
-                    // live from the page layer underneath.
+                    // pinned to the rotation-start center. Strokes themselves
+                    // keep drawing live from the page layer underneath.
+                    val anchor = rotationAnchorNorm?.let { anchorNorm ->
+                        Offset(
+                            anchorNorm.x * pageWidthDoc,
+                            anchorNorm.y * pageHeightDoc,
+                        )
+                    } ?: box.center
                     drawRotationDegreePill(
-                        box.center,
+                        anchor,
                         activeRotationDegrees,
                         pillTextPx,
                         pillPadHPx,
