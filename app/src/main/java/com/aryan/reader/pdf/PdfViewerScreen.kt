@@ -291,6 +291,7 @@ import com.aryan.reader.scaledToCanvasLimit
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
+import com.aryan.reader.shared.pdf.SharedPdfRichListType
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.pdf.PdfNavigationReason
 import com.aryan.reader.shared.pdf.RealisticPdfPageTurnAnimationSpec
@@ -10088,6 +10089,22 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                     }
                 },
                 popupsBelowBar = popupsBelowBar,
+                // Paragraph row is page-rich-text only; legacy text boxes
+                // stay on the single-row bar.
+                paragraphState = if (selectedTextBoxId != null) {
+                    null
+                } else {
+                    richTextController.richParagraphUiState()
+                },
+                onNumberedListClick = {
+                    richTextController.toggleRichListType(SharedPdfRichListType.NUMBERED)
+                },
+                onBulletedListClick = {
+                    richTextController.toggleRichListType(SharedPdfRichListType.BULLET)
+                },
+                onAlignmentSelected = { align ->
+                    richTextController.setRichParagraphAlignment(align)
+                },
             )
             }
         }

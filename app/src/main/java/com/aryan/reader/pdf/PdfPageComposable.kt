@@ -214,6 +214,10 @@ internal fun PdfPageComposable(
     ocrHoverHighlights: StableHolder<List<RectF>> = StableHolder(emptyList()),
     onPreSingleTap: ((Offset) -> Boolean)? = null,
     onSingleTap: (Offset?) -> Unit,
+    // Page rich-text cursor placement (native vertical reader): invoked with
+    // bitmap-space coords when a tap lands inside page content. Return true
+    // to consume (bars stay put while editing). Null everywhere else.
+    onRichTextTap: ((pageIndex: Int, xInBitmapPx: Float, yInBitmapPx: Float, bitmapWidthPx: Float, bitmapHeightPx: Float) -> Boolean)? = null,
     isProUser: Boolean,
     onShowDictionaryUpsellDialog: () -> Unit,
     onWordSelectedForAiDefinition: (String) -> Unit,
@@ -347,6 +351,7 @@ internal fun PdfPageComposable(
     }
 
     val currentOnSingleTap by rememberUpdatedState(onSingleTap)
+    val currentOnRichTextTap by rememberUpdatedState(onRichTextTap)
     val currentOnPreSingleTap by rememberUpdatedState(onPreSingleTap)
     val currentOnDoubleTap by rememberUpdatedState(onDoubleTap)
     val currentOnDoubleTapDragZoomStart by rememberUpdatedState(onDoubleTapDragZoomStart)
@@ -2649,6 +2654,17 @@ internal fun PdfPageComposable(
                     }
 
                     Timber.tag("BubbleZoom").d("Tap inside bounds. modeActive=$currentBubbleZoomModeActive, detectedBubbles=${currentDetectedBubbles.size}, tapPos=($tapXInBitmap, $tapYInBitmap)")
+
+                    if (currentOnRichTextTap?.invoke(
+                            pageIndex,
+                            tapXInBitmap,
+                            tapYInBitmap,
+                            actualBitmapWidthPx.toFloat(),
+                            actualBitmapHeightPx.toFloat()
+                        ) == true
+                    ) {
+                        return@tapDetector
+                    }
 
                     if (currentBubbleZoomModeActive && currentDetectedBubbles.isNotEmpty()) {
                         val tappedBubbleIndex = currentDetectedBubbles.indexOfFirst { bubble ->

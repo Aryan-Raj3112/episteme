@@ -15,6 +15,7 @@ import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.style.AbsoluteSizeSpan
+import android.text.style.AlignmentSpan
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.MetricAffectingSpan
@@ -29,6 +30,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.isSpecified
 import com.aryan.reader.pdf.data.PdfAnnotation
@@ -633,6 +635,23 @@ internal object PdfiumAnnotationExporter {
         val spannable = SpannableString(text.sanitizeRasterTextPreservingLength())
         spanStyles.forEach { range ->
             applySpanStyle(context, spannable, range.item, range.start, range.end)
+        }
+        // Paragraph alignment (list markers are plain text and flow through).
+        paragraphStyles.forEach { range ->
+            val alignment = when (range.item.textAlign) {
+                TextAlign.Center -> Layout.Alignment.ALIGN_CENTER
+                TextAlign.Right, TextAlign.End -> Layout.Alignment.ALIGN_OPPOSITE
+                else -> null
+            } ?: return@forEach
+            val start = range.start.coerceIn(0, spannable.length)
+            val end = range.end.coerceIn(start, spannable.length)
+            if (start >= end) return@forEach
+            spannable.setSpan(
+                AlignmentSpan.Standard(alignment),
+                start,
+                end,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
         }
         return spannable
     }

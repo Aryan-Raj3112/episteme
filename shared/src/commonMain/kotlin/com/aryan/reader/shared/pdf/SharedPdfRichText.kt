@@ -12,6 +12,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.ParagraphStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
@@ -103,7 +104,13 @@ data class SharedPdfRichSpan(
 
 data class SharedPdfRichDocument(
     val text: String = "",
-    val spans: List<SharedPdfRichSpan> = emptyList()
+    val spans: List<SharedPdfRichSpan> = emptyList(),
+    /**
+     * Per-'\n'-paragraph attributes (alignment + list), indexed by paragraph.
+     * Missing entries (and missing lists) mean defaults; the serializer
+     * stores only non-default paragraphs sparsely.
+     */
+    val paragraphs: List<SharedPdfRichParagraph> = emptyList()
 )
 
 data class SharedPdfRichPageLayout(
@@ -129,27 +136,72 @@ object SharedPdfRichTextSerializer {
 
     fun encodeElement(document: SharedPdfRichDocument): JsonElement {
         return JsonObject(
-            mapOf(
-                "text" to JsonPrimitive(document.text),
-                "spans" to JsonArray(
-                    document.spans.map { span ->
+            buildMap {
+                put("text", JsonPrimitive(document.text))
+                put(
+                    "spans",
+                    JsonArray(
+                        document.spans.map { span ->
+                            JsonObject(
+                                buildMap {
+                                    put("s", JsonPrimitive(span.start))
+                                    put("e", JsonPrimitive(span.end))
+                                    put("c", JsonPrimitive(span.color))
+                                    put("bg", JsonPrimitive(span.backgroundColor))
+                                    put("sz", JsonPrimitive(span.fontSizeNorm.toDouble()))
+                                    put("b", JsonPrimitive(span.isBold))
+                                    put("i", JsonPrimitive(span.isItalic))
+                                    put("u", JsonPrimitive(span.isUnderline))
+                                    put("st", JsonPrimitive(span.isStrikethrough))
+                                    span.fontPath?.let { put("fp", JsonPrimitive(it)) }
+                                }
+                            )
+                        }
+                    )
+                )
+                // Sparse paragraph attributes: only non-default paragraphs.
+                // a: 1=center, 2=right (left omitted); l: 1=bullet, 2=numbered.
+                val nonDefault = document.paragraphs.mapIndexedNotNull { index, paragraph ->
+                    if (paragraph.alignment == SharedPdfRichTextAlign.LEFT &&
+                        paragraph.listType == SharedPdfRichListType.NONE
+                    ) {
+                        null
+                    } else {
                         JsonObject(
                             buildMap {
-                                put("s", JsonPrimitive(span.start))
-                                put("e", JsonPrimitive(span.end))
-                                put("c", JsonPrimitive(span.color))
-                                put("bg", JsonPrimitive(span.backgroundColor))
-                                put("sz", JsonPrimitive(span.fontSizeNorm.toDouble()))
-                                put("b", JsonPrimitive(span.isBold))
-                                put("i", JsonPrimitive(span.isItalic))
-                                put("u", JsonPrimitive(span.isUnderline))
-                                put("st", JsonPrimitive(span.isStrikethrough))
-                                span.fontPath?.let { put("fp", JsonPrimitive(it)) }
+                                put("p", JsonPrimitive(index))
+                                if (paragraph.alignment != SharedPdfRichTextAlign.LEFT) {
+                                    put(
+                                        "a",
+                                        JsonPrimitive(
+                                            when (paragraph.alignment) {
+                                                SharedPdfRichTextAlign.CENTER -> 1
+                                                SharedPdfRichTextAlign.RIGHT -> 2
+                                                SharedPdfRichTextAlign.LEFT -> 0
+                                            }
+                                        )
+                                    )
+                                }
+                                if (paragraph.listType != SharedPdfRichListType.NONE) {
+                                    put(
+                                        "l",
+                                        JsonPrimitive(
+                                            when (paragraph.listType) {
+                                                SharedPdfRichListType.BULLET -> 1
+                                                SharedPdfRichListType.NUMBERED -> 2
+                                                SharedPdfRichListType.NONE -> 0
+                                            }
+                                        )
+                                    )
+                                }
                             }
                         )
                     }
-                )
-            )
+                }
+                if (nonDefault.isNotEmpty()) {
+                    put("paragraphs", JsonArray(nonDefault))
+                }
+            }
         )
     }
 
@@ -186,7 +238,25 @@ object SharedPdfRichTextSerializer {
                 )
             }
         SharedPdfRichTextLog.d("serializer.decodeElement textLen=${text.length} spans=${spans.size}")
-        return SharedPdfRichDocument(text = text, spans = spans)
+        val paragraphCount = richParagraphBounds(text).size
+        val paragraphs = MutableList(paragraphCount) { SharedPdfRichParagraph() }
+        root["paragraphs"]?.jsonArrayOrNull()?.forEach { paragraphElement ->
+            val obj = paragraphElement.jsonObjectOrNull() ?: return@forEach
+            val index = obj.int("p") ?: return@forEach
+            if (index < 0 || index >= paragraphCount) return@forEach
+            val alignment = when (obj.int("a") ?: 0) {
+                1 -> SharedPdfRichTextAlign.CENTER
+                2 -> SharedPdfRichTextAlign.RIGHT
+                else -> SharedPdfRichTextAlign.LEFT
+            }
+            val listType = when (obj.int("l") ?: 0) {
+                1 -> SharedPdfRichListType.BULLET
+                2 -> SharedPdfRichListType.NUMBERED
+                else -> SharedPdfRichListType.NONE
+            }
+            paragraphs[index] = SharedPdfRichParagraph(alignment = alignment, listType = listType)
+        }
+        return SharedPdfRichDocument(text = text, spans = spans, paragraphs = paragraphs.trimmedRichParagraphs())
     }
 
     private fun JsonElement.jsonArrayOrNull(): JsonArray? {
@@ -275,6 +345,35 @@ object SharedPdfRichTextMapper {
                     )
                 }
             }
+            // Paragraph attributes (alignment + list tags), clipped to range.
+            richParagraphBounds(document.text).forEachIndexed { index, bound ->
+                val attrs = document.paragraphs.getOrElse(index) { SharedPdfRichParagraph() }
+                if (attrs.alignment == SharedPdfRichTextAlign.LEFT &&
+                    attrs.listType == SharedPdfRichListType.NONE
+                ) {
+                    return@forEachIndexed
+                }
+                val localStart = (maxOf(bound.start, safeGlobalStart) - safeGlobalStart)
+                    .coerceIn(0, textSubstring.length)
+                val localEnd = (minOf(bound.end, safeGlobalEnd) - safeGlobalStart)
+                    .coerceIn(0, textSubstring.length)
+                if (localStart >= localEnd) return@forEachIndexed
+                if (attrs.alignment != SharedPdfRichTextAlign.LEFT) {
+                    addStyle(
+                        style = ParagraphStyle(textAlign = attrs.alignment.toComposeTextAlign()),
+                        start = localStart,
+                        end = localEnd
+                    )
+                }
+                attrs.listType.toListTag()?.let { tag ->
+                    addStringAnnotation(
+                        tag = SHARED_PDF_RICH_LIST_TAG,
+                        annotation = tag,
+                        start = localStart,
+                        end = localEnd
+                    )
+                }
+            }
         }
     }
 
@@ -345,7 +444,11 @@ object SharedPdfRichTextMapper {
                 spans += newSpan
             }
         }
-        return SharedPdfRichDocument(text = text.text, spans = spans)
+        return SharedPdfRichDocument(
+            text = text.text,
+            spans = spans,
+            paragraphs = readRichParagraphs(text).trimmedRichParagraphs()
+        )
     }
 
     private fun SharedPdfRichSpan.sameRichStyleAs(other: SharedPdfRichSpan): Boolean {
@@ -700,6 +803,11 @@ class SharedPdfRichTextController(
     private var dirtySinceMillis: Long? = null
     private var syncJob: Job? = null
     private var isSaving = false
+    /**
+     * One-shot: programmatic trailing-newline padding (tap below text)
+     * skips list inheritance so padding never grows list markers.
+     */
+    private var suppressListInheritOnce = false
 
     fun loadDocumentIfEmpty(document: SharedPdfRichDocument) {
         if (globalTextFieldValue.text.isEmpty()) {
@@ -830,11 +938,31 @@ class SharedPdfRichTextController(
                 "diff=$diff cursor=$cursor change=$changeStart..$changeEndOld style=${currentStyle.richStyleSummary()} " +
                 "preview=\"${newText.richPreview()}\""
         )
+        // Paragraph maintenance first: list markers, Enter/backspace list
+        // rules, renumber. Local page segments carry a leading ZWSP before
+        // user content; the first local paragraph may be a page-split
+        // continuation whose marker lives on the previous page.
+        val contentOffset = if (activePageIndex != -1) 1 else 0
+        val firstStartsAtBoundary = if (activePageIndex != -1) {
+            firstLocalParagraphStartsAtBoundary()
+        } else {
+            true
+        }
+        val inheritList = consumeSuppressListInherit()
+        val norm = applyRichParagraphKeystroke(
+            old = oldAnnotated,
+            newText = newText,
+            newSelection = newValue.selection,
+            contentOffset = contentOffset,
+            firstStartsAtParagraphStart = firstStartsAtBoundary,
+            inheritList = inheritList,
+            markerFallbackStyle = currentStyle,
+        )
         val mutableSpans = oldAnnotated.spanStyles.mapNotNull {
             it.shiftedByTextChange(
-                diff = diff,
-                changeStart = changeStart,
-                changeEndOld = changeEndOld
+                diff = norm.effectiveShift.diff,
+                changeStart = norm.effectiveShift.changeStart,
+                changeEndOld = norm.effectiveShift.changeEndOld
             )
         }.toMutableList()
         val mutableFontAnnotations = oldAnnotated.getStringAnnotations(
@@ -843,34 +971,72 @@ class SharedPdfRichTextController(
             end = oldAnnotated.length
         ).mapNotNull {
             it.shiftedByTextChange(
-                diff = diff,
-                changeStart = changeStart,
-                changeEndOld = changeEndOld
+                diff = norm.effectiveShift.diff,
+                changeStart = norm.effectiveShift.changeStart,
+                changeEndOld = norm.effectiveShift.changeEndOld
             )
         }.toMutableList()
 
-        if (diff > 0) {
-            val start = (cursor - diff).coerceAtLeast(0)
-            mutableSpans += MutableSpan(start, cursor, currentStyle)
+        if (diff > 0 && norm.typedStart >= 0) {
+            val start = norm.typedStart.coerceIn(0, norm.text.length)
+            val end = norm.typedEnd.coerceIn(start, norm.text.length)
+            mutableSpans += MutableSpan(start, end, currentStyle)
             currentFontPath?.takeIf { it.isNotBlank() }?.let { fontPath ->
                 mutableFontAnnotations += MutableStringAnnotation(
                     start = start,
-                    end = cursor,
+                    end = end,
                     tag = SHARED_PDF_RICH_FONT_PATH_TAG,
                     item = fontPath
                 )
             }
         }
+        // Paragraph follow-up shifts (marker insert/remove, renumber).
+        for (shift in norm.shifts) {
+            var i = mutableSpans.size - 1
+            while (i >= 0) {
+                val span = mutableSpans[i]
+                val next = shiftRange(span.start, span.end, shift.diff, shift.changeStart, shift.changeEndOld)
+                if (next == null) {
+                    mutableSpans.removeAt(i)
+                } else {
+                    span.start = next.first
+                    span.end = next.second
+                }
+                i--
+            }
+            var j = mutableFontAnnotations.size - 1
+            while (j >= 0) {
+                val annotation = mutableFontAnnotations[j]
+                val next = shiftRange(
+                    annotation.start,
+                    annotation.end,
+                    shift.diff,
+                    shift.changeStart,
+                    shift.changeEndOld
+                )
+                if (next == null) {
+                    mutableFontAnnotations.removeAt(j)
+                } else {
+                    annotation.start = next.first
+                    annotation.end = next.second
+                }
+                j--
+            }
+        }
+        norm.markerSpans.forEach { marker ->
+            mutableSpans += MutableSpan(marker.start, marker.end, marker.style)
+        }
 
-        val builder = AnnotatedString.Builder(newText)
+        val builder = AnnotatedString.Builder(norm.text)
         mutableSpans.compactSpans().forEach { span ->
             builder.addStyle(span.item, span.start, span.end)
         }
         mutableFontAnnotations.compactStringAnnotations().forEach { annotation ->
             builder.addStringAnnotation(annotation.tag, annotation.item, annotation.start, annotation.end)
         }
+        applyRichParagraphsToBuilder(builder, norm.text, norm.paragraphs)
 
-        val finalValue = newValue.copy(annotatedString = builder.toAnnotatedString())
+        val finalValue = newValue.copy(annotatedString = builder.toAnnotatedString(), selection = norm.selection)
         if (activePageIndex != -1) {
             localTextFieldValue = finalValue
             isCursorVisible = true
@@ -935,6 +1101,178 @@ class SharedPdfRichTextController(
                 "localSel=${localTextFieldValue.selection}"
         )
         requestFocus()
+    }
+
+    /** Dock state for the current selection/cursor (alignment + list types). */
+    fun richParagraphUiState(): RichParagraphUiState {
+        val editing = editingValue
+        return richParagraphUiState(editing.annotatedString, editing.selection)
+    }
+
+    /**
+     * Toggles a list type on the paragraphs intersecting the selection.
+     * Always operates on GLOBAL text: local page segments may start
+     * mid-paragraph, where a marker insert would orphan.
+     */
+    fun toggleRichListType(type: SharedPdfRichListType) {
+        if (type == SharedPdfRichListType.NONE) return
+        val global = globalTextFieldValue.annotatedString
+        val norm = toggleRichParagraphList(
+            annotated = global,
+            selection = globalSelectionForParagraphOp(),
+            type = type,
+            markerFallbackStyle = currentStyle,
+        )
+        SharedPdfRichTextLog.d(
+            "controller.toggleList type=$type textLen=${norm.text.length} shifts=${norm.shifts.size}"
+        )
+        applyGlobalParagraphEdit(norm)
+        requestFocus()
+    }
+
+    /**
+     * Sets alignment on the paragraphs intersecting the selection
+     * (global scope, same reason as [toggleRichListType]).
+     */
+    fun setRichParagraphAlignment(align: SharedPdfRichTextAlign) {
+        val global = globalTextFieldValue.annotatedString
+        val selection = globalSelectionForParagraphOp()
+        val next = setRichParagraphAlignment(global, selection, align)
+        SharedPdfRichTextLog.d("controller.setAlignment align=$align sel=$selection")
+        globalTextFieldValue = TextFieldValue(next, selection)
+        debouncedSave(globalTextFieldValue)
+        repaginate(dirtyStartIndex = selection.min)
+        refreshLocalFromGlobal(selection.min)
+        requestFocus()
+    }
+
+    private fun globalSelectionForParagraphOp(): TextRange {
+        val global = globalTextFieldValue.annotatedString
+        val layout = if (activePageIndex != -1) {
+            pageLayouts.find { it.pageIndex == activePageIndex }
+        } else {
+            null
+        }
+        if (layout == null) return globalTextFieldValue.selection
+        val local = localTextFieldValue.selection
+        val start = (local.min - 1 + layout.globalStartIndex).coerceIn(0, global.length)
+        val end = (local.max - 1 + layout.globalStartIndex).coerceIn(start, global.length)
+        return TextRange(start, end)
+    }
+
+    private fun applyGlobalParagraphEdit(norm: NormalizedRichParagraphEdit) {
+        val oldGlobal = globalTextFieldValue.annotatedString
+        val allShifts = listOf(norm.effectiveShift) + norm.shifts
+        fun shiftAll(start: Int, end: Int): Pair<Int, Int>? {
+            var coords: Pair<Int, Int>? = start to end
+            for (shift in allShifts) {
+                coords = coords?.let {
+                    shiftRange(it.first, it.second, shift.diff, shift.changeStart, shift.changeEndOld)
+                }
+            }
+            return coords
+        }
+        val mutableSpans = oldGlobal.spanStyles.mapNotNull { range ->
+            shiftAll(range.start, range.end)?.let { (s, e) -> MutableSpan(s, e, range.item) }
+        }.toMutableList()
+        val mutableFontAnnotations = oldGlobal.getStringAnnotations(
+            tag = SHARED_PDF_RICH_FONT_PATH_TAG,
+            start = 0,
+            end = oldGlobal.length
+        ).mapNotNull { annotation ->
+            shiftAll(annotation.start, annotation.end)?.let { (s, e) ->
+                MutableStringAnnotation(s, e, annotation.tag, annotation.item)
+            }
+        }.toMutableList()
+        norm.markerSpans.forEach { marker ->
+            mutableSpans += MutableSpan(marker.start, marker.end, marker.style)
+        }
+        val builder = AnnotatedString.Builder(norm.text)
+        mutableSpans.compactSpans().forEach { span ->
+            builder.addStyle(span.item, span.start, span.end)
+        }
+        mutableFontAnnotations.compactStringAnnotations().forEach { annotation ->
+            builder.addStringAnnotation(annotation.tag, annotation.item, annotation.start, annotation.end)
+        }
+        applyRichParagraphsToBuilder(builder, norm.text, norm.paragraphs)
+        globalTextFieldValue = TextFieldValue(builder.toAnnotatedString(), norm.selection)
+        debouncedSave(globalTextFieldValue)
+        scope.launch {
+            repaginateSync(dirtyStartIndex = norm.selection.min)
+            refreshLocalFromGlobal(norm.selection.min)
+        }
+    }
+
+    private fun refreshLocalFromGlobal(globalCursorPos: Int) {
+        if (activePageIndex == -1) return
+        val newLayout = pageLayouts.find {
+            globalCursorPos >= it.globalStartIndex && globalCursorPos <= it.globalEndIndex
+        } ?: return
+        activePageIndex = newLayout.pageIndex
+        val reExtracted = globalTextFieldValue.annotatedString.subSequence(
+            newLayout.globalStartIndex,
+            newLayout.globalEndIndex
+        ).withoutTrailingSharedPdfPageBreak()
+        val textWithZwsp = AnnotatedString(SHARED_PDF_ZWSP) + reExtracted
+        val newLocalCursor = (globalCursorPos - newLayout.globalStartIndex + 1)
+            .coerceIn(0, textWithZwsp.length)
+        localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(newLocalCursor))
+        updateLocalCursor()
+    }
+
+    /**
+     * Global paragraph safety net for merged text (sync merges, page
+     * deletes): renumbers cross-page numbered runs and clears orphaned
+     * markers. Returns the normalized text plus the shifts applied, so
+     * callers can remap cursors. Zero-cost when already normalized.
+     */
+    private fun withNormalizedSyncedParagraphs(
+        merged: AnnotatedString
+    ): Pair<AnnotatedString, List<RichTextShift>> {
+        val norm = normalizeRichParagraphsGlobal(merged, currentStyle)
+        if (norm.text == merged.text) return merged to emptyList()
+        val mutableSpans = merged.spanStyles.mapNotNull { range ->
+            shiftRichRange(range.start, range.end, norm.shifts)?.let { (s, e) ->
+                MutableSpan(s, e, range.item)
+            }
+        }.toMutableList()
+        val mutableFonts = merged.getStringAnnotations(
+            tag = SHARED_PDF_RICH_FONT_PATH_TAG,
+            start = 0,
+            end = merged.length
+        ).mapNotNull { annotation ->
+            shiftRichRange(annotation.start, annotation.end, norm.shifts)?.let { (s, e) ->
+                MutableStringAnnotation(s, e, annotation.tag, annotation.item)
+            }
+        }.toMutableList()
+        norm.markerSpans.forEach { marker ->
+            mutableSpans += MutableSpan(marker.start, marker.end, marker.style)
+        }
+        val builder = AnnotatedString.Builder(norm.text)
+        mutableSpans.compactSpans().forEach { span ->
+            builder.addStyle(span.item, span.start, span.end)
+        }
+        mutableFonts.compactStringAnnotations().forEach { annotation ->
+            builder.addStringAnnotation(annotation.tag, annotation.item, annotation.start, annotation.end)
+        }
+        applyRichParagraphsToBuilder(builder, norm.text, norm.paragraphs)
+        return builder.toAnnotatedString() to norm.shifts
+    }
+
+    private fun firstLocalParagraphStartsAtBoundary(): Boolean {
+        val layout = pageLayouts.find { it.pageIndex == activePageIndex } ?: return true
+        val globalStart = layout.globalStartIndex
+        if (globalStart <= 0) return true
+        return globalTextFieldValue.text.getOrNull(globalStart - 1) == '\n'
+    }
+
+    private fun consumeSuppressListInherit(): Boolean {
+        return if (suppressListInheritOnce) {
+            suppressListInheritOnce = false
+            false
+        } else {
+            true
+        }
     }
 
     fun handleTapOnPage(pageIndex: Int, localTapOffset: Offset) {
@@ -1093,7 +1431,11 @@ class SharedPdfRichTextController(
             if (end < original.length) {
                 builder.append(original.subSequence(end, original.length))
             }
-            globalTextFieldValue = TextFieldValue(builder.toAnnotatedString(), TextRange(start))
+            val (normalizedDeleted, paragraphShifts) =
+                withNormalizedSyncedParagraphs(builder.toAnnotatedString())
+            val newCursor = adjustRichOffset(start, paragraphShifts)
+                .coerceIn(0, normalizedDeleted.length)
+            globalTextFieldValue = TextFieldValue(normalizedDeleted, TextRange(newCursor))
             debouncedSave(globalTextFieldValue)
             repaginate(dirtyStartIndex = start)
             SharedPdfRichTextLog.d(
@@ -1205,9 +1547,15 @@ class SharedPdfRichTextController(
         if (globalEnd < currentGlobal.length) {
             builder.append(currentGlobal.subSequence(globalEnd, currentGlobal.length))
         }
-        val newGlobalAnnotated = builder.toAnnotatedString()
-        val localSelectionStart = (localTextFieldValue.selection.start - 1).coerceAtLeast(0)
-        val newGlobalCursorPos = globalStart + localSelectionStart
+        val newGlobalAnnotated: AnnotatedString
+        val newGlobalCursorPos: Int
+        run {
+            val (normalized, paragraphShifts) = withNormalizedSyncedParagraphs(builder.toAnnotatedString())
+            newGlobalAnnotated = normalized
+            val localSelectionStart = (localTextFieldValue.selection.start - 1).coerceAtLeast(0)
+            newGlobalCursorPos = adjustRichOffset(globalStart + localSelectionStart, paragraphShifts)
+                .coerceIn(0, newGlobalAnnotated.length)
+        }
         SharedPdfRichTextLog.d(
             "controller.syncLocalToGlobal page=$activePageIndex global=$globalStart..$globalEnd " +
                 "localEditableLen=${localEditableText.length} restoredBreak=$shouldPreservePageBreak " +
@@ -1282,9 +1630,16 @@ class SharedPdfRichTextController(
         if (globalEnd < currentGlobal.length) {
             builder.append(currentGlobal.subSequence(globalEnd, currentGlobal.length))
         }
-        val newGlobalAnnotated = builder.toAnnotatedString()
-        val localSelectionStart = (localTextFieldValue.selection.start - 1).coerceAtLeast(0)
-        val newGlobalCursorPos = (globalStart + localSelectionStart).coerceIn(0, newGlobalAnnotated.length)
+        val newGlobalAnnotated: AnnotatedString
+        val newGlobalCursorPos: Int
+        run {
+            val (normalized, paragraphShifts) = withNormalizedSyncedParagraphs(builder.toAnnotatedString())
+            newGlobalAnnotated = normalized
+            val localSelectionStart = (localTextFieldValue.selection.start - 1).coerceAtLeast(0)
+            newGlobalCursorPos =
+                adjustRichOffset(globalStart + localSelectionStart, paragraphShifts)
+                    .coerceIn(0, newGlobalAnnotated.length)
+        }
         SharedPdfRichTextLog.d(
             "controller.performSync page=$pageIdx checkCursor=$checkCursorMove global=$globalStart..$globalEnd " +
                 "localEditableLen=${localEditableAnnotated.length} restoredBreak=$shouldPreservePageBreak " +
@@ -1387,6 +1742,8 @@ class SharedPdfRichTextController(
         SharedPdfRichTextLog.d(
             "controller.injectNewlines done newLen=${next.length} newCursor=$newCursor preview=\"${next.text.richPreview()}\""
         )
+        // Trailing padding never inherits lists (stays plain paragraphs).
+        suppressListInheritOnce = true
         onValueChanged(localTextFieldValue)
     }
 
@@ -1694,7 +2051,6 @@ internal fun AnnotatedString.withScaledSharedPdfRichFontSizes(scale: Float): Ann
         builder.addStyle(range.item, range.start, range.end)
     }
     getStringAnnotations(
-        tag = SHARED_PDF_RICH_FONT_PATH_TAG,
         start = 0,
         end = length
     ).forEach { annotation ->
@@ -1734,7 +2090,6 @@ internal fun AnnotatedString.withSanitizedSharedPdfRichFontSizes(pageHeightPx: F
         builder.addStyle(range.item, range.start, range.end)
     }
     getStringAnnotations(
-        tag = SHARED_PDF_RICH_FONT_PATH_TAG,
         start = 0,
         end = length
     ).forEach { annotation ->

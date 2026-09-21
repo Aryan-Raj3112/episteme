@@ -1350,6 +1350,12 @@
     <string name="content_desc_underline">Underline</string>
     <string name="content_desc_strikethrough">Strikethrough</string>
     <string name="content_desc_insert_text_box">Insert Text Box</string>
+    <string name="content_desc_numbered_list">Numbered list</string>
+    <string name="content_desc_bulleted_list">Bulleted list</string>
+    <string name="content_desc_text_alignment">Text alignment</string>
+    <string name="content_desc_align_left">Align left</string>
+    <string name="content_desc_align_center">Align center</string>
+    <string name="content_desc_align_right">Align right</string>
 
     <!-- PdfPageComposable -->
     <!-- OCR = Optical Character Recognition. %1$s = error reason string. Example: "OCR selection error: No text detected". -->

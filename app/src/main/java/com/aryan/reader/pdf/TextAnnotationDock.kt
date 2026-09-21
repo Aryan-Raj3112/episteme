@@ -110,6 +110,8 @@ import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.shared.pdf.AndroidPdfTextDockFontSizes
 import com.aryan.reader.shared.pdf.PdfTextDockColorMenuMode as ColorMenuMode
 import com.aryan.reader.shared.pdf.PdfTextDockPopup as ActivePopup
+import com.aryan.reader.shared.pdf.RichParagraphUiState
+import com.aryan.reader.shared.pdf.SharedPdfRichTextAlign
 import com.aryan.reader.shared.pdf.androidPdfTextDockBuiltInFontPath
 import com.aryan.reader.shared.pdf.parsePdfTextDockHexColorOrNull
 import com.aryan.reader.shared.pdf.rememberPdfTextDockState
@@ -119,6 +121,8 @@ import com.aryan.reader.shared.ui.SharedPdfTextDockFormattingButton
 import com.aryan.reader.shared.ui.SharedPdfTextDockPopup
 import com.aryan.reader.shared.ui.SharedPdfTextDockFontPanel
 import com.aryan.reader.shared.ui.SharedPdfTextDockPopupHost
+import com.aryan.reader.shared.ui.SharedPdfTextDockAlignmentPopupContent
+import com.aryan.reader.shared.ui.SharedPdfTextDockParagraphControls
 import com.aryan.reader.shared.ui.SharedPdfTextDockPopupLabels
 import com.aryan.reader.shared.ui.SharedPdfTextDockBar
 import com.aryan.reader.shared.ui.SharedPdfTextDockBarLabels
@@ -146,7 +150,13 @@ fun TextAnnotationDock(
     customFonts: List<CustomFontEntity> = emptyList(),
     onImportFont: (android.net.Uri) -> Unit = {},
     currentFontName: String? = null,
-    onFontSelected: (String, String?) -> Unit = { _, _ -> }
+    onFontSelected: (String, String?) -> Unit = { _, _ -> },
+    // Second-row paragraph controls (lists + alignment). Null hides the row
+    // (legacy text boxes stay on the single-row bar).
+    paragraphState: RichParagraphUiState? = null,
+    onNumberedListClick: () -> Unit = {},
+    onBulletedListClick: () -> Unit = {},
+    onAlignmentSelected: (SharedPdfRichTextAlign) -> Unit = {},
 ) {
     val dockState = rememberPdfTextDockState(onPopupStateChange)
 
@@ -234,6 +244,12 @@ fun TextAnnotationDock(
                 underline = stringResource(R.string.content_desc_underline),
                 strikethrough = stringResource(R.string.content_desc_strikethrough),
                 insertTextBox = stringResource(R.string.content_desc_insert_text_box),
+                numberedList = stringResource(R.string.content_desc_numbered_list),
+                bulletedList = stringResource(R.string.content_desc_bulleted_list),
+                textAlignment = stringResource(R.string.content_desc_text_alignment),
+                alignLeft = stringResource(R.string.content_desc_align_left),
+                alignCenter = stringResource(R.string.content_desc_align_center),
+                alignRight = stringResource(R.string.content_desc_align_right),
             ),
             painters = SharedPdfTextDockBarPainters(
                 fonts = painterResource(R.drawable.fonts),
@@ -243,6 +259,11 @@ fun TextAnnotationDock(
                 underline = painterResource(R.drawable.format_underlined),
                 strikethrough = painterResource(R.drawable.format_strikethrough),
                 textBox = painterResource(R.drawable.text_box),
+                numberedList = painterResource(R.drawable.format_list_numbered),
+                bulletedList = painterResource(R.drawable.list),
+                alignLeft = painterResource(R.drawable.format_align_left),
+                alignCenter = painterResource(R.drawable.format_align_center),
+                alignRight = painterResource(R.drawable.format_align_right),
             ),
             onFontFamilyClick = { dockState.togglePopup(ActivePopup.FONT_FAMILY) },
             onFontSizeClick = { dockState.togglePopup(ActivePopup.FONT_SIZE) },
@@ -267,6 +288,34 @@ fun TextAnnotationDock(
                 onUpdateStyle(currentStyle.copy(textDecoration = next, fontFamily = currentStyle.fontFamily)); onApplyToSelection()
             },
             onInsertTextBox = { Timber.tag("PdfTextBoxDebug").d("Dock: Insert Text Box icon clicked"); onInsertTextBox() },
+            paragraphControls = paragraphState?.let { state ->
+                SharedPdfTextDockParagraphControls(
+                    state = state,
+                    onNumberedListClick = onNumberedListClick,
+                    onBulletedListClick = onBulletedListClick,
+                    onAlignmentClick = { dockState.togglePopup(ActivePopup.ALIGNMENT) },
+                    onAlignmentSelected = { onAlignmentSelected(it); dockState.dismiss() },
+                )
+            },
+            alignmentPopup = {
+                if (dockState.popup == ActivePopup.ALIGNMENT && paragraphState != null) {
+                    DockBubblePopup(onDismissRequest = dockState::dismiss,
+                        offsetY = if (popupsBelowBar) 55.dp else (-55).dp,
+                        alignment = if (popupsBelowBar) Alignment.BottomCenter else Alignment.TopCenter,
+                        focusable = false) {
+                        SharedPdfTextDockAlignmentPopupContent(
+                            selected = paragraphState.alignment,
+                            alignLeftPainter = painterResource(R.drawable.format_align_left),
+                            alignCenterPainter = painterResource(R.drawable.format_align_center),
+                            alignRightPainter = painterResource(R.drawable.format_align_right),
+                            alignLeftDescription = stringResource(R.string.content_desc_align_left),
+                            alignCenterDescription = stringResource(R.string.content_desc_align_center),
+                            alignRightDescription = stringResource(R.string.content_desc_align_right),
+                            onSelected = { onAlignmentSelected(it); dockState.dismiss() },
+                        )
+                    }
+                }
+            },
             textColorIndicator = { color ->
                 Column(horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy((-3).dp, Alignment.CenterVertically)) {

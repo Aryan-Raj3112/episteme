@@ -39,6 +39,9 @@ import com.aryan.reader.shared.pdf.SharedPdfRichTextPaginationEngine
 import com.aryan.reader.shared.pdf.SharedPdfRichTextMapper
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
+import com.aryan.reader.shared.pdf.SharedPdfRichListType
+import com.aryan.reader.shared.pdf.SharedPdfRichTextAlign
+import com.aryan.reader.shared.pdf.RichParagraphUiState
 import com.aryan.reader.shared.pdf.hasRenderableSharedPdfRichText
 import com.aryan.reader.shared.pdf.remapSharedPdfRichTextForLayoutChange
 import com.aryan.reader.shared.pdf.sharedPdfRichTextBlankInsertBreakCount
@@ -305,6 +308,12 @@ class RichTextController(
         fontPath: String? = currentFontPath,
         fontName: String? = currentFontName,
     ) = delegate.updateCurrentStyle(style, fontPath, fontName)
+
+    fun richParagraphUiState(): RichParagraphUiState = delegate.richParagraphUiState()
+
+    fun toggleRichListType(type: SharedPdfRichListType) = delegate.toggleRichListType(type)
+
+    fun setRichParagraphAlignment(align: SharedPdfRichTextAlign) = delegate.setRichParagraphAlignment(align)
 
     fun requestEditingFocus() = delegate.requestEditingFocus()
 

@@ -2606,6 +2606,54 @@ internal fun PdfVerticalReader(
                                 }
                             }
 
+                            // Page rich-text cursor placement (TEXT tool, no box):
+                            // bitmap space == rich-layer space (targetWidth =
+                            // actualBitmapWidthPx), so only the 10%/8% editor
+                            // margins come off. Box taps and out-of-editor taps
+                            // fall through to the normal single-tap behavior.
+                            val onRichTextTapLambda = remember(
+                                isEditMode,
+                                selectedTool,
+                                selectedTextBoxId,
+                                richTextController,
+                                textBoxes
+                            ) {
+                                { tappedIndex: Int, xBitmap: Float, yBitmap: Float, bitmapW: Float, bitmapH: Float ->
+                                    val controller = richTextController
+                                    if (!isEditMode || selectedTool != InkType.TEXT ||
+                                        selectedTextBoxId != null || controller == null
+                                    ) {
+                                        false
+                                    } else if (textBoxes.any { box ->
+                                            box.pageIndex == tappedIndex &&
+                                                xBitmap >= box.relativeBounds.left * bitmapW &&
+                                                xBitmap <= box.relativeBounds.right * bitmapW &&
+                                                yBitmap >= box.relativeBounds.top * bitmapH &&
+                                                yBitmap <= box.relativeBounds.bottom * bitmapH
+                                        }
+                                    ) {
+                                        false
+                                    } else {
+                                        val marginX = bitmapW * 0.1f
+                                        val marginY = bitmapH * 0.08f
+                                        val editorX = xBitmap - marginX
+                                        val editorY = yBitmap - marginY
+                                        if (editorX < 0f || editorY < 0f ||
+                                            editorX > bitmapW - marginX * 2f ||
+                                            editorY > bitmapH - marginY * 2f
+                                        ) {
+                                            false
+                                        } else {
+                                            controller.handleTapOnPage(
+                                                tappedIndex,
+                                                Offset(editorX, editorY)
+                                            )
+                                            true
+                                        }
+                                    }
+                                }
+                            }
+
                             val onTranslateTextLambda = remember(onTranslateText) {
                                 { text: String -> onTranslateText(text) }
                             }
@@ -2701,6 +2749,7 @@ internal fun PdfVerticalReader(
                                     searchResultToHighlight = searchResultForPage,
                                     ocrHoverHighlights = stableOcrHighlightRects,
                                     onSingleTap = onSingleTapLambda,
+                                    onRichTextTap = onRichTextTapLambda,
                                     isProUser = isProUser,
                                     onShowDictionaryUpsellDialog = onShowDictionaryUpsellDialog,
                                     onWordSelectedForAiDefinition = onWordSelectedForAiDefinition,

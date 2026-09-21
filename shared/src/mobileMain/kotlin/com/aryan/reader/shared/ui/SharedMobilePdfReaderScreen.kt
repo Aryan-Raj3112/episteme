@@ -244,6 +244,7 @@ import com.aryan.reader.shared.pdf.pdfTextDockRestingBottomPadding
 import com.aryan.reader.shared.pdf.sharedPdfAnnotationDockTopYPx
 import com.aryan.reader.shared.pdf.shouldShowPdfTextDock
 import com.aryan.reader.shared.pdf.toSharedPdfRichSpanStyle
+import com.aryan.reader.shared.pdf.SharedPdfRichListType
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfBookmark
@@ -3440,6 +3441,22 @@ fun SharedMobilePdfReaderHost(
                                     dragGestureModifier = textDockDragGesture,
                                     popupsBelowBar = textPopupsBelowBar,
                                     onPopupStateChange = { richTextController.showCursorOverride = !it },
+                                    // Paragraph row is flowing-rich-text only;
+                                    // open drafts stay on the single-row bar.
+                                    paragraphState = if (textDraft != null) {
+                                        null
+                                    } else {
+                                        richTextController.richParagraphUiState()
+                                    },
+                                    onNumberedListClick = {
+                                        richTextController.toggleRichListType(SharedPdfRichListType.NUMBERED)
+                                    },
+                                    onBulletedListClick = {
+                                        richTextController.toggleRichListType(SharedPdfRichListType.BULLET)
+                                    },
+                                    onAlignmentSelected = {
+                                        richTextController.setRichParagraphAlignment(it)
+                                    },
                                 )
                             }
                         }

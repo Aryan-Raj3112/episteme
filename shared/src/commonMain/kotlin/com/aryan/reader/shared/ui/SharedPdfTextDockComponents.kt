@@ -129,3 +129,68 @@ fun SharedPdfTextDockFontSizeRow(size: Int, selected: Boolean, onClick: () -> Un
             color = if (selected) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color.White)
     }
 }
+
+/**
+ * Alignment picker content (left / center / right icons in a dark bubble),
+ * rendered by callers inside their popup anchor next to the second dock row.
+ */
+@Composable
+fun SharedPdfTextDockAlignmentPopupContent(
+    selected: com.aryan.reader.shared.pdf.SharedPdfRichTextAlign,
+    alignLeftPainter: androidx.compose.ui.graphics.painter.Painter,
+    alignCenterPainter: androidx.compose.ui.graphics.painter.Painter,
+    alignRightPainter: androidx.compose.ui.graphics.painter.Painter,
+    alignLeftDescription: String,
+    alignCenterDescription: String,
+    alignRightDescription: String,
+    onSelected: (com.aryan.reader.shared.pdf.SharedPdfRichTextAlign) -> Unit,
+) {
+    Surface(shape = RoundedCornerShape(16.dp), color = androidx.compose.ui.graphics.Color(0xFF1E1E1E), shadowElevation = 8.dp) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            SharedPdfTextDockAlignmentOption(
+                selected = selected == com.aryan.reader.shared.pdf.SharedPdfRichTextAlign.LEFT,
+                painter = alignLeftPainter,
+                description = alignLeftDescription,
+                onClick = { onSelected(com.aryan.reader.shared.pdf.SharedPdfRichTextAlign.LEFT) },
+            )
+            SharedPdfTextDockAlignmentOption(
+                selected = selected == com.aryan.reader.shared.pdf.SharedPdfRichTextAlign.CENTER,
+                painter = alignCenterPainter,
+                description = alignCenterDescription,
+                onClick = { onSelected(com.aryan.reader.shared.pdf.SharedPdfRichTextAlign.CENTER) },
+            )
+            SharedPdfTextDockAlignmentOption(
+                selected = selected == com.aryan.reader.shared.pdf.SharedPdfRichTextAlign.RIGHT,
+                painter = alignRightPainter,
+                description = alignRightDescription,
+                onClick = { onSelected(com.aryan.reader.shared.pdf.SharedPdfRichTextAlign.RIGHT) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharedPdfTextDockAlignmentOption(
+    selected: Boolean,
+    painter: androidx.compose.ui.graphics.painter.Painter,
+    description: String,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
+            .background(
+                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = .25f)
+                else androidx.compose.ui.graphics.Color.Transparent
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painter,
+            description,
+            tint = if (selected) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color.White,
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
