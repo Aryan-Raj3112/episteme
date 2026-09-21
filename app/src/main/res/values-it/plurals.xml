@@ -136,4 +136,15 @@
         <item quantity="one">Cartelle %1$d</item>
         <item quantity="other">Cartelle %1$d</item>
     </plurals>
+    <!-- Search results count label. %1$d = number of results. Example: "12 risultati".
+         Italian (CLDR): one = risultato, other = risultati. -->
+    <plurals name="unified_library_search_results">
+        <item quantity="one">%1$d risultato</item>
+        <item quantity="other">%1$d risultati</item>
+    </plurals>
+    <!-- Listening-queue item count. %1$d = number of items. Italian (CLDR): elemento/elementi. -->
+    <plurals name="listen_item_count">
+        <item quantity="one">%1$d elemento</item>
+        <item quantity="other">%1$d elementi</item>
+    </plurals>
 </resources>
