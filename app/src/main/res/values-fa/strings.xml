@@ -157,4 +157,13 @@
     <string name="unified_library_grid_view">نمای شبکه‌ای</string>
     <string name="unified_library_list_view">نمای فهرست</string>
     <string name="unified_library_manage_account">حساب کاربری و همگام‌سازی</string>
+    <string name="copy_name">نام کپی</string>
+    <string name="audiobooks_timer_hours">ساعت</string>
+    <string name="audiobooks_timer_minutes">دقیقه</string>
+    <string name="audiobooks_hours_minutes">%1$d ساعت و %2$d دقیقه</string>
+    <string name="audiobooks_hours">%1$d ساعت</string>
+    <string name="audiobooks_title">کتاب‌های صوتی</string>
+    <string name="audiobooks_your_audiobooks">کتاب‌های صوتی شما</string>
+    <string name="audiobooks_sample_preview">پیش‌نمایشی از نحوهٔ نمایش صدای وارد شده</string>
+    <string name="audiobooks_imported_files_desc">پرونده‌های صوتی وارد شده</string>
 </resources>
