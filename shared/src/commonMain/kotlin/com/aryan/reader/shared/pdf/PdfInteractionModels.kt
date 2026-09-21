@@ -32,7 +32,14 @@ enum class PdfInkTool {
     ERASER,
     FOUNTAIN_PEN,
     PENCIL,
-    TEXT
+    TEXT,
+    /**
+     * Selection/edit mode (benchmark: Android `InkType.SELECT`): tap a stroke
+     * to select it, drag to move, handles to scale/rotate, freehand lasso for
+     * multi-select. Never stored on an annotation and never drawn — it only
+     * gates the selection gesture layer + overlay.
+     */
+    SELECT
 }
 
 @Serializable
@@ -346,6 +353,8 @@ object SharedPdfAnnotationDefaults {
             PdfInkTool.HIGHLIGHTER_ROUND -> PdfToolConfig(highlighterPalette[1], 0.035f)
             PdfInkTool.ERASER -> PdfToolConfig(0x00000000, 0.03f)
             PdfInkTool.TEXT -> PdfToolConfig(0xFF000000.toInt(), 0.02f)
+            // SELECT never draws; the fallback keeps setTool() callers safe.
+            PdfInkTool.SELECT -> PdfToolConfig(0xFF000000.toInt(), 0.008f)
         }
     }
 }

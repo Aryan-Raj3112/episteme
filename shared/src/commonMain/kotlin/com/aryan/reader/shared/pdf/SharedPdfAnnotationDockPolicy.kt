@@ -41,7 +41,8 @@ fun isSharedPdfAnnotationDockSticky(
 fun isSharedPdfAnnotationDrawingActive(
     selectedTool: PdfInkTool,
     isDockMinimized: Boolean,
-): Boolean = selectedTool != PdfInkTool.NONE && selectedTool != PdfInkTool.TEXT && !isDockMinimized
+): Boolean = selectedTool != PdfInkTool.NONE && selectedTool != PdfInkTool.TEXT &&
+    selectedTool != PdfInkTool.SELECT && !isDockMinimized
 
 fun isSharedPdfTextDockDrawingActive(
     selectedTool: PdfInkTool,
@@ -66,6 +67,11 @@ fun isSharedPdfAnnotationEraserActive(
     selectedTool: PdfInkTool,
     isMinimized: Boolean,
 ): Boolean = !isMinimized && selectedTool == PdfInkTool.ERASER
+
+fun isSharedPdfAnnotationSelectActive(
+    selectedTool: PdfInkTool,
+    isMinimized: Boolean,
+): Boolean = !isMinimized && selectedTool == PdfInkTool.SELECT
 
 /**
  * Resolves which tool a dock tap should activate, mirroring

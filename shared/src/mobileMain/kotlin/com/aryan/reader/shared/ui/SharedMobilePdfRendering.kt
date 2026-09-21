@@ -191,6 +191,7 @@ import com.aryan.reader.shared.pdf.pdfZoomIndicatorPercent
 import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
 import com.aryan.reader.shared.pdf.visiblePdfPageBounds
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
+import com.aryan.reader.shared.pdf.sharedPdfSelectionUnionBounds
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfTextDraft
 import com.aryan.reader.shared.pdf.SharedPdfTextDragState
@@ -551,6 +552,20 @@ internal fun SharedMobilePdfZoomViewport(
                     if (latestCamera.scale <= 1.05f) animateCameraTo(PdfZoomCamera(), 180)
                 }
             }
+            .pointerInput(Unit) {
+                // Bisection probe L1 (behavior-neutral: observes only, never
+                // consumes): does the touch reach the zoom viewport node?
+                awaitEachGesture {
+                    val down = awaitFirstDown(
+                        requireUnconsumed = false,
+                        pass = PointerEventPass.Initial,
+                    )
+                    pdfInkSelectionLog {
+                        "viewport.probe pos=(${down.position.x.roundToInt()}," +
+                            "${down.position.y.roundToInt()}) consumed=${down.isConsumed}"
+                    }
+                }
+            }
     ) {
         Box(
             Modifier
@@ -561,6 +576,20 @@ internal fun SharedMobilePdfZoomViewport(
                     translationX = camera.offset.x
                     translationY = camera.offset.y
                     transformOrigin = TransformOrigin.Center
+                }
+                .pointerInput(Unit) {
+                    // Bisection probe L2 (behavior-neutral): does the touch
+                    // survive the graphicsLayer transform into the page list?
+                    awaitEachGesture {
+                        val down = awaitFirstDown(
+                            requireUnconsumed = false,
+                            pass = PointerEventPass.Initial,
+                        )
+                        pdfInkSelectionLog {
+                            "layer.probe pos=(${down.position.x.roundToInt()}," +
+                                "${down.position.y.roundToInt()}) consumed=${down.isConsumed}"
+                        }
+                    }
                 }
         ) {
             content(camera)
@@ -721,7 +750,17 @@ internal fun SharedMobilePdfVerticalPages(
     modifier: Modifier = Modifier,
     eraserStrokeWidth: Float = SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER).strokeWidth,
     onInkStrokeStart: (Int) -> Boolean = { false },
-    onEraseAnnotations: (Int, Set<String>) -> Unit = { _, _ -> }
+    onEraseAnnotations: (Int, Set<String>) -> Unit = { _, _ -> },
+    /**
+     * SELECT-tool host forwarded to every page surface (null when inactive).
+     */
+    selectionHost: SharedPdfInkSelectionPageHost? = null,
+    /**
+     * Page surface window rects keyed by PDF page index (powers the floating
+     * selection edit-bar anchor). Separate from the display-keyed text-drag
+     * map because blank pages shift display indices.
+     */
+    onPageSurfaceWindowRectChanged: (Int, Rect) -> Unit = { _, _ -> },
 ) {
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = state.pageIndex.coerceIn(0, pageCount - 1))
     val scope = rememberCoroutineScope()
@@ -891,6 +930,8 @@ internal fun SharedMobilePdfVerticalPages(
                             onEraseAnnotations = onEraseAnnotations,
                             isActiveStrokeOwner = activeStrokeOwnerPdfPage == null || activeStrokeOwnerPdfPage == pdfPage,
                             onInkStrokeEnd = onInkStrokeEnd,
+                            selectionHost = selectionHost,
+                            onSurfaceWindowRectChanged = { rect -> onPageSurfaceWindowRectChanged(pdfPage, rect) },
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -1066,7 +1107,16 @@ internal fun SharedMobilePdfPaginatedPages(
     modifier: Modifier = Modifier,
     eraserStrokeWidth: Float = SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER).strokeWidth,
     onInkStrokeStart: (Int) -> Boolean = { false },
-    onEraseAnnotations: (Int, Set<String>) -> Unit = { _, _ -> }
+    onEraseAnnotations: (Int, Set<String>) -> Unit = { _, _ -> },
+    /**
+     * SELECT-tool host forwarded to every page surface (null when inactive).
+     */
+    selectionHost: SharedPdfInkSelectionPageHost? = null,
+    /**
+     * Page surface window rects keyed by PDF page index (powers the floating
+     * selection edit-bar anchor).
+     */
+    onPageSurfaceWindowRectChanged: (Int, Rect) -> Unit = { _, _ -> },
 ) {
     val scope = rememberCoroutineScope()
     var paginationViewportSize by remember(book.id) { mutableStateOf(IntSize.Zero) }
@@ -1404,7 +1454,6 @@ internal fun SharedMobilePdfPaginatedPages(
                                     onTextDragCancel = ::cancelTextDrag,
                                     isTextDraftDragging = textDrag?.draftId == textDraft?.id,
                                     containerWindowRect = pagerWindowRect,
-                                    onSurfaceWindowRectChanged = { rect -> pageSurfaceWindowRects[displayPage] = rect },
                                     onExternalLink = onExternalLink,
                                     onInternalLink = onInternalLink,
                                     onExistingHighlightTap = onExistingHighlightTap,
@@ -1422,6 +1471,11 @@ internal fun SharedMobilePdfPaginatedPages(
                                     onEraseAnnotations = onEraseAnnotations,
                                     isActiveStrokeOwner = activeStrokeOwnerPdfPage == null || activeStrokeOwnerPdfPage == pdfPage,
                                     onInkStrokeEnd = onInkStrokeEnd,
+                                    selectionHost = selectionHost,
+                                    onSurfaceWindowRectChanged = { rect ->
+                                        pageSurfaceWindowRects[displayPage] = rect
+                                        onPageSurfaceWindowRectChanged(pdfPage, rect)
+                                    },
                                     modifier = Modifier.size(fittedWidth, fittedHeight).then(turnSheetModifier)
                                 )
                             }
@@ -2203,6 +2257,14 @@ internal fun SharedMobilePdfPageSurface(
     onInkStrokeStart: (Int) -> Boolean = { false },
     onEraseAnnotations: (Int, Set<String>) -> Unit = { _, _ -> },
     /**
+     * SELECT-tool host (benchmark: Android `PdfVerticalReader` selection
+     * wiring). Null when selection UI is inactive. Carries the selection,
+     * live transform preview and all selection callbacks; the gesture
+     * detector reads it through updated-state so in-flight gestures survive
+     * the recompositions caused by live previews.
+     */
+    selectionHost: SharedPdfInkSelectionPageHost? = null,
+    /**
      * True when this page may append to [activeStroke]: no stroke is in
      * flight anywhere, or this page owns it. Like Android's single
      * drawingState, one stroke runs at a time, but it may start on ANY
@@ -2229,6 +2291,15 @@ internal fun SharedMobilePdfPageSurface(
     val latestOnEraseAnnotations by rememberUpdatedState(onEraseAnnotations)
     val latestIsActiveStrokeOwner by rememberUpdatedState(isActiveStrokeOwner)
     val latestOnInkStrokeEnd by rememberUpdatedState(onInkStrokeEnd)
+    val latestSelectionHost by rememberUpdatedState(selectionHost)
+    // Live transform preview overlaid on the stored annotations (same ids,
+    // moved points). Only the selection page renders previews; everywhere
+    // else the map lookup misses and base annotations show.
+    val selectionPreviewById = selectionHost?.previewById.orEmpty()
+    val effectiveAnnotations = remember(annotations, selectionPreviewById) {
+        if (selectionPreviewById.isEmpty()) annotations
+        else annotations.map { selectionPreviewById[it.id] ?: it }
+    }
     var visiblePageBounds by remember(pageIndex) { mutableStateOf<PdfPageBounds?>(null) }
     val textSession = rememberPdfTextPageSession(book, pageIndex, pdfPassword)
     var allTextHighlightBounds by remember(pageIndex) { mutableStateOf<List<PdfPageBounds>>(emptyList()) }
@@ -2280,13 +2351,30 @@ internal fun SharedMobilePdfPageSurface(
     )
     val pageColorFilter = sharedMobilePdfColorFilter(activeTheme, reverseColorMode)
         .takeUnless { pageRender.rasterizedReverseColorMode != null }
+    // Install probe (behavior-neutral, fires once per page/tool/canvas key
+    // change): proves whether the SELECT gesture block below is mounted for
+    // this page. If these lines are absent while SELECT is active, the block
+    // is never installed (tool/host/wiring) — no page.* log can ever follow.
+    if (selectedTool == PdfInkTool.SELECT && selectionHost != null) {
+        LaunchedEffect(pageIndex, localCanvasSize, isStylusOnlyMode) {
+            pdfInkSelectionLog {
+                "page.selectMount page=$pageIndex canvas=${localCanvasSize.width}x${localCanvasSize.height}"
+            }
+        }
+    }
+    // Box wrapper: the selection canvas below mounts as an unclipped sibling
+    // so the box/handles/lasso stay visible past the page edge (benchmark:
+    // Android's unclipped overlay), while the page content keeps its clip.
+    Box(
+        modifier = modifier.aspectRatio(pageRender.aspectRatio)
+    ) {
     Surface(
         color = sharedMobilePdfPageBackground(activeTheme),
         contentColor = sharedMobilePdfPageTextColor(activeTheme),
         shape = RoundedCornerShape(2.dp),
         shadowElevation = 4.dp,
-        modifier = modifier
-            .aspectRatio(pageRender.aspectRatio)
+        modifier = Modifier
+            .fillMaxSize()
             .clipToBounds()
             .onSizeChanged {
                 localCanvasSize = it
@@ -2310,7 +2398,9 @@ internal fun SharedMobilePdfPageSurface(
                 )
             }
             .then(
-                if (selectedTool == PdfInkTool.NONE) Modifier
+                // SELECT never draws (benchmark: `canDraw` excludes SELECT);
+                // its own gesture block below owns the finger instead.
+                if (selectedTool == PdfInkTool.NONE || selectedTool == PdfInkTool.SELECT) Modifier
                 else Modifier.pointerInput(selectedTool, localCanvasSize, pageIndex, isStylusOnlyMode) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -2491,6 +2581,91 @@ internal fun SharedMobilePdfPageSurface(
                 }
             )
             .then(
+                // SELECT gesture stream (benchmark:
+                // `detectPdfInkSelectionGestures`): tap-to-select,
+                // drag-to-move, box-interior move, freeform lasso. Handles
+                // are owned by the screen-level overlay (document-level like
+                // Android), which consumes handle grabs in the Initial pass —
+                // this Main-pass block only sees unclaimed downs. Keyed on
+                // tool / canvas / page (NOT on the host) so an in-flight
+                // gesture survives live-preview recompositions; updated-state
+                // reads keep the gesture calling the current handlers.
+                if (selectedTool != PdfInkTool.SELECT || selectionHost == null) Modifier
+                else Modifier
+                    .pointerInput(pageIndex, localCanvasSize, isStylusOnlyMode) {
+                        // Down-arrival probe (behavior-neutral: Initial pass,
+                        // requireUnconsumed=false, never consumes). Logs every
+                        // down reaching this page node and whether it arrived
+                        // already consumed upstream. If this fires with
+                        // consumed=false but page.down never follows, event
+                        // dispatch itself is broken; if consumed=true, a rival
+                        // above the page ate it; if it never fires, the touch
+                        // never reaches the page node (hit-test/structure).
+                        awaitEachGesture {
+                            val down = awaitFirstDown(
+                                requireUnconsumed = false,
+                                pass = PointerEventPass.Initial,
+                            )
+                            pdfInkSelectionLog {
+                                "page.probe page=$pageIndex pos=(${down.position.x.roundToInt()}," +
+                                    "${down.position.y.roundToInt()}) consumed=${down.isConsumed}"
+                            }
+                        }
+                    }
+                    .pointerInput(pageIndex, localCanvasSize, isStylusOnlyMode) {
+                    detectSharedPdfInkSelectionGestures(
+                        pageIndex = pageIndex,
+                        pageSizePx = localCanvasSize,
+                        pageAspectRatio = pageRender.aspectRatio,
+                        touchSlopPx = viewConfiguration.touchSlop,
+                        isStylusOnlyMode = isStylusOnlyMode,
+                        zoomProvider = { zoomCamera.scale },
+                        handleTransformInFlightProvider = { latestSelectionHost?.isHandleTransformInFlight == true },
+                        overlayOwnsPageProvider = { latestSelectionHost?.overlayOwnedPageIndex == pageIndex },
+                        annotationsProvider = {                            val host = latestSelectionHost
+                            val preview = host?.previewById.orEmpty()
+                            val base = if (preview.isEmpty()) effectiveAnnotations
+                            else annotations.map { preview[it.id] ?: it }
+                            base.filter { it.pageIndex == pageIndex && it.kind == PdfAnnotationKind.INK }
+                        },
+                        selectionBoundsProvider = {
+                            val host = latestSelectionHost
+                            val sel = host?.selection
+                            if (host == null || sel == null || sel.pageIndex != pageIndex || sel.isEmpty) {
+                                null
+                            } else {
+                                val preview = host.previewById
+                                val base = if (preview.isEmpty()) effectiveAnnotations
+                                else annotations.map { preview[it.id] ?: it }
+                                sharedPdfSelectionUnionBounds(
+                                    base.filter { it.pageIndex == pageIndex && it.id in sel.selectedIds }
+                                )
+                            }
+                        },
+                        onTapResult = { tappedPage, annotationId ->
+                            latestSelectionHost?.onTap?.invoke(tappedPage, annotationId)
+                        },
+                        onLassoResult = { lassoPage, annotationIds ->
+                            latestSelectionHost?.onLasso?.invoke(lassoPage, annotationIds)
+                        },
+                        onLassoProgress = { trail ->
+                            latestSelectionHost?.onLassoProgress?.invoke(pageIndex, trail)
+                        },
+                        onTransformStart = { transformPage ->
+                            onSelectionDragActiveChange(true)
+                            latestSelectionHost?.onTransformStart?.invoke(transformPage)
+                        },
+                        onTransformUpdate = { transformPage, transform, aspectRatio ->
+                            latestSelectionHost?.onTransformUpdate?.invoke(transformPage, transform, aspectRatio)
+                        },
+                        onTransformEnd = { commit ->
+                            onSelectionDragActiveChange(false)
+                            latestSelectionHost?.onTransformEnd?.invoke(commit)
+                        },
+                    )
+                }
+            )
+            .then(
                 if (selectedTool == PdfInkTool.TEXT) {
                     Modifier.pointerInput(
                         pageIndex,
@@ -2624,7 +2799,7 @@ internal fun SharedMobilePdfPageSurface(
                 )
             }
             SharedPdfAnnotationOverlay(
-                annotations = annotations,
+                annotations = effectiveAnnotations,
                 // The gesture always mutates the shared list object (captured
                 // at composition time), but only the owning page previews it:
                 // a non-empty list always implies an owner, so this shows the
@@ -2705,6 +2880,34 @@ internal fun SharedMobilePdfPageSurface(
                 )
             }
         }
+        // Selection overlay: box + handles + lasso in page px (the same space
+        // the gestures use), mounted unclipped past the page edge. Canvas
+        // never consumes input; the SELECT pointerInput above owns touches.
+        val selectHost = selectionHost
+        if (selectedTool == PdfInkTool.SELECT && selectHost != null &&
+            localCanvasSize.width > 0 && localCanvasSize.height > 0
+        ) {
+            val selectOnPage = selectHost.selection.pageIndex == pageIndex && !selectHost.selection.isEmpty
+            SharedPdfInkSelectionCanvas(
+                selectedAnnotations = if (selectOnPage) {
+                    selectHost.selection.selectedIds.mapNotNull { id ->
+                        selectHost.previewById[id] ?: effectiveAnnotations.firstOrNull { it.id == id }
+                    }
+                } else {
+                    emptyList()
+                },
+                pageSizePx = localCanvasSize,
+                lassoPagePoints = if (selectHost.lassoPageIndex == pageIndex) {
+                    selectHost.lassoTrail
+                } else {
+                    emptyList()
+                },
+                zoom = zoomCamera.scale,
+                activeRotationDegrees = if (selectOnPage) selectHost.activeRotationDegrees else null,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
     }
 }
 

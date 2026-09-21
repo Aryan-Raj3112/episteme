@@ -462,7 +462,10 @@ internal object PdfiumAnnotationExporter {
             PdfInkTool.TEXT -> InkType.TEXT.ordinal
             PdfInkTool.ERASER -> InkType.ERASER.ordinal
             PdfInkTool.NONE,
-            PdfInkTool.PEN -> InkType.PEN.ordinal
+            PdfInkTool.PEN,
+            // SELECT is a mode, never stored on an annotation; same fallback
+            // as the reverse mapping (InkType.SELECT -> PEN) above.
+            PdfInkTool.SELECT -> InkType.PEN.ordinal
         }
     }
 
