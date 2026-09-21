@@ -1121,7 +1121,7 @@ private fun SharedPdfSettingsToolItem(
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun SharedPdfStyledPropertySlider(
+internal fun SharedPdfStyledPropertySlider(
     value: Float,
     onValueChange: (Float) -> Unit,
     valueRange: ClosedFloatingPointRange<Float>,

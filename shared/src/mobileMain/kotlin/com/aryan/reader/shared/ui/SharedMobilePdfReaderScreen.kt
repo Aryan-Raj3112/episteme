@@ -2805,12 +2805,31 @@ fun SharedMobilePdfReaderHost(
                 ) {
                     val barThickness = selectionEditState.thickness
                     if (barThickness != null) {
+                        val styleHasHighlighter = remember(selectionEditState.selected) {
+                            selectionEditState.selected.any {
+                                it.tool == PdfInkTool.HIGHLIGHTER || it.tool == PdfInkTool.HIGHLIGHTER_ROUND
+                            }
+                        }
+                        val stylePalette = remember(
+                            styleHasHighlighter,
+                            readerState.penPalette,
+                            readerState.highlighterPalette,
+                        ) {
+                            if (styleHasHighlighter) readerState.highlighterPalette else readerState.penPalette
+                        }
                         SharedPdfInkSelectionEditBar(
                             selectionWindowRect = selectionBarRect,
                             containerSizePx = readerContainerSize,
                             selectedColor = selectionEditState.color,
+                            selectionPalette = stylePalette,
+                            onPaletteChange = { next ->
+                                if (styleHasHighlighter) {
+                                    dispatch(SharedPdfReaderAction.HighlighterPaletteChanged(next))
+                                } else {
+                                    dispatch(SharedPdfReaderAction.PenPaletteChanged(next))
+                                }
+                            },
                             onColorLive = ::selectionColorLive,
-                            onColorCommitted = { selectionStyleCommit() },
                             onColorReverted = ::revertSelectionStyle,
                             thickness = barThickness,
                             thicknessRange = selectionEditState.thicknessRange,
@@ -2821,7 +2840,6 @@ fun SharedMobilePdfReaderHost(
                             canDuplicate = true,
                             onDuplicate = ::duplicateInkSelection,
                             onDelete = ::deleteInkSelection,
-                            onClose = ::clearInkSelection,
                         )
                     }
                 }

@@ -352,13 +352,16 @@ internal fun PdfVerticalReader(
     onSelectionTransformEnd: (commit: Boolean) -> Unit = {},
     onSelectionDelete: () -> Unit = {},
     onSelectionDuplicate: () -> Unit = {},
-    onSelectionColor: (androidx.compose.ui.graphics.Color) -> Unit = {},
+    onSelectionColorLive: (androidx.compose.ui.graphics.Color) -> Unit = {},
+    onSelectionStyleReverted: () -> Unit = {},
+    onSelectionPaletteChange: (List<androidx.compose.ui.graphics.Color>) -> Unit = {},
     onSelectionThickness: (Float) -> Unit = {},
     onSelectionThicknessFinished: () -> Unit = {},
     onSelectionClear: () -> Unit = {},
     selectionEditColor: androidx.compose.ui.graphics.Color? = null,
     selectionEditThickness: Float = 0.008f,
     selectionThicknessRange: ClosedFloatingPointRange<Float> = 0.001f..0.015f,
+    selectionPalette: List<androidx.compose.ui.graphics.Color> = emptyList(),
 ) {
     DisposableEffect(state) {
         onDispose {
@@ -1569,7 +1572,7 @@ internal fun PdfVerticalReader(
                     layoutInfo = layoutInfo,
                     cameraProvider = { PdfSelectionCamera(cameraZoom, cameraPanX, cameraPanY) },
                     touchSlopPx = viewConfiguration.touchSlop,
-                    handleSlopPx = with(density) { 28.dp.toPx() },
+                    handleSlopPx = with(density) { 20.dp.toPx() },
                     isStylusOnlyMode = isStylusOnlyMode,
                     selection = inkSelection,
                     annotationsProvider = { pageIndex ->
@@ -3362,7 +3365,10 @@ internal fun PdfVerticalReader(
                 Box(modifier = Modifier.fillMaxSize()) {
                     PdfInkSelectionEditBar(
                         selectedColor = selectionEditColor,
-                        onColorSelected = onSelectionColor,
+                        selectionPalette = selectionPalette,
+                        onPaletteChange = onSelectionPaletteChange,
+                        onColorLive = onSelectionColorLive,
+                        onColorReverted = onSelectionStyleReverted,
                         thickness = selectionEditThickness,
                         thicknessRange = selectionThicknessRange,
                         onThicknessChange = onSelectionThickness,
@@ -3370,7 +3376,6 @@ internal fun PdfVerticalReader(
                         canDuplicate = editSelected.isNotEmpty(),
                         onDuplicate = onSelectionDuplicate,
                         onDelete = onSelectionDelete,
-                        onClose = onSelectionClear,
                         modifier = Modifier
                             .align(Alignment.TopCenter)
                             .onSizeChanged { editBarSizePx = it }

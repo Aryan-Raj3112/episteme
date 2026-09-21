@@ -4533,7 +4533,16 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                 )
             }
         }) {
-        PdfViewerReaderSurface(surfaceState)
+        PdfViewerReaderSurface(
+            surfaceState,
+            onSelectionPaletteChanged = { palette, isHighlighter ->
+                if (isHighlighter) {
+                    surfaceState.annotationSettingsRepo.updateHighlighterPalette(palette)
+                } else {
+                    surfaceState.annotationSettingsRepo.updatePenPalette(palette)
+                }
+            },
+        )
     }
 
     // Keep the long-lived reader state above separate from transient overlays.
@@ -6941,10 +6950,12 @@ private class PdfViewerSuspendPageAction(
 private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewerSurfaceContent(
     surfaceState: PdfViewerSurfaceState,
     stylusButtonHovering: Boolean,
+    onSelectionPaletteChanged: (palette: List<Color>, isHighlighter: Boolean) -> Unit = { _, _ -> },
 ) {
     PdfViewerDocumentViewport(
         surfaceState = surfaceState,
         stylusButtonHovering = stylusButtonHovering,
+        onSelectionPaletteChanged = onSelectionPaletteChanged,
     )
     PdfViewerChromeSurface(surfaceState = surfaceState)
 }
@@ -6953,6 +6964,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
 private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewerDocumentViewport(
     surfaceState: PdfViewerSurfaceState,
     stylusButtonHovering: Boolean,
+    onSelectionPaletteChanged: (palette: List<Color>, isHighlighter: Boolean) -> Unit = { _, _ -> },
 ) {
     val richTextController = surfaceState.richTextController
     val selectedTool = surfaceState.selectedTool.value
@@ -7468,12 +7480,24 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                             }
                         }
 
-                        val onSelectionColor = { color: androidx.compose.ui.graphics.Color ->
+                        val onSelectionStyleReverted = {
+                            val snapshot = selectionStyleSnapshot
+                            selectionStyleSnapshot = null
                             val page = inkSelection.pageIndex
-                            val selected = currentSelectedAnnotations()
-                            if (page != null && selected.isNotEmpty()) {
-                                val before = (allAnnotations[page] ?: emptyList()).toList()
-                                val next = before.map { annotation ->
+                            if (snapshot != null && page != null) {
+                                allAnnotations = allAnnotations + (page to snapshot)
+                            }
+                        }
+
+                        val onSelectionColorLive = { color: androidx.compose.ui.graphics.Color ->
+                            val page = inkSelection.pageIndex
+                            if (page != null && !inkSelection.isEmpty) {
+                                if (selectionStyleSnapshot == null) {
+                                    selectionStyleSnapshot =
+                                        (allAnnotations[page] ?: emptyList()).toList()
+                                }
+                                val current = allAnnotations[page] ?: emptyList()
+                                allAnnotations = allAnnotations + (page to current.map { annotation ->
                                     if (annotation.id !in inkSelection.selectedIds) return@map annotation
                                     val keepAlpha = annotation.inkType == InkType.HIGHLIGHTER ||
                                         annotation.inkType == InkType.HIGHLIGHTER_ROUND
@@ -7484,20 +7508,16 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                             color
                                         }
                                     )
-                                }
-                                if (next != before) {
-                                    allAnnotations = allAnnotations + (page to next)
-                                    undoStack.add(
-                                        HistoryAction.StyleChange(page, before, next)
-                                    )
-                                    redoStack.clear()
-                                    persistInkAnnotationsNow(
-                                        allAnnotations,
-                                        emptyList(),
-                                        "selection_style"
-                                    )
-                                }
+                                })
                             }
+                        }
+
+                        val onSelectionPaletteChange = { newPalette: List<Color> ->
+                            val hasHighlighter = currentSelectedAnnotations().any {
+                                it.inkType == InkType.HIGHLIGHTER ||
+                                    it.inkType == InkType.HIGHLIGHTER_ROUND
+                            }
+                            onSelectionPaletteChanged(newPalette, hasHighlighter)
                         }
 
                         val onSelectionThickness = { thickness: Float ->
@@ -7731,12 +7751,19 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 onSelectionTransformEnd = onSelectionTransformEnd,
                                 onSelectionDelete = onSelectionDelete,
                                 onSelectionDuplicate = onSelectionDuplicate,
-                                onSelectionColor = onSelectionColor,
+                                onSelectionColorLive = onSelectionColorLive,
+                                onSelectionStyleReverted = onSelectionStyleReverted,
+                                onSelectionPaletteChange = onSelectionPaletteChange,
                                 onSelectionThickness = onSelectionThickness,
                                 onSelectionThicknessFinished = onSelectionThicknessFinished,
                                 onSelectionClear = onSelectionClear,
                                 selectionEditColor = selectionEditState.first,
                                 selectionEditThickness = selectionEditState.second,
+                                selectionPalette = if (selectionEditState.third) {
+                                    surfaceState.highlighterPalette
+                                } else {
+                                    surfaceState.penPalette
+                                },
                                 selectionThicknessRange = if (selectionEditState.third) {
                                     0.01f..0.06f
                                 } else {
@@ -11442,7 +11469,10 @@ private fun PdfViewerPaginationPage(
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @Composable
-private fun PdfViewerReaderSurface(surfaceState: PdfViewerSurfaceState) {
+private fun PdfViewerReaderSurface(
+    surfaceState: PdfViewerSurfaceState,
+    onSelectionPaletteChanged: (palette: List<Color>, isHighlighter: Boolean) -> Unit = { _, _ -> },
+) {
     SharedMobileReaderScaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { _ ->
@@ -11480,6 +11510,7 @@ private fun PdfViewerReaderSurface(surfaceState: PdfViewerSurfaceState) {
                 PdfViewerSurfaceContent(
                     surfaceState = surfaceState,
                     stylusButtonHovering = stylusButtonHoveringState.value,
+                    onSelectionPaletteChanged = onSelectionPaletteChanged,
                 )
             }
     }

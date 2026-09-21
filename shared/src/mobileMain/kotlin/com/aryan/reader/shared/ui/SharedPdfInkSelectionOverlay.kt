@@ -5,20 +5,22 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,6 +41,8 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
@@ -51,6 +55,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -249,21 +254,22 @@ private fun DrawScope.drawSharedRotationDegreePill(
 }
 
 /**
- * Floating edit bar anchored near the selection (benchmark: Android
- * `PdfInkSelectionEditBar`): HSV color entry (opens the spectrum picker
- * directly), a compact thickness slider with a numeric readout, and
- * copy (duplicate-in-place) / delete / clear actions. Rendered outside the
- * zoom transform; [selectionWindowRect] positions it below the selection
- * (above when there is no room), fully clamped into [containerSizePx].
+ * Floating selection menu anchored near the selection: Duplicate / Delete /
+ * Change style, no icons. "Change style" swaps the menu for an inline style
+ * panel (same anchor): ink-settings slider + palette with live preview and
+ * slim Cancel | Done. The spectrum edits the selected palette slot, like the
+ * ink settings popup — no new circles are created. Rendered outside the zoom
+ * transform; [selectionWindowRect] positions it below the selection (above
+ * when there is no room), fully clamped into [containerSizePx].
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun SharedPdfInkSelectionEditBar(
     selectionWindowRect: Rect,
     containerSizePx: IntSize,
     selectedColor: Color?,
+    selectionPalette: List<Int>,
+    onPaletteChange: (List<Int>) -> Unit,
     onColorLive: (Color) -> Unit,
-    onColorCommitted: (Color) -> Unit,
     onColorReverted: () -> Unit,
     thickness: Float,
     thicknessRange: ClosedFloatingPointRange<Float>,
@@ -272,13 +278,9 @@ internal fun SharedPdfInkSelectionEditBar(
     canDuplicate: Boolean,
     onDuplicate: () -> Unit,
     onDelete: () -> Unit,
-    onClose: () -> Unit,
     topInsetPx: Float = 0f,
 ) {
-    var showSpectrum by remember { mutableStateOf(false) }
-    // Dismissing the spectrum without saving reverts the live preview; the
-    // flag tells dismiss apart from the save path (which hides first).
-    var spectrumCommitted by remember { mutableStateOf(false) }
+    var showStylePanel by remember { mutableStateOf(false) }
     var barSizePx by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
     val marginPx = remember(density) { with(density) { 8.dp.toPx() } }
@@ -306,150 +308,233 @@ internal fun SharedPdfInkSelectionEditBar(
                 .offset { offset }
                 .onSizeChanged { barSizePx = it },
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                // Single HSV entry: rainbow ring around the current color.
-                // Opens the spectrum picker directly, no palette dots.
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .clickable {
-                            spectrumCommitted = false
-                            showSpectrum = true
-                        }
-                        .semantics { contentDescription = "Pick selection color" },
-                    contentAlignment = Alignment.Center,
+            if (!showStylePanel) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(26.dp)
-                            .clip(CircleShape)
-                            .background(
-                                Brush.sweepGradient(
-                                    listOf(
-                                        Color.Red,
-                                        Color.Magenta,
-                                        Color.Blue,
-                                        Color.Cyan,
-                                        Color.Green,
-                                        Color.Yellow,
-                                        Color.Red,
-                                    )
-                                )
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Canvas(modifier = Modifier.size(14.dp)) {
-                            drawCircle(color = selectedColor ?: Color.Black)
-                        }
-                    }
+                    SelectionMenuTextButton(label = "Duplicate", onClick = onDuplicate, enabled = canDuplicate)
+                    SelectionMenuTextButton(label = "Delete", onClick = onDelete)
+                    SelectionMenuTextButton(label = "Change style", onClick = { showStylePanel = true })
                 }
-                val sizeNumber = remember(thickness, thicknessRange) {
-                    val span = thicknessRange.endInclusive - thicknessRange.start
-                    val fraction = if (span > 0f) {
-                        (thickness - thicknessRange.start) / span
-                    } else {
-                        0f
-                    }
-                    (fraction * 100).roundToInt().coerceIn(1, 100)
-                }
-                Text(
-                    text = sizeNumber.toString(),
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.width(26.dp),
-                )
-                Slider(
-                    value = thickness.coerceIn(thicknessRange.start, thicknessRange.endInclusive),
-                    onValueChange = onThicknessChange,
-                    onValueChangeFinished = onThicknessChangeFinished,
-                    valueRange = thicknessRange,
-                    colors = androidx.compose.material3.SliderDefaults.colors(
-                        thumbColor = Color.White,
-                        activeTrackColor = Color.White.copy(alpha = 0.85f),
-                        inactiveTrackColor = Color.White.copy(alpha = 0.25f),
-                    ),
-                    thumb = {
-                        Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .clip(CircleShape)
-                                .background(Color.White),
-                        )
+            } else {
+                SharedPdfSelectionStylePanel(
+                    selectedColor = selectedColor,
+                    selectionPalette = selectionPalette,
+                    onPaletteChange = onPaletteChange,
+                    thickness = thickness,
+                    thicknessRange = thicknessRange,
+                    onThicknessChange = onThicknessChange,
+                    onPaletteColorPicked = onColorLive,
+                    onCancel = {
+                        onColorReverted()
+                        showStylePanel = false
                     },
-                    modifier = Modifier.width(84.dp),
+                    onDone = {
+                        // One commit for the whole panel: thickness + color
+                        // share the live snapshot/preview, so a single commit
+                        // covers both.
+                        onThicknessChangeFinished()
+                        showStylePanel = false
+                    },
                 )
-                SharedSelectionEditBarButton(
-                    onClick = onDuplicate,
-                    enabled = canDuplicate,
-                    description = "Duplicate selection",
-                ) {
-                    SharedPdfAndroidPathIcon(
-                        pathData = SharedPdfAndroidContentCopyPath,
-                        tint = Color.White,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-                SharedSelectionEditBarButton(onClick = onDelete, description = "Delete selection") {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-                SharedSelectionEditBarButton(onClick = onClose, description = "Clear selection") {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
             }
         }
-    }
-    if (showSpectrum) {
-        val initial = selectedColor ?: Color.Black
-        SharedHsvColorPickerDialog(
-            initialColor = initial,
-            title = readerString("label_spectrum", "Spectrum"),
-            onDismiss = {
-                showSpectrum = false
-                if (!spectrumCommitted) onColorReverted()
-            },
-            onSave = {
-                onColorLive(it)
-                onColorCommitted(it)
-                spectrumCommitted = true
-                showSpectrum = false
-            },
-            onLiveColorChange = onColorLive,
-            stateKey = initial,
-        )
     }
 }
 
 @Composable
-private fun SharedSelectionEditBarButton(
+private fun SelectionMenuTextButton(
+    label: String,
     onClick: () -> Unit,
-    description: String,
     enabled: Boolean = true,
-    content: @Composable () -> Unit,
 ) {
     Box(
         modifier = Modifier
-            .size(36.dp)
-            .clip(CircleShape)
+            .clip(RoundedCornerShape(12.dp))
             .clickable(enabled = enabled, onClick = onClick)
-            .semantics { contentDescription = description },
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
-        content()
+        Text(
+            text = label,
+            color = if (enabled) Color.White else Color.White.copy(alpha = 0.3f),
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+/**
+ * Inline change-style panel replacing the text menu at the same anchor:
+ * ink-settings thickness slider (steppers + value-bubble thumb), palette
+ * row with checkmark + rainbow custom entry, slim Cancel | Done footer. All
+ * edits preview live; [onCancel] reverts, [onDone] commits once. The
+ * spectrum edits the selected palette slot via [onPaletteChange] (like the
+ * ink settings popup); with no circle selected it applies a custom color
+ * live without touching the palette.
+ */
+@Composable
+private fun SharedPdfSelectionStylePanel(
+    selectedColor: Color?,
+    selectionPalette: List<Int>,
+    onPaletteChange: (List<Int>) -> Unit,
+    thickness: Float,
+    thicknessRange: ClosedFloatingPointRange<Float>,
+    onThicknessChange: (Float) -> Unit,
+    onPaletteColorPicked: (Color) -> Unit,
+    onCancel: () -> Unit,
+    onDone: () -> Unit,
+) {
+    var showSpectrum by remember { mutableStateOf(false) }
+    val selectedArgb = selectedColor?.toArgb()
+    val selectedIndex = remember(selectionPalette, selectedArgb) {
+        if (selectedArgb == null) {
+            -1
+        } else {
+            selectionPalette.take(6).indexOfFirst { (it and 0x00FFFFFF) == (selectedArgb and 0x00FFFFFF) }
+        }
+    }
+    Column(modifier = Modifier.width(300.dp).padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    Spacer(Modifier.height(8.dp))
+                    SharedPdfStyledPropertySlider(
+                        value = thickness,
+                        onValueChange = onThicknessChange,
+                        valueRange = thicknessRange,
+                        isOpacity = false,
+                        trackColor = Color(0xFF424242),
+                        thumbColor = Color(0xFF757575),
+                        activeColor = selectedColor ?: Color.White,
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            selectionPalette.take(6).forEachIndexed { index, argb ->
+                                val dotColor = Color(argb).copy(alpha = 1f)
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .background(dotColor)
+                                        .clickable { onPaletteColorPicked(dotColor) }
+                                        .semantics { contentDescription = "Selection color $index" },
+                                ) {
+                                    if (index == selectedIndex) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = if (dotColor.luminance() > 0.5f) Color.Black else Color.White,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        Spacer(Modifier.width(16.dp))
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .height(28.dp)
+                                .background(Color.White.copy(alpha = 0.15f))
+                        )
+                        Spacer(Modifier.width(16.dp))
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    Brush.sweepGradient(
+                                        listOf(
+                                            Color.Red,
+                                            Color.Magenta,
+                                            Color.Blue,
+                                            Color.Cyan,
+                                            Color.Green,
+                                            Color.Yellow,
+                                            Color.Red,
+                                        )
+                                    )
+                                )
+                                .clickable { showSpectrum = true }
+                                .semantics { contentDescription = "Custom selection color" },
+                            content = {},
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable(onClick = onCancel)
+                                .padding(vertical = 8.dp)
+                                .semantics { contentDescription = "Cancel style change" },
+                        ) {
+                            Text(
+                                text = "Cancel",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .height(24.dp)
+                                .background(Color.White.copy(alpha = 0.25f))
+                        )
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable(onClick = onDone)
+                                .padding(vertical = 8.dp)
+                                .semantics { contentDescription = "Apply style change" },
+                        ) {
+                            Text(
+                                text = "Done",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
+                }
+    if (showSpectrum) {
+        SharedHsvColorPickerDialog(
+            initialColor = selectedColor ?: Color.Black,
+            title = readerString("label_spectrum", "Spectrum"),
+            // Slot edit like the ink settings popup: saving rewrites the
+            // selected palette slot (persisted via onPaletteChange) and
+            // applies it; with no circle selected it applies a custom color
+            // live without touching the palette.
+            onDismiss = { showSpectrum = false },
+            onSave = {
+                if (selectedIndex in selectionPalette.indices) {
+                    onPaletteChange(
+                        selectionPalette.toMutableList().also { next -> next[selectedIndex] = it.toArgb() }
+                    )
+                }
+                onPaletteColorPicked(it)
+                showSpectrum = false
+            },
+            stateKey = selectedIndex,
+        )
     }
 }

@@ -647,7 +647,7 @@ private fun PenItem(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun StyledPropertySlider(
+internal fun StyledPropertySlider(
     value: Float,
     onValueChange: (Float) -> Unit,
     valueRange: ClosedFloatingPointRange<Float>, isOpacity: Boolean,
