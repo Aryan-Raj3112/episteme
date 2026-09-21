@@ -1901,4 +1901,10 @@
     <string name="settings_device_status_revoke_failed">Kan het geselecteerde apparaat niet intrekken.</string>
     <string name="settings_device_status_revoked">Apparaat ingetrokken.</string>
     <string name="settings_device_status_unavailable">Apparaatbeheer is niet beschikbaar.</string>
+    <string name="content_desc_numbered_list">Genummerde lijst</string>
+    <string name="content_desc_bulleted_list">Opsomming met tekens</string>
+    <string name="content_desc_text_alignment">Tekstuitlijning</string>
+    <string name="content_desc_align_left">Links uitlijnen</string>
+    <string name="content_desc_align_center">Midden uitlijnen</string>
+    <string name="content_desc_align_right">Rechts uitlijnen</string>
 </resources>

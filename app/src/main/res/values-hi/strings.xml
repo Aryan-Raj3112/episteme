@@ -1900,4 +1900,10 @@
     <string name="unified_library_recent_searches">हाल की खोजें</string>
     <string name="unified_library_clear_recent_searches">हाल की खोजें मिटाएँ</string>
     <string name="unified_library_reading_now">%1$d किताबें पढ़ी जा रही हैं</string>
+    <string name="content_desc_numbered_list">क्रमांकित सूची</string>
+    <string name="content_desc_bulleted_list">बुलेट सूची</string>
+    <string name="content_desc_text_alignment">टेक्स्ट पंक्तिबद्धता</string>
+    <string name="content_desc_align_left">बाईं ओर पंक्तिबद्ध करें</string>
+    <string name="content_desc_align_center">केंद्र में पंक्तिबद्ध करें</string>
+    <string name="content_desc_align_right">दाईं ओर पंक्तिबद्ध करें</string>
 </resources>

@@ -1901,4 +1901,10 @@
     <string name="settings_device_status_revoke_failed">Không thể thu hồi thiết bị đã chọn.</string>
     <string name="settings_device_status_revoked">Đã thu hồi thiết bị.</string>
     <string name="settings_device_status_unavailable">Quản lý thiết bị không khả dụng.</string>
+    <string name="content_desc_numbered_list">Danh sách đánh số</string>
+    <string name="content_desc_bulleted_list">Danh sách dấu đầu dòng</string>
+    <string name="content_desc_text_alignment">Căn chỉnh văn bản</string>
+    <string name="content_desc_align_left">Căn trái</string>
+    <string name="content_desc_align_center">Căn giữa</string>
+    <string name="content_desc_align_right">Căn phải</string>
 </resources>

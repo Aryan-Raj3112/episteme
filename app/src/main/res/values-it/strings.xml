@@ -1901,4 +1901,10 @@
     <string name="settings_device_status_revoke_failed">Impossibile revocare il dispositivo selezionato.</string>
     <string name="settings_device_status_revoked">Dispositivo revocato.</string>
     <string name="settings_device_status_unavailable">La gestione dei dispositivi non è disponibile.</string>
+    <string name="content_desc_numbered_list">Elenco numerato</string>
+    <string name="content_desc_bulleted_list">Elenco puntato</string>
+    <string name="content_desc_text_alignment">Allineamento del testo</string>
+    <string name="content_desc_align_left">Allinea a sinistra</string>
+    <string name="content_desc_align_center">Centra</string>
+    <string name="content_desc_align_right">Allinea a destra</string>
 </resources>

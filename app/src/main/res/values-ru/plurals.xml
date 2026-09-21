@@ -204,4 +204,16 @@
         <item quantity="many">Папки %1$d</item>
         <item quantity="other">Папки %1$d</item>
     </plurals>
+    <plurals name="listen_item_count">
+        <item quantity="one">%1$d элемент</item>
+        <item quantity="few">%1$d элемента</item>
+        <item quantity="many">%1$d элементов</item>
+        <item quantity="other">%1$d элементов</item>
+    </plurals>
+    <plurals name="unified_library_search_results">
+        <item quantity="one">%1$d результат</item>
+        <item quantity="few">%1$d результата</item>
+        <item quantity="many">%1$d результатов</item>
+        <item quantity="other">%1$d результатов</item>
+    </plurals>
 </resources>

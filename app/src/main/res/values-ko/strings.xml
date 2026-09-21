@@ -1901,4 +1901,10 @@
     <string name="settings_device_status_revoke_failed">선택한 기기를 취소하지 못했습니다.</string>
     <string name="settings_device_status_revoked">기기가 취소되었습니다.</string>
     <string name="settings_device_status_unavailable">기기 관리를 사용할 수 없습니다.</string>
+    <string name="content_desc_numbered_list">번호 있는 목록</string>
+    <string name="content_desc_bulleted_list">글머리기호 목록</string>
+    <string name="content_desc_text_alignment">텍스트 정렬</string>
+    <string name="content_desc_align_left">왼쪽 맞춤</string>
+    <string name="content_desc_align_center">가운데 맞춤</string>
+    <string name="content_desc_align_right">오른쪽 맞춤</string>
 </resources>

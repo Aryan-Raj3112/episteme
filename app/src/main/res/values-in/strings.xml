@@ -1903,4 +1903,10 @@ Pengguna Pro mendapat 10 ringkasan gratis per hari.</string>
     <string name="unified_library_recent_searches">Pencarian terbaru</string>
     <string name="unified_library_clear_recent_searches">Hapus pencarian terbaru</string>
     <string name="unified_library_reading_now">%1$d buku sedang dibaca</string>
+    <string name="content_desc_numbered_list">Daftar bernomor</string>
+    <string name="content_desc_bulleted_list">Daftar berpoin</string>
+    <string name="content_desc_text_alignment">Perataan teks</string>
+    <string name="content_desc_align_left">Rata kiri</string>
+    <string name="content_desc_align_center">Rata tengah</string>
+    <string name="content_desc_align_right">Rata kanan</string>
 </resources>

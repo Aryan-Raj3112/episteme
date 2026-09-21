@@ -272,4 +272,26 @@
         <item quantity="many">(%1$d قطع)</item>
         <item quantity="other">(%1$d قطع)</item>
     </plurals>
+    <!-- Search results count label. %1$d = number of results.
+         Arabic (CLDR): zero/one/two/few/many/other — six categories.
+         1 → "1 نتيجة", 2 → "2 نتيجتان", 3-10 → "5 نتائج",
+         11-99 → "12 نتيجة", 0 → "0 نتيجة". Keep all six quantities. -->
+    <plurals name="unified_library_search_results">
+        <item quantity="zero">%1$d نتيجة</item>
+        <item quantity="one">%1$d نتيجة</item>
+        <item quantity="two">%1$d نتيجتان</item>
+        <item quantity="few">%1$d نتائج</item>
+        <item quantity="many">%1$d نتيجة</item>
+        <item quantity="other">%1$d نتيجة</item>
+    </plurals>
+    <!-- Listening-queue item count. %1$d = number of items.
+         Arabic (CLDR): six categories — عنصر / عنصران / عناصر / عنصراً. -->
+    <plurals name="listen_item_count">
+        <item quantity="zero">%1$d عنصر</item>
+        <item quantity="one">%1$d عنصر</item>
+        <item quantity="two">%1$d عنصران</item>
+        <item quantity="few">%1$d عناصر</item>
+        <item quantity="many">%1$d عنصراً</item>
+        <item quantity="other">%1$d عنصراً</item>
+    </plurals>
 </resources>

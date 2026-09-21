@@ -1900,4 +1900,10 @@
     <string name="settings_device_status_revoke_failed">Não foi possível revogar o dispositivo selecionado.</string>
     <string name="settings_device_status_revoked">Dispositivo revogado.</string>
     <string name="settings_device_status_unavailable">O gerenciamento de dispositivos não está disponível.</string>
+    <string name="content_desc_numbered_list">Lista numerada</string>
+    <string name="content_desc_bulleted_list">Lista com marcadores</string>
+    <string name="content_desc_text_alignment">Alinhamento do texto</string>
+    <string name="content_desc_align_left">Alinhar à esquerda</string>
+    <string name="content_desc_align_center">Centralizar</string>
+    <string name="content_desc_align_right">Alinhar à direita</string>
 </resources>

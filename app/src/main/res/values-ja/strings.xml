@@ -1901,4 +1901,10 @@
     <string name="settings_device_status_revoke_failed">選択したデバイスを取り消せませんでした。</string>
     <string name="settings_device_status_revoked">デバイスを取り消しました。</string>
     <string name="settings_device_status_unavailable">デバイス管理を利用できません。</string>
+    <string name="content_desc_numbered_list">番号付きリスト</string>
+    <string name="content_desc_bulleted_list">箇条書き</string>
+    <string name="content_desc_text_alignment">テキストの整列</string>
+    <string name="content_desc_align_left">左揃え</string>
+    <string name="content_desc_align_center">中央揃え</string>
+    <string name="content_desc_align_right">右揃え</string>
 </resources>
