@@ -362,6 +362,10 @@ internal fun PdfVerticalReader(
     selectionEditThickness: Float = 0.008f,
     selectionThicknessRange: ClosedFloatingPointRange<Float> = 0.001f..0.015f,
     selectionPalette: List<androidx.compose.ui.graphics.Color> = emptyList(),
+    // True when the text toolbar sits at the bottom (sticky bottom or
+    // floating), so cursor-follow keeps the caret above the bar instead of
+    // under it. False when top-anchored.
+    textDockCoversBottom: Boolean = false,
 ) {
     DisposableEffect(state) {
         onDispose {
@@ -1267,12 +1271,36 @@ internal fun PdfVerticalReader(
 
         val imeBottom = imeInsets.getBottom(density)
 
+        // Bottom space the text toolbar covers while the keyboard is open.
+        // The cursor-follow window and the scroll clamp both reserve it so a
+        // new line lands above the bar instead of under it.
+        val textDockReservePx = with(density) {
+            if (textDockCoversBottom) PdfTextDockHeight.toPx() else 0f
+        }
+
+        // Cursor-follow arming: typing/tapping re-arms (cursor rect changes),
+        // a manual drag or fling disarms so free scroll sticks instead of
+        // snapping back to the caret on release.
+        var cursorFollowArmed by remember { mutableStateOf(true) }
+        var lastFollowCursorPage by remember { mutableIntStateOf(-1) }
+        var lastFollowCursorRect by remember { mutableStateOf<Rect?>(null) }
+
+        LaunchedEffect(isInteracting, isFlinging) {
+            if ((isInteracting || isFlinging) && cursorFollowArmed) {
+                cursorFollowArmed = false
+                pdfRichCursorTrace(
+                    "follow disarm userScroll interacting=$isInteracting flinging=$isFlinging"
+                )
+            }
+        }
+
         LaunchedEffect(
             headerHeightPx,
             footerHeightPx,
             totalDocHeight,
             screenHeight,
             imeBottom,
+            textDockReservePx,
             isEditMode,
             selectedTool,
             isInteracting,
@@ -1289,7 +1317,7 @@ internal fun PdfVerticalReader(
 
             val isTextEditing = isEditMode && selectedTool == InkType.TEXT && imeBottom > 0
             val effectiveFooterPx = if (isTextEditing) 0f else footerHeightPx
-            val extraScrollForIme = if (isTextEditing) imeBottom.toFloat() else 0f
+            val extraScrollForIme = if (isTextEditing) imeBottom.toFloat() + textDockReservePx else 0f
 
             val minPanY = (screenHeight - effectiveFooterPx - zoomedDocHeight - extraScrollForIme).coerceAtMost(headerHeightPx)
 
@@ -1326,6 +1354,7 @@ internal fun PdfVerticalReader(
             richTextController?.cursorPageIndex,
             richTextController?.cursorRectInPage,
             imeBottom,
+            textDockReservePx,
             density,
             isEditMode,
             selectedTool,
@@ -1342,35 +1371,64 @@ internal fun PdfVerticalReader(
             val pageIndex = controller.cursorPageIndex
             val cursorRect = controller.cursorRectInPage
 
-            if (pageIndex >= 0 && cursorRect != null) {
-                val pageLayout = layoutInfo.find { it.index == pageIndex }
+            if (pageIndex < 0 || cursorRect == null) {
+                pdfRichCursorTrace("follow skip page=$pageIndex rect=null ime=$imeBottom")
+                return@LaunchedEffect
+            }
 
-                if (pageLayout != null) {
-                    val currentPanY = cameraPanY
-                    val currentZoom = cameraZoom
+            if (pageIndex != lastFollowCursorPage || cursorRect != lastFollowCursorRect) {
+                lastFollowCursorPage = pageIndex
+                lastFollowCursorRect = cursorRect
+                if (!cursorFollowArmed) {
+                    pdfRichCursorTrace("follow rearm edit page=$pageIndex rect=${cursorRect.pdfRichCursorSummary()}")
+                }
+                cursorFollowArmed = true
+            }
+            if (!cursorFollowArmed) {
+                pdfRichCursorTrace("follow skip disarmed page=$pageIndex rect=${cursorRect.pdfRichCursorSummary()}")
+                return@LaunchedEffect
+            }
 
-                    val cursorGlobalTopY =
-                        (pageLayout.y + cursorRect.top) * currentZoom + currentPanY
-                    val cursorGlobalBottomY =
-                        (pageLayout.y + cursorRect.bottom) * currentZoom + currentPanY
+            val pageLayout = layoutInfo.find { it.index == pageIndex }
 
-                    val topSafeBuffer = with(density) { 80.dp.toPx() }
+            if (pageLayout != null) {
+                val currentPanY = cameraPanY
+                val currentZoom = cameraZoom
 
-                    val visibleBottom = screenHeight - imeBottom
+                val topSafePx = with(density) { 80.dp.toPx() }
+                val caretPadPx = with(density) { 12.dp.toPx() }
+                val window = PdfCursorFollowWindow(
+                    screenHeightPx = screenHeight,
+                    imeBottomPx = imeBottom.toFloat(),
+                    dockReservePx = if (textDockCoversBottom) textDockReservePx else 0f,
+                    topSafePx = topSafePx,
+                    caretPaddingPx = caretPadPx,
+                )
+                val requiredShift = pdfCursorFollowShift(
+                    cursorTopDocPx = pageLayout.y + cursorRect.top,
+                    cursorBottomDocPx = pageLayout.y + cursorRect.bottom,
+                    zoom = currentZoom,
+                    panY = currentPanY,
+                    window = window,
+                )
+                val cursorTopScreen = (pageLayout.y + cursorRect.top) * currentZoom + currentPanY
+                val cursorBottomScreen = (pageLayout.y + cursorRect.bottom) * currentZoom + currentPanY
+                val visibleBottom = screenHeight - imeBottom - window.dockReservePx
 
-                    var requiredShift = 0f
-
-                    if (cursorGlobalBottomY > (visibleBottom)) {
-                        requiredShift = visibleBottom - cursorGlobalBottomY
-                    } else if (cursorGlobalTopY < topSafeBuffer) {
-                        requiredShift = topSafeBuffer - cursorGlobalTopY
-                    }
-
-                    if (abs(requiredShift) > 10f) {
-                        val targetPanY = currentPanY + requiredShift
-                        panYAnimatable.snapTo(targetPanY)
-                        commitRenderedCamera(currentZoom, cameraPanX, targetPanY)
-                    }
+                if (abs(requiredShift) > 10f) {
+                    val targetPanY = currentPanY + requiredShift
+                    pdfRichCursorTrace(
+                        "follow apply page=$pageIndex cursorScreen=${cursorTopScreen.roundToInt()}..${cursorBottomScreen.roundToInt()} " +
+                            "visible=${topSafePx.roundToInt()}..${visibleBottom.roundToInt()} shift=${requiredShift.roundToInt()} " +
+                            "panY=${currentPanY.roundToInt()}->${targetPanY.roundToInt()}"
+                    )
+                    panYAnimatable.snapTo(targetPanY)
+                    commitRenderedCamera(currentZoom, cameraPanX, targetPanY)
+                } else {
+                    pdfRichCursorTrace(
+                        "follow visible page=$pageIndex cursorScreen=${cursorTopScreen.roundToInt()}..${cursorBottomScreen.roundToInt()} " +
+                            "visible=${topSafePx.roundToInt()}..${visibleBottom.roundToInt()}"
+                    )
                 }
             }
         }
@@ -2632,6 +2690,7 @@ internal fun PdfVerticalReader(
                                                 yBitmap <= box.relativeBounds.bottom * bitmapH
                                         }
                                     ) {
+                                        pdfRichCursorTrace("tap page=$tappedIndex inBox skip")
                                         false
                                     } else {
                                         val marginX = bitmapW * 0.1f
@@ -2642,8 +2701,13 @@ internal fun PdfVerticalReader(
                                             editorX > bitmapW - marginX * 2f ||
                                             editorY > bitmapH - marginY * 2f
                                         ) {
+                                            pdfRichCursorTrace("tap page=$tappedIndex outsideEditor skip")
                                             false
                                         } else {
+                                            pdfRichCursorTrace(
+                                                "tap page=$tappedIndex bitmap=(${xBitmap.roundToInt()},${yBitmap.roundToInt()}) " +
+                                                    "editor=(${editorX.roundToInt()},${editorY.roundToInt()})"
+                                            )
                                             controller.handleTapOnPage(
                                                 tappedIndex,
                                                 Offset(editorX, editorY)

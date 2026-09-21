@@ -191,6 +191,61 @@ class SharedPdfRichParagraphsTest {
     }
 
     @Test
+    fun `alignment sticks on empty mid-text paragraph`() {
+        // Cursor on a fresh empty line after Enter: CENTER must attach over
+        // the terminating newline so it reads back and survives rebuilds.
+        val annotated = plain("hello\n\nworld")
+        val centered = setRichParagraphAlignment(annotated, TextRange(6, 6), SharedPdfRichTextAlign.CENTER)
+        val attrs = readRichParagraphs(centered)
+        assertEquals(SharedPdfRichTextAlign.LEFT, attrs[0].alignment)
+        assertEquals(SharedPdfRichTextAlign.CENTER, attrs[1].alignment)
+        assertEquals(SharedPdfRichTextAlign.LEFT, attrs[2].alignment)
+        // Ui state at the empty line reports CENTER (dock shows it active).
+        val ui = richParagraphUiState(centered, TextRange(6, 6))
+        assertEquals(SharedPdfRichTextAlign.CENTER, ui.alignment)
+        // Builder round-trip (toggle/typing path) preserves it.
+        val builder = AnnotatedString.Builder(centered.text)
+        applyRichParagraphsToBuilder(builder, centered.text, attrs)
+        val rebuilt = readRichParagraphs(builder.toAnnotatedString())
+        assertEquals(SharedPdfRichTextAlign.CENTER, rebuilt[1].alignment)
+    }
+
+    @Test
+    fun `first local paragraph list recognized past ZWSP`() {
+        // Local page segments lead with a ZWSP: the bullet tag sits at [1,5),
+        // not [0, ...). Without the offset the first paragraph reads NONE
+        // (Enter never continued, dock icon stayed off).
+        val annotated = AnnotatedString.Builder("\u200B• hi").apply {
+            addStringAnnotation(SHARED_PDF_RICH_LIST_TAG, SHARED_PDF_RICH_LIST_BULLET, 1, 5)
+        }.toAnnotatedString()
+        assertEquals(
+            SharedPdfRichListType.BULLET,
+            readRichParagraphs(annotated, contentOffset = 1).single().listType
+        )
+        assertTrue(richParagraphUiState(annotated, TextRange(5), contentOffset = 1).isBulleted)
+        // Global (offset 0) behavior unchanged.
+        assertEquals(
+            SharedPdfRichListType.NONE,
+            readRichParagraphs(annotated).single().listType
+        )
+    }
+
+    @Test
+    fun `enter at end of first local list paragraph continues marker`() {
+        val annotated = AnnotatedString.Builder("\u200B• hi").apply {
+            addStringAnnotation(SHARED_PDF_RICH_LIST_TAG, SHARED_PDF_RICH_LIST_BULLET, 1, 5)
+        }.toAnnotatedString()
+        val result = applyRichParagraphKeystroke(
+            old = annotated,
+            newText = "\u200B• hi\n",
+            newSelection = TextRange(6),
+            contentOffset = 1,
+        )
+        assertEquals("\u200B• hi\n• ", result.text)
+        assertEquals(TextRange(8), result.selection)
+    }
+
+    @Test
     fun `marker length matches digits`() {
         assertEquals(2, richMarkerLengthAt("• x", 0))
         assertEquals(3, richMarkerLengthAt("1. x", 0))

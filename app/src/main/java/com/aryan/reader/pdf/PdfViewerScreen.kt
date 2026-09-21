@@ -7011,6 +7011,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     val drawingState = surfaceState.drawingState
     val persistInkAnnotationsNow = surfaceState.persistInkAnnotationsNow
     var selectedTextBoxId by surfaceState.selectedTextBoxId
+    val textDockLocationValue by surfaceState.textDockLocation
+    val isTextDockDraggingValue by surfaceState.isTextDockDragging
     val displayPageRatios = surfaceState.displayPageRatios
     val onHighlightAdd = surfaceState.onHighlightAdd
     val onHighlightUpdate = surfaceState.onHighlightUpdate
@@ -7739,6 +7741,10 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 },
                                 selectedTool = selectedTool,
                                 richTextController = richTextController,
+                                textDockCoversBottom = !isPdfTextDockTopAnchored(
+                                    textDockLocationValue,
+                                    isTextDockDraggingValue
+                                ),
                                 isStylusOnlyMode = isStylusOnlyMode,
                                 stylusButtonHovering = stylusButtonHovering,
                                 isEditMode = isDrawingActive,

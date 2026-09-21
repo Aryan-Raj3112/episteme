@@ -85,7 +85,18 @@ fun shouldUpdateSharedPdfRichTextLayoutConfig(
 object SharedPdfRichTextLog {
     var enabled: Boolean = true
 
+    /**
+     * Device-log forwarder (Android wires this to logcat under PdfRichCursor
+     * so page rich-text cursor/list/alignment issues are diagnosable on
+     * device). Null keeps logging compiled out. The message strings are
+     * built by callers either way.
+     */
+    var forwarder: ((String) -> Unit)? = null
+
     fun d(message: String) {
+        if (enabled) {
+            forwarder?.invoke(message)
+        }
     }
 }
 
@@ -120,6 +131,28 @@ data class SharedPdfRichPageLayout(
     val globalEndIndex: Int,
     val pageHeightPx: Float
 )
+
+/**
+ * Page owning a global cursor offset. Adjacent ranges share boundary chars
+ * (page 0 ends where page 1 starts, around the explicit break): when the
+ * cursor sits exactly on a shared boundary, the later page owns it if it
+ * has content after the cursor; otherwise the earlier page does (an
+ * end-of-text cursor stays on the content page, not the trailing blank).
+ * A first-match `start <= pos <= end` scan would yank boundary cursors to
+ * the earlier page (e.g. toggling a list on page 1 jumps to page 0).
+ */
+internal fun selectRichPageLayoutForCursor(
+    layouts: List<SharedPdfRichPageLayout>,
+    pos: Int,
+): SharedPdfRichPageLayout? {
+    var fallback: SharedPdfRichPageLayout? = null
+    for (layout in layouts) {
+        if (pos < layout.globalStartIndex || pos > layout.globalEndIndex) continue
+        if (layout.globalEndIndex > pos) return layout
+        if (fallback == null) fallback = layout
+    }
+    return fallback
+}
 
 object SharedPdfRichTextSerializer {
     private val json = Json {
@@ -575,7 +608,11 @@ private fun MutableList<SharedPdfRichPageLayout>.appendMeasuredRichTextSegment(
         val measureResult = textMeasurer.measure(
             text = remainingText,
             style = TextStyle(fontSize = 16.sp, color = Color.Black),
-            constraints = Constraints(maxWidth = editorWidth.toInt(), maxHeight = Constraints.Infinity),
+            constraints = Constraints(
+                minWidth = editorWidth.toInt(),
+                maxWidth = editorWidth.toInt(),
+                maxHeight = Constraints.Infinity,
+            ),
             density = density
         )
         val fitsOnPage = measureResult.size.height.toFloat() <= editorHeight || measureResult.lineCount <= 1
@@ -809,6 +846,20 @@ class SharedPdfRichTextController(
      */
     private var suppressListInheritOnce = false
 
+    /**
+     * Echo guard for Enter-continuation markers. Some software keyboards
+     * echo the pre-insertion text right after the engine inserts a
+     * continued marker inside onValueChange (observed: the fresh "• "
+     * deleted 2ms after Enter, looking like the list "toggled off"). When
+     * set, the very next change that is EXACTLY that marker's deletion is
+     * treated as the echo and the marker is restored from the still-marked
+     * old value. Anything else clears it, so a genuine backspace re-press
+     * (guard consumed) still exits the list as designed.
+     */
+    private var pendingContinuationGuard: PendingContinuationMarker? = null
+
+    private data class PendingContinuationMarker(val text: String, val start: Int, val end: Int)
+
     fun loadDocumentIfEmpty(document: SharedPdfRichDocument) {
         if (globalTextFieldValue.text.isEmpty()) {
             globalTextFieldValue = TextFieldValue(
@@ -933,6 +984,38 @@ class SharedPdfRichTextController(
         val cursor = newValue.selection.end
         val changeStart = if (diff > 0) cursor - diff else cursor
         val changeEndOld = if (diff > 0) changeStart else changeStart - diff
+        pendingContinuationGuard?.let { guard ->
+            pendingContinuationGuard = null
+            if (diff == guard.start - guard.end &&
+                changeStart == guard.start &&
+                changeEndOld == guard.end &&
+                newValue.selection.start == guard.start &&
+                newValue.selection.end == guard.start &&
+                newText == oldText.removeRange(guard.start, guard.end) &&
+                oldText.substring(guard.start, guard.end) == guard.text
+            ) {
+                // IME echo of the just-inserted continuation marker, not a
+                // user delete: oldValue still carries the marker with correct
+                // spans/tags, so keep it and park the cursor after it.
+                SharedPdfRichTextLog.d(
+                    "controller.textChanged echo-guard restore page=$activePageIndex range=${guard.start}..${guard.end}"
+                )
+                if (activePageIndex != -1) {
+                    localTextFieldValue = oldValue.copy(selection = TextRange(guard.end))
+                    isCursorVisible = true
+                    updateLocalCursor()
+                    syncJob?.cancel()
+                    syncJob = scope.launch {
+                        delay(300)
+                        performSync(activePageIndex, checkCursorMove = true)
+                    }
+                } else {
+                    globalTextFieldValue = oldValue.copy(selection = TextRange(guard.end))
+                    debouncedSave(globalTextFieldValue)
+                }
+                return
+            }
+        }
         SharedPdfRichTextLog.d(
             "controller.textChanged activePage=$activePageIndex oldLen=${oldText.length} newLen=${newText.length} " +
                 "diff=$diff cursor=$cursor change=$changeStart..$changeEndOld style=${currentStyle.richStyleSummary()} " +
@@ -1037,6 +1120,28 @@ class SharedPdfRichTextController(
         applyRichParagraphsToBuilder(builder, norm.text, norm.paragraphs)
 
         val finalValue = newValue.copy(annotatedString = builder.toAnnotatedString(), selection = norm.selection)
+        // Arm the echo guard when the engine grew the text around a typed
+        // newline with a fresh marker (Enter continuation): the adjacent
+        // marker span is ours, recorded verbatim for exact-match restore.
+        pendingContinuationGuard = if (diff > 0 && norm.text.length > newText.length) {
+            val typedEnd = (changeStart + diff).coerceIn(0, newText.length)
+            val typedHasNewline = changeStart < typedEnd &&
+                newText.substring(changeStart, typedEnd).contains('\n')
+            if (typedHasNewline) {
+                norm.markerSpans.firstOrNull { it.start >= changeStart && it.start <= changeStart + diff + 4 }
+                    ?.let { span ->
+                        PendingContinuationMarker(
+                            text = norm.text.substring(span.start, span.end),
+                            start = span.start,
+                            end = span.end,
+                        )
+                    }
+            } else {
+                null
+            }
+        } else {
+            null
+        }
         if (activePageIndex != -1) {
             localTextFieldValue = finalValue
             isCursorVisible = true
@@ -1106,16 +1211,26 @@ class SharedPdfRichTextController(
     /** Dock state for the current selection/cursor (alignment + list types). */
     fun richParagraphUiState(): RichParagraphUiState {
         val editing = editingValue
-        return richParagraphUiState(editing.annotatedString, editing.selection)
+        return richParagraphUiState(
+            editing.annotatedString,
+            editing.selection,
+            if (activePageIndex != -1) 1 else 0,
+        )
     }
 
     /**
      * Toggles a list type on the paragraphs intersecting the selection.
      * Always operates on GLOBAL text: local page segments may start
-     * mid-paragraph, where a marker insert would orphan.
+     * mid-paragraph, where a marker insert would orphan. Unsynced local
+     * edits are merged (and re-paginated) first so the op targets the
+     * cursor's actual paragraph instead of stale global text.
      */
     fun toggleRichListType(type: SharedPdfRichListType) {
         if (type == SharedPdfRichListType.NONE) return
+        if (activePageIndex != -1) {
+            mergeLocalIntoGlobal(activePageIndex)
+            repaginateSync(dirtyStartIndex = 0)
+        }
         val global = globalTextFieldValue.annotatedString
         val norm = toggleRichParagraphList(
             annotated = global,
@@ -1132,9 +1247,14 @@ class SharedPdfRichTextController(
 
     /**
      * Sets alignment on the paragraphs intersecting the selection
-     * (global scope, same reason as [toggleRichListType]).
+     * (global scope, same reason as [toggleRichListType]; merges unsynced
+     * local edits first for the same reason).
      */
     fun setRichParagraphAlignment(align: SharedPdfRichTextAlign) {
+        if (activePageIndex != -1) {
+            mergeLocalIntoGlobal(activePageIndex)
+            repaginateSync(dirtyStartIndex = 0)
+        }
         val global = globalTextFieldValue.annotatedString
         val selection = globalSelectionForParagraphOp()
         val next = setRichParagraphAlignment(global, selection, align)
@@ -1148,10 +1268,21 @@ class SharedPdfRichTextController(
 
     private fun globalSelectionForParagraphOp(): TextRange {
         val global = globalTextFieldValue.annotatedString
-        val layout = if (activePageIndex != -1) {
+        var layout = if (activePageIndex != -1) {
             pageLayouts.find { it.pageIndex == activePageIndex }
         } else {
             null
+        }
+        if (layout == null && activePageIndex != -1 && lastTextMeasurer != null && lastDensity != null) {
+            // Dangling active page (layouts replaced without its page, e.g.
+            // after an async sync repagination): re-paginate current global
+            // text once so the toggle/align maps onto the cursor paragraph
+            // instead of a stale global selection on the wrong page.
+            SharedPdfRichTextLog.d(
+                "controller.paragraphOp dangling activePage=$activePageIndex layouts=${pageLayouts.richLayoutSummary()} repaginating"
+            )
+            repaginateSync(dirtyStartIndex = 0)
+            layout = pageLayouts.find { it.pageIndex == activePageIndex }
         }
         if (layout == null) return globalTextFieldValue.selection
         val local = localTextFieldValue.selection
@@ -1205,9 +1336,7 @@ class SharedPdfRichTextController(
 
     private fun refreshLocalFromGlobal(globalCursorPos: Int) {
         if (activePageIndex == -1) return
-        val newLayout = pageLayouts.find {
-            globalCursorPos >= it.globalStartIndex && globalCursorPos <= it.globalEndIndex
-        } ?: return
+        val newLayout = selectRichPageLayoutForCursor(pageLayouts, globalCursorPos) ?: return
         activePageIndex = newLayout.pageIndex
         val reExtracted = globalTextFieldValue.annotatedString.subSequence(
             newLayout.globalStartIndex,
@@ -1217,6 +1346,7 @@ class SharedPdfRichTextController(
         val newLocalCursor = (globalCursorPos - newLayout.globalStartIndex + 1)
             .coerceIn(0, textWithZwsp.length)
         localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(newLocalCursor))
+        pendingContinuationGuard = null
         updateLocalCursor()
     }
 
@@ -1308,13 +1438,17 @@ class SharedPdfRichTextController(
         val editorWidth = (lastPageWidth - (margin * 2f)).coerceAtLeast(10f)
         val editableText = currentLayout.visibleText.withoutTrailingSharedPdfPageBreak()
         val textWithZwsp = AnnotatedString(SHARED_PDF_ZWSP) + editableText
+        pendingContinuationGuard = null
         val safeLen = editableText.length
         localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(safeLen + 1))
 
         val measureResult = measurer.measure(
             text = editableText,
             style = TextStyle(fontSize = 16.sp, color = Color.Black),
-            constraints = Constraints(maxWidth = editorWidth.toInt()),
+            constraints = Constraints(
+                minWidth = editorWidth.toInt(),
+                maxWidth = editorWidth.toInt(),
+            ),
             density = density
         )
         val textHeight = if (editableText.isEmpty()) 0f else measureResult.size.height.toFloat()
@@ -1527,42 +1661,8 @@ class SharedPdfRichTextController(
             SharedPdfRichTextLog.d("controller.syncLocalToGlobal abort no active page")
             return
         }
-        val layout = pageLayouts.find { it.pageIndex == activePageIndex } ?: run {
-            SharedPdfRichTextLog.d("controller.syncLocalToGlobal abort missing layout page=$activePageIndex")
-            return
-        }
-        val globalStart = layout.globalStartIndex
-        val globalEnd = layout.globalEndIndex
-        val currentGlobal = globalTextFieldValue.annotatedString
-        val localEditableText = if (localTextFieldValue.annotatedString.text.isNotEmpty()) {
-            localTextFieldValue.annotatedString.subSequence(1, localTextFieldValue.annotatedString.length)
-        } else {
-            AnnotatedString("")
-        }
-        val shouldPreservePageBreak = layout.visibleText.text.lastOrNull() == SHARED_PDF_PAGE_BREAK_CHAR
-        val localText = localEditableText.withRestoredTrailingSharedPdfPageBreak(shouldPreservePageBreak)
-        val builder = AnnotatedString.Builder()
-        builder.append(currentGlobal.subSequence(0, globalStart))
-        builder.append(localText)
-        if (globalEnd < currentGlobal.length) {
-            builder.append(currentGlobal.subSequence(globalEnd, currentGlobal.length))
-        }
-        val newGlobalAnnotated: AnnotatedString
-        val newGlobalCursorPos: Int
-        run {
-            val (normalized, paragraphShifts) = withNormalizedSyncedParagraphs(builder.toAnnotatedString())
-            newGlobalAnnotated = normalized
-            val localSelectionStart = (localTextFieldValue.selection.start - 1).coerceAtLeast(0)
-            newGlobalCursorPos = adjustRichOffset(globalStart + localSelectionStart, paragraphShifts)
-                .coerceIn(0, newGlobalAnnotated.length)
-        }
-        SharedPdfRichTextLog.d(
-            "controller.syncLocalToGlobal page=$activePageIndex global=$globalStart..$globalEnd " +
-                "localEditableLen=${localEditableText.length} restoredBreak=$shouldPreservePageBreak " +
-                "localLen=${localText.length} newLen=${newGlobalAnnotated.length} cursor=$newGlobalCursorPos"
-        )
-        globalTextFieldValue = TextFieldValue(newGlobalAnnotated, TextRange(newGlobalCursorPos))
-        debouncedSave(globalTextFieldValue)
+        val newGlobalCursorPos = mergeLocalIntoGlobal(activePageIndex) ?: return
+        val newGlobalAnnotated = globalTextFieldValue.annotatedString
 
         val measurer = lastTextMeasurer ?: return
         val density = lastDensity ?: return
@@ -1576,14 +1676,12 @@ class SharedPdfRichTextController(
                 marginX = marginX(),
                 marginY = marginY(),
                 previousLayouts = pageLayouts,
-                dirtyGlobalIndex = globalStart
+                dirtyGlobalIndex = newGlobalCursorPos
             )
         }
         pageLayouts = newLayouts
         SharedPdfRichTextLog.d("controller.syncLocalToGlobal layouts=${newLayouts.richLayoutSummary()}")
-        val newActiveLayout = newLayouts.find {
-            newGlobalCursorPos >= it.globalStartIndex && newGlobalCursorPos <= it.globalEndIndex
-        }
+        val newActiveLayout = selectRichPageLayoutForCursor(newLayouts, newGlobalCursorPos)
         if (newActiveLayout != null) {
             activePageIndex = newActiveLayout.pageIndex
             val reExtractedText = newGlobalAnnotated.subSequence(
@@ -1604,14 +1702,17 @@ class SharedPdfRichTextController(
         }
     }
 
-    private suspend fun performSync(pageIdx: Int, checkCursorMove: Boolean = false) {
-        if (pageIdx == -1) {
-            SharedPdfRichTextLog.d("controller.performSync abort page=-1")
-            return
-        }
+    /**
+     * Merges the active page's local edits into global text (splice +
+     * paragraph safety net) and returns the merged global cursor. No
+     * repagination and no local refresh: callers follow up with repaginate
+     * + refresh. Null when there is no active page/layout to merge.
+     */
+    private fun mergeLocalIntoGlobal(pageIdx: Int): Int? {
+        if (pageIdx == -1) return null
         val layout = pageLayouts.find { it.pageIndex == pageIdx } ?: run {
-            SharedPdfRichTextLog.d("controller.performSync abort missing layout page=$pageIdx layouts=${pageLayouts.richLayoutSummary()}")
-            return
+            SharedPdfRichTextLog.d("controller.mergeLocal abort missing layout page=$pageIdx layouts=${pageLayouts.richLayoutSummary()}")
+            return null
         }
         val globalStart = layout.globalStartIndex
         val globalEnd = layout.globalEndIndex
@@ -1630,23 +1731,28 @@ class SharedPdfRichTextController(
         if (globalEnd < currentGlobal.length) {
             builder.append(currentGlobal.subSequence(globalEnd, currentGlobal.length))
         }
-        val newGlobalAnnotated: AnnotatedString
-        val newGlobalCursorPos: Int
-        run {
-            val (normalized, paragraphShifts) = withNormalizedSyncedParagraphs(builder.toAnnotatedString())
-            newGlobalAnnotated = normalized
-            val localSelectionStart = (localTextFieldValue.selection.start - 1).coerceAtLeast(0)
-            newGlobalCursorPos =
-                adjustRichOffset(globalStart + localSelectionStart, paragraphShifts)
-                    .coerceIn(0, newGlobalAnnotated.length)
-        }
+        val (normalized, paragraphShifts) = withNormalizedSyncedParagraphs(builder.toAnnotatedString())
+        val localSelectionStart = (localTextFieldValue.selection.start - 1).coerceAtLeast(0)
+        val newGlobalCursorPos =
+            adjustRichOffset(globalStart + localSelectionStart, paragraphShifts)
+                .coerceIn(0, normalized.length)
         SharedPdfRichTextLog.d(
-            "controller.performSync page=$pageIdx checkCursor=$checkCursorMove global=$globalStart..$globalEnd " +
+            "controller.mergeLocal page=$pageIdx global=$globalStart..$globalEnd " +
                 "localEditableLen=${localEditableAnnotated.length} restoredBreak=$shouldPreservePageBreak " +
-                "localLen=${localAnnotated.length} newLen=${newGlobalAnnotated.length} cursor=$newGlobalCursorPos"
+                "localLen=${localAnnotated.length} newLen=${normalized.length} cursor=$newGlobalCursorPos"
         )
-        globalTextFieldValue = TextFieldValue(newGlobalAnnotated, TextRange(newGlobalCursorPos))
+        globalTextFieldValue = TextFieldValue(normalized, TextRange(newGlobalCursorPos))
         debouncedSave(globalTextFieldValue)
+        return newGlobalCursorPos
+    }
+
+    private suspend fun performSync(pageIdx: Int, checkCursorMove: Boolean = false) {
+        if (pageIdx == -1) {
+            SharedPdfRichTextLog.d("controller.performSync abort page=-1")
+            return
+        }
+        val newGlobalCursorPos = mergeLocalIntoGlobal(pageIdx) ?: return
+        val newGlobalAnnotated = globalTextFieldValue.annotatedString
 
         val measurer = lastTextMeasurer ?: return
         val density = lastDensity ?: return
@@ -1660,7 +1766,7 @@ class SharedPdfRichTextController(
                 marginX = marginX(),
                 marginY = marginY(),
                 previousLayouts = pageLayouts,
-                dirtyGlobalIndex = globalStart
+                dirtyGlobalIndex = newGlobalCursorPos
             )
         }
         pageLayouts = newLayouts
@@ -1738,13 +1844,16 @@ class SharedPdfRichTextController(
         }
         val next = builder.toAnnotatedString()
         val newCursor = if (endsWithBreak) next.length - 1 else next.length
-        localTextFieldValue = TextFieldValue(next, TextRange(newCursor))
+        // Trailing padding never inherits lists (stays plain paragraphs).
+        suppressListInheritOnce = true
+        // Do NOT pre-assign localTextFieldValue here: onValueChanged diffs
+        // against it, and a pre-set value looks like "no change" — the
+        // padding would never reach global text (stale-global toggle/align
+        // bugs) and no sync would be scheduled.
+        onValueChanged(TextFieldValue(next, TextRange(newCursor)))
         SharedPdfRichTextLog.d(
             "controller.injectNewlines done newLen=${next.length} newCursor=$newCursor preview=\"${next.text.richPreview()}\""
         )
-        // Trailing padding never inherits lists (stays plain paragraphs).
-        suppressListInheritOnce = true
-        onValueChanged(localTextFieldValue)
     }
 
     private fun repaginate(dirtyStartIndex: Int) {
@@ -1820,7 +1929,10 @@ class SharedPdfRichTextController(
             val measureResult = measurer.measure(
                 text = localTextFieldValue.annotatedString,
                 style = TextStyle(fontSize = 16.sp),
-                constraints = Constraints(maxWidth = editorWidth().toInt()),
+                constraints = Constraints(
+                    minWidth = editorWidth().toInt(),
+                    maxWidth = editorWidth().toInt(),
+                ),
                 density = density
             )
             val safeOffset = selection.start.coerceIn(0, localTextFieldValue.text.length)
@@ -1839,16 +1951,17 @@ class SharedPdfRichTextController(
         val selection = globalTextFieldValue.selection
         if (isCursorVisible && showCursorOverride && selection.collapsed) {
             val cursorIndex = selection.start
-            val layout = pageLayouts.find {
-                cursorIndex >= it.globalStartIndex && cursorIndex <= it.globalEndIndex
-            }
+            val layout = selectRichPageLayoutForCursor(pageLayouts, cursorIndex)
             val measurer = lastTextMeasurer
             val density = lastDensity
             if (layout != null && measurer != null && density != null) {
                 val measureResult = measurer.measure(
                     text = layout.visibleText,
                     style = TextStyle(fontSize = 16.sp),
-                    constraints = Constraints(maxWidth = editorWidth().toInt()),
+                    constraints = Constraints(
+                        minWidth = editorWidth().toInt(),
+                        maxWidth = editorWidth().toInt(),
+                    ),
                     density = density
                 )
                 val localIndex = (cursorIndex - layout.globalStartIndex).coerceIn(0, layout.visibleText.length)
