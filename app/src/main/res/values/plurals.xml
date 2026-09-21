@@ -204,8 +204,14 @@
         <item quantity="other">(%1$d chunks)</item>
     </plurals>
 
+    <!-- Listening-queue item count in the audiobook player. %1$d = number of items. Example: "5 items". Add zero/two/few/many forms if your language has them. -->
     <plurals name="listen_item_count">
         <item quantity="one">%1$d item</item>
         <item quantity="other">%1$d items</item>
+    </plurals>
+    <!-- Search results count label in the unified library. %1$d = number of results. Example: "12 results". -->
+    <plurals name="unified_library_search_results">
+        <item quantity="one">%1$d result</item>
+        <item quantity="other">%1$d results</item>
     </plurals>
 </resources>

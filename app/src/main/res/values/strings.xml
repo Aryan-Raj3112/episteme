@@ -1,4 +1,23 @@
 <resources>
+    <!--
+      TRANSLATOR CONVENTIONS (read before translating)
+      1. Every string with a placeholder (%1$s, %1$d, ...) has a comment above it
+         explaining each placeholder and showing a filled-in example. Keep the
+         comment's example grammatical when you move placeholders.
+      2. Reorder placeholders freely to fit your grammar (%2$s ... %1$s is fine);
+         never change the index or the type letter (s = text, d = number).
+      3. \n = line break, \n\n = paragraph break — keep the same number of
+         paragraph breaks. Quotes around dynamic values ("...") follow the
+         target language's quotation marks.
+      4. Buttons/menu items: short imperative or infinitive, sentence case
+         unless the source is Title Case. Dialog bodies may be full sentences.
+      5. Do not translate app/brand names (Episteme, Gemini, Groq, OPDS, GitHub,
+         Google Drive) or units the UI formats itself.
+      6. Comments marked "do not translate literally" contain wordplay or
+         app-specific terms — check the glossary in docs/localization-revamp-plan.md.
+      7. Ampersands appear as &amp;; apostrophes are escaped \' — keep escaping
+         exactly as in the source when editing.
+    -->
     <!-- App name — brand name, must not be translated. -->
     <string name="app_name" translatable="false">Episteme</string>
 
@@ -43,6 +62,7 @@
     <string name="info">Info</string>
     <string name="select_all">Select All</string>
     <string name="dialog_remove_from_recents">Remove from Recents</string>
+    <!-- Warning dialog shown when disconnecting a synced local folder while its books are selected. States the files themselves will be deleted from device storage; second paragraph stresses irreversibility. -->
     <string name="dialog_warning_folder_sync_delete">Warning: Some selected items are synced from a local folder. Proceeding will delete the actual files from your device storage.\n\nThis action cannot be undone.</string>
 
     <string name="file_information">File Information</string>
@@ -68,6 +88,7 @@
     <string name="about_version">Version: %1$s (Build: %2$d)</string>
     <string name="empty_select_file">Select a File</string>
     <string name="clear_cloud_data_title">Clear All Synced Data?</string>
+    <!-- Confirmation dialog for wiping ALL synced data (Account/Storage settings). Explains cloud books AND the local library copy are deleted to prevent re-sync; must sound serious. -->
     <string name="clear_cloud_data_desc">Are you sure you want to permanently delete all of your book data from the cloud? This will also wipe your local library to prevent re-syncing. This action cannot be undone.</string>
     <!-- Destructive action button, intentionally styled in all-caps. -->
     <string name="delete_all_data">DELETE ALL DATA</string>
@@ -105,6 +126,7 @@
     <string name="unified_library_back_to_shelves">All shelves</string>
     <string name="unified_library_recent_searches">Recent searches</string>
     <string name="unified_library_clear_recent_searches">Clear recent searches</string>
+    <!-- Library "Reading now" section header. %1$d = number of books currently being read. Translators: this is a full sentence — pluralize naturally. Example: "5 books in progress". -->
     <string name="unified_library_reading_now">%1$d books in progress</string>
     <string name="audiobooks_your_timers">Your timers</string>
     <string name="audiobooks_quick_timers">Quick timers</string>
@@ -114,7 +136,9 @@
     <string name="audiobooks_remove_custom_timer">Remove custom timer</string>
     <string name="audiobooks_timer_hours">Hours</string>
     <string name="audiobooks_timer_minutes">Minutes</string>
+    <!-- Combined audiobook duration. %1$d = hours, %2$d = minutes. Example: "2 hr 15 min". Translators: adapt unit forms to the language. -->
     <string name="audiobooks_hours_minutes">%1$d hr %2$d min</string>
+    <!-- Audiobook duration, hours component only. %1$d = whole hours. Example: "3 hours". Pluralize via quantity per language. -->
     <string name="audiobooks_hours">%1$d hours</string>
     <string name="audiobooks_title">Audiobooks</string>
     <string name="audiobooks_listen_anywhere">Your listening library</string>
@@ -136,6 +160,7 @@
     <string name="audiobooks_add">Add audiobook</string>
     <string name="audiobooks_add_preview_desc">Choose an audiobook file. Multi-file books and folders will be added next.</string>
     <string name="audiobooks_coming_later">Multi-file grouping is coming in the next step.</string>
+    <!-- Success banner after audiobook import. %1$s = the audiobook title. Example: "Imported The Hobbit". -->
     <string name="audiobooks_imported">Imported %1$s</string>
     <string name="audiobooks_import_failed">Could not import this audiobook.</string>
     <string name="audiobook_notification_channel_name">Audiobook playback</string>
@@ -154,9 +179,11 @@
     <string name="audiobooks_chapters">Chapters</string>
     <string name="audiobooks_tts_generated_note">Audio will be generated progressively using your current TTS voice and settings.</string>
     <string name="unified_library_recently_finished">Recently finished</string>
+    <!-- Filter button badge in the unified library. %1$d = number of active filters. Example: "3 filters". -->
     <string name="unified_library_filters_selected">%1$d filters</string>
     <string name="recent_files">Recent Files</string>
     <string name="your_library_empty">Your Library is Empty</string>
+    <!-- Empty-state text under the Library tab when nothing matches the current filter. Two alternatives joined by 'or'. -->
     <string name="your_library_empty_desc">Select a file to read, or sync a local folder to automatically import books.</string>
     <string name="no_recent_files">No Recent Files</string>
     <string name="no_recent_files_desc">Open a file from your library to see it here.</string>
@@ -214,6 +241,7 @@
     <string name="tab_catalogs">Catalogs</string>
     <!-- Shown when the library search has no matches. %1$s = the user\'s search query. Example: "No results found for \"hobbit\"". -->
     <string name="no_results_found">No results found for \"%1$s\"</string>
+    <!-- First-launch empty state of the main library. Lists supported file formats; keep format acronyms as-is. -->
     <string name="library_empty_desc">Select a PDF, EPUB, MOBI, or AZW3 file from your device to get started.</string>
     <!-- Floating action button label to add a file to the library. -->
     <string name="fab_add_file">Add file</string>
@@ -288,18 +316,21 @@
 
     <!-- External File Behavior -->
     <string name="external_file_prompt_title">Save File?</string>
+    <!-- Dialog when a file is opened from another app: asks whether to keep it in the library. The in-app navigation path in parentheses must match the localized screen names. -->
     <string name="external_file_prompt_desc">Do you want to save this external file in the app\'s library? If not, it will be removed.\n\n(You can change this default behavior anytime from the Home Screen &gt; More Options &gt; External File Behavior).</string>
     <!-- Checkbox label — "Don\'t ask again" for the external file save prompt. -->
     <string name="external_file_dont_ask">Don\'t ask again</string>
     <string name="external_file_keep">Keep in Library</string>
     <string name="external_file_delete">Remove</string>
     <string name="external_file_behavior_ask">Ask Every Time</string>
+    <!-- Settings summary for the 'Ask every time' external-file option. -->
     <string name="external_file_behavior_ask_desc">After closing an externally opened file, ask whether to keep it in the library or remove it.</string>
     <string name="external_file_behavior_keep">Always Keep</string>
     <string name="external_file_behavior_keep_desc">Externally opened files are copied into the library and kept after closing.</string>
     <string name="external_file_behavior_delete">Always Remove</string>
     <string name="external_file_behavior_delete_desc">Externally opened files are copied for reading, then removed after closing.</string>
     <string name="external_file_behavior_temporary">Open Temporarily</string>
+    <!-- Settings summary for the 'Temporary' external-file option: opens a throwaway reader; Back returns to the source app without importing. -->
     <string name="external_file_behavior_temporary_desc">Open directly from the source app in a temporary reader. Back returns to that app without adding the file to the library.</string>
     <string name="options_external_file_behavior">External File Behavior</string>
 
@@ -385,6 +416,7 @@
     <!-- "Google" is a brand name. "Episteme Pro" is the product tier name — do not translate "Episteme". -->
     <string name="sign_in_to_purchase">Please sign in to your Google account to purchase Episteme Pro.</string>
     <string name="sign_in_to_purchase_credits">Please sign in to your Google account to purchase credits.</string>
+    <!-- Progress note shown while Google Play verifies a purchase; reassures the user no action is needed. -->
     <string name="verifying_purchase_desc">This may take a few moments. Your Pro status will be updated automatically.</string>
     <!-- "Pro" refers to the Episteme Pro product tier. -->
     <string name="dialog_existing_purchase_desc">This device already has a Pro purchase, but it\'s linked to a different account. Please sign in to the account that was used for the original purchase to restore your Pro features.</string>
@@ -422,6 +454,7 @@
 
     <!-- Feedback -->
     <string name="get_in_touch">Get in Touch</string>
+    <!-- Feedback screen intro sentence; invites bugs, feature requests, and general contact via GitHub or email. -->
     <string name="feedback_desc">Found a bug, have a feature request, or just want to say hi? Let us know on GitHub or email us.</string>
     <string name="github_issues">GitHub Issues</string>
     <string name="github_issues_desc">Report bugs, request features, and track development progress.</string>
@@ -433,8 +466,10 @@
     <string name="support_project_heading">Help keep Episteme moving</string>
     <string name="support_project_desc">Your support helps me keep maintaining and Improving Episteme for everyone!!!</string>
     <string name="support_github_sponsor">Sponsor on GitHub</string>
+    <!-- GitHub Sponsors support-card description; 'README shoutout' means name credited in the project's README file. -->
     <string name="support_github_sponsor_desc">Support development directly through GitHub Sponsors. As a thank you, you get a README shoutout in the project repo.</string>
     <string name="support_patreon">Join on Patreon</string>
+    <!-- Patreon support-card description; longer marketing sentence listing backer perks — keep the friendly tone and the perk list structure. -->
     <string name="support_patreon_desc">As a thank you for backing the app, Patreon supporters get extra content and benefits: sneak peeks at what I am working on, early screenshots and updates, votes that help shape how new features should look and work, and a README shoutout in the project repo.</string>
 
     <!-- Dialogs -->
@@ -454,6 +489,7 @@
     <!-- "Google Drive" is a brand name — do not translate. -->
     <string name="dialog_destructive_action_desc">This will permanently delete all your books and reading progress from this device AND from your Google Drive account. This action cannot be undone. Are you sure?</string>
     <string name="dialog_clear_book_cache">Clear Book Cache</string>
+    <!-- Confirmation dialog for clearing the paginated-layout cache: fixes layout bugs but forces re-processing on next open. -->
     <string name="dialog_clear_book_cache_desc">This will clear all processed pages in pagination mode. This helps fix layout issues but will require books to be re-processed next time you open them.</string>
     <string name="action_confirm_clear">Confirm &amp; Clear</string>
     <string name="dialog_clear_reflow_cache">Clear Reflow Cache</string>
@@ -585,7 +621,9 @@
     <string name="banner_exporting_annotations">Exporting annotations...</string>
     <string name="banner_annotations_exported">Annotations exported successfully.</string>
     <string name="banner_no_annotations_to_export">No annotations to export.</string>
+    <!-- Error dialog when annotation export fails. %1$s = the technical error message. Example: "Error exporting annotations: disk full". -->
     <string name="error_exporting_annotations">Error exporting annotations: %1$s</string>
+    <!-- Error dialog when saving an imported file fails. %1$s = the technical error message. Example: "Error saving file: no space left". -->
     <string name="error_saving_file">Error saving file: %1$s</string>
     <!-- Email/share subject line. %1$s = the name of the file being shared. Example: "Sharing: Dracula.pdf". -->
     <string name="share_subject">Sharing: %1$s</string>
@@ -608,6 +646,7 @@
     <string name="error_no_enabled_folder_sync">No local folders have sync enabled.</string>
     <string name="banner_folder_local_sync_disabled">Local folder sync disabled.</string>
     <string name="banner_folder_local_sync_disabled_removed_data">Local folder sync disabled. Sync data folder removed.</string>
+    <!-- Error banner: folder sync was disabled, but its data folder could not be removed from disk. -->
     <string name="banner_folder_sync_data_remove_failed">Local folder sync disabled, but the sync data folder could not be removed.</string>
     <string name="banner_folder_local_sync_enabled">Local folder sync enabled.</string>
     <string name="error_enable_sync_download">Enable sync to download files.</string>
@@ -622,6 +661,7 @@
     <string name="error_cloud_delete_pending">Couldn\'t reach the cloud. Your deletion will finish automatically the next time you\'re online.</string>
     <string name="banner_local_data_cleared">All local data cleared.</string>
     <string name="error_sign_in_failed">Sign in failed. Please try again.</string>
+    <!-- Error banner when sign-in finds no Google account on the device; asks the user to retry shortly after a fresh install. -->
     <string name="error_no_google_account">Could not find a Google account. This can happen on a fresh install, please try again in a moment.</string>
     <string name="error_sign_in_internet">An error occurred during sign in. Please check your internet connection.</string>
     <!-- Debug/developer message. -->
@@ -741,7 +781,9 @@
 
     <!-- Common.kt: RGB Inputs — R, G, B are universal color-channel abbreviations, do not translate. -->
     <string name="color_r" translatable="false">R</string>
+    <!-- Green channel label for the RGB color picker; single letter, do not translate. -->
     <string name="color_g" translatable="false">G</string>
+    <!-- Blue channel label for the RGB color picker; single letter, do not translate. -->
     <string name="color_b" translatable="false">B</string>
 
     <!-- Common.kt: fetchAiDefinition — AI feature errors. -->
@@ -908,6 +950,7 @@
     <!-- EpubReaderDrawer.kt -->
     <string name="tab_chapters">Chapters</string>
     <string name="search_chapters_placeholder">Search chapters</string>
+    <!-- Empty state when a chapter search finds nothing. %1$s = the search query. Example: 'No chapters found for "Chapter 5".' -->
     <string name="no_chapters_matching">No chapters found for &quot;%1$s&quot;.</string>
     <string name="tab_tabs">Tabs</string>
     <string name="tab_bookmarks">Bookmarks</string>
@@ -946,6 +989,7 @@
     <string name="no_chapters_available">No chapters available for this book.</string>
     <string name="navigating_to_position">Navigating to position…</string>
     <string name="dialog_permission_required">Permission Required</string>
+    <!-- Rationale dialog shown BEFORE the OS notification permission prompt: needed so playback controls can appear in the background. -->
     <string name="dialog_permission_notification_desc">To show playback controls while the app is in the background, please grant the notification permission.</string>
     <string name="action_continue">Continue</string>
     <!-- "Paginated Mode" is a reading mode name — keep consistent. -->
@@ -996,18 +1040,21 @@
     <string name="visual_options_system_ui">System UI (Status &amp; Navigation Bars)</string>
     <string name="visual_options_system_ui_desc">Control the visibility of the device\'s system bars.</string>
     <string name="visual_options_screen_orientation">Screen Orientation</string>
+    <!-- Settings summary for screen orientation: follows system by default, or prefers portrait/landscape where Android allows. -->
     <string name="visual_options_screen_orientation_desc">Choose whether the reader follows the system orientation or prefers portrait or landscape when Android allows it.</string>
     <string name="visual_options_progress_bar">Progress Bar</string>
     <string name="visual_options_progress_bar_desc">The reading progress and chapter indicator on the reading screen.</string>
     <string name="visual_options_progress_bar_position">Position</string>
     <!-- "Seamless Chapter Transition" is a reading feature name. -->
     <string name="visual_options_seamless_chapter">Seamless Chapter Transition</string>
+    <!-- Settings summary for seamless chapter transitions: next/previous chapter loads instantly while scrolling, no pull-to-refresh animation. -->
     <string name="visual_options_seamless_chapter_desc">Instantly load the next/previous chapter when scrolling past the end, without the pull-to-refresh animation.</string>
     <string name="visual_options_edge_padding">Remove Edge Padding</string>
     <string name="visual_options_edge_padding_desc">Removes the horizontal gap on the left and right edges.</string>
     <string name="visual_options_hide_images">Hide Images</string>
     <string name="visual_options_hide_images_desc">Turn this on to read with all images in the book hidden.</string>
     <string name="visual_options_epub_page_spread">Page Spread</string>
+    <!-- Settings summary for page spread: one or two pages side by side; applies only in paginated mode. -->
     <string name="visual_options_epub_page_spread_desc">Show one page or two pages side by side. Only applies in paginated mode.</string>
     <string name="visual_options_epub_spread_single">Single</string>
     <string name="visual_options_epub_spread_two">Two pages</string>
@@ -1069,6 +1116,7 @@
     <string name="dialog_external_link_desc">You clicked on an external link:\n\n%1$s\n\nWhat would you like to do?</string>
     <string name="action_open">Open</string>
     <string name="menu_delete_tag">Delete tag</string>
+    <!-- Dialog body when deleting a tag. %1$s = the tag name. Example: 'Delete tag "To read"? It will be removed from every book.' -->
     <string name="dialog_delete_tag_desc">Delete tag &quot;%1$s&quot;? It will be removed from every book.</string>
     <string name="error_no_browser">No browser found to open the link.</string>
 
@@ -1134,6 +1182,7 @@
 
     <!-- Customize Toolbar -->
     <string name="title_customize_toolbar">Customize Toolbar</string>
+    <!-- Intro text on the toolbar-customization screen: unchecking a tool hides it to leave a distraction-free reading space. -->
     <string name="desc_customize_toolbar">Select the tools you want to keep visible. Unchecking a tool hides it from the UI to give you a distraction-free reading space.</string>
 
     <!-- Navigation & Drawer -->
@@ -1150,7 +1199,9 @@
     <string name="page_format">%1$d / %2$d</string>
     <!-- Full page indicator shown in the reader. %1$d = current page; %2$d = total pages. Example: "Page 3 of 18". -->
     <string name="page_of_format">Page %1$d of %2$d</string>
+    <!-- Chapter position indicator in the reader. %1$d = current chapter number, %2$d = total chapters. Example: "Chapter 3 of 12". -->
     <string name="chapter_of_chapters">Chapter %1$d of %2$d</string>
+    <!-- Standalone chapter label. %1$d = chapter number. Example: "Chapter 7". -->
     <string name="chapter_number">Chapter %1$d</string>
     <string name="settings_hub_cloud_sync_pro_required">A Pro account is required for cloud sync.</string>
     <string name="settings_hub_cloud_sync_ready">Sync library metadata across signed-in devices.</string>
@@ -1227,6 +1278,7 @@
     <string name="settings_hub_literal_60">Reader toolbar and tools</string>
     <string name="settings_hub_literal_61">Choose visible tools, bottom-bar tools, and reader overflow tools</string>
     <string name="settings_hub_literal_62">Per-book overrides</string>
+    <!-- Settings page footnote: per-book overrides set inside an open reader take priority over these global defaults for that book. -->
     <string name="settings_hub_literal_63">Local overrides are available from the active reader screen and still win for that book.</string>
     <string name="settings_hub_literal_64">App theme</string>
     <string name="settings_hub_literal_65">Theme mode, contrast, reading text dimming, and custom app colors</string>
@@ -1585,6 +1637,7 @@
     <string name="tts_voice_sample_generic">This is a voice sample.</string>
     <string name="tts_preview_text_label">Voice preview text</string>
     <string name="tts_favorites">Favorites</string>
+    <!-- Empty state of the favorite-voices list; instructs to star a voice to add it. -->
     <string name="tts_no_favorite_voices">No favorite voices yet. Tap the star on any voice to add it here.</string>
     <string name="tts_add_favorite">Add to favorites</string>
     <string name="tts_remove_favorite">Remove from favorites</string>
@@ -1617,16 +1670,21 @@
     <string name="credits_count">%1$d Credits</string>
     <string name="credits_estimated_cost_breakdown">Estimated Cost Breakdown</string>
     <string name="credits_cloud_tts_title">Cloud TTS</string>
+    <!-- Cloud TTS credits card. Two paragraphs: cost per minute, then where to enable it — localize the navigation path to match the UI. -->
     <string name="credits_cloud_tts_desc">Cost: ~3–4 credits per minute of audio generated.\nTo enable: Reader Screen &gt; More &gt; TTS Voice Settings.</string>
     <string name="credits_ai_summaries_title">AI Summaries &amp; Recap</string>
+    <!-- AI summaries credits card. Two paragraphs: cost per request (varies with chapter length), then the free daily allowance for Pro users. -->
     <string name="credits_ai_summaries_desc">Cost: ~1–4 credits per request based on chapter length.\nPro Users get 10 free summaries daily.</string>
     <string name="legal_by_purchasing">By purchasing,</string>
     <string name="dialog_out_of_credits_title">Out of Credits</string>
+    <!-- Paywall dialog when out of credits: names what credits unlock (Summaries, Cloud TTS, Story Recap) and the free daily allowance with Pro. -->
     <string name="dialog_out_of_credits_desc">You don\'t have enough credits. Get Episteme Pro for 10 free Summaries per day, or add more credits to use Summaries, Cloud TTS and Story Recap.</string>
     <string name="action_get_pro_or_add_credits">Get Pro / Add Credits</string>
     <string name="dialog_unlock_page_summarization">Unlock Page Summarization</string>
+    <!-- Paywall dialog for page summarization: short benefit statement plus upgrade call to action. -->
     <string name="dialog_unlock_page_summarization_desc">Get concise summaries of any page with Episteme Pro. Upgrade to start using this feature.</string>
     <string name="dialog_download_bubble_zoom_model">Download Bubble Zoom Model</string>
+    <!-- Confirmation before downloading the ~134 MB on-device AI model for Bubble Zoom; mention the size exactly. -->
     <string name="dialog_download_bubble_zoom_model_desc">To use the Bubble Zoom feature, an AI model needs to be downloaded (~134 MB). Do you want to download it now?</string>
 
     <!-- PDF and annotation helpers. -->
@@ -1825,9 +1883,11 @@
     <string name="ai_settings_cloud_tts_desc">Uses the saved Gemini key. Only %1$s is supported for now.</string>
     <!-- Provider key confirmation title. %1$s = provider name, such as Gemini or Groq. Example: "Save Gemini key?" -->
     <string name="dialog_save_provider_key">Save %1$s key?</string>
+    <!-- Shown after saving an AI API key: only first 3 and last 3 characters stay visible; to change it, replace or delete it. -->
     <string name="dialog_save_key_desc">After saving, only the first 3 and last 3 characters will be visible. To change it later, replace or delete it.</string>
     <!-- Provider key deletion title. %1$s = provider name, such as Gemini or Groq. Example: "Delete Groq key?" -->
     <string name="dialog_delete_provider_key">Delete %1$s key?</string>
+    <!-- Confirmation body when deleting an AI provider key: features using that provider stop until a new key is saved. -->
     <string name="dialog_delete_key_desc">Features using this provider will stop working until a new key is saved.</string>
     <string name="ai_settings_no_key_saved">No key saved</string>
     <!-- Accessibility label for deleting a provider key. %1$s = provider display name. Example: "Delete Gemini key". -->
@@ -1952,6 +2012,7 @@
     <string name="book_replacements_edit_replacement">Edit replacement</string>
     <string name="book_replacements_label_with">With</string>
     <string name="book_replacements_empty_replacement">empty text</string>
+    <!-- Default preview sentence for text-replacement rules; shown in the reader font, not translated. -->
     <string name="book_replacements_preview_default" translatable="false">Alice met the White Rabbit.</string>
     <string name="language_dutch">Nederlands (Dutch)</string>
     <string name="language_ukrainian">Українська (Ukrainian)</string>
@@ -1972,6 +2033,7 @@
     <string name="desktop_cached">Cached</string>
     <string name="desktop_cached_summary">Cached summary</string>
     <string name="desktop_choose_cloud_tts_voice">Choose the Gemini voice used for cloud read aloud.</string>
+    <!-- Desktop confirmation for deleting generated pagination cache files; they are recreated on next open. -->
     <string name="desktop_clear_book_cache_desc">Delete generated desktop book and EPUB pagination cache files? They will be recreated the next time books are opened.</string>
     <string name="desktop_clear_voice_cache">Clear voice cache</string>
     <string name="desktop_close_tools">Close tools</string>
@@ -2059,6 +2121,7 @@
     <string name="desktop_pro">Account &amp; credits</string>
     <string name="desktop_pro_and_credits">Account &amp; credits</string>
     <string name="desktop_pro_not_unlocked_account">Pro is not unlocked for this account.</string>
+    <!-- Desktop info text: Pro/credits are purchased in the Android app only; desktop uses the same signed-in account's credits for paid AI features. -->
     <string name="desktop_pro_purchase_android_desc">Pro and credits can only be purchased from the Android app. Desktop checks the same signed-in account and uses those credits for cloud TTS, summaries, recaps, and other paid AI features.</string>
     <string name="desktop_pro_sign_in_desc">Sign in to check your account status on desktop.</string>
     <string name="desktop_pro_unlocked_account">Pro is unlocked for this account.</string>
@@ -2069,6 +2132,7 @@
     <string name="desktop_reader_tabs_on">Reader tabs on</string>
     <string name="desktop_refresh">Refresh</string>
     <string name="desktop_release_add_library">Release to add to your library.</string>
+    <!-- Desktop warning when the OS secure storage is unavailable: keys work this session but are not persisted. -->
     <string name="desktop_secure_key_storage_unavailable">Secure key storage is unavailable on this operating system. Keys entered here will be used for this session but will not be persisted.</string>
     <string name="desktop_settings_hub">Settings hub</string>
     <string name="desktop_show_ai_in_reader_desc">Matches the Android hide toggle for smart dictionary, summaries, and recaps.</string>
@@ -2121,9 +2185,11 @@
     <string name="desktop_choose_pdf_to_save">Choose which PDF to save.</string>
     <string name="desktop_clear_jump_history">Clear jump history</string>
     <string name="desktop_cloud_tts_failed">Cloud TTS failed.</string>
+    <!-- Desktop setup hint: to use cloud TTS, add a Gemini key and select Gemini cloud TTS under AI keys and models. -->
     <string name="desktop_cloud_tts_needs_gemini_key_desc">Add a Gemini key and select Gemini cloud TTS in AI keys and models.</string>
     <string name="desktop_cloud_tts_not_configured_desc">Cloud TTS is not configured for this desktop build.</string>
     <string name="desktop_cloud_tts_sign_in_required_desc">Sign in with Google to use cloud TTS.</string>
+    <!-- Desktop note: cloud TTS needs a signed-in account with credits; purchases happen in the Android app. -->
     <string name="desktop_cloud_tts_signed_in_credits_required_desc">Cloud TTS needs a signed-in account with credits. Pro and credits can only be purchased from the Android app.</string>
     <string name="desktop_color">Color</string>
     <string name="desktop_comment_options">Comment options</string>
@@ -2160,10 +2226,15 @@
     <string name="desktop_no_text_on_page_to_read">There is no text on this page to read.</string>
     <string name="desktop_no_text_to_summarize">There is no text to summarize.</string>
     <string name="desktop_open_comment">Open comment</string>
+    <!-- Desktop out-of-credits notice (generic): purchases happen in the Android app only. -->
     <string name="desktop_out_of_credits_android_purchase_desc">Out of credits. Pro and credits can only be purchased from the Android app.</string>
+    <!-- Desktop out-of-credits notice for cloud TTS; purchases happen in the Android app only. -->
     <string name="desktop_out_of_credits_cloud_tts_desc">Using cloud TTS needs credits on desktop. Pro and credits can only be purchased from the Android app.</string>
+    <!-- Desktop out-of-credits notice for a generic paid feature; purchases happen in the Android app only. -->
     <string name="desktop_out_of_credits_generic_feature_desc">Using this feature needs credits on desktop. Pro and credits can only be purchased from the Android app.</string>
+    <!-- Desktop out-of-credits notice for story recaps; purchases happen in the Android app only. -->
     <string name="desktop_out_of_credits_recaps_desc">Using recaps needs credits on desktop. Pro and credits can only be purchased from the Android app.</string>
+    <!-- Desktop out-of-credits notice for summaries; purchases happen in the Android app only. -->
     <string name="desktop_out_of_credits_summaries_desc">Using summaries needs credits on desktop. Pro and credits can only be purchased from the Android app.</string>
     <string name="desktop_pan">Pan</string>
     <string name="desktop_pdf_action_failed">PDF action failed</string>
@@ -2189,7 +2260,9 @@
     <string name="desktop_previous_search_result">Previous search result</string>
     <string name="desktop_print_dialog_finished">The print dialog has finished.</string>
     <string name="desktop_pro_required">Pro required</string>
+    <!-- Desktop notice for a Pro-gated feature: purchase on Android, then sign in on desktop to use it. -->
     <string name="desktop_pro_required_generic_feature_desc">This feature requires Pro. Pro can only be purchased from the Android app, then desktop will use the upgraded account after sign-in.</string>
+    <!-- Desktop notice: the multi-word smart dictionary needs Pro; purchase on Android, then sign in on desktop. -->
     <string name="desktop_pro_required_multi_word_dictionary_desc">Multi-word smart dictionary requires Pro. Pro can only be purchased from the Android app, then desktop will use the upgraded account after sign-in.</string>
     <string name="desktop_reader_ai_hidden_desc">Reader AI features are hidden.</string>
     <string name="desktop_ai_not_configured_desc">Desktop AI is not configured for this build.</string>
@@ -2284,6 +2357,7 @@
     <string name="desktop_increase_format">Increase %1$s</string>
     <string name="desktop_jump_history">Jump history</string>
     <string name="desktop_layout_spacing">Layout and Spacing</string>
+    <!-- Desktop empty-library state: import files into app storage, or add a folder to read files in place. -->
     <string name="desktop_library_empty_desc">Import files into app storage or add a folder to read files in place.</string>
     <string name="desktop_library_subtitle">Browse your collection</string>
     <!-- Desktop primary navigation shortcut for bring-your-own-key AI configuration. -->
@@ -2324,12 +2398,14 @@
     <string name="desktop_page_and_text_colors">Page and text colors</string>
     <string name="desktop_page_info">Page Info</string>
     <string name="desktop_page_width">Page width</string>
+    <!-- Desktop settings note: these defaults apply only where the platform supports shared PDF appearance; per-book overrides win inside the PDF reader. -->
     <string name="desktop_pdf_appearance_defaults_desc">These defaults apply where the platform supports shared PDF appearance. Per-book PDF overrides stay in the PDF reader.</string>
     <string name="desktop_pdf_file_actions">PDF file actions</string>
     <string name="desktop_pdf_highlighter">PDF highlighter</string>
     <string name="desktop_pdf_highlighter_alpha_desc">Saved with reader highlight transparency.</string>
     <string name="desktop_pin">Pin</string>
     <string name="desktop_reader_managed_pdf_tools">Reader-managed PDF tools</string>
+    <!-- Desktop settings note: auto-scroll, OCR, annotation defaults and PDF tool visibility are managed inside the active PDF reader, not here. -->
     <string name="desktop_reader_managed_pdf_tools_desc">Auto-scroll, OCR, annotation defaults, and PDF-only tool visibility are managed inside the active PDF reader.</string>
     <!-- Desktop reader page info. %1$s = page mode; %2$s = page or spread label; %3$d = total pages; %4$d = progress percentage. Example: "Page 12 of 240 (5%)". -->
     <string name="desktop_reader_page_info_format">%1$s %2$s of %3$d (%4$d%%)</string>
@@ -2385,6 +2461,7 @@
     <string name="audiobooks_playback_speed">Playback speed</string>
     <string name="audiobooks_speed_selected">Selected</string>
     <string name="audiobooks_sleep_timer">Sleep timer</string>
+    <!-- Audiobook duration, minutes component only (0-59), shown after hours. %1$d = minutes. Example: "42 min". -->
     <string name="audiobooks_minutes">%1$d minutes</string>
     <string name="audiobooks_one_hour">1 hour</string>
     <string name="audiobooks_one_minute">1 minute</string>
@@ -2412,12 +2489,59 @@
 
     <string name="listen_empty">Nothing to listen to yet</string>
     <string name="listen_empty_desc">Import an audiobook or choose a library book to listen with text-to-speech.</string>
+    <!-- Empty state in the audiobook player chapter list search. %1$s = the search query. Example: 'No listening items match "intro"'. -->
     <string name="listen_no_matches">No listening items match “%1$s”</string>
 
     <string name="listen_badge_audiobook">AUDIOBOOK</string>
     <string name="listen_badge_tts">TTS</string>
 
     <string name="listen_timer">Timer</string>
+    <!-- Chapter row label in the audiobook player. %1$d = chapter number. Example: "Chapter 2". -->
     <string name="listen_chapter_number">Chapter %1$d</string>
     <string name="document_picker_unavailable">No document picker is available on this device.</string>
+
+    <!-- Shared-UI strings consumed via readerString() (iOS/desktop and shared
+         screens). These keys previously existed only in the generated JSON
+         catalogs; they now live in the base resource file so every platform
+         and every language pass translates them from one source of truth. -->
+    <string name="account_apple_linked">Apple linked</string>
+    <string name="account_authorize_google_drive">Authorize Google Drive to enable full library sync.</string>
+    <string name="account_continue_apple">Continue with Apple</string>
+    <string name="account_google_drive_sync_available">Google Drive sync is available.</string>
+    <string name="account_google_linked">Google linked</string>
+    <!-- Account screen note: syncing requires a Google sign-in; Apple-only accounts can still use Pro and credits. -->
+    <string name="account_google_required_for_sync">Sync requires Google. Apple-only accounts can use Pro and credits but cannot sync.</string>
+    <string name="account_link_apple">Link Apple sign-in</string>
+    <string name="account_link_google">Link Google sign-in</string>
+    <!-- Account screen note: linking adds another sign-in method to the SAME account; it does not create or purchase a separate one. -->
+    <string name="account_linking_desc">Linking adds another way to sign in to this Episteme account. It does not create or purchase a separate account.</string>
+    <string name="account_title">Episteme Account</string>
+    <string name="settings_clear_cloud_local_authorization_required">Sign in and authorize Google Drive before clearing cloud and local data.</string>
+    <string name="settings_clear_cloud_local_cleanup_missing">Cloud data cleared, but local cleanup was not available.</string>
+    <string name="settings_clear_cloud_local_confirmation_required">Confirmation is required before clearing cloud and local data.</string>
+    <!-- Destructive-action confirmation listing exactly what is deleted (synced books, shelves, fonts, PDF sidecars, matching local files) and what remains (account, purchases). -->
+    <string name="settings_clear_cloud_local_desc">This permanently deletes your synced books, shelves, fonts, PDF sidecars, and matching local library files. Your account and purchases remain. This action cannot be undone.</string>
+    <!-- Error banner when clearing cloud+local data fails. %1$s = the technical error message. Example: "Unable to clear cloud and local data: network timeout". -->
+    <string name="settings_clear_cloud_local_failed">Unable to clear cloud and local data: %1$s</string>
+    <string name="settings_clear_cloud_local_in_progress">Cloud sync is busy. Try clearing cloud and local data again shortly.</string>
+    <!-- Success banner after wiping cloud+local data. Placeholder: none. Always shown as-is. -->
+    <string name="settings_clear_cloud_local_success">Cloud and local data cleared (removed %1$d cloud file(s)).</string>
+    <string name="settings_clear_cloud_local_title">Clear cloud and local data?</string>
+    <string name="settings_clear_cloud_local_unavailable">Cloud and local data clearing is unavailable in this build.</string>
+    <!-- Device management screen intro: review signed-in devices; revoking stops sync participation for that device. -->
+    <string name="settings_device_management_desc">Review devices signed in to this account. Revoking a device stops it from participating in account sync.</string>
+    <string name="settings_device_management_empty">No active devices are registered for this account.</string>
+    <!-- Device row detail in device management. %1$s = a formatted date/time. Example: "Last seen Sep 21, 2026, 4:30 PM". -->
+    <string name="settings_device_management_last_seen">Last seen %1$s</string>
+    <string name="settings_device_management_refresh">Refresh devices</string>
+    <string name="settings_device_management_revoke">Revoke</string>
+    <!-- Dialog body when revoking a device. %1$s = the device name. Example: "Pixel 8 will no longer be allowed to participate in account sync." -->
+    <string name="settings_device_management_revoke_desc">%1$s will no longer be allowed to participate in account sync.</string>
+    <string name="settings_device_management_revoke_title">Revoke device?</string>
+    <string name="settings_device_management_title">Device management</string>
+    <string name="settings_device_status_cannot_revoke_active">This device cannot be revoked while it is active.</string>
+    <string name="settings_device_status_no_active">No active devices are registered for this account.</string>
+    <string name="settings_device_status_revoke_failed">Unable to revoke the selected device.</string>
+    <string name="settings_device_status_revoked">Device revoked.</string>
+    <string name="settings_device_status_unavailable">Device management is unavailable.</string>
 </resources>
