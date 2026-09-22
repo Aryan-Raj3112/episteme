@@ -1180,7 +1180,7 @@
     <string name="desktop_custom_fonts_desc">Імпартаваныя шрыфты для чыталкі</string>
     <string name="desktop_delete_font">Выдаліць шрыфт</string>
     <string name="desktop_delete_font_desc">Выдаліць %1$s? Кнігі, якія выкарыстоўваюць яго, вернуцца да шрыфта па змаўчанні.</string>
-    <string name="desktop_delete_shelf_desc">Выдаліць \&quot;%1$s\&quot;? Кнігі застаюцца ў вашай бібліятэцы.</string>
+    <string name="desktop_delete_shelf_desc">Выдаліць \"%1$s\"? Кнігі застаюцца ў вашай бібліятэцы.</string>
     <string name="desktop_delete_summary">Выдаліць падсумаванне</string>
     <string name="desktop_disabled">Інваліды</string>
     <string name="desktop_drop_files_to_import">Перацягніце файлы для імпарту</string>
@@ -1214,7 +1214,7 @@
     <string name="desktop_more_menu">больш</string>
     <string name="desktop_no_cached_summaries_book">Кэшаваных падсумаванняў для гэтай кнігі яшчэ няма.</string>
     <string name="desktop_no_custom_fonts_desc">Імпартуйце файлы TTF, OTF або WOFF2, каб выкарыстоўваць іх у кнігах.</string>
-    <string name="desktop_no_fonts_matching">Шрыфты, якія адпавядаюць \&quot;%1$s\&quot;</string>
+    <string name="desktop_no_fonts_matching">Шрыфты, якія адпавядаюць \"%1$s\"</string>
     <string name="desktop_no_google_account_connected">Няма Google уліковы запіс падключаны.</string>
     <string name="desktop_no_summary_cached_section">Для гэтага раздзела няма падсумавання ў кэшы.</string>
     <string name="desktop_offline_oss_reader">Аўтаномная праграма для чытання на працоўным стале</string>
@@ -1460,7 +1460,7 @@
     <string name="desktop_no_tags_yet">Тэгаў пакуль няма</string>
     <string name="desktop_no_supported_files_imported">Файлы, якія падтрымліваюцца, не былі імпартаваныя.</string>
     <string name="desktop_opds_catalog">Каталог</string>
-    <string name="desktop_opds_delete_catalog_desc">Выдаліць &quot;%1$s&quot;? Патокавыя кнігі з гэтага каталога могуць перастаць адкрывацца, калі ўліковыя даныя зменяцца пазней.</string>
+    <string name="desktop_opds_delete_catalog_desc">Выдаліць "%1$s"? Патокавыя кнігі з гэтага каталога могуць перастаць адкрывацца, калі ўліковыя даныя зменяцца пазней.</string>
     <string name="desktop_opds_no_catalogs">Ніякіх каталогаў</string>
     <string name="desktop_opds_no_catalogs_desc">Дадайце OPDS каталог для прагляду выдаленых кніг.</string>
     <string name="desktop_opds_subtitle">Праглядайце каталогі, патокі і загрузкі</string>
@@ -1513,7 +1513,6 @@
     <string name="tts_replacements_replace_only_spoken">Замяняйце толькі сказанае</string>
     <string name="tts_replacements_replace_only_spoken_desc">Тэкст Reader, вылучэнні і месцы застаюцца нязменнымі.</string>
     <string name="tts_replacements_summary_format">%1$s -&gt; %2$s</string>
-
     <!-- Strings added by the be language pass (docs/localization-revamp-plan.md §6).
          Register: formal Вы with plural imperatives; glossary: бібліятэка, паліца,
          закладка, раздзел, вокладка, налады, воблака/воблачны (genuine be cloud
@@ -1636,7 +1635,7 @@
     <string name="listen_no_tts_books">Падтрымліваных кніг не знойдзена</string>
     <string name="listen_empty">Пакуль няма чаго слухаць</string>
     <string name="listen_empty_desc">Імпартуйце аўдыякнігу або выберыце кнігу з бібліятэкі, каб слухаць яе сінтэзаваным голасам.</string>
-    <string name="listen_no_matches">Нішто з праслухоўвання не адпавядае &quot;%1$s&quot;</string>
+    <string name="listen_no_matches">Нішто з праслухоўвання не адпавядае "%1$s"</string>
     <string name="listen_badge_audiobook">АЎДЫЯКНІГА</string>
     <string name="listen_badge_tts">TTS</string>
     <string name="listen_timer">Таймер сну</string>
@@ -1669,7 +1668,7 @@
     <string name="visual_options_bottom_toolbar">Паказваць ніжнюю панэль інструментаў</string>
     <string name="visual_options_bottom_toolbar_desc">Схавайце яе, каб чытаць толькі з верхнімі інструментамі</string>
     <string name="search_chapters_placeholder">Пошук раздзелаў</string>
-    <string name="no_chapters_matching">Раздзелаў для &quot;%1$s&quot; не знойдзена.</string>
+    <string name="no_chapters_matching">Раздзелаў для "%1$s" не знойдзена.</string>
     <string name="visual_options_hide_images">Схаваць выявы</string>
     <string name="visual_options_hide_images_desc">Уключыце, каб чытаць са схаванымі ўсімі выявамі кнігі.</string>
     <string name="visual_options_epub_page_spread">Разварот</string>
@@ -1677,9 +1676,9 @@
     <string name="visual_options_epub_spread_single">Адна старонка</string>
     <string name="visual_options_epub_spread_two">Дзве старонкі</string>
     <string name="label_spread_gap">Прамежак развароту</string>
-    <string name="banner_tag_deleted">Тэг &quot;%1$s&quot; выдалены.</string>
+    <string name="banner_tag_deleted">Тэг "%1$s" выдалены.</string>
     <string name="menu_delete_tag">Выдаліць тэг</string>
-    <string name="dialog_delete_tag_desc">Выдаліць тэг &quot;%1$s&quot;? Ён будзе выдалены з кожнай кнігі.</string>
+    <string name="dialog_delete_tag_desc">Выдаліць тэг "%1$s"? Ён будзе выдалены з кожнай кнігі.</string>
     <string name="chapter_of_chapters">Раздзел %1$d з %2$d</string>
     <string name="chapter_number">Раздзел %1$d</string>
     <string name="content_desc_numbered_list">Нумараваны спіс</string>
