@@ -1513,7 +1513,6 @@
     <string name="tts_replacements_replace_only_spoken">話されている内容だけを置き換える</string>
     <string name="tts_replacements_replace_only_spoken_desc">リーダーのテキスト、ハイライト、位置は変更されません。</string>
     <string name="tts_replacements_summary_format">%1$s -&gt; %2$s</string>
-
     <!-- Strings added by the ja language pass (docs/localization-revamp-plan.md §6).
          Register: です・ます; half-width space between Japanese and Latin words;
          katakana loanwords (クラウド/ファイル/ブックマーク/オーディオブック);
