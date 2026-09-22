@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PointF
 import android.graphics.Rect
@@ -28,6 +29,7 @@ import io.legere.pdfiumandroid.suspend.PdfiumCoreKt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.coroutines.cancellation.CancellationException
 import me.zhanghai.android.libarchive.Archive
 import me.zhanghai.android.libarchive.ArchiveEntry
 import me.zhanghai.android.libarchive.ArchiveException
@@ -42,6 +44,31 @@ interface ReaderDocument : AutoCloseable {
     suspend fun getPageCount(): Int
     suspend fun openPage(pageIndex: Int): ReaderPage?
     suspend fun getTableOfContents(): List<Bookmark>
+
+    /**
+     * Renders a small thumbnail of [pageIndex] scaled to [widthPx] wide, or
+     * null when the page cannot be opened or rendered.
+     *
+     * The default implementation reuses [openPage]. The PDF implementation
+     * overrides it with a single-lock render: the Pages tab used to spend one
+     * global-Pdfium-mutex acquisition per call (open, measure x2, render,
+     * close), so a fast scrollbar fling queued thousands of lock ops behind
+     * every tile and starved the main page render (blank page) and back/close.
+     */
+    suspend fun renderPageThumbnail(pageIndex: Int, widthPx: Int): Bitmap? {
+        if (widthPx <= 0 || pageIndex < 0) return null
+        openPage(pageIndex)?.use { page ->
+            val w = page.getPageWidthPoint()
+            val h = page.getPageHeightPoint()
+            if (w <= 0 || h <= 0) return null
+            val thumbH = (widthPx.toFloat() / (w.toFloat() / h.toFloat())).toInt().coerceAtLeast(1)
+            val bmp = createBitmap(widthPx, thumbH)
+            bmp.eraseColor(Color.WHITE)
+            page.renderPageBitmap(bmp, 0, 0, widthPx, thumbH, false)
+            return bmp
+        }
+        return null
+    }
 }
 
 interface ReaderPage : AutoCloseable {
@@ -162,6 +189,39 @@ class PdfDocumentWrapper(val pdfDocument: PdfDocumentKt) : ReaderDocument {
             if (isClosed.get()) null else pdfDocument.openPage(pageIndex)
         } ?: return null
         return PdfPageWrapper(page, isClosed)
+    }
+
+    override suspend fun renderPageThumbnail(pageIndex: Int, widthPx: Int): Bitmap? {
+        if (isClosed.get() || widthPx <= 0 || pageIndex < 0) return null
+        return try {
+            PdfiumEngineProvider.withPdfium {
+                if (isClosed.get()) return@withPdfium null
+                val page = try {
+                    pdfDocument.openPage(pageIndex)
+                } catch (_: Exception) {
+                    null
+                } ?: return@withPdfium null
+                try {
+                    val w = page.getPageWidthPoint()
+                    val h = page.getPageHeightPoint()
+                    if (w <= 0 || h <= 0) return@withPdfium null
+                    val thumbH = (widthPx.toFloat() / (w.toFloat() / h.toFloat())).toInt().coerceAtLeast(1)
+                    val bmp = createBitmap(widthPx, thumbH)
+                    bmp.eraseColor(Color.WHITE)
+                    page.renderPageBitmap(bmp, 0, 0, widthPx, thumbH, false)
+                    bmp
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    null
+                } finally {
+                    closePdfiumResource(PdfPagesTabLogTag) { page.close() }
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
     }
 
     override suspend fun getTableOfContents() = PdfiumEngineProvider.withPdfium {
@@ -843,7 +903,6 @@ class OpdsStreamDocumentWrapper(
                 catalogId = catalogId,
             ),
             pageIndex = pageIndex,
-            catalogUrl = streamCatalog?.url,
         )
 
         // Stream pages must carry credentials on the first request: unlike

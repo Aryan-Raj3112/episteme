@@ -113,6 +113,7 @@ internal fun sharedPaginatedTransitionDirection(
 
 enum class SharedNativeReaderSelectionAction {
     DEFINE,
+    DICTIONARY,
     TRANSLATE,
     SEARCH,
     SPEAK,
@@ -121,7 +122,11 @@ enum class SharedNativeReaderSelectionAction {
 
 internal fun SharedNativeReaderSelectionAction.externalLookupActionOrNull(): ReaderExternalLookupAction? {
     return when (this) {
-        SharedNativeReaderSelectionAction.DEFINE -> ReaderExternalLookupAction.DICTIONARY
+        // WebView parity (ReaderHtmlDocumentTemplate): Define opens AI define
+        // when available and falls back to dictionary lookup; Dictionary always
+        // opens the dictionary lookup.
+        SharedNativeReaderSelectionAction.DEFINE,
+        SharedNativeReaderSelectionAction.DICTIONARY -> ReaderExternalLookupAction.DICTIONARY
         SharedNativeReaderSelectionAction.TRANSLATE -> ReaderExternalLookupAction.TRANSLATE
         SharedNativeReaderSelectionAction.SEARCH -> ReaderExternalLookupAction.SEARCH
         SharedNativeReaderSelectionAction.SPEAK,
@@ -241,6 +246,18 @@ internal object SharedNativeSelectionVectorIcons {
         name = "SharedNativeSelectionSpeak",
         pathData = "M560,828L560,746Q653,719 706.5,642Q760,565 760,466Q760,367 706.5,290Q653,213 560,186L560,104Q687,133 763.5,234Q840,335 840,466Q840,597 763.5,698Q687,799 560,828ZM120,600L120,360L280,360L480,160L480,800L280,600L120,600ZM560,640L560,292Q612,317 646,364.5Q680,412 680,466Q680,520 646,567.5Q612,615 560,640Z"
     )
+    // WebView parity (ReaderSelectionIconTranslatePath): dedicated translate
+    // glyph instead of reusing the Define book icon.
+    val Translate: ImageVector = vector(
+        name = "SharedNativeSelectionTranslate",
+        pathData = "M440,800L600,400L760,800L685,800L645,690L555,690L515,800L440,800ZM578,625L622,625L600,560L578,625ZM160,720L105,665L300,470Q263,430 235,382Q207,334 190,280L270,280Q284,318 304,350Q324,382 350,410Q390,365 419,312Q448,259 464,200L80,200L80,120L320,120L320,40L400,40L400,120L640,120L640,200L544,200Q526,276 489,344Q452,412 405,470L500,565L470,645L350,525L160,720Z"
+    )
+    // WebView parity (ReaderSelectionIconNotePath): dedicated note glyph
+    // instead of reusing the Copy icon.
+    val Note: ImageVector = vector(
+        name = "SharedNativeSelectionNote",
+        pathData = "M200,840Q167,840 143.5,816.5Q120,793 120,760L120,200Q120,167 143.5,143.5Q167,120 200,120L760,120Q793,120 816.5,143.5Q840,167 840,200L840,620L620,840L200,840ZM200,760L580,760L580,580L760,580L760,200L200,200L200,760ZM280,520L680,520L680,440L280,440L280,520ZM280,360L680,360L680,280L280,280L280,360Z"
+    )
     val Search: ImageVector = vector(
         name = "SharedNativeSelectionSearch",
         pathData = "M784,840L532,588Q502,612 463,626Q424,640 380,640Q271,640 195.5,564.5Q120,489 120,380Q120,271 195.5,195.5Q271,120 380,120Q489,120 564.5,195.5Q640,271 640,380Q640,424 626,463Q612,502 588,532L840,784L784,840ZM380,560Q455,560 507.5,507.5Q560,455 560,380Q560,305 507.5,252.5Q455,200 380,200Q305,200 252.5,252.5Q200,305 200,380Q200,455 252.5,507.5Q305,560 380,560Z"
@@ -289,7 +306,10 @@ fun SharedNativePaginatedReader(
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)? = null,
     positionController: SharedNativePaginatedPositionController? = null,
     pageTurn: SharedPaginatedPageTurnSpec? = null,
-    pageDragController: SharedPaginatedPageDragController? = null
+    pageDragController: SharedPaginatedPageDragController? = null,
+    // See SharedNativePaginatedPagesContent.background: the host passes
+    // Transparent when this reader is the top layer of an active turn.
+    contentBackground: Color = renderPlan.background
 ) {
     val visiblePages = renderPlan.visiblePages
     val logicalFirstPage = remember(visiblePages) {
@@ -420,7 +440,8 @@ fun SharedNativePaginatedReader(
             onReaderTap = onReaderTap,
             imageContent = imageContent,
             pageTurn = pageTurn,
-            magnifierCaptureLayer = magnifierCaptureLayer
+            magnifierCaptureLayer = magnifierCaptureLayer,
+            background = contentBackground
         )
         activeSelection?.let { selection ->
             arrayOf(SharedNativeSelectionHandle.START, SharedNativeSelectionHandle.END).forEach { handle ->
@@ -540,7 +561,12 @@ internal fun SharedNativePaginatedPagesContent(
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?,
     pageTurn: SharedPaginatedPageTurnSpec?,
     magnifierCaptureLayer: GraphicsLayer?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    // Android benchmark parity: during a realistic turn the two page sets are
+    // stacked (beneath = opaque base fill, top = transparent so the curling
+    // sheet reveals the set beneath with its drop/inner shadows). The overlay
+    // passes Transparent; settled content keeps the default paper fill.
+    background: Color = renderPlan.background
 ) {
     if (visiblePages.isEmpty()) {
         Box(modifier = modifier, contentAlignment = Alignment.Center) {
@@ -552,7 +578,7 @@ internal fun SharedNativePaginatedPagesContent(
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
-            .background(renderPlan.background)
+            .background(background)
             .then(
                 if (magnifierCaptureLayer != null) {
                     Modifier.drawWithContent {
@@ -571,7 +597,7 @@ internal fun SharedNativePaginatedPagesContent(
             ),
         contentAlignment = Alignment.Center
     ) {
-        val pageGap = 28.dp
+        val pageGap = renderPlan.settings.pageSpreadGutterDp.dp
         val horizontalMargin = renderPlan.settings.resolvedHorizontalMargin.dp
         val configuredContentWidth = renderPlan.settings.pageWidth.dp
         val pageOuterWidth = if (renderPlan.settings.usesNativePaginatedSpreadPageSlot()) {
@@ -663,7 +689,8 @@ internal fun SharedNativePaginatedPageTurnOverlay(
     selectionHighlight: Color,
     pageTurn: SharedPaginatedPageTurnSpec,
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    background: Color = renderPlan.background
 ) {
     val selectionLayouts = remember { mutableStateMapOf<String, SharedNativeTextLayoutInfo>() }
     SharedNativePaginatedPagesContent(
@@ -682,7 +709,8 @@ internal fun SharedNativePaginatedPageTurnOverlay(
         imageContent = imageContent,
         pageTurn = pageTurn,
         magnifierCaptureLayer = null,
-        modifier = modifier
+        modifier = modifier,
+        background = background
     )
 }
 

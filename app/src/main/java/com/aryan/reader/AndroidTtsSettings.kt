@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -73,11 +74,19 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.media3.common.util.UnstableApi
+import com.aryan.reader.shared.ui.SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH
+import com.aryan.reader.shared.ui.sanitizeSharedMobileTtsSampleText
+import com.aryan.reader.shared.ui.toggleSharedMobileTtsVoiceFavorite
 import com.aryan.reader.tts.GEMINI_TTS_SPEAKERS
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsCacheManager
 import com.aryan.reader.tts.TtsPlaybackManager
+import com.aryan.reader.tts.effectiveTtsPreviewSampleText
 import com.aryan.reader.tts.formatBytes
+import com.aryan.reader.tts.loadTtsFavoriteVoices
+import com.aryan.reader.tts.loadTtsPreviewSampleText
+import com.aryan.reader.tts.saveTtsFavoriteVoices
+import com.aryan.reader.tts.saveTtsPreviewSampleText
 import org.commonmark.node.ListItem
 import org.commonmark.node.Text
 import timber.log.Timber
@@ -260,6 +269,7 @@ fun DeviceVoicesTab(
     var isTtsLoading by remember { mutableStateOf(true) }
 
     val allLanguagesLabel = stringResource(R.string.filter_all)
+    val favoritesLabel = stringResource(R.string.tts_favorites)
     var selectedLanguage by remember { mutableStateOf(allLanguagesLabel) }
     var languageMenuExpanded by remember { mutableStateOf(false) }
     val offlineNativeOnly = BuildConfig.IS_OFFLINE
@@ -295,18 +305,40 @@ fun DeviceVoicesTab(
         if (offlineNativeOnly) allVoices.filter { voice -> !voice.isNetworkConnectionRequired } else allVoices
     }
 
-    val languages = remember(selectableVoices) {
-        val list = listOf(allLanguagesLabel) + selectableVoices.map { it.locale.displayLanguage }.filter { it.isNotBlank() }.distinct().sorted()
+    val languages = remember(selectableVoices, allLanguagesLabel, favoritesLabel) {
+        val list = listOf(favoritesLabel, allLanguagesLabel) +
+            selectableVoices.map { it.locale.displayLanguage }.filter { it.isNotBlank() }.distinct().sorted()
         Timber.tag("TTS_DIAGNOSE").d("Languages list updated: size=${list.size}, items=$list")
         list
     }
 
-    val filteredVoices = remember(selectableVoices, selectedLanguage) {
-        if (selectedLanguage == allLanguagesLabel) selectableVoices
-        else selectableVoices.filter { it.locale.displayLanguage == selectedLanguage }
+    var favoriteVoices by remember { mutableStateOf(loadTtsFavoriteVoices(context)) }
+    // Favorites lives inside the language menu as a starred entry; picking a
+    // language again exits it. No real locale is ever named "Favorites".
+    // A stale selection (e.g. after a locale change) falls back to All.
+    val effectiveLanguage = selectedLanguage.takeIf { it in languages } ?: allLanguagesLabel
+    val showingFavorites = effectiveLanguage == favoritesLabel
+
+    val filteredVoices = remember(selectableVoices, effectiveLanguage, showingFavorites, favoriteVoices) {
+        val base = when {
+            showingFavorites || effectiveLanguage == allLanguagesLabel -> selectableVoices
+            else -> selectableVoices.filter { it.locale.displayLanguage == effectiveLanguage }
+        }
+        if (showingFavorites) base.filter { it.name in favoriteVoices } else base
     }
 
     val isBaseMode = currentMode == TtsPlaybackManager.TtsMode.BASE
+
+    // Local-TTS voice preview text, persisted under the same key as the
+    // shared reader sheet so both stay in sync. Editing is harmless while
+    // TTS is active (only previews read it). The field always shows the
+    // effective text, so the default is visible until customized.
+    var sampleDraft by remember { mutableStateOf(effectiveTtsPreviewSampleText(context)) }
+    val sampleDefault = stringResource(R.string.tts_voice_sample_generic)
+    val hasCustomSample = loadTtsPreviewSampleText(context).isNotBlank()
+    val effectiveSample = remember(sampleDraft, sampleDefault) {
+        sanitizeSharedMobileTtsSampleText(sampleDraft).ifBlank { sampleDefault }
+    }
 
     Surface(
         color = if (isBaseMode && savedVoiceName == null) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -356,13 +388,40 @@ fun DeviceVoicesTab(
         }
     }
 
+    Spacer(Modifier.height(16.dp))
+
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.tts_preview_text_label), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        TextButton(
+            onClick = {
+                saveTtsPreviewSampleText(context, "")
+                sampleDraft = effectiveTtsPreviewSampleText(context)
+            },
+            enabled = hasCustomSample || sampleDraft != sampleDefault,
+        ) {
+            Text(stringResource(R.string.action_reset))
+        }
+    }
+    OutlinedTextField(
+        value = sampleDraft,
+        onValueChange = { next ->
+            sampleDraft = next.take(SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH)
+            saveTtsPreviewSampleText(context, sampleDraft)
+        },
+        placeholder = { Text(sampleDefault) },
+        supportingText = { Text("${sampleDraft.length}/${SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH}") },
+        minLines = 2,
+        maxLines = 3,
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+    )
+
     androidx.compose.material3.ExposedDropdownMenuBox(
         expanded = languageMenuExpanded,
         onExpandedChange = { if (!isTtsActive) languageMenuExpanded = it },
         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
     ) {
         OutlinedTextField(
-            value = selectedLanguage,
+            value = effectiveLanguage,
             onValueChange = {},
             readOnly = true,
             label = { Text(stringResource(R.string.tts_language_filter)) },
@@ -381,6 +440,18 @@ fun DeviceVoicesTab(
                     text = {
                         Text(text = lang)
                     },
+                    leadingIcon = if (lang == favoritesLabel) {
+                        {
+                            Icon(
+                                Icons.Default.Star,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    } else null,
+                    trailingIcon = if (lang == effectiveLanguage) {
+                        { Icon(Icons.Default.Check, contentDescription = null) }
+                    } else null,
                     onClick = {
                         selectedLanguage = lang
                         languageMenuExpanded = false
@@ -391,10 +462,20 @@ fun DeviceVoicesTab(
         }
     }
 
+    if (showingFavorites && filteredVoices.isEmpty()) {
+        Text(
+            text = stringResource(R.string.tts_no_favorite_voices),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+        )
+    }
+
     LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))) {
         items(filteredVoices.size) { index ->
             val voice = filteredVoices[index]
             val isSelected = isBaseMode && voice.name == savedVoiceName
+            val isFavorite = voice.name in favoriteVoices
 
             ListItem(
                 headlineContent = { Text(voice.locale.displayName, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
@@ -412,16 +493,35 @@ fun DeviceVoicesTab(
                 },
                 colors = ListItemDefaults.colors(containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(0.2f) else Color.Transparent),
                 trailingContent = {
-                    IconButton(
-                        enabled = !isTtsActive,
-                        onClick = {
-                            ttsEngine?.apply {
-                                this.voice = voice
-                                speak(context.getString(R.string.tts_voice_sample_generic), TextToSpeech.QUEUE_FLUSH, null, "sample_${voice.name}")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = {
+                                favoriteVoices = toggleSharedMobileTtsVoiceFavorite(favoriteVoices, voice.name)
+                                saveTtsFavoriteVoices(context, favoriteVoices)
                             }
+                        ) {
+                            Icon(
+                                Icons.Default.Star,
+                                contentDescription = if (isFavorite) {
+                                    stringResource(R.string.tts_remove_favorite)
+                                } else {
+                                    stringResource(R.string.tts_add_favorite)
+                                },
+                                tint = if (isFavorite) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
-                    ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = stringResource(R.string.tts_play_sample), tint = MaterialTheme.colorScheme.primary)
+                        IconButton(
+                            enabled = !isTtsActive,
+                            onClick = {
+                                ttsEngine?.apply {
+                                    this.voice = voice
+                                    speak(effectiveSample, TextToSpeech.QUEUE_FLUSH, null, "sample_${voice.name}")
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = stringResource(R.string.tts_play_sample), tint = MaterialTheme.colorScheme.primary)
+                        }
                     }
                 }
             )

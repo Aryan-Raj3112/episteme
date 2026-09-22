@@ -10,6 +10,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -22,7 +24,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import com.aryan.reader.shared.UserData
+import com.aryan.reader.shared.accountInitial
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.usePinned
@@ -37,7 +41,8 @@ import platform.posix.memcpy
 /**
  * iOS account-image slot used by both the global drawer and Unified top bar.
  * Firebase exposes photoURL as a remote URL, so decode it off the Compose
- * thread and retain the account-circle fallback for missing/invalid images.
+ * thread. Apple sign-in never provides a photo, so fall back to the shared
+ * initials avatar for signed-in users and keep the account-circle for guests.
  */
 @Composable
 internal fun IosAccountAvatar(
@@ -56,19 +61,35 @@ internal fun IosAccountAvatar(
         modifier = modifier.clip(CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        bitmap?.let {
-            Image(
-                bitmap = it,
+        val image = bitmap
+        when {
+            image != null -> Image(
+                bitmap = image,
                 contentDescription = user?.displayName,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
             )
-        } ?: Icon(
-            imageVector = Icons.Default.AccountCircle,
-            contentDescription = user?.displayName,
-            modifier = Modifier.fillMaxSize(),
-            tint = MaterialTheme.colorScheme.primary,
-        )
+            user != null -> Surface(
+                modifier = Modifier.fillMaxSize(),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        user.accountInitial(),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+            else -> Icon(
+                imageVector = Icons.Default.AccountCircle,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
     }
 }
 

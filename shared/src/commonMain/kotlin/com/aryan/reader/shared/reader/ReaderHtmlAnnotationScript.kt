@@ -1,9 +1,47 @@
 package com.aryan.reader.shared.reader
 
 internal fun readerHtmlAnnotationScript(): String = """
-              function wrapRangeTextSegments(range, markerFactory) {
+              function wrapRangeTextSegments(range, markerFactory, shiftContext) {
                 var segments = textSegmentsInRange(range);
+                var shiftCtx = shiftContext || '';
+                var shiftBeforeDoc = '';
+                var shiftBeforeRange = '';
+                var shiftBeforeBlocks = '';
+                try {
+                  if (window.readerHighlightShiftLog) {
+                    shiftBeforeDoc = readerHighlightShiftDocSnapshot();
+                    shiftBeforeRange = readerHighlightShiftRangeRects(range);
+                    var seenBlocks = {};
+                    var blockSnaps = [];
+                    for (var bi = 0; bi < segments.length; bi++) {
+                      var block = readerHighlightShiftBlockOf(segments[bi].node);
+                      if (!block) continue;
+                      var key = readerElementLabel(block);
+                      if (seenBlocks[key]) continue;
+                      seenBlocks[key] = true;
+                      blockSnaps.push(readerHighlightShiftBlockSnapshot(block));
+                      if (blockSnaps.length >= 3) break;
+                    }
+                    shiftBeforeBlocks = blockSnaps.join(' | ');
+                    var segSnaps = [];
+                    for (var si = 0; si < segments.length && si < 3; si++) {
+                      try {
+                        var segNode = segments[si].node;
+                        var segParentLabel = readerElementLabel(segNode && segNode.parentElement);
+                        var segSelected = readerTtsPreview((segNode.nodeValue || '').substring(segments[si].start, segments[si].end), 20);
+                        segSnaps.push(segParentLabel + '[' + segments[si].start + '..' + segments[si].end + ']="' + segSelected + '"');
+                      } catch (error) {}
+                    }
+                    var rangeText = '';
+                    try { rangeText = readerTtsPreview(range.toString(), 80); } catch (error) {}
+                    readerHighlightShiftLog('wrap_before', 'ctx=' + shiftCtx + ' segs=' + segments.length +
+                      ' rangeRects=' + shiftBeforeRange + ' doc=' + shiftBeforeDoc +
+                      ' text="' + rangeText + '" segDetail=[' + segSnaps.join(' | ') + ']' +
+                      ' blocks=[' + shiftBeforeBlocks + ']');
+                  }
+                } catch (error) {}
                 var wrapped = 0;
+                var createdMarkers = [];
                 for (var index = segments.length - 1; index >= 0; index--) {
                   var segment = segments[index];
                   var node = segment.node;
@@ -18,10 +56,40 @@ internal fun readerHtmlAnnotationScript(): String = """
                   var marker = markerFactory();
                   marker.textContent = selected;
                   fragment.appendChild(marker);
+                  createdMarkers.push(marker);
                   if (segment.end < value.length) fragment.appendChild(document.createTextNode(value.substring(segment.end)));
                   parent.replaceChild(fragment, node);
                   wrapped++;
                 }
+                try {
+                  if (window.readerHighlightShiftLog) {
+                    var afterDoc = readerHighlightShiftDocSnapshot();
+                    var markerSnaps = [];
+                    for (var mi = 0; mi < createdMarkers.length && mi < 3; mi++) {
+                      markerSnaps.push(readerHighlightShiftMarkerSnapshot(createdMarkers[mi]));
+                    }
+                    var afterBlocks = '';
+                    try {
+                      var afterSeen = {};
+                      var afterSnaps = [];
+                      for (var ai = 0; ai < createdMarkers.length; ai++) {
+                        var afterBlock = readerHighlightShiftBlockOf(createdMarkers[ai]);
+                        if (!afterBlock) continue;
+                        var afterKey = readerElementLabel(afterBlock);
+                        if (afterSeen[afterKey]) continue;
+                        afterSeen[afterKey] = true;
+                        afterSnaps.push(readerHighlightShiftBlockSnapshot(afterBlock));
+                        if (afterSnaps.length >= 3) break;
+                      }
+                      afterBlocks = afterSnaps.join(' | ');
+                    } catch (error) {}
+                    readerHighlightShiftLog('wrap_after', 'ctx=' + shiftCtx + ' wrapped=' + wrapped +
+                      ' markers=' + createdMarkers.length + ' docBefore=' + shiftBeforeDoc + ' docAfter=' + afterDoc +
+                      ' rangeBefore=' + shiftBeforeRange +
+                      ' markerSnaps=[' + markerSnaps.join(' | ') + ']' +
+                      ' blocksBefore=[' + shiftBeforeBlocks + '] blocksAfter=[' + afterBlocks + ']');
+                  }
+                } catch (error) {}
                 return wrapped > 0;
               }
               function unwrapReaderHighlights() {
@@ -301,9 +369,382 @@ internal fun readerHtmlAnnotationScript(): String = """
                 if (endOffset === startOffset && expectedText) endOffset = startOffset + String(expectedText).length;
                 return { startOffset: startOffset, endOffset: endOffset };
               }
+              // Reflow-free user-highlight painting. Wrapping words in spans
+              // perturbs justified line breaking at subpixel level (proven by
+              // HIGHLIGHT_SHIFT logs: identical metrics, changed breaks, whole
+              // paragraph reflow). CSS Custom Highlights paint without touching
+              // the DOM, so layout cannot shift. DOM spans remain as fallback.
+              var readerUserHighlightRegistryOk = null;
+              var readerUserHighlightPaints = {};
+              var readerUserHighlightGroups = {};
+              var readerUserHighlightsPainted = {};
+              function userHighlightRegistryUsable() {
+                if (readerUserHighlightRegistryOk !== null) return readerUserHighlightRegistryOk;
+                try {
+                  readerUserHighlightRegistryOk = !!(
+                    window.CSS && window.Highlight &&
+                    window.CSS.highlights && window.CSS.highlights.set
+                  );
+                } catch (error) {
+                  readerUserHighlightRegistryOk = false;
+                }
+                return readerUserHighlightRegistryOk;
+              }
+              function readerUserHighlightPaintName(colorId, styleId, colorArgb) {
+                var color = String(colorId || 'yellow').toLowerCase().replace(/[^a-z0-9]+/g, '') || 'yellow';
+                var style = String(styleId || 'background').toLowerCase().replace(/[^a-z0-9]+/g, '') || 'background';
+                var suffix = '';
+                try {
+                  if (colorArgb !== undefined && colorArgb !== null && Number.isFinite(Number(colorArgb))) {
+                    suffix = '-c' + ((Number(colorArgb) >>> 0) & 0xFFFFFF).toString(16);
+                  }
+                } catch (error) {}
+                return 'reader-hl-' + color + '-' + style + suffix;
+              }
+              function readerUserHighlightPaintColor(colorId, colorArgb) {
+                try {
+                  if (colorArgb !== undefined && colorArgb !== null && Number.isFinite(Number(colorArgb))) {
+                    var rgb = (Number(colorArgb) >>> 0) & 0xFFFFFF;
+                    return '#' + rgb.toString(16).padStart(6, '0').toUpperCase();
+                  }
+                } catch (error) {}
+                try {
+                  var probe = document.createElement('span');
+                  probe.className = 'reader-user-highlight user-highlight-' + (colorId || 'yellow');
+                  probe.setAttribute('style', 'position:absolute !important; visibility:hidden !important;');
+                  probe.textContent = 'x';
+                  document.body.appendChild(probe);
+                  var bg = window.getComputedStyle ? window.getComputedStyle(probe).getPropertyValue('background-color') : '';
+                  if (probe.parentNode) probe.parentNode.removeChild(probe);
+                  if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') return bg;
+                } catch (error) {}
+                return '';
+              }
+              function readerEnsureUserHighlightPaint(paintName, styleId, colorCss) {
+                if (readerUserHighlightPaints[paintName]) return true;
+                try {
+                  var styleEl = document.getElementById('reader-user-highlight-paint');
+                  if (!styleEl) {
+                    styleEl = document.createElement('style');
+                    styleEl.id = 'reader-user-highlight-paint';
+                    document.head.appendChild(styleEl);
+                  }
+                  var style = String(styleId || 'background');
+                  var rule = '';
+                  if (style === 'underline' || style === 'wavy_underline') {
+                    rule = '::highlight(' + paintName + ') { background-color: transparent; ' +
+                      'text-decoration-line: underline !important; ' +
+                      'text-decoration-style: ' + (style === 'wavy_underline' ? 'wavy' : 'solid') + ' !important;' +
+                      (colorCss ? ' text-decoration-color: ' + colorCss + ' !important;' : '') + ' }';
+                  } else if (style === 'strikethrough') {
+                    rule = '::highlight(' + paintName + ') { background-color: transparent; ' +
+                      'text-decoration-line: line-through !important; text-decoration-style: solid !important;' +
+                      (colorCss ? ' text-decoration-color: ' + colorCss + ' !important;' : '') + ' }';
+                  } else {
+                    rule = '::highlight(' + paintName + ') { ' +
+                      (colorCss ? 'background-color: ' + colorCss + ' !important;' : '') + ' }';
+                  }
+                  styleEl.sheet.insertRule(rule, styleEl.sheet.cssRules.length);
+                  readerUserHighlightPaints[paintName] = true;
+                  return true;
+                } catch (error) {
+                  readerUserHighlightRegistryOk = false;
+                  try {
+                    if (window.readerHighlightShiftLog) readerHighlightShiftLog('registry_unavailable_fallback', 'reason=paint_rule_failed');
+                  } catch (ignored) {}
+                  return false;
+                }
+              }
+              function paintedEntryLive(entry) {
+                try {
+                  if (!entry || !entry.ranges || !entry.ranges.length) return false;
+                  for (var i = 0; i < entry.ranges.length; i++) {
+                    var r = entry.ranges[i];
+                    if (!r || r.collapsed) return false;
+                    if (r.startContainer && r.startContainer.isConnected === false) return false;
+                  }
+                  return true;
+                } catch (error) {
+                  return false;
+                }
+              }
+              function paintedEntryMatches(entry, highlight) {
+                var locator = (highlight && highlight.locator) || {};
+                if ((entry.styleId || 'background') !== (highlight.style || 'background')) return false;
+                if ((entry.colorId || 'yellow') !== (highlight.colorId || 'yellow')) return false;
+                var s = locator.startOffset;
+                var e = locator.endOffset;
+                if (s === undefined || s === null || e === undefined || e === null) return true;
+                return String(entry.startOffset) === String(s) && String(entry.endOffset) === String(e);
+              }
+              function unpaintUserHighlightByKey(key) {
+                var entry = readerUserHighlightsPainted[key];
+                if (!entry) return;
+                try {
+                  var group = readerUserHighlightGroups[entry.paintName];
+                  if (group) {
+                    for (var i = 0; i < entry.ranges.length; i++) {
+                      try { group.delete(entry.ranges[i]); } catch (error) {}
+                    }
+                    var empty = true;
+                    try { empty = group.size === 0; } catch (error) {}
+                    if (empty) {
+                      try { window.CSS.highlights.delete(entry.paintName); } catch (error) {}
+                      delete readerUserHighlightGroups[entry.paintName];
+                    }
+                  }
+                } catch (error) {}
+                delete readerUserHighlightsPainted[key];
+              }
+              function paintRangeWithUserHighlightRegistry(range, p) {
+                try {
+                  if (!range || range.collapsed) return false;
+                  if (!userHighlightRegistryUsable()) return wrapRangeTextSegments(range, p.markerFactory, p.ctx);
+                  readerEnsureUserHighlightPaint(p.paintName, p.styleId, p.colorCss);
+                  if (!readerUserHighlightPaints[p.paintName]) {
+                    return wrapRangeTextSegments(range, p.markerFactory, p.ctx);
+                  }
+                  var cloned = range.cloneRange();
+                  var group = readerUserHighlightGroups[p.paintName];
+                  if (!group) {
+                    group = new Highlight();
+                    readerUserHighlightGroups[p.paintName] = group;
+                    window.CSS.highlights.set(p.paintName, group);
+                  }
+                  group.add(cloned);
+                  var entry = readerUserHighlightsPainted[p.key];
+                  if (!entry) {
+                    entry = {
+                      paintName: p.paintName, ranges: [], spans: [],
+                      chapterIndex: p.chapterIndex, startOffset: p.startOffset, endOffset: p.endOffset,
+                      cfi: p.cfi, colorId: p.colorId, styleId: p.styleId,
+                      temp: !p.realId, id: p.realId || ''
+                    };
+                    readerUserHighlightsPainted[p.key] = entry;
+                  }
+                  entry.ranges.push(cloned);
+                  entry.spans.push({ chapterIndex: p.chapterIndex, startOffset: p.startOffset, endOffset: p.endOffset });
+                  try {
+                    if (window.readerHighlightShiftLog) {
+                      readerHighlightShiftLog('registry_paint', 'key=' + p.key +
+                        ' style=' + p.styleId + ' color=' + p.colorId +
+                        ' chapter=' + p.chapterIndex + ' offsets=' + p.startOffset + '..' + p.endOffset +
+                        ' rangeRects=' + readerHighlightShiftRangeRects(cloned) +
+                        ' doc=' + readerHighlightShiftDocSnapshot());
+                    }
+                  } catch (error) {}
+                  return true;
+                } catch (error) {
+                  try { readerUserHighlightRegistryOk = false; } catch (ignored) {}
+                  return wrapRangeTextSegments(range, p.markerFactory, p.ctx);
+                }
+              }
+              function paintParamsForHighlight(highlight, chapterIndex, segStart, segEnd, key, realId, markerFactory, ctx) {
+                var colorCss = readerUserHighlightPaintColor(highlight.colorId || 'yellow', highlight.colorArgb);
+                return {
+                  paintName: readerUserHighlightPaintName(highlight.colorId || 'yellow', highlight.style || 'background', highlight.colorArgb),
+                  key: key, realId: !!realId,
+                  chapterIndex: (chapterIndex === undefined || chapterIndex === null) ? highlight.chapterIndex : chapterIndex,
+                  startOffset: segStart, endOffset: segEnd,
+                  cfi: ((highlight.locator || {}).cfi || highlight.cfi || ''),
+                  colorId: highlight.colorId || 'yellow', styleId: highlight.style || 'background',
+                  colorCss: colorCss, markerFactory: markerFactory, ctx: ctx
+                };
+              }
+              function findIncomingForPaintedEntry(incoming, entry) {
+                for (var i = 0; i < incoming.length; i++) {
+                  var candidate = incoming[i];
+                  if (!candidate) continue;
+                  if (String(candidate.cfi || '') !== String(entry.cfi || '')) continue;
+                  var locator = candidate.locator || {};
+                  if ((candidate.style || 'background') !== (entry.styleId || 'background')) continue;
+                  if ((candidate.colorId || 'yellow') !== (entry.colorId || 'yellow')) continue;
+                  return candidate;
+                }
+                return null;
+              }
+              function cfiPresentInIncoming(incoming, entry) {
+                for (var i = 0; i < incoming.length; i++) {
+                  if (incoming[i] && String(incoming[i].cfi || '') === String(entry.cfi || '')) return true;
+                }
+                return false;
+              }
+              function reconcileUserHighlightRegistry(incoming) {
+                var list = Array.isArray(incoming) ? incoming : [];
+                var byId = {};
+                list.forEach(function (h) { if (h && h.id) byId[h.id] = h; });
+                Object.keys(readerUserHighlightsPainted).forEach(function (key) {
+                  var entry = readerUserHighlightsPainted[key];
+                  if (!entry) return;
+                  if (entry.temp) {
+                    var match = findIncomingForPaintedEntry(list, entry);
+                    if (match && match.id) {
+                      delete readerUserHighlightsPainted[key];
+                      entry.temp = false;
+                      entry.id = match.id;
+                      readerUserHighlightsPainted[match.id] = entry;
+                      try {
+                        if (window.readerHighlightShiftLog) readerHighlightShiftLog('registry_adopt', 'temp=' + key + ' id=' + match.id);
+                      } catch (error) {}
+                    } else if (!cfiPresentInIncoming(list, entry)) {
+                      unpaintUserHighlightByKey(key);
+                    }
+                  } else {
+                    var current = byId[key];
+                    if (!current) {
+                      unpaintUserHighlightByKey(key);
+                    } else if (!paintedEntryLive(entry) || !paintedEntryMatches(entry, current)) {
+                      unpaintUserHighlightByKey(key);
+                      applyHighlightObject(current);
+                    }
+                  }
+                });
+                list.forEach(function (h) {
+                  if (h && h.id && !readerUserHighlightsPainted[h.id]) applyHighlightObject(h);
+                });
+              }
+              function userHighlightIdFromPoint(x, y) {
+                try {
+                  var range = null;
+                  if (document.caretRangeFromPoint) {
+                    range = document.caretRangeFromPoint(x, y);
+                  } else if (document.caretPositionFromPoint) {
+                    var pos = document.caretPositionFromPoint(x, y);
+                    if (pos && pos.offsetNode) {
+                      var len = (pos.offsetNode.nodeValue || '').length;
+                      var start = Math.max(0, Math.min(pos.offset, len));
+                      range = document.createRange();
+                      range.setStart(pos.offsetNode, start);
+                      range.setEnd(pos.offsetNode, Math.min(len, start + 1));
+                    }
+                  }
+                  if (!range) return '';
+                  if (range.collapsed) {
+                    try {
+                      var node = range.startContainer;
+                      var textLen = (node.nodeValue || '').length;
+                      var probeStart = range.startOffset;
+                      if (probeStart >= textLen && textLen > 0) probeStart = textLen - 1;
+                      var probe = document.createRange();
+                      probe.setStart(node, probeStart);
+                      probe.setEnd(node, Math.min(textLen, probeStart + 1));
+                      if (!probe.collapsed) range = probe;
+                      else return '';
+                    } catch (error) {
+                      return '';
+                    }
+                  }
+                  var contents = Array.prototype.slice.call(document.querySelectorAll('.page[data-reader-page-index] .reader-content'));
+                  if (!contents.length) {
+                    contents = Array.prototype.slice.call(document.querySelectorAll('[data-reader-chapter-index] .reader-content'));
+                  }
+                  var bestId = '';
+                  var bestSpan = Number.MAX_SAFE_INTEGER;
+                  contents.forEach(function (content) {
+                    var segmentRange = null;
+                    try {
+                      segmentRange = clippedRangeForContent(content, range);
+                      if (!segmentRange || segmentRange.collapsed) return;
+                      var offsets = rangeOffsetsWithinContent(content, segmentRange);
+                      if (offsets.start === null || offsets.end === null) return;
+                      var readerHost = content.closest ? content.closest('[data-reader-chapter-index]') : null;
+                      var chapterIndex = readerHost ? parseInt(readerHost.getAttribute('data-reader-chapter-index') || '0', 10) : 0;
+                      Object.keys(readerUserHighlightsPainted).forEach(function (key) {
+                        var entry = readerUserHighlightsPainted[key];
+                        if (!entry || entry.temp || !entry.id || !entry.spans) return;
+                        entry.spans.forEach(function (span) {
+                          if (span.chapterIndex !== undefined && span.chapterIndex !== null && span.chapterIndex !== chapterIndex) return;
+                          if (offsets.start >= span.startOffset && offsets.start < span.endOffset) {
+                            var width = span.endOffset - span.startOffset;
+                            if (width < bestSpan) {
+                              bestSpan = width;
+                              bestId = entry.id;
+                            }
+                          }
+                        });
+                      });
+                    } finally {
+                      if (segmentRange && segmentRange.detach) segmentRange.detach();
+                    }
+                  });
+                  return bestId;
+                } catch (error) {
+                  return '';
+                }
+              }
+              function adoptServerRenderedHighlightMarkers(incoming) {
+                var spans = Array.prototype.slice.call(document.querySelectorAll('span[data-reader-highlight-id], span[data-cfi].reader-user-highlight, span[data-cfi][class*="user-highlight-"]'));
+                if (!spans.length) return;
+                var list = Array.isArray(incoming) ? incoming : [];
+                var byId = {};
+                list.forEach(function (h) { if (h && h.id) byId[h.id] = h; });
+                spans.forEach(function (marker) {
+                  try {
+                    var id = marker.getAttribute('data-reader-highlight-id') || '';
+                    var cfi = marker.getAttribute('data-cfi') || '';
+                    var highlight = (id && byId[id]) || null;
+                    if (!highlight) {
+                      for (var i = 0; i < list.length; i++) {
+                        var candidate = list[i];
+                        if (candidate && candidate.cfi && String(candidate.cfi) === String(cfi) &&
+                          markerMatchesHighlight(marker, candidate)) {
+                          highlight = candidate;
+                          break;
+                        }
+                      }
+                    }
+                    var range = document.createRange();
+                    range.selectNodeContents(marker);
+                    if (highlight && highlight.id && !range.collapsed) {
+                      var locator = highlight.locator || {};
+                      var colorCss = readerUserHighlightPaintColor(highlight.colorId || 'yellow', highlight.colorArgb);
+                      var paintName = readerUserHighlightPaintName(highlight.colorId || 'yellow', highlight.style || 'background', highlight.colorArgb);
+                      readerEnsureUserHighlightPaint(paintName, highlight.style || 'background', colorCss);
+                      if (readerUserHighlightPaints[paintName]) {
+                        var cloned = range.cloneRange();
+                        var group = readerUserHighlightGroups[paintName];
+                        if (!group) {
+                          group = new Highlight();
+                          readerUserHighlightGroups[paintName] = group;
+                          window.CSS.highlights.set(paintName, group);
+                        }
+                        group.add(cloned);
+                        readerUserHighlightsPainted[highlight.id] = {
+                          paintName: paintName, ranges: [cloned],
+                          spans: [{ chapterIndex: locator.chapterIndex, startOffset: locator.startOffset, endOffset: locator.endOffset }],
+                          chapterIndex: locator.chapterIndex, startOffset: locator.startOffset, endOffset: locator.endOffset,
+                          cfi: highlight.cfi || '', colorId: highlight.colorId || 'yellow',
+                          styleId: highlight.style || 'background', temp: false, id: highlight.id
+                        };
+                      }
+                    }
+                    var parent = marker.parentNode;
+                    if (parent) {
+                      while (marker.firstChild) parent.insertBefore(marker.firstChild, marker);
+                      parent.removeChild(marker);
+                      parent.normalize();
+                    }
+                    if (range.detach) range.detach();
+                  } catch (error) {}
+                });
+                try {
+                  if (window.readerHighlightShiftLog) {
+                    readerHighlightShiftLog('registry_adopt_server', 'converted=' + spans.length +
+                      ' doc=' + readerHighlightShiftDocSnapshot());
+                  }
+                } catch (error) {}
+              }
               function applyHighlightObject(highlight) {
                 if (!highlight) return;
                 var locator = highlight.locator || {};
+                if (userHighlightRegistryUsable()) {
+                  var painted = highlight.id ? readerUserHighlightsPainted[highlight.id] : null;
+                  if (painted && paintedEntryLive(painted) && paintedEntryMatches(painted, highlight)) {
+                    readerDesktopHighlightMapLog('web_apply_skip_painted id=' + highlight.id);
+                    return;
+                  }
+                  if (painted) unpaintUserHighlightByKey(highlight.id);
+                }
                 if (highlight.id) {
                   // Android parity: never re-derive a highlight that is already painted
                   // correctly — re-wrapping from stored offsets can drift the span.
@@ -353,6 +794,17 @@ internal fun readerHtmlAnnotationScript(): String = """
                   ' textChars=' + String(expectedText || '').length +
                   ' cfi=' + readerTtsPreview(sourceCfi, 160)
                 );
+                try {
+                  if (window.readerHighlightShiftLog) {
+                    readerHighlightShiftLog('apply_create',
+                      'id=' + (highlight.id || '') + ' style=' + (highlight.style || 'background') +
+                      ' color=' + (highlight.colorId || 'yellow') + ' chapter=' + chapterIndex +
+                      ' offsets=' + startOffset + '..' + endOffset +
+                      ' textChars=' + String(expectedText || '').length +
+                      ' text="' + readerTtsPreview(expectedText, 80) + '"' +
+                      ' doc=' + readerHighlightShiftDocSnapshot());
+                  }
+                } catch (error) {}
                 var cfiOffsets = readerOffsetsForSourceCfi(chapterIndex, sourceCfi, expectedText);
                 if (cfiOffsets) {
                   startOffset = cfiOffsets.startOffset;
@@ -469,11 +921,16 @@ internal fun readerHtmlAnnotationScript(): String = """
                     if (range && range.detach) range.detach();
                     return;
                   }
-                  wrapRangeTextSegments(range, function () {
-                    var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', segmentStart, segmentEnd, highlight.colorArgb, highlight.style || 'background');
-                    marker.setAttribute('data-cfi', sourceCfi || highlight.cfi || ('desktop:' + chapterIndex + ':' + startOffset + ':' + endOffset));
-                    return marker;
-                  });
+                  paintRangeWithUserHighlightRegistry(range, paintParamsForHighlight(
+                    highlight, chapterIndex, segmentStart, segmentEnd, highlight.id || ('cfi:' + (sourceCfi || highlight.cfi || '')),
+                    highlight.id,
+                    function () {
+                      var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', segmentStart, segmentEnd, highlight.colorArgb, highlight.style || 'background');
+                      marker.setAttribute('data-cfi', sourceCfi || highlight.cfi || ('desktop:' + chapterIndex + ':' + startOffset + ':' + endOffset));
+                      return marker;
+                    },
+                    'apply id=' + (highlight.id || '') + ' style=' + (highlight.style || 'background') + ' seg=' + segmentStart + '..' + segmentEnd
+                  ));
                   readerDesktopHighlightMapLog(
                     'web_apply_segment id=' + (highlight.id || '') +
                     ' chapter=' + chapterIndex +
@@ -529,11 +986,16 @@ internal fun readerHtmlAnnotationScript(): String = """
                   );
                   return false;
                 }
-                wrapRangeTextSegments(range, function () {
-                  var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', null, null, highlight.colorArgb, highlight.style || 'background');
-                  marker.setAttribute('data-cfi', locator.cfi || highlight.cfi || '');
-                  return marker;
-                });
+                paintRangeWithUserHighlightRegistry(range, paintParamsForHighlight(
+                  highlight, chapterIndex, null, null, highlight.id || ('cfi:' + (locator.cfi || highlight.cfi || '')),
+                  highlight.id,
+                  function () {
+                    var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', null, null, highlight.colorArgb, highlight.style || 'background');
+                    marker.setAttribute('data-cfi', locator.cfi || highlight.cfi || '');
+                    return marker;
+                  },
+                  'fallback id=' + ((highlight && highlight.id) || '') + ' style=' + ((highlight && highlight.style) || 'background')
+                ));
                 readerDesktopHighlightMapLog(
                   'web_text_fallback_result id=' + ((highlight && highlight.id) || '') +
                   ' applied=true text="' + readerTtsPreview(range.toString(), 120) + '"'
@@ -558,6 +1020,13 @@ internal fun readerHtmlAnnotationScript(): String = """
               window.readerApplyHighlights = function (highlights) {
                 var previousX = window.scrollX;
                 var previousY = window.scrollY;
+                try {
+                  if (window.readerHighlightShiftLog) {
+                    var shiftCount = Array.isArray(highlights) ? highlights.length : -1;
+                    readerHighlightShiftLog('reconcile_before',
+                      'incoming=' + shiftCount + ' doc=' + readerHighlightShiftDocSnapshot());
+                  }
+                } catch (error) {}
                 readerCurrentHighlights = Array.isArray(highlights) ? highlights.slice() : [];
                 window.readerCurrentHighlightsSnapshot = function () {
                   return readerCurrentHighlights.slice();
@@ -566,6 +1035,17 @@ internal fun readerHtmlAnnotationScript(): String = """
                 readerCurrentHighlights.forEach(function (highlight) {
                   if (highlight && highlight.id) incomingIds[highlight.id] = highlight;
                 });
+                if (userHighlightRegistryUsable()) {
+                  adoptServerRenderedHighlightMarkers(readerCurrentHighlights);
+                  reconcileUserHighlightRegistry(readerCurrentHighlights);
+                  try {
+                    if (window.readerHighlightShiftLog) {
+                      readerHighlightShiftLog('reconcile_registry_done',
+                        'painted=' + Object.keys(readerUserHighlightsPainted).length +
+                        ' doc=' + readerHighlightShiftDocSnapshot());
+                    }
+                  } catch (error) {}
+                } else {
                 // Selective reconcile (Android parity: Android's WebView mutates the live
                 // DOM on highlight changes and never repaints from stored offsets). Keep
                 // markers that already match, so a just-painted selection is never
@@ -601,6 +1081,14 @@ internal fun readerHtmlAnnotationScript(): String = """
                     })
                     .forEach(applyHighlightObject);
                 }
+                }
+                try {
+                  if (window.readerHighlightShiftLog) {
+                    readerHighlightShiftLog('reconcile_after',
+                      'restoredScroll=' + previousX + ',' + previousY +
+                      ' doc=' + readerHighlightShiftDocSnapshot());
+                  }
+                } catch (error) {}
                 window.scrollTo({ top: previousY, left: previousX, behavior: 'auto' });
               };
               function scheduleReaderHighlightReconcile() {
@@ -739,6 +1227,15 @@ internal fun readerHtmlAnnotationScript(): String = """
                   ' textChars=' + text.length +
                   ' range=' + selectionDebugRange(range)
                 );
+                try {
+                  if (window.readerHighlightShiftLog) {
+                    readerHighlightShiftLog('create_before',
+                      'color=' + (colorId || 'yellow') + ' style=' + styleId +
+                      ' textChars=' + text.length + ' text="' + readerTtsPreview(text, 80) + '"' +
+                      ' rangeRects=' + readerHighlightShiftRangeRects(range) +
+                      ' doc=' + readerHighlightShiftDocSnapshot());
+                  }
+                } catch (error) {}
                 var segments = selectionSegmentsForRange(range);
                 if (!segments.length) {
                   readerHighlightFlowLog(
@@ -854,11 +1351,20 @@ internal fun readerHtmlAnnotationScript(): String = """
                     var localRange = range.cloneRange ? range.cloneRange() : range;
                     var wrappedSingle = false;
                     try {
-                      wrappedSingle = wrapRangeTextSegments(localRange, function () {
-                        var marker = createReaderHighlightMarker(null, colorId || 'yellow', payload.locator.startOffset, payload.locator.endOffset, null, styleId);
-                        marker.setAttribute('data-cfi', payload.cfi);
-                        return marker;
-                      });
+                      var localPaint = {
+                        colorId: colorId || 'yellow', style: styleId, colorArgb: null,
+                        cfi: payload.cfi, chapterIndex: chapterIndex
+                      };
+                      wrappedSingle = paintRangeWithUserHighlightRegistry(localRange, paintParamsForHighlight(
+                        localPaint, chapterIndex, payload.locator.startOffset, payload.locator.endOffset,
+                        'local:' + payload.cfi, false,
+                        function () {
+                          var marker = createReaderHighlightMarker(null, colorId || 'yellow', payload.locator.startOffset, payload.locator.endOffset, null, styleId);
+                          marker.setAttribute('data-cfi', payload.cfi);
+                          return marker;
+                        },
+                        'create color=' + (colorId || 'yellow') + ' style=' + styleId
+                      ));
                     } finally {
                       if (localRange !== range && localRange.detach) localRange.detach();
                     }
@@ -869,11 +1375,20 @@ internal fun readerHtmlAnnotationScript(): String = """
                   } else {
                     segments.forEach(function (segment, index) {
                       var payload = payloads[index];
-                      var wrappedSegment = wrapRangeTextSegments(segment.range, function () {
-                        var marker = createReaderHighlightMarker(null, colorId || 'yellow', segment.startOffset, segment.endOffset, null, styleId);
-                        marker.setAttribute('data-cfi', payload.cfi);
-                        return marker;
-                      });
+                      var localSegPaint = {
+                        colorId: colorId || 'yellow', style: styleId, colorArgb: null,
+                        cfi: payload.cfi, chapterIndex: segment.chapterIndex
+                      };
+                      var wrappedSegment = paintRangeWithUserHighlightRegistry(segment.range, paintParamsForHighlight(
+                        localSegPaint, segment.chapterIndex, segment.startOffset, segment.endOffset,
+                        'local:' + payload.cfi, false,
+                        function () {
+                          var marker = createReaderHighlightMarker(null, colorId || 'yellow', segment.startOffset, segment.endOffset, null, styleId);
+                          marker.setAttribute('data-cfi', payload.cfi);
+                          return marker;
+                        },
+                        'create-multiseg color=' + (colorId || 'yellow') + ' style=' + styleId + ' seg=' + index
+                      ));
                       readerHighlightFlowLog(
                         'local_wrap_done sameChapter=false segment=' + index +
                         ' wrapped=' + wrappedSegment +

@@ -1,6 +1,7 @@
 package com.aryan.reader.shared
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -67,5 +68,15 @@ class SharedAppThemeReducerTest {
             .reduce(AppAction.AppFontPreferenceChanged(AppFontPreference(AppFontPreferenceKind.CUSTOM)))
 
         assertEquals(AppFontPreference.System, state.appFontPreference)
+    }
+
+    @Test
+    fun `baseline app font family matches android benchmark`() {
+        assertNull(AppFontPreference.System.toBaselineAppFontFamily())
+        assertEquals(FontFamily.Serif, AppFontPreference.Serif.toBaselineAppFontFamily())
+        assertEquals(FontFamily.SansSerif, AppFontPreference.SansSerif.toBaselineAppFontFamily())
+        assertEquals(FontFamily.Monospace, AppFontPreference.Monospace.toBaselineAppFontFamily())
+        // CUSTOM needs a platform file lookup, so the shared baseline stays null.
+        assertNull(AppFontPreference.custom("font-id").toBaselineAppFontFamily())
     }
 }

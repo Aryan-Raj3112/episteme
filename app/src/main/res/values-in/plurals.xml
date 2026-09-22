@@ -136,4 +136,14 @@
         <item quantity="other">Folder %1$d</item>
         <item quantity="one">Folder %1$d</item>
     </plurals>
+    <!-- Search results count label in the unified library. %1$d = number of results. Example: "12 hasil". Indonesian does not inflect: one and other are identical. -->
+    <plurals name="unified_library_search_results">
+        <item quantity="one">%1$d hasil</item>
+        <item quantity="other">%1$d hasil</item>
+    </plurals>
+    <!-- Listening-queue item count in the audiobook player. %1$d = number of items. Indonesian does not inflect: one and other are identical. -->
+    <plurals name="listen_item_count">
+        <item quantity="one">%1$d item</item>
+        <item quantity="other">%1$d item</item>
+    </plurals>
 </resources>

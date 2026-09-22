@@ -136,4 +136,15 @@
         <item quantity="one">Mappen %1$d</item>
         <item quantity="other">Mappen %1$d</item>
     </plurals>
+    <!-- Search results count label. %1$d = number of results. Example: "12 resultaten".
+         Dutch (CLDR): one = resultaat, other = resultaten. -->
+    <plurals name="unified_library_search_results">
+        <item quantity="one">%1$d resultaat</item>
+        <item quantity="other">%1$d resultaten</item>
+    </plurals>
+    <!-- Listening-queue item count. %1$d = number of items. Dutch (CLDR): item/items. -->
+    <plurals name="listen_item_count">
+        <item quantity="one">%1$d item</item>
+        <item quantity="other">%1$d items</item>
+    </plurals>
 </resources>

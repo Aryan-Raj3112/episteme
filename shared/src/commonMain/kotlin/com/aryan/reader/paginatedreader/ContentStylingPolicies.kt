@@ -149,12 +149,118 @@ fun readerContentBlockStyle(
     )
 }
 
-fun readerImageBlockStyle(style: CssStyle): BlockStyle =
-    if (style.paragraphStyle.textAlign == androidx.compose.ui.text.style.TextAlign.Center) {
-        style.blockStyle.copy(horizontalAlign = "center")
-    } else {
-        style.blockStyle
+fun SemanticRuby.toRubyAnnotation(): RubyAnnotation =
+    RubyAnnotation(
+        baseStart = baseStart,
+        baseEnd = baseEnd,
+        reading = reading,
+        readingScale = readingScale
+    )
+
+/**
+ * Moves a pagination split offset out of any ruby base range. Ruby runs are
+ * atomic: a page must never break between a base character and its reading.
+ * Prefers moving the split before the run; when the run starts at 0 the split
+ * is impossible and null is returned.
+ */
+fun adjustPaginationSplitForRubies(rubies: List<RubyAnnotation>, splitOffset: Int): Int? {
+    var adjusted = splitOffset
+    for (ruby in rubies) {
+        if (adjusted > ruby.baseStart && adjusted < ruby.baseEnd) {
+            adjusted = ruby.baseStart
+        }
     }
+    return adjusted.takeIf { it > 0 }
+}
+
+/** Parser-level overload of [adjustPaginationSplitForRubies]. */
+fun adjustPaginationSplitForSemanticRubies(rubies: List<SemanticRuby>, splitOffset: Int): Int? {
+    var adjusted = splitOffset
+    for (ruby in rubies) {
+        if (adjusted > ruby.baseStart && adjusted < ruby.baseEnd) {
+            adjusted = ruby.baseStart
+        }
+    }
+    return adjusted.takeIf { it > 0 }
+}
+
+/** Clips ruby runs to [start, end) and shifts them to slice-relative offsets. */
+fun sliceRubyAnnotations(rubies: List<RubyAnnotation>, start: Int, end: Int): List<RubyAnnotation> {
+    if (rubies.isEmpty()) return emptyList()
+    return rubies.mapNotNull { ruby ->
+        val clippedStart = ruby.baseStart.coerceAtLeast(start)
+        val clippedEnd = ruby.baseEnd.coerceAtMost(end)
+        if (clippedEnd <= clippedStart) {
+            null
+        } else {
+            ruby.copy(baseStart = clippedStart - start, baseEnd = clippedEnd - start)
+        }
+    }
+}
+
+/** Same as [sliceRubyAnnotations] for parser-level [SemanticRuby] runs. */
+fun sliceSemanticRubies(rubies: List<SemanticRuby>, start: Int, end: Int): List<SemanticRuby> {
+    if (rubies.isEmpty()) return emptyList()
+    return rubies.mapNotNull { ruby ->
+        val clippedStart = ruby.baseStart.coerceAtLeast(start)
+        val clippedEnd = ruby.baseEnd.coerceAtMost(end)
+        if (clippedEnd <= clippedStart) {
+            null
+        } else {
+            ruby.copy(baseStart = clippedStart - start, baseEnd = clippedEnd - start)
+        }
+    }
+}
+
+/**
+ * Extra line height reserved for furigana in vertical (`tategaki`) layout,
+ * where readings consume real column pitch beside their base.
+ *
+ * Horizontal text intentionally reserves nothing: browsers never grow the
+ * paragraph pitch for `<rt>` (measured: pitch stays exactly `line-height`
+ * even at 1.2, the annotation overhangs into the leading), and our overlay
+ * readings do the same. Only grows the height, never shrinks publication
+ * spacing.
+ */
+fun lineHeightWithRubyReserve(lineHeight: androidx.compose.ui.unit.TextUnit, fontSize: androidx.compose.ui.unit.TextUnit, hasRuby: Boolean, isVertical: Boolean): androidx.compose.ui.unit.TextUnit {
+    if (!hasRuby || !isVertical) return lineHeight
+    if (!lineHeight.isSpecified || !fontSize.isSpecified) return lineHeight
+    val minimum = fontSize.value * RubyReserveLineHeightEm
+    if (lineHeight.isEm) {
+        return maxOf(lineHeight.value, minimum).em
+    }
+    if (lineHeight.isSp) {
+        return maxOf(lineHeight.value, fontSize.value * RubyReserveLineHeightEm).sp
+    }
+    return lineHeight
+}
+
+/** Minimum line height (in em) for lines carrying furigana: base em + ruby reserve. */
+const val RubyReserveLineHeightEm = 1.55f
+
+/** Ruby reading size relative to its base text. Matches browser `rt` defaults. */
+const val RubyReadingFontScale = 0.5f
+
+/**
+ * Propagates the inherited paragraph alignment to standalone images so they
+ * honor the publication intent instead of always centering. Lone images in a
+ * start/left-aligned (or single-item justified) block sit at the start edge;
+ * only centered content centers. `justify` maps to `start` for images: a lone
+ * image cannot justify, and browsers start-align it.
+ */
+fun readerImageBlockStyle(style: CssStyle): BlockStyle {
+    if (style.blockStyle.horizontalAlign?.isNotBlank() == true) return style.blockStyle
+    val horizontalAlign = when (style.paragraphStyle.textAlign) {
+        androidx.compose.ui.text.style.TextAlign.Center -> "center"
+        androidx.compose.ui.text.style.TextAlign.End,
+        androidx.compose.ui.text.style.TextAlign.Right -> "end"
+        androidx.compose.ui.text.style.TextAlign.Start,
+        androidx.compose.ui.text.style.TextAlign.Left,
+        androidx.compose.ui.text.style.TextAlign.Justify -> "start"
+        else -> null
+    } ?: return style.blockStyle
+    return style.blockStyle.copy(horizontalAlign = horizontalAlign)
+}
 
 fun shouldInvertReaderImage(style: CssStyle): Boolean = style.blockStyle.filter == "invert(100%)"
 
@@ -200,6 +306,34 @@ fun readerChantUnits(
         }
     }
     return units
+}
+
+/**
+ * Reserves headroom for furigana in vertical (`tategaki`) paragraphs, where
+ * readings consume real column pitch beside their base and need at least
+ * [RubyReserveLineHeightEm]. Horizontal paragraphs are left alone: browsers
+ * never grow the pitch for `<rt>`, so neither do we; the overlay readings
+ * overhang into the leading exactly like the reference rendering. Only ever
+ * grows the height, so publication spacing and reader overrides are preserved
+ * whenever they already leave room.
+ */
+fun AnnotatedString.adjustReaderLineHeightForRuby(fontSize: androidx.compose.ui.unit.TextUnit, hasRuby: Boolean, isVertical: Boolean): AnnotatedString {
+    if (!hasRuby || !isVertical) return this
+    if (!fontSize.isSpecified || fontSize.value <= 0f) return this
+    val currentLineHeight = paragraphStyles.firstOrNull()?.item?.lineHeight
+        ?: androidx.compose.ui.unit.TextUnit.Unspecified
+    val currentFactor = when {
+        currentLineHeight.isUnspecified || currentLineHeight.value == 0f -> 0f
+        currentLineHeight.isEm -> currentLineHeight.value
+        currentLineHeight.isSp -> currentLineHeight.value / fontSize.value
+        else -> 0f
+    }
+    if (currentFactor >= RubyReserveLineHeightEm) return this
+    return buildAnnotatedString {
+        withStyle(ParagraphStyle(lineHeight = RubyReserveLineHeightEm.em)) {
+            append(this@adjustReaderLineHeightForRuby)
+        }
+    }
 }
 
 fun AnnotatedString.adjustReaderLineHeightForEmphasis(): AnnotatedString {

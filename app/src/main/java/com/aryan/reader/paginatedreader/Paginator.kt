@@ -326,7 +326,8 @@ class SuspendingAndroidBlockMeasurementProvider(
                 block = imageBlock,
                 density = density,
                 maxWidthPx = constraints.maxWidth.toFloat(),
-                imageSizeMultiplier = imageSizeMultiplier
+                imageSizeMultiplier = imageSizeMultiplier,
+                maxHeightPx = constraints.maxHeight.toFloat()
             )
         }
 
@@ -516,7 +517,21 @@ class SuspendingAndroidBlockMeasurementProvider(
     }
 
     override suspend fun split(block: TableBlock, availableHeight: Int): Pair<TableBlock, TableBlock>? {
-        return splitTableAt(contentConstraints = constraints, block = block, availableHeight = availableHeight)
+        return splitTableAt(contentConstraints = tableSplitMeasureConstraints(block, constraints), block = block, availableHeight = availableHeight)
+    }
+
+    /**
+     * Width budget for table measure/split/render agreement. This must be the width the
+     * table actually renders at: a specified width (e.g. the CONTENTS table's 60%) in a
+     * centered box, otherwise the full incoming width. Stacked tables are no exception —
+     * render lays their rows out inside the same width-constrained box (fillMaxWidth fills
+     * the parent, not the page), so measuring them at page width budgets half the real
+     * height and every fragment overruns its page. Split and measure must both use this
+     * budget or split heads remeasure taller than estimated and get rejected, force-placing
+     * the whole table on one page.
+     */
+    private fun tableSplitMeasureConstraints(block: TableBlock, base: Constraints): Constraints {
+        return computeBlockBoxMetrics(block, base, density).contentConstraints
     }
 
     /**
@@ -548,13 +563,14 @@ class SuspendingAndroidBlockMeasurementProvider(
         currentHeight += decorationTop
 
         val stackRows = block.shouldStackRowsForNarrowPagination()
+        val tableConstraints = tableSplitMeasureConstraints(block, contentConstraints)
         val rowsForSplit = if (stackRows) block.rowsForNarrowPaginationLayout() else block.rows
         for (i in rowsForSplit.indices) {
             coroutineContext.ensureActive()
             val rowHeight = measureTableRowHeight(
                 row = rowsForSplit[i],
                 textMeasurer = textMeasurer,
-                constraints = contentConstraints,
+                constraints = tableConstraints,
                 defaultStyle = textStyle,
                 headerStyle = textStyle.copy(fontWeight = FontWeight.Bold),
                 density = density,
@@ -573,7 +589,7 @@ class SuspendingAndroidBlockMeasurementProvider(
                             row = rowsForSplit[i],
                             availableHeight = availableForRow,
                             textMeasurer = textMeasurer,
-                            constraints = contentConstraints,
+                            constraints = tableConstraints,
                             defaultStyle = textStyle,
                             headerStyle = textStyle.copy(fontWeight = FontWeight.Bold),
                             density = density,
@@ -598,7 +614,7 @@ class SuspendingAndroidBlockMeasurementProvider(
                 } else if (availableForRow > 0) {
                     // Fragment the overflowing row itself so layout tables (publisher callout
                     // boxes with a single tall cell) span pages instead of overflowing them.
-                    splitTableRowCells(row = rowsForSplit[i], availableHeight = availableForRow, contentConstraints = contentConstraints)?.let { (part1Row, part2Row) ->
+                    splitTableRowCells(row = rowsForSplit[i], availableHeight = availableForRow, contentConstraints = tableConstraints)?.let { (part1Row, part2Row) ->
                         logAndroidEpubCutoff(
                             "cutoff_probe layer=android_table_row_fragmentation_success block=${block.blockIndex} " +
                                 "rowIndex=$i availableForRowPx=$availableForRow rowCells=${part1Row.size}"
@@ -858,11 +874,17 @@ private suspend fun measureBlockHeight(
             if (hideImages) {
                 0
             } else {
+                // adjustedConstraints carries an unbounded maxHeight (content
+                // boxes measure vertically unbounded); bound images by the
+                // page instead so tall images contain-fit to the screen.
+                val pageBoundHeightPx = (constraints.maxHeight - verticalPaddingPx - verticalBorderPx)
+                    .coerceAtLeast(0f)
                 val measuredHeight = measureScaledImageHeightPx(
                     block = block,
                     density = density,
                     contentMaxWidth = adjustedConstraints.maxWidth.toFloat(),
-                    imageSizeMultiplier = imageSizeMultiplier
+                    imageSizeMultiplier = imageSizeMultiplier,
+                    maxHeightPx = pageBoundHeightPx.toFloat()
                 ) ?: with(density) { 250.dp.toPx() }
 
                 val finalHeight = measuredHeight.coerceAtMost(constraints.maxHeight.toFloat()).roundToInt()
@@ -909,12 +931,16 @@ private suspend fun measureBlockHeight(
         }
         is TableBlock -> {
             val stackRows = block.shouldStackRowsForNarrowPagination()
+            // Same budget as split/render (see tableSplitMeasureConstraints): the table's
+            // own content box, so stacked rows wrap exactly as they will on the page.
+            // (Duplicated here because this is a top-level function outside the class.)
+            val tableConstraints = computeBlockBoxMetrics(block, constraints, density).contentConstraints
             val rowsForMeasure = if (stackRows) block.rowsForNarrowPaginationLayout() else block.rows
             rowsForMeasure.sumOf { row ->
                 measureTableRowHeight(
                     row = row,
                     textMeasurer = textMeasurer,
-                    constraints = adjustedConstraints,
+                    constraints = tableConstraints,
                     defaultStyle = defaultStyle,
                     headerStyle = headerStyle,
                     density = density,
@@ -934,7 +960,9 @@ private suspend fun measureBlockHeight(
                     block = imageBlock,
                     density = density,
                     maxWidthPx = adjustedConstraints.maxWidth.toFloat(),
-                    imageSizeMultiplier = imageSizeMultiplier
+                    imageSizeMultiplier = imageSizeMultiplier,
+                    maxHeightPx = (constraints.maxHeight - verticalPaddingPx - verticalBorderPx)
+                        .coerceAtLeast(0f)
                 )
             }
 
@@ -1436,7 +1464,8 @@ private suspend fun splitTextContentBlock(
         startCharOffsetInSource = block.startCharOffsetInSource,
         endCharOffsetInSource = block.endCharOffsetInSource,
         blockIndex = block.blockIndex,
-        expectedHeight = block.expectedHeight
+        expectedHeight = block.expectedHeight,
+        rubies = block.rubies
     )
     val split = splitParagraphBlock(
         block = paragraph,
@@ -1466,28 +1495,32 @@ private fun TextContentBlock.copyFromPaginationSplit(part: ParagraphBlock): Cont
             style = part.style,
             startCharOffsetInSource = part.startCharOffsetInSource,
             endCharOffsetInSource = part.endCharOffsetInSource,
-            expectedHeight = part.expectedHeight
+            expectedHeight = part.expectedHeight,
+            rubies = part.rubies
         )
         is HeaderBlock -> copy(
             content = part.content,
             style = part.style,
             startCharOffsetInSource = part.startCharOffsetInSource,
             endCharOffsetInSource = part.endCharOffsetInSource,
-            expectedHeight = part.expectedHeight
+            expectedHeight = part.expectedHeight,
+            rubies = part.rubies
         )
         is QuoteBlock -> copy(
             content = part.content,
             style = part.style,
             startCharOffsetInSource = part.startCharOffsetInSource,
             endCharOffsetInSource = part.endCharOffsetInSource,
-            expectedHeight = part.expectedHeight
+            expectedHeight = part.expectedHeight,
+            rubies = part.rubies
         )
         is ListItemBlock -> copy(
             content = part.content,
             style = part.style,
             startCharOffsetInSource = part.startCharOffsetInSource,
             endCharOffsetInSource = part.endCharOffsetInSource,
-            expectedHeight = part.expectedHeight
+            expectedHeight = part.expectedHeight,
+            rubies = part.rubies
         )
         else -> part
     }
@@ -1988,6 +2021,9 @@ private suspend fun splitParagraphBlock(
         availableTextHeight = availableTextHeight
     )
 
+    // Ruby runs are atomic: never break between a base character and its reading.
+    splitOffset = adjustPaginationSplitForRubies(block.rubies, splitOffset) ?: return null
+
     if (splitOffset <= 0 || splitOffset >= text.length) {
         return null
     }
@@ -2004,6 +2040,8 @@ private suspend fun splitParagraphBlock(
         trimStartIndex++
     }
     val part2Text = initialPart2.subSequence(trimStartIndex, initialPart2.length)
+    val part1Rubies = sliceRubyAnnotations(block.rubies, 0, part1End)
+    val part2Rubies = sliceRubyAnnotations(block.rubies, splitOffset + trimStartIndex, text.length)
 
     if (part1Text.isEmpty() || part2Text.isEmpty()) {
         return null
@@ -2046,14 +2084,16 @@ private suspend fun splitParagraphBlock(
 
     val part1 = block.copy(
         content = part1Text,
-        endCharOffsetInSource = part1EndOffset
+        endCharOffsetInSource = part1EndOffset,
+        rubies = part1Rubies
     )
     val part2Style = block.style.copy(margin = block.style.margin.copy(top = 0.dp))
     val part2 = block.copy(
         content = part2TextWithoutIndent,
         style = part2Style,
         startCharOffsetInSource = part1EndOffset,
-        endCharOffsetInSource = block.endCharOffsetInSource
+        endCharOffsetInSource = block.endCharOffsetInSource,
+        rubies = part2Rubies
     )
 
     if (DEBUG_PAGINATION_LOGS) {
@@ -2167,19 +2207,22 @@ private fun measureScaledImageHeightPx(
     block: ImageBlock,
     density: Density,
     contentMaxWidth: Float,
-    imageSizeMultiplier: Float
+    imageSizeMultiplier: Float,
+    maxHeightPx: Float = Float.MAX_VALUE
 ): Float? = measureScaledImageSizePx(
     block = block,
     density = density,
     maxWidthPx = contentMaxWidth,
-    imageSizeMultiplier = imageSizeMultiplier
+    imageSizeMultiplier = imageSizeMultiplier,
+    maxHeightPx = maxHeightPx
 ).second.takeIf { it > 0f }
 
 private fun measureScaledImageSizePx(
     block: ImageBlock,
     density: Density,
     maxWidthPx: Float,
-    imageSizeMultiplier: Float
+    imageSizeMultiplier: Float,
+    maxHeightPx: Float = Float.MAX_VALUE
 ): Pair<Float, Float> {
     val intrinsicWidth = block.intrinsicWidth
     val intrinsicHeight = block.intrinsicHeight
@@ -2199,7 +2242,16 @@ private fun measureScaledImageSizePx(
     }
     scaledWidth = scaledWidth.coerceAtMost(maxWidthPx)
 
-    return scaledWidth to (scaledWidth * aspectRatio)
+    // Contain-fit: a width-fit tall image (e.g. portrait photo in a short
+    // landscape page) must shrink to the available height instead of
+    // overflowing the page. Aspect ratio is always preserved.
+    var scaledHeight = scaledWidth * aspectRatio
+    if (scaledHeight > maxHeightPx) {
+        scaledWidth = (maxHeightPx / aspectRatio).coerceAtLeast(0f)
+        scaledHeight = scaledWidth * aspectRatio
+    }
+
+    return scaledWidth to scaledHeight
 }
 
 /**

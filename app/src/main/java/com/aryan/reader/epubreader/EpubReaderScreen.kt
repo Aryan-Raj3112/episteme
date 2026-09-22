@@ -190,6 +190,8 @@ import com.aryan.reader.readerSliderBookmarkPosition
 import com.aryan.reader.readerSliderChromeColors
 import com.aryan.reader.readerSliderToggleState
 import com.aryan.reader.paginatedreader.CssParser
+import com.aryan.reader.paginatedreader.EpubPageSpread
+import com.aryan.reader.paginatedreader.EpubSpreadBlinkTag
 import com.aryan.reader.paginatedreader.BookPaginator
 import com.aryan.reader.paginatedreader.HeaderBlock
 import com.aryan.reader.paginatedreader.IPaginator
@@ -717,9 +719,27 @@ fun EpubReaderHost(
 
     val paginatorState = remember { mutableStateOf<IPaginator?>(null) }
     var paginator by paginatorState
+    // Two-page split view (global Visual Options toggle, paginated mode only):
+    // the pager speaks spreads while BookPaginator speaks book pages. The
+    // helpers below are the only spread<->book boundary; everything else stays
+    // in book-page space. Mirrors shared ReaderSpreadLayout semantics.
+    // NOTE: pageCount reads state directly (not the isTwoPageSpread val) so a
+    // remembered PagerState never observes a stale spread flag.
+    val isTwoPageSpread = prefs.pageSpreadMode == ReaderPageSpreadMode.TWO_PAGE &&
+        currentRenderMode == RenderMode.PAGINATED
     val paginatedPagerState = rememberPagerState(pageCount = {
-        (paginator as? BookPaginator)?.totalPageCount ?: 0
+        val twoPage = prefs.pageSpreadMode == ReaderPageSpreadMode.TWO_PAGE &&
+            currentRenderMode == RenderMode.PAGINATED
+        EpubPageSpread.spreadCount((paginator as? BookPaginator)?.totalPageCount ?: 0, twoPage)
     })
+    fun totalBookPageCount(): Int = (paginator as? BookPaginator)?.totalPageCount ?: 0
+    fun spreadToBookPage(spreadIndex: Int): Int =
+        EpubPageSpread.spreadToBookPage(spreadIndex, totalBookPageCount(), isTwoPageSpread)
+    fun bookPageToSpread(bookPage: Int): Int =
+        EpubPageSpread.bookPageToSpread(bookPage, totalBookPageCount(), isTwoPageSpread)
+    fun currentSpreadFirstBookPage(): Int = spreadToBookPage(paginatedPagerState.currentPage)
+    fun currentSpreadBookPages(): List<Int> =
+        EpubPageSpread.visibleBookPages(paginatedPagerState.currentPage, totalBookPageCount(), isTwoPageSpread)
     val isPagerInitializedState = remember(initialLocator) { mutableStateOf(initialLocator == null) }
     var isPagerInitialized by isPagerInitializedState
     val paginatedExplicitNavigationEpochState = remember(epubBook) { mutableLongStateOf(0L) }
@@ -903,14 +923,14 @@ fun EpubReaderHost(
     var showFontSelectionSheet by remember { mutableStateOf(false) }
     val fontSheetState = rememberModalBottomSheetState()
 
-    LaunchedEffect(format.currentFontSizeEm, format.currentLineHeight, format.currentParagraphGap, format.currentImageSize, format.currentHorizontalMargin, format.currentVerticalMargin, format.currentFontFamily, format.currentCustomFontPath, format.currentTextAlign, format.currentFontWeight, format.currentLetterSpacing, isFormatLocal) {
+    LaunchedEffect(format.currentFontSizeEm, format.currentLineHeight, format.currentParagraphGap, format.currentImageSize, format.currentHorizontalMargin, format.currentVerticalMargin, format.currentFontFamily, format.currentCustomFontPath, format.currentTextAlign, format.currentFontWeight, format.currentLetterSpacing, format.currentSpreadGapDp, isFormatLocal) {
         if (isFormatLocal) {
             saveLocalReaderSettings(
-                context, bookId, format.currentFontSizeEm, format.currentLineHeight, format.currentParagraphGap, format.currentImageSize, format.currentHorizontalMargin, format.currentVerticalMargin, format.currentFontFamily, format.currentCustomFontPath, format.currentTextAlign, format.currentFontWeight, format.currentLetterSpacing
+                context, bookId, format.currentFontSizeEm, format.currentLineHeight, format.currentParagraphGap, format.currentImageSize, format.currentHorizontalMargin, format.currentVerticalMargin, format.currentFontFamily, format.currentCustomFontPath, format.currentTextAlign, format.currentFontWeight, format.currentLetterSpacing, format.currentSpreadGapDp
             )
         } else {
             saveReaderSettings(
-                context, format.currentFontSizeEm, format.currentLineHeight, format.currentParagraphGap, format.currentImageSize, format.currentHorizontalMargin, format.currentVerticalMargin, format.currentFontFamily, format.currentCustomFontPath, format.currentTextAlign, format.currentFontWeight, format.currentLetterSpacing
+                context, format.currentFontSizeEm, format.currentLineHeight, format.currentParagraphGap, format.currentImageSize, format.currentHorizontalMargin, format.currentVerticalMargin, format.currentFontFamily, format.currentCustomFontPath, format.currentTextAlign, format.currentFontWeight, format.currentLetterSpacing, format.currentSpreadGapDp
             )
         }
     }
@@ -1119,7 +1139,7 @@ fun EpubReaderHost(
     val currentChapterInPaginatedMode by remember {
         derivedStateOf {
             if (currentRenderMode == RenderMode.PAGINATED) {
-                (paginator as? BookPaginator)?.findChapterIndexForPage(paginatedPagerState.currentPage)
+                (paginator as? BookPaginator)?.findChapterIndexForPage(currentSpreadFirstBookPage())
             } else {
                 null
             }
@@ -1363,7 +1383,7 @@ fun EpubReaderHost(
 
                 logTtsChapterDiag("Paginated locate scrolling to page=$pageIndex. reason=$reason")
                 navigation.isNavigatingToPosition = true
-                paginatedPagerState.scrollToPage(pageIndex)
+                paginatedPagerState.scrollToPage(bookPageToSpread(pageIndex))
                 navigation.isNavigatingToPosition = false
                 return true
             }
@@ -1425,7 +1445,7 @@ fun EpubReaderHost(
                         ?: if (isNativeVerticalMode) {
                             nativeVerticalCurrentPage
                         } else {
-                            paginatedPagerState.currentPage
+                            currentSpreadFirstBookPage()
                         }
                     val chapterIndex = nativeStartLocator?.chapterIndex
                         ?: bookPaginator.findChapterIndexForPage(currentPage)
@@ -1658,7 +1678,9 @@ fun EpubReaderHost(
         locatorConverter = locatorConverter,
         epubBook = epubBook,
         ttsReplacementPreferences = ttsReplacementPreferences,
-        ttsReplacementBookId = bookId
+        ttsReplacementBookId = bookId,
+        isTwoPageSpread = isTwoPageSpread,
+        totalBookPageCount = totalBookPageCount()
     )
 
     TtsHighlightHandler(
@@ -1669,7 +1691,9 @@ fun EpubReaderHost(
         paginator = paginator,
         pagerState = paginatedPagerState,
         ttsChapterIndex = ttsChapterIndex,
-        scope = scope
+        scope = scope,
+        isTwoPageSpread = isTwoPageSpread,
+        totalBookPageCount = totalBookPageCount()
     )
 
     LaunchedEffect(
@@ -2185,25 +2209,31 @@ fun EpubReaderHost(
 
             @Suppress("SENSELESS_COMPARISON")
             if (pageToScrollTo != null) {
-                val readyPageCount = if (paginatedPagerState.pageCount <= pageToScrollTo) {
+                val rawTargetSpread = EpubPageSpread.rawBookPageToSpread(pageToScrollTo, isTwoPageSpread)
+            val readyPageCount = if (paginatedPagerState.pageCount <= rawTargetSpread) {
                     Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
-                        "restore_wait_page_count rawPage=$pageToScrollTo currentPageCount=${paginatedPagerState.pageCount} paginatorTotal=${bookPaginator?.totalPageCount}"
+                        "restore_wait_page_count rawPage=$pageToScrollTo targetSpread=$rawTargetSpread currentPageCount=${paginatedPagerState.pageCount} paginatorTotal=${bookPaginator?.totalPageCount}"
                     )
                     withTimeoutOrNull(2000L) {
                         snapshotFlow { paginatedPagerState.pageCount }
-                            .filter { it > pageToScrollTo }
+                            .filter { it > rawTargetSpread }
                             .first()
                     } ?: paginatedPagerState.pageCount
                 } else {
                     paginatedPagerState.pageCount
                 }
-                val targetPage = pageToScrollTo.coerceIn(0, (readyPageCount - 1).coerceAtLeast(0))
+                val targetPage = EpubPageSpread.normalizeSpreadIndex(rawTargetSpread, totalBookPageCount(), isTwoPageSpread)
+                    .coerceIn(0, (readyPageCount - 1).coerceAtLeast(0))
+                Timber.tag(EpubSpreadBlinkTag).d(
+                    "open_restore rawBook=$pageToScrollTo rawSpread=$rawTargetSpread spread=$targetPage " +
+                        "spreadCount=$readyPageCount totalBook=${totalBookPageCount()} twoPage=$isTwoPageSpread"
+                )
                 Timber.d("Scrolling to page: $targetPage")
                 Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
                     "restore_scroll page=$targetPage rawPage=$pageToScrollTo pageCount=$readyPageCount locator=$restoreLocator"
                 )
                 delay(16)
-                bookPaginator?.onUserScrolledTo(targetPage)
+                bookPaginator?.onUserScrolledTo(pageToScrollTo)
                 paginatedPagerState.scrollToPage(targetPage)
             } else {
                 Timber.w("Could not determine a page to scroll to.")
@@ -2214,6 +2244,9 @@ fun EpubReaderHost(
 
             delay(100)
             isPagerInitialized = true
+            Timber.tag(EpubSpreadBlinkTag).d(
+                "open_veil_off spread=${paginatedPagerState.currentPage} spreadCount=${paginatedPagerState.pageCount} twoPage=$isTwoPageSpread"
+            )
             navigation.chapterToLoadOnSwitch = null
             Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
                 "restore_complete currentPage=${paginatedPagerState.currentPage} pageCount=${paginatedPagerState.pageCount}"
@@ -2226,7 +2259,8 @@ fun EpubReaderHost(
             return@LaunchedEffect
         }
         snapshotFlow { paginatedPagerState.currentPage }
-            .collectLatest { page ->
+            .collectLatest { spread ->
+                val page = spreadToBookPage(spread)
                 if (!navigation.isPaginatedReconfigurationRestoring) {
                     (paginator as? BookPaginator)?.getLocatorForPage(page)?.let { locator ->
                         lastKnownLocator = locator
@@ -2292,15 +2326,16 @@ fun EpubReaderHost(
             return@LaunchedEffect
         }
 
-        val locator = (paginator as? BookPaginator)?.getLocatorForPage(pageToSave)
-        val chapterIndex = paginator!!.findChapterIndexForPage(pageToSave)
+        val bookPageToSave = spreadToBookPage(pageToSave)
+        val locator = (paginator as? BookPaginator)?.getLocatorForPage(bookPageToSave)
+        val chapterIndex = paginator!!.findChapterIndexForPage(bookPageToSave)
 
         if (locator != null && chapterIndex != null) {
             lastKnownLocator = locator
             val bookPaginator = paginator as? BookPaginator
             val progress = if (totalBookLengthChars > 0 && bookPaginator != null) {
                 val completedCharsInPreviousChapters = chapters.take(chapterIndex).sumOf { it.plainTextCharacterCount().toLong() }
-                val currentPageInChapter = (bookPaginator.chapterStartPageIndices[chapterIndex] ?: 0).let { pageToSave - it }
+                val currentPageInChapter = (bookPaginator.chapterStartPageIndices[chapterIndex] ?: 0).let { bookPageToSave - it }
                 val charsScrolledInCurrentChapter = bookPaginator.getCharactersScrolledInChapter(chapterIndex, currentPageInChapter)
                 val isLastPageOfBook = pageToSave == paginatedPagerState.pageCount - 1
                 mobileEpubCharacterProgress(
@@ -2399,7 +2434,7 @@ fun EpubReaderHost(
 
     LaunchedEffect(paginatedPagerState.currentPage, paginator, currentRenderMode) {
         if (currentRenderMode == RenderMode.PAGINATED && paginator != null && isPagerInitialized) {
-            val chapterIndex = (paginator as? BookPaginator)?.findChapterIndexForPage(paginatedPagerState.currentPage)
+            val chapterIndex = (paginator as? BookPaginator)?.findChapterIndexForPage(currentSpreadFirstBookPage())
             if (chapterIndex != null) {
                 val chapterPath = chapters.getOrNull(chapterIndex)?.absPath
                 val relevantAnchors = epubBook.tableOfContents
@@ -2408,7 +2443,7 @@ fun EpubReaderHost(
 
                 if (relevantAnchors.isNotEmpty()) {
                     val active = paginator!!.getActiveAnchorForPage(
-                        paginatedPagerState.currentPage,
+                        currentSpreadFirstBookPage(),
                         relevantAnchors
                     )
                     if (navigation.activeFragmentId != active) {
@@ -2490,7 +2525,8 @@ fun EpubReaderHost(
 
                 RenderMode.PAGINATED -> {
                     scope.launch {
-                        val pageToSave = paginatedPagerState.currentPage
+                        val pageToSave = currentSpreadFirstBookPage()
+                        val isLastSpread = paginatedPagerState.currentPage == paginatedPagerState.pageCount - 1
                         val pageLocator = if (navigation.isPaginatedReconfigurationRestoring) {
                             null
                         } else {
@@ -2509,7 +2545,7 @@ fun EpubReaderHost(
                                 val completedCharsInPreviousChapters = chapters.take(chapterIndex).sumOf { it.plainTextCharacterCount().toLong() }
                                 val currentPageInChapter = (bookPaginator.chapterStartPageIndices[chapterIndex] ?: 0).let { pageToSave - it }
                                 val charsScrolledInCurrentChapter = bookPaginator.getCharactersScrolledInChapter(chapterIndex, currentPageInChapter)
-                                val isLastPageOfBook = pageToSave == paginatedPagerState.pageCount - 1
+                                val isLastPageOfBook = isLastSpread
                                 mobileEpubCharacterProgress(
                                     totalBookCharacters = totalBookLengthChars,
                                     completedChapterCharacters = completedCharsInPreviousChapters,
@@ -2583,14 +2619,14 @@ fun EpubReaderHost(
             RenderMode.PAGINATED -> {
                 val bookPaginator = paginator as? BookPaginator
                 val currentPageIndex = authoritativePaginatedPageIndex(
-                    currentPageIndex = paginatedPagerState.currentPage,
-                    settledPageIndex = paginatedPagerState.settledPage,
+                    currentPageIndex = currentSpreadFirstBookPage(),
+                    settledPageIndex = spreadToBookPage(paginatedPagerState.settledPage),
                     isScrollInProgress = paginatedPagerState.isScrollInProgress
                 )
                 val currentChapterIndex = currentPageIndex?.let { bookPaginator?.findChapterIndexForPage(it) }
                 paginatedEpubJumpLocator(
-                    currentPageIndex = paginatedPagerState.currentPage,
-                    settledPageIndex = paginatedPagerState.settledPage,
+                    currentPageIndex = currentSpreadFirstBookPage(),
+                    settledPageIndex = spreadToBookPage(paginatedPagerState.settledPage),
                     isScrollInProgress = paginatedPagerState.isScrollInProgress,
                     locatorForPage = { pageIndex -> bookPaginator?.getLocatorForPage(pageIndex) },
                     fallbackLocator = lastKnownLocator,
@@ -2643,7 +2679,7 @@ fun EpubReaderHost(
     ): SharedReaderLocator? {
         val safePageIndex = when {
             pageIndex < 0 -> return null
-            paginatedPagerState.pageCount > 0 -> pageIndex.coerceIn(0, paginatedPagerState.pageCount - 1)
+            totalBookPageCount() > 0 -> pageIndex.coerceIn(0, totalBookPageCount() - 1)
             else -> pageIndex
         }
         val bookPaginator = paginator as? BookPaginator
@@ -2661,7 +2697,14 @@ fun EpubReaderHost(
     }
 
     fun sliderJumpTargetForPage(page: Int): SharedReaderLocator? {
-        val pageIndex = (page - 1).takeIf { it >= 0 } ?: return null
+        val requestedIndex = (page - 1).takeIf { it >= 0 } ?: return null
+        // The slider counts spreads in split view (shared ReaderSpreadLayout
+        // sliderStepCount semantics); resolve to the spread's first book page.
+        val pageIndex = if (currentRenderMode == RenderMode.PAGINATED) {
+            spreadToBookPage(requestedIndex)
+        } else {
+            requestedIndex
+        }
         return when {
             isNativeVerticalMode -> {
                 val bookPaginator = paginator as? BookPaginator
@@ -2695,8 +2738,8 @@ fun EpubReaderHost(
         targetLocator: Locator? = null,
         fallbackToChapterStart: Boolean = false
     ) {
-        if (paginatedPagerState.pageCount <= 0) return
-        val targetPageIndex = pageIndex.coerceIn(0, paginatedPagerState.pageCount - 1)
+        if (totalBookPageCount() <= 0) return
+        val targetPageIndex = pageIndex.coerceIn(0, totalBookPageCount() - 1)
         val bookPaginator = paginator as? BookPaginator
         val resolvedLocator = targetLocator
             ?: bookPaginator?.getLocatorForPage(targetPageIndex)
@@ -2718,7 +2761,7 @@ fun EpubReaderHost(
             "external_scroll_request requestedPage=$pageIndex targetPage=$targetPageIndex anchor=$resolvedLocator fallbackToChapterStart=$fallbackToChapterStart pageCount=${paginatedPagerState.pageCount} epoch=$navigationEpoch"
         )
         bookPaginator?.onUserScrolledTo(targetPageIndex)
-        paginatedPagerState.scrollToPage(targetPageIndex)
+        paginatedPagerState.scrollToPage(bookPageToSpread(targetPageIndex))
         Timber.tag(TAG_STABLE_PAGE_NAV).d(
             "external_scroll_complete targetPage=$targetPageIndex currentPage=${paginatedPagerState.currentPage} anchor=$resolvedLocator epoch=$navigationEpoch"
         )
@@ -3020,7 +3063,7 @@ fun EpubReaderHost(
 
                 RenderMode.PAGINATED -> {
                     val bookPaginator = paginator as? BookPaginator
-                    val directPage = locator.pageIndex?.takeIf { it in 0 until paginatedPagerState.pageCount }
+                    val directPage = locator.pageIndex?.takeIf { it in 0 until totalBookPageCount() }
                     navigation.isNavigatingToPosition = true
                     try {
                         when {
@@ -3487,7 +3530,7 @@ fun EpubReaderHost(
                             RenderMode.PAGINATED -> {
                                 val bookPaginator = paginator as? BookPaginator
                                 if (bookPaginator != null) {
-                                    val currentFromPager = bookPaginator.findChapterIndexForPage(paginatedPagerState.currentPage)
+                                    val currentFromPager = bookPaginator.findChapterIndexForPage(currentSpreadFirstBookPage())
                                     if (index != currentFromPager) {
                                         navigation.isNavigatingByToc = true
                                         try {
@@ -3936,7 +3979,7 @@ fun EpubReaderHost(
 
                     RenderMode.PAGINATED -> {
                         scope.launch {
-                            val currentPage = paginatedPagerState.currentPage
+                            val currentPage = currentSpreadFirstBookPage()
                             val token = viewModel.getAuthToken()
                             val chapterIndex =
                                 (paginator as? BookPaginator)?.findChapterIndexForPage(currentPage)
@@ -4066,7 +4109,7 @@ fun EpubReaderHost(
 
                         if (bookPaginator != null && chapterIndex != null) {
                             val startPage = bookPaginator.chapterStartPageIndices[chapterIndex] ?: 0
-                            val currentPageInChapter = paginatedPagerState.currentPage - startPage
+                            val currentPageInChapter = currentSpreadFirstBookPage() - startPage
                             val charsScrolled = bookPaginator.getCharactersScrolledInChapter(
                                 chapterIndex,
                                 currentPageInChapter
@@ -4557,17 +4600,17 @@ fun EpubReaderHost(
                         }
                     }
                     RenderMode.PAGINATED -> {
-                        val pageContent = remember(paginatedPagerState.currentPage, paginator) {
-                            paginator?.getPageContent(paginatedPagerState.currentPage)
+                        val pageContent = remember(currentSpreadFirstBookPage(), paginator) {
+                            paginator?.getPageContent(currentSpreadFirstBookPage())
                         }
                         val blocksOnPage = remember(pageContent) {
                             pageContent?.content ?: emptyList()
                         }
                         val bookPaginator = paginator as? BookPaginator
 
-                        val bookmarkedOnPage = remember(paginatedPagerState.currentPage, bookmarkPageMap, bookmarks) {
+                        val bookmarkedOnPage = remember(currentSpreadFirstBookPage(), bookmarkPageMap, bookmarks) {
                             bookmarks.find { bookmark ->
-                                bookmarkPageMap[bookmark.cfi] == paginatedPagerState.currentPage
+                                bookmarkPageMap[bookmark.cfi] in currentSpreadBookPages()
                             }
                         }
 
@@ -4595,7 +4638,7 @@ fun EpubReaderHost(
 
                                     val finalCfi = if (offset > 0) "$baseCfi:$offset" else baseCfi
 
-                                    val chapterIndex = paginator?.findChapterIndexForPage(paginatedPagerState.currentPage)
+                                    val chapterIndex = paginator?.findChapterIndexForPage(currentSpreadFirstBookPage())
                                     val chapterTitle = chapterIndex?.let { epubBook.chapters.getOrNull(it)?.title } ?: context.getString(R.string.unknown_chapter)
                                     val snippet = (targetBlockForBookmark as? TextContentBlock)?.content?.text?.take(150) ?: ""
 
@@ -4605,7 +4648,7 @@ fun EpubReaderHost(
                                         val chapterStartPage = bookPaginator.chapterStartPageIndices[chapterIndex]
                                         totalPages = bookPaginator.chapterPageCounts[chapterIndex]
                                         pageInChapter = if (chapterStartPage != null) {
-                                            paginatedPagerState.currentPage - chapterStartPage + 1
+                                            currentSpreadFirstBookPage() - chapterStartPage + 1
                                         } else {
                                             null
                                         }
@@ -4757,13 +4800,25 @@ fun EpubReaderHost(
 
                             if (totalPagesInChapter != null && chapterStartPage != null && totalPagesInChapter > 0) {
                                 val currentPageInChapter =
-                                    paginatedPagerState.currentPage - chapterStartPage + 1
-                                "$chapterTitle ($currentPageInChapter/$totalPagesInChapter)"
+                                    currentSpreadFirstBookPage() - chapterStartPage + 1
+                                val chapterPositionLabel = if (isTwoPageSpread) {
+                                    val inChapter = currentSpreadBookPages()
+                                        .map { it - chapterStartPage + 1 }
+                                        .filter { it in 1..totalPagesInChapter }
+                                    if (inChapter.size > 1 && inChapter.first() != inChapter.last()) {
+                                        "${inChapter.first()}-${inChapter.last()}"
+                                    } else {
+                                        "${inChapter.firstOrNull() ?: currentPageInChapter}"
+                                    }
+                                } else {
+                                    "$currentPageInChapter"
+                                }
+                                "$chapterTitle ($chapterPositionLabel/$totalPagesInChapter)"
                             } else {
                                 chapterTitle
                             }
                         } else {
-                            stringResource(R.string.page_number_of_total, paginatedPagerState.currentPage + 1, paginatedPagerState.pageCount)
+                            stringResource(R.string.page_number_of_total, currentSpreadFirstBookPage() + 1, totalBookPageCount())
                         }
 
                         Text(
@@ -4793,7 +4848,7 @@ fun EpubReaderHost(
                                 }
                                 val chapterStartPage = bookPaginator.chapterStartPageIndices[chapterIndex]
                                 val currentPageInChapter = if (chapterStartPage != null) {
-                                    paginatedPagerState.currentPage - chapterStartPage
+                                    currentSpreadFirstBookPage() - chapterStartPage
                                 } else {
                                     0
                                 }
@@ -5121,12 +5176,12 @@ fun EpubReaderHost(
                                 scope.launch {
                                     Timber.tag("NavDiag").d("Mode changing to VERTICAL. lastKnownLocator=$lastKnownLocator")
                                     if (useNativeVerticalRenderer) {
-                                        val locator = (paginator as? BookPaginator)?.getLocatorForPage(paginatedPagerState.currentPage)
+                                        val locator = (paginator as? BookPaginator)?.getLocatorForPage(currentSpreadFirstBookPage())
                                             ?: lastKnownLocator
                                         if (locator != null) {
                                             lastKnownLocator = locator
                                         }
-                                        verticalScrollRequests.nativeVerticalScrollRequest = paginatedPagerState.currentPage
+                                        verticalScrollRequests.nativeVerticalScrollRequest = currentSpreadFirstBookPage()
                                         webViewRefForTts = null
                                         currentRenderMode = RenderMode.VERTICAL_SCROLL
                                         onRenderModeChange(RenderMode.VERTICAL_SCROLL)
@@ -5525,6 +5580,9 @@ fun EpubReaderHost(
                     onHorizontalMarginChange = { format.currentHorizontalMargin = it },
                     currentVerticalMargin = format.currentVerticalMargin,
                     onVerticalMarginChange = { format.currentVerticalMargin = it },
+                    currentSpreadGapDp = format.currentSpreadGapDp,
+                    onSpreadGapChange = { format.currentSpreadGapDp = it },
+                    isTwoPageSpread = isTwoPageSpread,
                     currentFont = format.currentFontFamily,
                     currentFontWeight = format.currentFontWeight,
                     onFontWeightChange = { format.currentFontWeight = it },
@@ -5549,6 +5607,7 @@ fun EpubReaderHost(
                         format.currentImageSize = DEFAULT_IMAGE_SIZE_VAL
                         format.currentHorizontalMargin = DEFAULT_HORIZONTAL_MARGIN_VAL
                         format.currentVerticalMargin = DEFAULT_VERTICAL_MARGIN_VAL
+                        format.currentSpreadGapDp = DEFAULT_SPREAD_GAP_DP_VAL
                         format.currentFontWeight = DEFAULT_FONT_WEIGHT_VAL
                         format.currentLetterSpacing = DEFAULT_LETTER_SPACING_VAL
                         format.currentFontFamily = ReaderFont.ORIGINAL
@@ -5748,11 +5807,11 @@ fun EpubReaderHost(
                     scrollToPaginatedPage = { page ->
                         scope.launch { paginatedPagerState.scrollToPage(page) }
                     },
-                    paginatedJumpLocatorForPage = { page ->
-                        (paginator as? BookPaginator)?.getLocatorForPage(page)
+                    paginatedJumpLocatorForPage = { spread ->
+                        (paginator as? BookPaginator)?.getLocatorForPage(spreadToBookPage(spread))
                     },
-                    jumpPaginatedToPage = { pageIndex, targetLocator ->
-                        scrollPaginatedToJumpPage(pageIndex, targetLocator)
+                    jumpPaginatedToPage = { spread, targetLocator ->
+                        scrollPaginatedToJumpPage(spreadToBookPage(spread), targetLocator)
                     }
                 )
             }
@@ -5894,6 +5953,12 @@ fun EpubReaderHost(
                     prefs.hideImages = it
                     saveHideImages(context, it)
                 },
+                pageSpreadMode = prefs.pageSpreadMode,
+                onPageSpreadModeChange = {
+                    prefs.pageSpreadMode = it
+                    savePageSpreadMode(context, it)
+                },
+                isPaginated = currentRenderMode == RenderMode.PAGINATED,
                 onDismiss = { prefs.showVisualOptionsSheet = false }
             )
         }

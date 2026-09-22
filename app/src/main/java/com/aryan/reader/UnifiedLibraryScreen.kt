@@ -107,6 +107,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -339,11 +340,16 @@ fun UnifiedLibraryScreen(
     val advancedFilterCount = uiState.libraryFilters.selectedFilterCount()
     val selectedItems = uiState.contextualActionItems
 
+    fun navigateShelfUp() {
+        val parentId = selectedShelfId?.let { id -> uiState.shelves.find { it.id == id } }?.parentShelfId
+        selectedShelfId = parentId
+    }
+
     BackHandler(enabled = selectedItems.isNotEmpty() || selectedShelfId != null) {
         if (selectedItems.isNotEmpty()) {
             viewModel.clearContextualAction()
         } else {
-            selectedShelfId = null
+            navigateShelfUp()
         }
     }
 
@@ -538,7 +544,7 @@ fun UnifiedLibraryScreen(
                         section = section,
                         selectedShelf = selectedShelfId?.let { id -> uiState.shelves.find { it.id == id } },
                         onMenuClick = { scope.launch { drawerState.open() } },
-                        onBackFromShelf = { selectedShelfId = null },
+                        onBackFromShelf = ::navigateShelfUp,
                         uiState = uiState,
                         onAccountClick = { scope.launch { accountDrawerState.open() } },
                         searchQuery = if (section == UnifiedLibrarySection.HOME) query else null,
@@ -622,7 +628,9 @@ fun UnifiedLibraryScreen(
                     selectedBookIds = uiState.contextualActionItems.mapTo(mutableSetOf()) { it.bookId },
                     downloadingBookIds = uiState.downloadingBookIds,
                     usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
+                    widthSizeClass = widthSizeClass,
                     onShelfSelected = { selectedShelfId = it.id },
+                    onBreadcrumbNavigate = { shelfId -> selectedShelfId = shelfId },
                     onBookClick = viewModel::onRecentFileClicked,
                     onBookLongClick = viewModel::onRecentItemLongPress
                 )
@@ -1014,7 +1022,11 @@ private fun UnifiedLibraryTopBar(
         title = title,
         showingShelf = selectedShelf != null,
         drawerDescription = stringResource(R.string.unified_library_drawer_title),
-        backToShelvesDescription = stringResource(R.string.unified_library_back_to_shelves),
+        backToShelvesDescription = if (selectedShelf?.parentShelfId != null) {
+            stringResource(R.string.action_back)
+        } else {
+            stringResource(R.string.unified_library_back_to_shelves)
+        },
         onMenu = onMenuClick,
         onBackFromShelf = onBackFromShelf,
         onAccount = onAccountClick,
@@ -1126,6 +1138,7 @@ private fun UnifiedLibrarySearchResults(
     selectedBookIds: Set<String>,
     downloadingBookIds: Set<String>,
     usePdfFileNameAsDisplayName: Boolean,
+    widthSizeClass: WindowWidthSizeClass,
     onQueryChange: (String) -> Unit,
     onClose: () -> Unit,
     onBookClick: (RecentFileItem) -> Unit,
@@ -1143,6 +1156,11 @@ private fun UnifiedLibrarySearchResults(
         onQueryChange = onQueryChange,
         onClose = onClose,
         modifier = modifier,
+        widthClass = when (widthSizeClass) {
+            WindowWidthSizeClass.Compact -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.COMPACT
+            WindowWidthSizeClass.Medium -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.MEDIUM
+            else -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.EXPANDED
+        },
         bookCard = { item ->
             RecentFileCard(
                 item = item,
@@ -1165,12 +1183,26 @@ private fun UnifiedShelvesSection(
     selectedBookIds: Set<String>,
     downloadingBookIds: Set<String>,
     usePdfFileNameAsDisplayName: Boolean,
+    widthSizeClass: WindowWidthSizeClass,
     onShelfSelected: (Shelf) -> Unit,
+    onBreadcrumbNavigate: (String?) -> Unit,
     onBookClick: (RecentFileItem) -> Unit,
     onBookLongClick: (RecentFileItem) -> Unit,
 ) {
     val selectedShelf = shelves.find { it.id == selectedShelfId }
     val visibleShelves = remember(shelves) { shelves.filter { it.type != ShelfType.TAG && it.parentShelfId == null } }
+    val childShelves = remember(shelves, selectedShelf) {
+        selectedShelf?.childShelfIds?.mapNotNull { childId -> shelves.find { it.id == childId } } ?: emptyList()
+    }
+    val breadcrumbEntries = remember(shelves, selectedShelfId) {
+        com.aryan.reader.shared.ui.genericShelfBreadcrumbPath(
+            currentShelfId = selectedShelfId,
+            lookup = { id -> shelves.find { it.id == id } },
+            idOf = { it.id },
+            nameOf = { it.name },
+            parentIdOf = { it.parentShelfId },
+        )
+    }
     com.aryan.reader.shared.ui.SharedAndroidUnifiedShelves(
         visibleShelves = visibleShelves,
         selectedShelf = selectedShelf,
@@ -1178,10 +1210,30 @@ private fun UnifiedShelvesSection(
         noShelvesLabel = stringResource(R.string.unified_library_no_shelves),
         shelfKey = { it.id },
         shelfName = { it.name },
-        shelfBookCountLabel = { "${it.bookCount} ${if (it.bookCount == 1) "book" else "books"}" },
+        shelfBookCountLabel = { unifiedShelfCountLabel(it) },
         bookKey = { it.bookId },
         onShelfSelected = onShelfSelected,
+        widthClass = when (widthSizeClass) {
+            WindowWidthSizeClass.Compact -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.COMPACT
+            WindowWidthSizeClass.Medium -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.MEDIUM
+            else -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.EXPANDED
+        },
         modifier = modifier,
+        childShelves = childShelves,
+        onChildShelfSelected = onShelfSelected,
+        foldersSectionLabel = stringResource(R.string.section_folders),
+        filesSectionLabel = stringResource(R.string.section_files),
+        emptyShelfLabel = stringResource(R.string.shelf_empty),
+        breadcrumbContent = {
+            if (selectedShelf != null) {
+                com.aryan.reader.shared.ui.SharedMobileShelfBreadcrumb(
+                    entries = breadcrumbEntries,
+                    onNavigate = { entry -> onBreadcrumbNavigate(entry.id) },
+                    homeContentDescription = stringResource(R.string.tab_shelves),
+                    modifier = Modifier.padding(horizontal = 20.dp).padding(top = 12.dp),
+                )
+            }
+        },
         bookCard = { item ->
             RecentFileCard(
                 item = item,
@@ -1194,6 +1246,19 @@ private fun UnifiedShelvesSection(
             )
         },
     )
+}
+
+@Composable
+private fun unifiedShelfCountLabel(shelf: Shelf): String {
+    val isFolder = shelf.type == ShelfType.FOLDER
+    val folderCount = pluralStringResource(R.plurals.folder_count, shelf.childShelfCount, shelf.childShelfCount)
+    val directCount = pluralStringResource(R.plurals.book_count, shelf.directBookCount, shelf.directBookCount)
+    return when {
+        isFolder && shelf.childShelfCount > 0 && shelf.directBookCount > 0 -> "$folderCount · $directCount"
+        isFolder && shelf.childShelfCount > 0 -> folderCount
+        isFolder -> directCount
+        else -> pluralStringResource(R.plurals.book_count, shelf.bookCount, shelf.bookCount)
+    }
 }
 
 @Composable

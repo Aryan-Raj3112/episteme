@@ -66,7 +66,7 @@ import com.aryan.reader.shared.reader.mobileEpubCoverBitmapSampleSize
 import com.aryan.reader.shared.reader.mobileEpubCssPaths
 import com.aryan.reader.shared.reader.resolveMobileEpubReference
 import com.aryan.reader.shared.reader.resolveMobileEpubSpineChapterTitle
-import com.aryan.reader.shared.reader.mobileEpubLogicalSectionRanges
+import com.aryan.reader.shared.reader.mobileEpubMergedChapterSections
 import com.aryan.reader.shared.reader.MobileEpubExtractionAction
 import com.aryan.reader.shared.reader.mobileEpubExtractionAction
 import com.aryan.reader.shared.reader.MOBILE_EPUB_MAX_METADATA_ENTRY_BYTES
@@ -485,8 +485,7 @@ class EpubParser(private val context: Context) {
         originalFilePathOrKey: String,
         parseContent: Boolean = true
     ): EpubBook = withContext(Dispatchers.IO) {
-        val metadataNodes = document.metadata.selectChildTag("meta")
-            .ifEmpty { document.metadata.selectChildTag("opf:meta") }
+        val metadataNodes = document.metadata.selectChildTagsByLocalName("meta")
         val metadata = resolveMobileEpubMetadata(
             sourceFileName = originalFilePathOrKey,
             title = document.metadata.selectFirstChildTag("dc:title")?.textContent,
@@ -663,31 +662,41 @@ class EpubParser(private val context: Context) {
                 directChildIndex(body.getElementById(fragmentId))?.let { idChildIndices.putIfAbsent(fragmentId, it) }
                 directChildIndex(body.selectFirst("[name='$fragmentId']"))?.let { nameChildIndices.putIfAbsent(fragmentId, it) }
             }
-            val sectionRanges = mobileEpubLogicalSectionRanges(
+            val mergedSections = mobileEpubMergedChapterSections(
                 entries = entries,
                 bodyChildCount = bodyChildren.size,
                 fragmentId = EpubTocEntry::fragmentId,
                 idChildIndex = idChildIndices::get,
-                nameChildIndex = nameChildIndices::get
+                nameChildIndex = nameChildIndices::get,
+                depthOf = EpubTocEntry::depth,
+                sectionTextLength = { startChild, endChild ->
+                    bodyChildren.subList(startChild, endChild).joinToString(" ") { it.text() }.length
+                },
+                sectionHasMedia = { startChild, endChild ->
+                    bodyChildren.subList(startChild, endChild).any { child ->
+                        child.select("img, table, svg, video, audio").isNotEmpty()
+                    }
+                }
             )
 
-            if (sectionRanges.isEmpty()) {
+            if (mergedSections.isEmpty()) {
                 logicalChapters += spineChapter
                 return@forEach
             }
 
-            sectionRanges.forEach { range ->
-                val entry = range.entry
+            mergedSections.forEach { section ->
+                val entry = section.entry
+                val rangeEntries = listOf(entry) + section.absorbedEntries
                 val sectionDocument = sourceDocument.clone()
                 val sectionBody = sectionDocument.body()
                 sectionBody.empty()
-                bodyChildren.subList(range.startChildIndex, range.endChildIndexExclusive)
+                bodyChildren.subList(section.startChildIndex, section.endChildIndexExclusive)
                     .forEach { sectionBody.appendChild(it.clone()) }
 
                 val sourcePath = spineChapter.contentFilePath()
                 val extension = sourcePath.substringAfterLast('.', "xhtml")
                 val baseName = sourcePath.substringBeforeLast('.', sourcePath)
-                val sectionPath = "${baseName}.episteme-section-${range.materializationIndex + 1}.$extension"
+                val sectionPath = "${baseName}.episteme-section-${section.materializationIndex + 1}.$extension"
                 val sectionFile = File(extractionRoot, sectionPath)
                 sectionFile.parentFile?.mkdirs()
                 sectionFile.writeText(sectionDocument.outerHtml())
@@ -702,7 +711,9 @@ class EpubParser(private val context: Context) {
                     depth = entry.depth,
                     isInToc = true
                 )
-                remappedEntries[entry] = entry.copy(absolutePath = sectionPath)
+                rangeEntries.forEach { rangeEntry ->
+                    remappedEntries[rangeEntry] = rangeEntry.copy(absolutePath = sectionPath)
+                }
             }
         }
 
@@ -780,8 +791,7 @@ class EpubParser(private val context: Context) {
 
 
     private fun getMetadataCoverId(metadata: Node): String? {
-        return metadata.selectChildTag("meta")
-            .ifEmpty { metadata.selectChildTag("opf:meta") }
+        return metadata.selectChildTagsByLocalName("meta")
             .find { it.getAttributeValue("name") == "cover" }?.getAttributeValue("content")
     }
 
@@ -789,8 +799,7 @@ class EpubParser(private val context: Context) {
         manifest: Node,
         opfParentDir: File
     ): Map<String, EpubManifestItem> {
-        return manifest.selectChildTag("item")
-            .ifEmpty { manifest.selectChildTag("opf:item") }
+        return manifest.selectChildTagsByLocalName("item")
             .mapNotNull { itemElement ->
                 val href = itemElement.getAttribute("href")?.decodedURL ?: return@mapNotNull null
                 val pathRelativeToEpubRoot = resolveMobileEpubReference("${opfParentDir.path}/_", href)
@@ -828,8 +837,7 @@ class EpubParser(private val context: Context) {
     ): List<EpubChapter> = withContext(Dispatchers.Default) {
         val parsingSemaphore = Semaphore(6)
 
-        val spineItems = spine.selectChildTag("itemref")
-            .ifEmpty { spine.selectChildTag("opf:itemref") }
+        val spineItems = spine.selectChildTagsByLocalName("itemref")
         val spineIds = mobileEpubSpineItemIds(spineItems.map { it.getAttributeValue("idref") }.toList())
 
         val deferredChapters = spineIds.mapIndexed { index, idRef ->

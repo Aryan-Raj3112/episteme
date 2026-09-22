@@ -12,15 +12,24 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -83,6 +92,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -103,8 +116,11 @@ import com.aryan.reader.shared.toSharedReaderFontFamily
 import com.aryan.reader.shared.toAndroidEpubFormatSliderValues
 import com.aryan.reader.shared.withAndroidEpubFormatSliderValue
 import com.aryan.reader.shared.reader.ReaderPageInfo
+import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
+import com.aryan.reader.shared.reader.isTwoPageSpreadEnabled
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.writeSharedReaderDiagnostic
 import com.aryan.reader.shared.reader.pullToTurnEnabled
 import com.aryan.reader.shared.reader.seamlessChapterTransitionEnabled
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
@@ -154,6 +170,7 @@ internal fun SharedMobileEpubFormatSheet(
         AndroidEpubFormatSlider.IMAGE_SIZE -> sliderValues.imageSize
         AndroidEpubFormatSlider.HORIZONTAL_MARGIN -> sliderValues.horizontalMargin
         AndroidEpubFormatSlider.VERTICAL_MARGIN -> sliderValues.verticalMargin
+        AndroidEpubFormatSlider.SPREAD_GAP -> sliderValues.spreadGapDp
     }
 
     fun adjust(slider: AndroidEpubFormatSlider, deltaSteps: Int) {
@@ -265,6 +282,15 @@ internal fun SharedMobileEpubFormatSheet(
                 SharedMobileEpubFormatStepperRow("Image Size", sharedMobileFormatMultiplier(sliderValues.imageSize), { adjust(AndroidEpubFormatSlider.IMAGE_SIZE, -1) }, { adjust(AndroidEpubFormatSlider.IMAGE_SIZE, 1) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.IMAGE_SIZE })
                 SharedMobileEpubFormatStepperRow("Horizontal Margin", sharedMobileFormatMargin(sliderValues.horizontalMargin), { adjust(AndroidEpubFormatSlider.HORIZONTAL_MARGIN, -1) }, { adjust(AndroidEpubFormatSlider.HORIZONTAL_MARGIN, 1) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN })
                 SharedMobileEpubFormatStepperRow("Vertical Margin", sharedMobileFormatMargin(sliderValues.verticalMargin), { adjust(AndroidEpubFormatSlider.VERTICAL_MARGIN, -1) }, { adjust(AndroidEpubFormatSlider.VERTICAL_MARGIN, 1) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN })
+                if (settings.isTwoPageSpreadEnabled()) {
+                    SharedMobileEpubFormatStepperRow(
+                        "Spread Gap",
+                        sharedMobileFormatSpreadGap(sliderValues.spreadGapDp),
+                        { adjust(AndroidEpubFormatSlider.SPREAD_GAP, -1) },
+                        { adjust(AndroidEpubFormatSlider.SPREAD_GAP, 1) },
+                        { activeAdjustment = SharedMobileReaderFormatAdjustment.SPREAD_GAP }
+                    )
+                }
             }
         }
     }
@@ -333,7 +359,8 @@ internal enum class SharedMobileReaderFormatAdjustment(val title: String) {
     PARAGRAPH_GAP("Paragraph gap"),
     IMAGE_SIZE("Image size"),
     HORIZONTAL_MARGIN("Horizontal margin"),
-    VERTICAL_MARGIN("Vertical margin")
+    VERTICAL_MARGIN("Vertical margin"),
+    SPREAD_GAP("Spread gap")
 }
 
 @Composable
@@ -419,6 +446,7 @@ internal fun SharedMobileEpubFormatAdjustmentDialog(
         SharedMobileReaderFormatAdjustment.IMAGE_SIZE -> sliderValues.imageSize
         SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN -> sliderValues.horizontalMargin
         SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> sliderValues.verticalMargin
+        SharedMobileReaderFormatAdjustment.SPREAD_GAP -> sliderValues.spreadGapDp
     }
     val range = when (adjustment) {
         SharedMobileReaderFormatAdjustment.FONT_SIZE -> AndroidEpubFormatSliders.fontSize.minimum..AndroidEpubFormatSliders.fontSize.maximum
@@ -428,6 +456,7 @@ internal fun SharedMobileEpubFormatAdjustmentDialog(
         SharedMobileReaderFormatAdjustment.PARAGRAPH_GAP -> AndroidEpubFormatSliders.paragraphGap.minimum..AndroidEpubFormatSliders.paragraphGap.maximum
         SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN -> AndroidEpubFormatSliders.horizontalMargin.minimum..AndroidEpubFormatSliders.horizontalMargin.maximum
         SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> AndroidEpubFormatSliders.verticalMargin.minimum..AndroidEpubFormatSliders.verticalMargin.maximum
+        SharedMobileReaderFormatAdjustment.SPREAD_GAP -> AndroidEpubFormatSliders.spreadGap.minimum..AndroidEpubFormatSliders.spreadGap.maximum
         SharedMobileReaderFormatAdjustment.IMAGE_SIZE -> AndroidEpubFormatSliders.imageSize.minimum..AndroidEpubFormatSliders.imageSize.maximum
     }
     fun update(raw: Float) {
@@ -459,6 +488,10 @@ internal fun SharedMobileEpubFormatAdjustmentDialog(
                     AndroidEpubFormatSlider.VERTICAL_MARGIN,
                     AndroidEpubFormatSliders.verticalMargin.snap(raw)
                 )
+                SharedMobileReaderFormatAdjustment.SPREAD_GAP -> settings.withAndroidEpubFormatSliderValue(
+                    AndroidEpubFormatSlider.SPREAD_GAP,
+                    AndroidEpubFormatSliders.spreadGap.snap(raw)
+                )
             }
         )
     }
@@ -467,6 +500,7 @@ internal fun SharedMobileEpubFormatAdjustmentDialog(
         SharedMobileReaderFormatAdjustment.LETTER_SPACING -> sharedMobileFormatLetterSpacing(settings.letterSpacing)
         SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN -> sharedMobileFormatMargin(value)
         SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> sharedMobileFormatMargin(value)
+        SharedMobileReaderFormatAdjustment.SPREAD_GAP -> sharedMobileFormatSpreadGap(value)
         else -> sharedMobileFormatMultiplier(value)
     }
     AlertDialog(
@@ -513,6 +547,10 @@ internal fun SharedMobileEpubFormatAdjustmentDialog(
                             AndroidEpubFormatSlider.VERTICAL_MARGIN,
                             AndroidEpubFormatSliders.verticalMargin.default
                         )
+                        SharedMobileReaderFormatAdjustment.SPREAD_GAP -> settings.withAndroidEpubFormatSliderValue(
+                            AndroidEpubFormatSlider.SPREAD_GAP,
+                            AndroidEpubFormatSliders.spreadGap.default
+                        )
                     }
                 )
             }) { Text("Reset") }
@@ -536,6 +574,9 @@ internal fun sharedMobileFormatMargin(value: Float): String =
         value in 0.99f..1.01f -> "Original"
         else -> "${(value * 10).roundToInt() / 10f}x"
     }
+
+internal fun sharedMobileFormatSpreadGap(valueDp: Float): String =
+    "${valueDp.roundToInt()} dp"
 
 @Composable
 internal fun SharedMobileEpubFormatSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, allowNone: Boolean = false, onValueChange: (Float) -> Unit) {
@@ -745,15 +786,79 @@ internal fun SharedMobileEpubThemeGridItem(
     }
 }
 
+/**
+ * Content height of the shared mobile PageInfo bar.
+ *
+ * Android benchmark ([PAGE_INFO_BAR_HEIGHT]) adds a rounded-corner allowance on
+ * top of this; the safe-area background extension below covers the iOS home
+ * indicator and curved corners instead of growing the content row.
+ */
+internal val SharedMobileEpubPageInfoBarContentHeight = 25.dp
+
+/** Common log tag for PageInfo-bar clipping diagnosis on iOS and Android. */
+internal const val ReaderPageInfoBarDiagTag = "ReaderPageInfoBar"
+
+/** Bump when the bar layout changes, so logs prove which code produced them. */
+internal const val ReaderPageInfoBarDiagRevision = 8
+
+/**
+ * Bottom safe padding owned by the PageInfo bar (single source of truth).
+ *
+ * Used both for the bar's own background extension and, at the call site, for
+ * the chrome offset and the WebView reserve — the three must agree, otherwise
+ * the bottom toolbar overlaps the bar text (or floats far from it).
+ */
+@Composable
+internal fun rememberSharedMobileEpubPageInfoBottomPad(
+    pageInfoPosition: PageInfoPosition,
+    applySystemBarsInsets: Boolean
+): Dp {
+    val safeBottom = WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
+    return if (applySystemBarsInsets && pageInfoPosition == PageInfoPosition.BOTTOM) {
+        (safeBottom - sharedMobileEpubPageInfoCornerClearance).coerceAtLeast(0.dp)
+    } else {
+        0.dp
+    }
+}
+
+/**
+ * Chrome-stable version of the PageInfo bottom safe pad for paginated layout.
+ *
+ * Android benchmark ([PAGE_INFO_BAR_HEIGHT]) reserves one exact bar height that
+ * never changes with chrome state. The live [rememberSharedMobileEpubPageInfoBottomPad]
+ * is chrome-dependent (0 when the toolbar covers the home-indicator zone, full
+ * safe pad when chrome hides), so folding it into the paginator viewport would
+ * repaginate on every tap. Paginating with the maximum instead keeps one stable
+ * viewport whose text box always clears the bar: exact when chrome hides, with
+ * harmless extra bottom margin when chrome shows — and never clipped under it.
+ */
+@Composable
+internal fun rememberSharedMobileEpubPageInfoMaxBottomPad(
+    pageInfoPosition: PageInfoPosition
+): Dp {
+    val safeBottom = WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
+    return if (pageInfoPosition == PageInfoPosition.BOTTOM) {
+        (safeBottom - sharedMobileEpubPageInfoCornerClearance).coerceAtLeast(0.dp)
+    } else {
+        0.dp
+    }
+}
+
 @Composable
 internal fun SharedMobileEpubPageInfo(
     chapterTitle: String,
     pageInfo: ReaderPageInfo?,
     progressPercent: Float,
     settings: ReaderSettings,
+    pageInfoPosition: PageInfoPosition,
+    applySystemBarsInsets: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val background = settings.readerPageInfoBackgroundColor()
+    val background = if (sharedMobileEpubPageInfoMatchesReaderBackground) {
+        settings.readerBackgroundColor()
+    } else {
+        settings.readerPageInfoBackgroundColor()
+    }
     val foreground = settings.readerTextColor().copy(alpha = 0.8f)
     val texture = sharedMobileEpubTextureBitmap(settings.textureId)
     val clockTime = rememberReaderClockTime()
@@ -763,14 +868,113 @@ internal fun SharedMobileEpubPageInfo(
     val axDescription = pageInfo?.let {
         "$chapterTitle, page ${it.currentPageInChapter} of ${it.totalPagesInChapter}, ${formatReaderProgress(progressPercent)} percent"
     } ?: chapterTitle
+    // Temporary clipping diagnosis: environment + inputs + measured rect under
+    // one tag. Config logs on input change; layout logs only when the on-screen
+    // rect moves (rotation, chrome toggle), so idle sessions stay quiet.
+    val density = LocalDensity.current
+    val containerSize = LocalWindowInfo.current.containerSize
+    val safeDrawing = WindowInsets.safeDrawing.asPaddingValues()
+    val cutout = WindowInsets.displayCutout.asPaddingValues()
+    val sidePadding = 16.dp + sharedMobileEpubPageInfoCornerClearance
+    val centerReserve = 48.dp + sharedMobileEpubPageInfoCornerClearance
+    // Hug the bottom edge a little closer than the full safe inset so the bar
+    // doesn't float high above it; the same corner room keeps the content clear
+    // of the home indicator and the curve. Android clearance is 0.dp, so its
+    // exact benchmark padding is untouched. Top keeps the full inset.
+    val bottomPad = rememberSharedMobileEpubPageInfoBottomPad(pageInfoPosition, applySystemBarsInsets)
+    val orientation = when {
+        containerSize.width > containerSize.height -> "landscape"
+        containerSize.width < containerSize.height -> "portrait"
+        else -> "square"
+    }
+    LaunchedEffect(
+        pageInfoPosition, applySystemBarsInsets, sidePadding, centerReserve,
+        containerSize, orientation, density.density, density.fontScale
+    ) {
+        writeSharedReaderDiagnostic(
+            ReaderPageInfoBarDiagTag,
+            "config rev=$ReaderPageInfoBarDiagRevision pos=$pageInfoPosition applyInsets=$applySystemBarsInsets " +
+                "clearance=$sharedMobileEpubPageInfoCornerClearance sidePad=$sidePadding " +
+                "centerReserve=$centerReserve density=${density.density} " +
+                "fontScale=${density.fontScale} container=$containerSize orient=$orientation " +
+                "safeDrawing=l${safeDrawing.calculateLeftPadding(LayoutDirection.Ltr)}" +
+                "t${safeDrawing.calculateTopPadding()}r${safeDrawing.calculateRightPadding(LayoutDirection.Ltr)}" +
+                "b${safeDrawing.calculateBottomPadding()} " +
+                "cutout=l${cutout.calculateLeftPadding(LayoutDirection.Ltr)}" +
+                "t${cutout.calculateTopPadding()}r${cutout.calculateRightPadding(LayoutDirection.Ltr)}" +
+                "b${cutout.calculateBottomPadding()} bottomPad=$bottomPad"
+        )
+    }
+    var lastRootRect by remember { mutableStateOf<String?>(null) }
+    // The bottom safe pad must be painted, not transparent: in Compose a
+    // padding modifier outside the background leaves that strip unpainted, so
+    // on iOS (where bottomPad is nonzero while chrome hides) the page showed
+    // through below the bar. The background and texture therefore go outside
+    // the bottom padding and cover the full bar down to the screen edge, while
+    // the 25.dp content row stays clear of the home indicator. TOP and the
+    // no-insets states keep the benchmark modifier order pixel-identical. The
+    // inner horizontal safe-drawing padding keeps the clock and percentage
+    // clear of the notch and curved screen corners: displayCutout alone
+    // reports 0 on iOS, safeDrawing carries the insets on both platforms (on
+    // Android it already includes the cutout).
+    val extendBackgroundThroughBottomPad =
+        applySystemBarsInsets && pageInfoPosition == PageInfoPosition.BOTTOM && bottomPad > 0.dp
+    val textureModifier = texture?.let { bitmap ->
+        Modifier.drawBehind {
+            drawRect(
+                ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)),
+                alpha = settings.textureAlpha.coerceIn(0f, 1f),
+                blendMode = if (settings.darkMode) BlendMode.Screen else BlendMode.Multiply
+            )
+        }
+    } ?: Modifier
     Box(
-        modifier.fillMaxWidth().height(25.dp).background(background)
-            .then(texture?.let { bitmap -> Modifier.drawBehind { drawRect(ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)), alpha = settings.textureAlpha.coerceIn(0f, 1f), blendMode = if (settings.darkMode) BlendMode.Screen else BlendMode.Multiply) } } ?: Modifier)
-            .padding(horizontal = 16.dp)
+        modifier.fillMaxWidth()
+            .then(
+                if (extendBackgroundThroughBottomPad) {
+                    Modifier.background(background).then(textureModifier)
+                } else {
+                    Modifier
+                }
+            )
+            .then(
+                if (!applySystemBarsInsets) {
+                    Modifier
+                } else if (pageInfoPosition == PageInfoPosition.TOP) {
+                    Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                } else {
+                    Modifier.padding(bottom = bottomPad)
+                }
+            )
+            .then(
+                if (extendBackgroundThroughBottomPad) {
+                    Modifier
+                } else {
+                    Modifier.background(background).then(textureModifier)
+                }
+            )
             .testTag(SharedMobileEpubAxTags.PAGE_INFO)
-            .semantics(mergeDescendants = true) { contentDescription = axDescription },
+            .semantics(mergeDescendants = true) { contentDescription = axDescription }
+            .onGloballyPositioned { coordinates ->
+                val rect = coordinates.boundsInRoot()
+                val fingerprint = with(density) {
+                    "rect=${rect.left.toDp()}x${rect.top.toDp()} " +
+                        "size=${rect.width.toDp()}x${rect.height.toDp()} " +
+                        "px=[${rect.left.toInt()},${rect.top.toInt()},${rect.width.toInt()},${rect.height.toInt()}]"
+                }
+                if (fingerprint != lastRootRect) {
+                    lastRootRect = fingerprint
+                    writeSharedReaderDiagnostic(ReaderPageInfoBarDiagTag, "layout $fingerprint")
+                }
+            },
         contentAlignment = Alignment.Center
     ) {
+        Box(
+            Modifier.fillMaxWidth().height(SharedMobileEpubPageInfoBarContentHeight)
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                .padding(horizontal = 16.dp + sharedMobileEpubPageInfoCornerClearance),
+            contentAlignment = Alignment.Center
+        ) {
             Text(
                 centerLabel,
                 maxLines = 1,
@@ -778,7 +982,7 @@ internal fun SharedMobileEpubPageInfo(
                 style = MaterialTheme.typography.bodySmall,
                 color = foreground,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 48.dp)
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 48.dp + sharedMobileEpubPageInfoCornerClearance)
             )
             Text(
                 clockTime,
@@ -792,6 +996,7 @@ internal fun SharedMobileEpubPageInfo(
                 color = foreground,
                 modifier = Modifier.align(Alignment.CenterEnd)
             )
+        }
     }
 }
 
@@ -882,6 +1087,25 @@ internal fun SharedMobileEpubVisualOptionsSheet(
             SharedMobileEpubEnumChoices(PageInfoMode.entries, settings.pageInfoMode, { it.title }) { onSettingsChange(settings.copy(pageInfoMode = it)) }
             Text("Progress Bar Position", style = MaterialTheme.typography.titleSmall)
             SharedMobileEpubEnumChoices(PageInfoPosition.entries, settings.pageInfoPosition, { it.title }) { onSettingsChange(settings.copy(pageInfoPosition = it)) }
+            if (settings.readingMode == ReaderReadingMode.PAGINATED) {
+                Spacer(Modifier.height(8.dp))
+                Text("Page Spread", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Show one page or two pages side by side.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                SharedMobileEpubEnumChoices(
+                    ReaderPageSpreadMode.entries,
+                    settings.pageSpreadMode,
+                    {
+                        when (it) {
+                            ReaderPageSpreadMode.SINGLE -> "Single"
+                            ReaderPageSpreadMode.TWO_PAGE -> "Two pages"
+                        }
+                    }
+                ) { onSettingsChange(settings.copy(pageSpreadMode = it)) }
+            }
             Spacer(Modifier.height(8.dp))
             Surface(
                 shape = RoundedCornerShape(12.dp),

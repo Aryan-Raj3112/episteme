@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -62,11 +63,13 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.Tag
@@ -108,6 +111,8 @@ import com.aryan.reader.shared.readerAutoScrollBoundaryAction
 import com.aryan.reader.shared.migrateLegacyIosReaderAutoScrollSpeed
 import com.aryan.reader.shared.migrateAndroidEpubFormatSettings
 import com.aryan.reader.shared.shouldFollowReaderTtsChunk
+import com.aryan.reader.shared.pageInfoBarBottomReserve
+import com.aryan.reader.shared.shouldReserveEpubPageInfoBarSpace
 import com.aryan.reader.shared.shouldShowEpubPageInfoBar
 import com.aryan.reader.shared.toSharedReaderFontFamily
 import com.aryan.reader.shared.withTtsReplacements
@@ -135,6 +140,7 @@ import com.aryan.reader.shared.reader.sharedEpubOpenTraceMs
 import com.aryan.reader.shared.reader.effectiveReaderTocEntries
 import com.aryan.reader.shared.reader.findPageIndexForLocator
 import com.aryan.reader.shared.reader.layoutSignature
+import com.aryan.reader.shared.reader.withUncappedPageWidth
 import com.aryan.reader.shared.reader.readerImageReferences
 import com.aryan.reader.shared.reader.readerTocActiveIndex
 import com.aryan.reader.shared.reader.pullToTurnEnabled
@@ -148,6 +154,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.aryan.reader.shared.reader.mobileEpubSystemBarsVisibility
+import com.aryan.reader.shared.reader.writeSharedReaderDiagnostic
 
 data class SharedMobileEpubReaderSnapshot(
     val locator: ReaderLocator,
@@ -334,6 +341,12 @@ fun SharedMobileEpubReaderScreen(
             }
         )
     }
+    // Android parity (PaginatedReaderScreen has no page-width cap): the shared
+    // mobile paginated pipeline (estimate session, measured paginator, native
+    // render) uses uncapped settings so iOS fills viewport width like Android
+    // instead of letterboxing at the persisted/desktop pageWidth (760 default).
+    // Pagination and rendering share this instance so they stay identical.
+    val paginatedSettings = remember(settings) { settings.withUncappedPageWidth() }
     var pages by remember(book.id) { mutableStateOf<List<ReaderPage>>(emptyList()) }
     var measuredPagesApplied by remember(book.id) { mutableStateOf(false) }
     var currentLocator by remember(book.id) { mutableStateOf(book.readerPosition) }
@@ -503,6 +516,39 @@ fun SharedMobileEpubReaderScreen(
     val systemBarsVisibility = mobileEpubSystemBarsVisibility(settings.systemUiMode, showChrome)
     val systemUiHidden = !systemBarsVisibility.statusBarsVisible
     val navigationUiHidden = !systemBarsVisibility.navigationBarsVisible
+    // Android parity (EpubReaderRenderSurfaces paginated + WebView branch below):
+    // the native paginated pager is measured inside the PageInfo reserve, so
+    // pagination and rendering share one box and text never slides under the
+    // bar. The reserve covers the bar's full visual height (content row plus
+    // the maximum bottom safe pad, like Android's exact bar height) and stays
+    // stable across chrome toggles: the live chrome-dependent pad would
+    // repaginate on every tap, so the paginator uses the chrome-independent
+    // maximum and the render box shares it.
+    val nativePaginatedPageInfoReserveTop = if (
+        settings.pageInfoPosition == PageInfoPosition.TOP &&
+        shouldReserveEpubPageInfoBarSpace(
+            pageInfoMode = settings.pageInfoMode,
+            showReaderChrome = showChrome,
+            isNativeVerticalMode = false
+        )
+    ) {
+        SharedMobileEpubPageInfoBarContentHeight
+    } else {
+        0.dp
+    }
+    val nativePaginatedPageInfoMaxBottomPad =
+        rememberSharedMobileEpubPageInfoMaxBottomPad(settings.pageInfoPosition)
+    val nativePaginatedPageInfoReserveBottom = pageInfoBarBottomReserve(
+        pageInfoPosition = settings.pageInfoPosition,
+        pageInfoMode = settings.pageInfoMode,
+        showReaderChrome = showChrome,
+        barVisible = shouldShowEpubPageInfoBar(
+            pageInfoMode = settings.pageInfoMode,
+            showReaderChrome = showChrome
+        ),
+        contentHeight = SharedMobileEpubPageInfoBarContentHeight,
+        bottomPad = nativePaginatedPageInfoMaxBottomPad
+    )
 
     fun refreshSelectedTocIndex(
         locator: ReaderLocator? = currentLocator,
@@ -547,7 +593,7 @@ fun SharedMobileEpubReaderScreen(
         }
     }
 
-    LaunchedEffect(loadedBook, settings.layoutSignature()) {
+    LaunchedEffect(loadedBook, paginatedSettings.layoutSignature()) {
         val epub = loadedBook ?: return@LaunchedEffect
         if (pages.isNotEmpty()) delay(180)
         if (measuredPagesApplied) return@LaunchedEffect
@@ -556,7 +602,7 @@ fun SharedMobileEpubReaderScreen(
         val readerState = withContext(Dispatchers.Default) {
             ReaderEngine().createSession(
                 book = epub,
-                settings = settings,
+                settings = paginatedSettings,
                 initialPageIndex = currentPageIndex,
                 initialLocator = locator
             ).reader
@@ -566,19 +612,50 @@ fun SharedMobileEpubReaderScreen(
         currentPageIndex = readerState.currentPageIndex.coerceIn(0, readerState.pages.lastIndex.coerceAtLeast(0))
     }
 
+    // Android parity (PaginatedReader BoxWithConstraints): onSizeChanged above
+    // observes the pre-inset fullscreen box, but the pager renders inside the
+    // status inset and the PageInfo reserve. Deriving the paginated viewport
+    // arithmetically keeps measured pagination and rendering on the same box.
+    val paginatedViewportTopInset = if (!systemUiHidden) {
+        WindowInsets.safeDrawing.asPaddingValues().calculateTopPadding()
+    } else {
+        0.dp
+    }
+    val paginatedContentViewport = remember(
+        readerViewport,
+        paginatedViewportTopInset,
+        nativePaginatedPageInfoReserveTop,
+        nativePaginatedPageInfoReserveBottom,
+        settings.readingMode,
+        readerDensity
+    ) {
+        if (settings.readingMode != ReaderReadingMode.PAGINATED || !readerViewport.isSpecified) {
+            readerViewport
+        } else {
+            with(readerDensity) {
+                val usedHeightPx = (
+                    paginatedViewportTopInset.roundToPx() +
+                        nativePaginatedPageInfoReserveTop.roundToPx() +
+                        nativePaginatedPageInfoReserveBottom.roundToPx()
+                    ).coerceAtLeast(0)
+                readerViewport.copy(heightPx = (readerViewport.heightPx - usedHeightPx).coerceAtLeast(1))
+            }
+        }
+    }
+
     LaunchedEffect(
         loadedBook,
-        settings.layoutSignature(),
-        readerViewport,
+        paginatedSettings.layoutSignature(),
+        paginatedContentViewport,
         measuredPaginator
     ) {
         val epub = loadedBook ?: return@LaunchedEffect
-        if (settings.readingMode != ReaderReadingMode.PAGINATED) return@LaunchedEffect
-        if (!readerViewport.isSpecified) return@LaunchedEffect
+        if (paginatedSettings.readingMode != ReaderReadingMode.PAGINATED) return@LaunchedEffect
+        if (!paginatedContentViewport.isSpecified) return@LaunchedEffect
         val paginateMark = sharedEpubOpenTraceMark()
-        sharedEpubOpenTrace { "readerScreen measuredPaginate start viewport=${readerViewport.widthPx}x${readerViewport.heightPx}" }
+        sharedEpubOpenTrace { "readerScreen measuredPaginate start viewport=${paginatedContentViewport.widthPx}x${paginatedContentViewport.heightPx}" }
         val measuredPages = withContext(Dispatchers.Default) {
-            measuredPaginator.paginate(epub, settings, readerViewport)
+            measuredPaginator.paginate(epub, paginatedSettings, paginatedContentViewport)
         }
         sharedEpubOpenTrace { "readerScreen measuredPaginate done pages=${measuredPages.size} ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(paginateMark))}" }
         measuredPagesApplied = true
@@ -663,6 +740,29 @@ fun SharedMobileEpubReaderScreen(
     }
     val progress = pageInfo?.progressPercent?.toFloat()
         ?: ((currentPageIndex + 1).toFloat() / pageCount) * 100f
+    // Hoisted: the WebView reserve below needs the same bar geometry the
+    // overlays further below use. Single definitions here keep the bar height, the
+    // safe extension, and the content reserve in agreement.
+    val pageInfoVisible = shouldShowEpubPageInfoBar(
+        pageInfoMode = settings.pageInfoMode,
+        showReaderChrome = showChrome
+    ) && loadedBook != null && pages.isNotEmpty()
+    // Android parity (vertical/paginated info bars): fade with the
+    // shared 200ms spec instead of popping.
+    //
+    // The bar owns a bottom safe extension only when no toolbar sits
+    // below it: with chrome shown the toolbar's own safe padding
+    // covers the home-indicator zone, so the bar needs none (its old
+    // extension hid invisibly behind the toolbar anyway). Exactly one
+    // safe-zone filler exists in every state.
+    val pageInfoApplySystemBarsInsets =
+        settings.pageInfoPosition == PageInfoPosition.TOP && !systemUiHidden ||
+            settings.pageInfoPosition == PageInfoPosition.BOTTOM && !showChrome &&
+            (!navigationUiHidden || sharedMobileEpubPageInfoAlwaysApplyBottomSafeInset)
+    val pageInfoBottomPad = rememberSharedMobileEpubPageInfoBottomPad(
+        settings.pageInfoPosition,
+        pageInfoApplySystemBarsInsets
+    )
 
     fun currentReaderSnapshot(): SharedMobileEpubReaderSnapshot? {
         val locator = currentLocator ?: return null
@@ -1132,7 +1232,7 @@ fun SharedMobileEpubReaderScreen(
                                     }
                                 }
                             },
-                            text = { Text(label, maxLines = 1) }
+                            text = { Text(label, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
                         )
                     }
                 }
@@ -1229,15 +1329,15 @@ fun SharedMobileEpubReaderScreen(
                     loadState.errorMessage != null -> SharedMobileEpubError(loadState.errorMessage)
                     loadedBook != null && pages.isEmpty() -> SharedMobileEpubLoading("Preparing book layout…")
                     loadedBook != null -> {
-                        if (settings.readingMode == ReaderReadingMode.PAGINATED) {
+                        if (paginatedSettings.readingMode == ReaderReadingMode.PAGINATED) {
                             val visiblePages = ReaderSpreadLayout.visiblePageIndicesForDisplay(
                                 currentPageIndex,
                                 pages.size,
-                                settings
+                                paginatedSettings
                             ).mapNotNull(pages::getOrNull)
                             val paginatedRenderPlan = ReaderContentRenderPlan.NativePaginatedPages(
                                 visiblePages = visiblePages,
-                                settings = settings,
+                                settings = paginatedSettings,
                                 searchQuery = searchQuery,
                                 searchOptions = ReaderSearchOptions(),
                                 highlightPalette = readerHighlightPalette,
@@ -1516,6 +1616,19 @@ fun SharedMobileEpubReaderScreen(
                             } else {
                                 (activeTurn?.direction ?: 0) < 0
                             }
+                            // Android benchmark parity: the pager slots sit side-by-side, so the
+                            // curling sheet reveals the set beneath with shadows. The shared
+                            // reader stacks both sets, so the beneath layer stays opaque while
+                            // the top layer goes transparent — otherwise the top layer's
+                            // full-size paper background hides the incoming set until the turn
+                            // overlay is removed at the end.
+                            val turnLayerActive = activeTurn != null || dragOverlayPlan != null
+                            val (turnMainBackground, turnOverlayBackground) =
+                                sharedPaginatedTurnLayerBackgrounds(
+                                    turnActive = turnLayerActive,
+                                    overlayFirst = overlayFirst,
+                                    baseBackground = paginatedRenderPlan.background
+                                )
                             val turnOverlay: @Composable () -> Unit = {
                                 val overlayPlan = when {
                                     dragOverlayPlan != null -> dragOverlayPlan
@@ -1529,11 +1642,30 @@ fun SharedMobileEpubReaderScreen(
                                         readerFontFamily = settings.toSharedReaderFontFamily(),
                                         searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
                                         selectionHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
-                                        pageTurn = overlaySpec
+                                        pageTurn = overlaySpec,
+                                        background = turnOverlayBackground,
+                                        imageContent = { image, imageModifier ->
+                                            if (!settings.hideImages) {
+                                                SharedMobileEpubNativeImage(
+                                                    image = image,
+                                                    modifier = imageModifier
+                                                )
+                                            }
+                                        }
                                     )
                                 }
                             }
-                            Box(Modifier.fillMaxSize()) {
+                            // Android parity (EpubReaderRenderSurfaces paginated):
+                            // shrink the pager by the PageInfo reserve instead of
+                            // overlaying the bar, so the chapter end lands above it.
+                            // Matches paginatedContentViewport above.
+                            Box(
+                                Modifier.fillMaxSize()
+                                    .padding(
+                                        top = nativePaginatedPageInfoReserveTop,
+                                        bottom = nativePaginatedPageInfoReserveBottom
+                                    )
+                            ) {
                                 if (overlayFirst) {
                                     turnOverlay()
                                 }
@@ -1597,7 +1729,18 @@ fun SharedMobileEpubReaderScreen(
                                     modifier = Modifier.fillMaxSize().testTag(SharedMobileEpubAxTags.CONTENT),
                                     positionController = nativePaginatedPositionController,
                                     pageTurn = if (pageDragActive) dragCurrentSpec else incomingTurnSpec,
-                                    pageDragController = pageDragController
+                                    pageDragController = pageDragController,
+                                    contentBackground = turnMainBackground,
+                                    // Native-vertical parity (:1809): without this the paginated
+                                    // reader falls back to alt-text/file-name labels.
+                                    imageContent = { image, imageModifier ->
+                                        if (!settings.hideImages) {
+                                            SharedMobileEpubNativeImage(
+                                                image = image,
+                                                modifier = imageModifier
+                                            )
+                                        }
+                                    }
                                 )
                                 if (!overlayFirst) {
                                     turnOverlay()
@@ -1791,6 +1934,58 @@ fun SharedMobileEpubReaderScreen(
                             }
                             add(sharedMobileEpubTtsNavigationScript(activeTtsChunk?.toLocator()))
                         }.joinToString(separator = "\n")
+                        // Android parity (EpubReaderRenderSurfaces): shrink the WebView
+                        // by the full PageInfo bar height instead of overlaying it, so the
+                        // chapter end lands above the bar and window.innerHeight
+                        // already excludes the overlay. Native vertical reserves no
+                        // space, so only the WebView branch reserves here.
+                        val webViewPageInfoReserve = if (
+                            shouldReserveEpubPageInfoBarSpace(
+                                pageInfoMode = settings.pageInfoMode,
+                                showReaderChrome = showChrome,
+                                isNativeVerticalMode = false
+                            )
+                        ) {
+                            SharedMobileEpubPageInfoBarContentHeight
+                        } else {
+                            0.dp
+                        }
+                        val webViewContentTopPadding =
+                            if (settings.pageInfoPosition == PageInfoPosition.TOP) webViewPageInfoReserve else 0.dp
+                        // The reserve is the bar's full height (content row plus the
+                        // bottom safe pad it paints while chrome hides). Reserving
+                        // only the content row left a gap below the bar on iOS where
+                        // the page showed through. Android stays exactly 25.dp
+                        // (its pad is 0.dp), so the benchmark is untouched.
+                        val webViewContentBottomPadding = pageInfoBarBottomReserve(
+                            pageInfoPosition = settings.pageInfoPosition,
+                            pageInfoMode = settings.pageInfoMode,
+                            showReaderChrome = showChrome,
+                            barVisible = pageInfoVisible,
+                            contentHeight = webViewPageInfoReserve,
+                            bottomPad = pageInfoBottomPad
+                        )
+                        val webViewContentBackgroundArgb =
+                            settings.readerBackgroundColor().toArgb().toUInt().toLong()
+                        LaunchedEffect(
+                            webViewContentTopPadding, webViewContentBottomPadding,
+                            settings.pageInfoPosition, settings.pageInfoMode, showChrome,
+                            readerViewport
+                        ) {
+                            writeSharedReaderDiagnostic(
+                                ReaderPageInfoBarDiagTag,
+                                "webview reserveTop=$webViewContentTopPadding " +
+                                    "reserveBottom=$webViewContentBottomPadding " +
+                                    "barVisible=$pageInfoVisible bottomPad=$pageInfoBottomPad " +
+                                    "pos=${settings.pageInfoPosition} mode=${settings.pageInfoMode} " +
+                                    "chrome=$showChrome viewport=${readerViewport.widthPx}x${readerViewport.heightPx}px"
+                            )
+                        }
+                        Box(
+                            Modifier.fillMaxSize()
+                                .padding(top = webViewContentTopPadding, bottom = webViewContentBottomPadding)
+                                .testTag(SharedMobileEpubAxTags.CONTENT)
+                        ) {
                         SharedMobileEpubWebView(
                             html = initialHtml,
                             contentChunks = chapterChunks,
@@ -1801,6 +1996,7 @@ fun SharedMobileEpubReaderScreen(
                             positionController = webViewPositionController,
                             streamPageLoader = streamPageLoader,
                             streamPageUnavailableLabel = streamPageUnavailableLabel,
+                            contentBackgroundArgb = webViewContentBackgroundArgb,
                             onBridgeMessage = { method, payload ->
                                 when (method) {
                                     "readerPointerActivity" -> {
@@ -1858,9 +2054,20 @@ fun SharedMobileEpubReaderScreen(
                                         }
                                     }
                                     "readerHighlightCreated" -> payload.sharedMobileEpubHighlightOrNull()?.let { highlight ->
+                                        writeSharedReaderDiagnostic(
+                                            SharedMobileEpubHighlightShiftTag,
+                                            "HIGHLIGHT_SHIFT native_created id=${highlight.id} " +
+                                                "style=${highlight.style.id} color=${highlight.color.id} " +
+                                                "chapter=${highlight.chapterIndex} " +
+                                                "offsets=${highlight.locator.startOffset}..${highlight.locator.endOffset} " +
+                                                "textChars=${highlight.text.length}"
+                                        )
                                         highlights = highlights
                                             .filterNot { existing -> existing.cfi == highlight.cfi }
                                             .plus(highlight)
+                                    }
+                                    SharedMobileEpubHighlightShiftBridgeMethod -> payload.sharedMobileEpubHighlightShiftMessageOrNull()?.let { message ->
+                                        writeSharedReaderDiagnostic(SharedMobileEpubHighlightShiftTag, message)
                                     }
                                     "readerHighlightClicked" -> payload.sharedMobileEpubHighlightIdOrNull()?.let { id ->
                                         editingHighlight = highlights.firstOrNull { it.id == id }
@@ -1885,8 +2092,9 @@ fun SharedMobileEpubReaderScreen(
                                     }
                                 }
                             },
-                            modifier = Modifier.fillMaxSize().testTag(SharedMobileEpubAxTags.CONTENT)
+                            modifier = Modifier.fillMaxSize()
                         )
+                        }
                         }
                     }
                 }
@@ -1895,18 +2103,23 @@ fun SharedMobileEpubReaderScreen(
                 val chapterTitle = loadedBook?.effectiveReaderTocEntries()?.getOrNull(selectedTocIndex)?.label
                     ?: loadedBook?.chapters?.getOrNull(currentChapterIndex)?.title
                     ?: "Chapter ${currentChapterIndex + 1}"
-                val pageInfoVisible = shouldShowEpubPageInfoBar(
-                    pageInfoMode = settings.pageInfoMode,
-                    showReaderChrome = showChrome
-                ) && loadedBook != null && pages.isNotEmpty()
+                // Temporary: catches chrome strobing (which would leave both
+                // bars mid-animation: overlapping, translucent, gappy).
+                LaunchedEffect(showChrome, pageInfoVisible) {
+                    writeSharedReaderDiagnostic(
+                        ReaderPageInfoBarDiagTag,
+                        "state chrome=$showChrome infoVisible=$pageInfoVisible"
+                    )
+                }
 
-                // Android parity (vertical/paginated info bars): fade with the
-                // shared 200ms spec instead of popping.
+                // TOP stays a floating overlay (unchanged). BOTTOM lives in the
+                // single bottom Column below, stacked directly atop the toolbar.
+                if (settings.pageInfoPosition == PageInfoPosition.TOP) {
                 AnimatedVisibility(
                     visible = pageInfoVisible,
                     enter = fadeIn(animationSpec = tween(motionPolicy.durationMillis(200))),
                     exit = fadeOut(animationSpec = tween(motionPolicy.durationMillis(200))),
-                    modifier = Modifier.align(if (settings.pageInfoPosition == PageInfoPosition.TOP) Alignment.TopCenter else Alignment.BottomCenter)
+                    modifier = Modifier.align(Alignment.TopCenter)
                 ) {
                     if (pageInfoVisible) {
                         SharedMobileEpubPageInfo(
@@ -1914,28 +2127,12 @@ fun SharedMobileEpubReaderScreen(
                         pageInfo = pageInfo,
                         progressPercent = progress,
                         settings = settings,
-                        modifier = Modifier
-                            .then(
-                                if (
-                                    settings.pageInfoPosition == PageInfoPosition.TOP && !systemUiHidden ||
-                                    settings.pageInfoPosition == PageInfoPosition.BOTTOM && !navigationUiHidden
-                                ) {
-                                    Modifier.windowInsetsPadding(
-                                        WindowInsets.safeDrawing.only(
-                                            if (settings.pageInfoPosition == PageInfoPosition.TOP) {
-                                                WindowInsetsSides.Top
-                                            } else {
-                                                WindowInsetsSides.Bottom
-                                            }
-                                        )
-                                    )
-                                } else {
-                                    Modifier
-                                }
-                            )
-                            .offset(y = if (settings.pageInfoPosition == PageInfoPosition.TOP && showChrome) 55.dp else if (settings.pageInfoPosition == PageInfoPosition.BOTTOM && showChrome) (-45).dp else 0.dp)
+                        pageInfoPosition = settings.pageInfoPosition,
+                        applySystemBarsInsets = pageInfoApplySystemBarsInsets,
+                        modifier = Modifier.offset(y = if (showChrome) 55.dp else 0.dp)
                     )
                     }
+                }
                 }
                 // Android parity (EpubReaderTopBar/BottomBar): chrome slides +
                 // fades with the shared 200ms spec instead of popping.
@@ -2043,23 +2240,43 @@ fun SharedMobileEpubReaderScreen(
                     )
                 }
                 if (loadedBook != null && pages.isNotEmpty()) {
+                    // Single bottom block: the PageInfo bar stacked directly atop
+                    // the bottom toolbar. One layout, zero gap, no offsets — the
+                    // bar can neither float away from nor slide under the
+                    // toolbar in any chrome/safe-area state.
+                    Column(
+                        modifier = Modifier.align(Alignment.BottomCenter),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                    AnimatedVisibility(
+                        visible = pageInfoVisible && settings.pageInfoPosition == PageInfoPosition.BOTTOM,
+                        enter = fadeIn(animationSpec = tween(motionPolicy.durationMillis(200))),
+                        exit = fadeOut(animationSpec = tween(motionPolicy.durationMillis(200)))
+                    ) {
+                        if (pageInfoVisible && settings.pageInfoPosition == PageInfoPosition.BOTTOM) {
+                            SharedMobileEpubPageInfo(
+                            chapterTitle = chapterTitle,
+                            pageInfo = pageInfo,
+                            progressPercent = progress,
+                            settings = settings,
+                            pageInfoPosition = settings.pageInfoPosition,
+                            applySystemBarsInsets = pageInfoApplySystemBarsInsets
+                        )
+                        }
+                    }
+                    // The toolbar paints its own bottom safe filler inside its
+                    // Surface (see applyBottomSafeInset): keeping the inset
+                    // outside would leave a transparent strip where the WebView
+                    // shows through below the toolbar.
                     SharedReaderBarVisibility(
                         visible = showChrome,
                         edge = SharedReaderBarEdge.BOTTOM,
                         motionPolicy = motionPolicy,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .then(
-                                if (!navigationUiHidden) {
-                                    Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
-                                } else {
-                                    Modifier
-                                }
-                            )
                     ) {
                         SharedMobileEpubBottomBar(
                             tools = bottomToolbarTools,
                             isBookmarked = isBookmarked,
+                            applyBottomSafeInset = !navigationUiHidden,
                             onToc = { openReaderDrawer() },
                             onFormat = { showFormatSheet = true },
                             onSearch = { showSearchResultsPanel = true; showSearch = true },
@@ -2099,6 +2316,7 @@ fun SharedMobileEpubReaderScreen(
                             onLocalTtsStop = localTts::stop,
                             onCloudTtsStop = cloudTts?.let { controller -> { controller.stop() } } ?: {},
                         )
+                    }
                     }
                 }
                 // Android parity (EpubReaderScreen TTS overlay): session AND chrome
@@ -2324,12 +2542,41 @@ fun SharedMobileEpubReaderScreen(
                     )
                     }
                 }
+                // Android parity (EpubReaderScreen bottom stacking): toolbar
+                // (45.dp) at the screen bottom, jump bar (40.dp) directly above
+                // it, slider above the jump bar. Fixed 52/60.dp offsets ignored
+                // the home-indicator inset and overlapped when both bars showed,
+                // so derive the stack from the toolbar + safe inset like the
+                // benchmark (bottomPadding + 45.dp + jump).
+                val epubEffectiveBottomInset = if (!navigationUiHidden) {
+                    WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
+                } else {
+                    0.dp
+                }
+                val epubBottomChromePadding = sharedMobileEpubBottomChromePadding(epubEffectiveBottomInset)
+                val epubJumpVisible = showChrome && !showSearch && jumpHistory.hasJumpTargets
+                val epubPageInfoBottomVisible = pageInfoVisible &&
+                    settings.pageInfoPosition == PageInfoPosition.BOTTOM
+                // PageInfo lives in the bottom Column directly above the
+                // toolbar, so overlays must clear it to avoid overlap.
+                val epubPageInfoReserve = if (epubPageInfoBottomVisible) {
+                    SharedMobileEpubPageInfoBarContentHeight
+                } else {
+                    0.dp
+                }
+                // Preserve the existing TTS/auto-scroll lift so the jump bar
+                // still clears the floating TTS controls.
+                val epubTtsLift = if (localTts.isSessionActive || autoScrollModeActive) 68.dp else 0.dp
+                val epubJumpBottomPadding = sharedMobileEpubJumpBottomPadding(
+                    epubBottomChromePadding,
+                    epubPageInfoReserve,
+                    epubTtsLift
+                )
+                val epubSliderBottomPadding = sharedMobileEpubSliderBottomPadding(epubJumpBottomPadding, epubJumpVisible)
                 // Android parity (EpubJumpHistoryBar): slides+fades with the
                 // shared 200ms spec instead of popping.
                 AnimatedVisibility(
-                    visible = showChrome &&
-                        !showSearch &&
-                        jumpHistory.hasJumpTargets,
+                    visible = epubJumpVisible,
                     enter = slideInVertically(animationSpec = tween(motionPolicy.durationMillis(200))) { it } + fadeIn(animationSpec = tween(motionPolicy.durationMillis(200))),
                     exit = slideOutVertically(animationSpec = tween(motionPolicy.durationMillis(200))) { it } + fadeOut(animationSpec = tween(motionPolicy.durationMillis(200))),
                     modifier = Modifier.align(Alignment.BottomCenter)
@@ -2346,13 +2593,7 @@ fun SharedMobileEpubReaderScreen(
                         onForward = ::goForwardInJumpHistory,
                         onClear = { jumpHistory = jumpHistory.clear() },
                         modifier = Modifier
-                            .padding(
-                                bottom = if (localTts.isSessionActive || autoScrollModeActive) {
-                                    120.dp
-                                } else {
-                                    52.dp
-                                }
-                            )
+                            .padding(bottom = epubJumpBottomPadding)
                     )
                     }
                 }
@@ -2377,7 +2618,7 @@ fun SharedMobileEpubReaderScreen(
                             },
                             onScrubPositionChange = { sliderScrubPage = it },
                             modifier = Modifier
-                                .padding(bottom = 60.dp, start = 16.dp, end = 16.dp)
+                                .padding(bottom = epubSliderBottomPadding)
                         )
                     }
                 }

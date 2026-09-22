@@ -13,8 +13,78 @@ import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 class IosEpubMetadataWriterTest {
+    @Test
+    fun rewritesEpub3PrefixedSeriesCollectionAndVerifiesThroughSharedResolver() {
+        val directory = "${NSTemporaryDirectory().trimEnd('/')}/reader-epub3-series-${Random.nextInt()}"
+        NSFileManager.defaultManager.createDirectoryAtPath(
+            path = directory,
+            withIntermediateDirectories = true,
+            attributes = null,
+            error = null,
+        )
+        val source = "$directory/source.epub"
+        val output = "$directory/output.epub"
+        try {
+            val entries = linkedMapOf(
+                "mimetype" to "application/epub+zip".encodeToByteArray(),
+                "META-INF/container.xml" to """
+                    <container><rootfiles>
+                      <rootfile full-path="OEBPS/content.opf"/>
+                    </rootfiles></container>
+                """.trimIndent().encodeToByteArray(),
+                "OEBPS/content.opf" to """
+                    <package xmlns:dc="http://purl.org/dc/elements/1.1/" version="3.0">
+                      <metadata>
+                        <dc:title>Exhalation: Stories</dc:title>
+                        <dc:creator>Ted Chiang</dc:creator>
+                        <meta content="2019-04-18T00:00:00Z" name="created"/>
+                        <opf:meta property="belongs-to-collection" id="id-2">1, aryan</opf:meta>
+                        <opf:meta refines="#id-2" property="collection-type">series</opf:meta>
+                        <opf:meta refines="#id-2" property="group-position">1</opf:meta>
+                      </metadata>
+                      <manifest>
+                        <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+                      </manifest>
+                    </package>
+                """.trimIndent().encodeToByteArray(),
+                "OEBPS/chapter.xhtml" to "<p>Keep me</p>".encodeToByteArray(),
+            )
+            writeIosZipArchive(source, entries.keys.toList(), entries::get)
+
+            val rewritten = rewriteIosEpubMetadata(
+                sourcePath = source,
+                destinationPath = output,
+                title = "Exhalation: Stories",
+                author = "Ted Chiang",
+                description = null,
+                seriesName = "New Series",
+                seriesIndex = 2.0,
+                coverPath = null,
+            )
+
+            assertEquals("New Series", rewritten.seriesName)
+            assertEquals(2.0, rewritten.seriesIndex)
+
+            val cleared = rewriteIosEpubMetadata(
+                sourcePath = output,
+                destinationPath = "$directory/cleared.epub",
+                title = "Exhalation: Stories",
+                author = "Ted Chiang",
+                description = null,
+                seriesName = null,
+                seriesIndex = null,
+                coverPath = null,
+            )
+            assertNull(cleared.seriesName)
+            assertNull(cleared.seriesIndex)
+        } finally {
+            NSFileManager.defaultManager.removeItemAtPath(directory, error = null)
+        }
+    }
+
     @Test
     fun rewritesMetadataAndCoverIntoReadableEpub() {
         val directory = "${NSTemporaryDirectory().trimEnd('/')}/reader-epub-${Random.nextInt()}"

@@ -78,6 +78,33 @@ internal fun sharedPaginatedTurnShouldAnimate(
 }
 
 /**
+ * Which stacked layer owns the opaque base fill during a realistic turn.
+ *
+ * Android benchmark parity: the pager slots sit side-by-side, so the curling
+ * sheet is transparent outside its frontPath and the set beneath shows through
+ * with the drop/inner shadows. The shared reader stacks the two sets in one
+ * Box, so the beneath layer must stay opaque while the top layer goes
+ * transparent — otherwise the top layer's full-size paper background covers the
+ * incoming set and the next page only appears once the turn overlay is removed.
+ *
+ * Returns (mainBackground, overlayBackground).
+ */
+internal fun sharedPaginatedTurnLayerBackgrounds(
+    turnActive: Boolean,
+    overlayFirst: Boolean,
+    baseBackground: Color
+): Pair<Color, Color> {
+    if (!turnActive) return baseBackground to baseBackground
+    return if (overlayFirst) {
+        // Overlay beneath (opaque base), main on top (transparent to reveal it).
+        Color.Transparent to baseBackground
+    } else {
+        // Main beneath (opaque base), overlay on top (transparent to reveal it).
+        baseBackground to Color.Transparent
+    }
+}
+
+/**
  * Verbatim port of the Android `realisticBookPage` page-curl modifier
  * (app/src/main/java/com/aryan/reader/paginatedreader/PaginatedReaderContent.kt).
  * The offset is read lazily every frame so the curl tracks the turn animation

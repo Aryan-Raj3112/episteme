@@ -42,6 +42,41 @@ class EpubReaderTtsHighlightAssetTest {
     }
 
     @Test
+    fun `vertical webview image css never collapses figure images to zero`() {
+        val js = epubReaderAsset().readText()
+
+        // Parent-relative max-height (100%/60% in Standard Ebooks local.css) resolves
+        // to 0 against a not-yet-laid-out figure; CSS vh units also resolve to 0 in
+        // some Android WebViews, so the cap is a JS-measured px value with a `none`
+        // fallback that can never collapse. Svg covers that ask for 100% width keep it.
+        assertTrue(js.contains("max-height: none !important;"))
+        assertTrue(js.contains("max-height: var(--reader-image-max-h, none) !important;"))
+        assertTrue(js.contains("--reader-image-max-h"))
+        assertTrue(js.contains("body svg[width=\"100%\"]"))
+        assertTrue(js.contains("body figure {"))
+        assertTrue(js.contains("body figure img {"))
+    }
+
+    @Test
+    fun `vertical webview linearizes shoulder-note asides without hiding them`() {
+        val js = epubReaderAsset().readText()
+
+        assertTrue(js.contains("div.aside {"))
+        assertTrue(js.contains("float: none !important;"))
+        assertTrue(js.contains("visibility: visible !important;"))
+        assertTrue(js.contains("border: 1px solid currentColor !important;"))
+    }
+
+    @Test
+    fun `vertical webview recovers fully collapsed zero by zero images`() {
+        val js = epubReaderAsset().readText()
+
+        assertTrue(js.contains("fully-collapsed-0x0"))
+        assertTrue(js.contains("android_img_correct"))
+        assertTrue(js.contains("android_img_corrected"))
+    }
+
+    @Test
     fun `vertical webview applies reader font weight and letter spacing`() {
         val js = epubReaderAsset().readText()
 
@@ -49,6 +84,22 @@ class EpubReaderTtsHighlightAssetTest {
         assertTrue(js.contains("newLetterSpacing"))
         assertTrue(js.contains("font-weight: ${'$'}{newFontWeight} !important;"))
         assertTrue(js.contains("letter-spacing: ${'$'}{newLetterSpacing}em !important;"))
+    }
+
+    @Test
+    fun `asset has no backticks inside comments that would terminate template literals`() {
+        val js = epubReaderAsset().readText()
+
+        // A stray backtick inside the CSS template literal terminated the
+        // string early (Unexpected identifier 'span'), which killed the whole
+        // script block: every window.* reader function became "not a function".
+        val withoutBlockComments = js.replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
+        val backticksInComments = js.count { it == '`' } - withoutBlockComments.count { it == '`' }
+        assertTrue("backticks inside /* */ comments would break template literals", backticksInComments == 0)
+        assertTrue(
+            "unbalanced backticks would break template literals",
+            withoutBlockComments.count { it == '`' } % 2 == 0
+        )
     }
 
     private fun epubReaderAsset(): File {

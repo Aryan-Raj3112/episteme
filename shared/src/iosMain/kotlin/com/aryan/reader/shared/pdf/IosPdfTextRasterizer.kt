@@ -7,6 +7,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontStyle as ComposeFontStyle
 import androidx.compose.ui.text.font.FontWeight as ComposeFontWeight
+import androidx.compose.ui.text.style.TextAlign as ComposeTextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.isSpecified
 import kotlin.math.ceil
@@ -22,6 +23,7 @@ import org.jetbrains.skia.FontMgrWithFallback
 import org.jetbrains.skia.ImageInfo
 import org.jetbrains.skia.Paint
 import org.jetbrains.skia.Surface
+import org.jetbrains.skia.paragraph.Alignment as SkiaAlignment
 import org.jetbrains.skia.paragraph.DecorationLineStyle
 import org.jetbrains.skia.paragraph.DecorationStyle
 import org.jetbrains.skia.paragraph.FontCollection
@@ -154,44 +156,73 @@ private fun renderIosPdfParagraph(
     fallbackFontName: String? = null,
     fontRegistry: IosPdfTextFontRegistry,
 ): ByteArray? = runCatching {
-    val paragraphStyle = ParagraphStyle().apply {
-        this.textStyle = TextStyle().apply {
-            color = 0xFF000000.toInt()
-            fontSize = 16f
-            fontFamilies = arrayOf(fallbackFontName?.takeIf(String::isNotBlank) ?: "Arial")
+    // One Skia paragraph per '\n'-paragraph: alignment is builder-wide in
+    // Skia, so segments stack vertically with their own alignment (list
+    // markers are plain text and flow through). A trailing newline adds no
+    // line, so an empty trailing segment is dropped.
+    val segments = mutableListOf<AnnotatedString>()
+    var segmentStart = 0
+    for (i in text.text.indices) {
+        if (text.text[i] == '\n') {
+            segments += text.subSequence(segmentStart, i)
+            segmentStart = i + 1
         }
     }
-    val builder = ParagraphBuilder(paragraphStyle, fontRegistry.fontCollection)
-    val boundaries = buildSet {
-        add(0)
-        add(text.length)
-        text.spanStyles.forEach { range ->
-            add(range.start.coerceIn(0, text.length))
-            add(range.end.coerceIn(0, text.length))
-        }
-    }.sorted()
-    boundaries.zipWithNext().forEach { (start, end) ->
-        if (start >= end) return@forEach
-        val merged = text.spanStyles
-            .filter { it.start < end && it.end > start }
-            .fold(SpanStyle()) { style, range -> style.merge(range.item) }
-        val spanFontPath = text.getStringAnnotations(
-            tag = IOS_PDF_RICH_FONT_PATH_TAG,
-            start = start,
-            end = end,
-        ).firstOrNull()?.item
-        builder.pushStyle(
-            merged.toIosSkiaTextStyle(
-                fallbackFontName = fontRegistry.familyName(spanFontPath, null) ?: fallbackFontName,
-            )
-        )
-        builder.addText(text.text.substring(start, end))
-        builder.popStyle()
-    }
-    val paragraph = builder.build().layout((width - padding * 2f).coerceAtLeast(1f))
+    val trailing = text.subSequence(segmentStart, text.length)
+    if (trailing.text.isNotEmpty()) segments += trailing
+    if (segments.isEmpty()) return@runCatching null
     val surface = Surface.makeRasterN32Premul(width, height)
     surface.canvas.clear(0x00000000)
-    paragraph.paint(surface.canvas, padding, padding)
+    var y = padding
+    for (segment in segments) {
+        if (y >= height) break
+        val alignment = when (
+            segment.paragraphStyles.firstOrNull()?.item?.textAlign
+        ) {
+            ComposeTextAlign.Center -> SkiaAlignment.CENTER
+            ComposeTextAlign.Right, ComposeTextAlign.End -> SkiaAlignment.RIGHT
+            else -> SkiaAlignment.LEFT
+        }
+        val paragraphStyle = ParagraphStyle().apply {
+            this.alignment = alignment
+            this.textStyle = TextStyle().apply {
+                color = 0xFF000000.toInt()
+                fontSize = 16f
+                fontFamilies = arrayOf(fallbackFontName?.takeIf(String::isNotBlank) ?: "Arial")
+            }
+        }
+        val builder = ParagraphBuilder(paragraphStyle, fontRegistry.fontCollection)
+        val boundaries = buildSet {
+            add(0)
+            add(segment.length)
+            segment.spanStyles.forEach { range ->
+                add(range.start.coerceIn(0, segment.length))
+                add(range.end.coerceIn(0, segment.length))
+            }
+        }.sorted()
+        boundaries.zipWithNext().forEach { (start, end) ->
+            if (start >= end) return@forEach
+            val merged = segment.spanStyles
+                .filter { it.start < end && it.end > start }
+                .fold(SpanStyle()) { style, range -> style.merge(range.item) }
+            val spanFontPath = segment.getStringAnnotations(
+                tag = IOS_PDF_RICH_FONT_PATH_TAG,
+                start = start,
+                end = end,
+            ).firstOrNull()?.item
+            builder.pushStyle(
+                merged.toIosSkiaTextStyle(
+                    fallbackFontName = fontRegistry.familyName(spanFontPath, null) ?: fallbackFontName,
+                )
+            )
+            builder.addText(segment.text.substring(start, end))
+            builder.popStyle()
+        }
+        if (segment.text.isEmpty()) builder.addText(" ")
+        val paragraph = builder.build().layout((width - padding * 2f).coerceAtLeast(1f))
+        paragraph.paint(surface.canvas, padding, y)
+        y += paragraph.height
+    }
     val image = surface.makeImageSnapshot()
     val bitmap = Bitmap.makeFromImage(image)
     bitmap.readPixels(

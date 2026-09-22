@@ -115,6 +115,141 @@ data class MobileEpubLogicalSectionRange<T>(
 )
 
 /**
+ * Minimum plain-text length for a TOC split to stand as its own chapter. Sections below
+ * this with no media are front-matter crumbs (title-page lines) or half-titles, not chapters.
+ */
+const val MOBILE_EPUB_MIN_SPLIT_SECTION_TEXT_CHARS = 400
+
+data class MobileEpubMergedSection<T>(
+    val entry: T,
+    val startChildIndex: Int,
+    val endChildIndexExclusive: Int,
+    /** TOC entries absorbed into this section; they stay in the TOC and navigate by fragment. */
+    val absorbedEntries: List<T>,
+    val materializationIndex: Int
+)
+
+/**
+ * Good-split policy over [mobileEpubLogicalSectionRanges].
+ *
+ * Raw ranges are kept verbatim except for two tiny-section cases (a section is tiny when
+ * its plain text is below [MOBILE_EPUB_MIN_SPLIT_SECTION_TEXT_CHARS] and it holds no media):
+ * - a leading run of 2+ tiny sections is folded into one section starting at the first
+ *   entry (Gutenberg title pages: LOST IN THE JUNGLE. + 3 one-line h4s + ...). The run stops
+ *   at the first substantial section or depth-0 parent. A single leading tiny section is
+ *   kept, and an all-tiny file is never folded.
+ * - a tiny section whose entry is a TOC parent of the entries following it in the same
+ *   file is folded forward into the next section (half-titles such as the reprinted
+ *   LOST IN THE JUNGLE. before CHAPTER I.).
+ *
+ * Collision/id-priority semantics of [mobileEpubLogicalSectionRanges] are preserved: this
+ * only drops split points, never reorders or remaps anchors.
+ */
+fun <T> mobileEpubMergedChapterSections(
+    entries: List<T>,
+    bodyChildCount: Int,
+    fragmentId: (T) -> String?,
+    idChildIndex: (String) -> Int?,
+    nameChildIndex: (String) -> Int?,
+    depthOf: (T) -> Int,
+    sectionTextLength: (startChild: Int, endChildExclusive: Int) -> Int,
+    sectionHasMedia: (startChild: Int, endChildExclusive: Int) -> Boolean
+): List<MobileEpubMergedSection<T>> {
+    val raw = mobileEpubLogicalSectionRanges(
+        entries = entries,
+        bodyChildCount = bodyChildCount,
+        fragmentId = fragmentId,
+        idChildIndex = idChildIndex,
+        nameChildIndex = nameChildIndex
+    )
+    if (raw.size < 2) {
+        return raw.mapIndexed { index, range ->
+            MobileEpubMergedSection(range.entry, range.startChildIndex, range.endChildIndexExclusive, emptyList(), index)
+        }
+    }
+    fun isTiny(range: MobileEpubLogicalSectionRange<T>): Boolean =
+        sectionTextLength(range.startChildIndex, range.endChildIndexExclusive) < MOBILE_EPUB_MIN_SPLIT_SECTION_TEXT_CHARS &&
+            !sectionHasMedia(range.startChildIndex, range.endChildIndexExclusive)
+
+    fun isParentOfFollowing(entry: T, entryIndexInEntries: Int): Boolean {
+        val depth = depthOf(entry)
+        for (i in entryIndexInEntries + 1 until entries.size) {
+            val laterDepth = depthOf(entries[i])
+            if (laterDepth > depth) return true
+            if (laterDepth <= depth) return false
+        }
+        return false
+    }
+    // Map each raw range back to its position in `entries` for the parent test. Raw ranges
+    // hold the winning entry per start; entries are distinct by fragment upstream.
+    fun entryIndex(entry: T): Int = entries.indexOfFirst { fragmentId(it) == fragmentId(entry) }
+
+    val working = raw.toMutableList()
+    // Leading tiny run folds into one section starting at the first entry (Gutenberg title
+    // pages). The run stops at the first substantial section or at a depth-0 parent, which
+    // opens its own group (e.g. a half-title before its chapter). A single leading tiny
+    // section is kept, and an all-tiny file is never folded.
+    var runEnd = 0
+    while (runEnd < working.size && isTiny(working[runEnd]) &&
+        (runEnd == 0 || !(depthOf(working[runEnd].entry) == 0 && isParentOfFollowing(working[runEnd].entry, entryIndex(working[runEnd].entry))))
+    ) {
+        runEnd++
+    }
+    if (runEnd >= 2 && runEnd < working.size) {
+        val head = working[0]
+        val mergedHead = MobileEpubMergedSection(
+            entry = head.entry,
+            startChildIndex = head.startChildIndex,
+            endChildIndexExclusive = working[runEnd - 1].endChildIndexExclusive,
+            absorbedEntries = working.subList(1, runEnd).map { it.entry },
+            materializationIndex = 0
+        )
+        val rest = working.subList(runEnd, working.size).toList()
+        val out = mutableListOf(mergedHead)
+        out.addAll(foldParentRanges(rest, ::isTiny, ::isParentOfFollowing, ::entryIndex, startIndex = 1))
+        return out
+    }
+    return foldParentRanges(working, ::isTiny, ::isParentOfFollowing, ::entryIndex, startIndex = 0)
+}
+
+private fun <T> foldParentRanges(
+    working: List<MobileEpubLogicalSectionRange<T>>,
+    isTiny: (MobileEpubLogicalSectionRange<T>) -> Boolean,
+    isParentOfFollowing: (T, Int) -> Boolean,
+    entryIndex: (T) -> Int,
+    startIndex: Int
+): List<MobileEpubMergedSection<T>> {
+    val out = mutableListOf<MobileEpubMergedSection<T>>()
+    var index = 0
+    var materializationIndex = startIndex
+    while (index < working.size) {
+        val current = working[index]
+        val isLast = index == working.lastIndex
+        if (!isLast && isTiny(current) && isParentOfFollowing(current.entry, entryIndex(current.entry))) {
+            val next = working[index + 1]
+            out += MobileEpubMergedSection(
+                entry = current.entry,
+                startChildIndex = current.startChildIndex,
+                endChildIndexExclusive = next.endChildIndexExclusive,
+                absorbedEntries = listOf(next.entry),
+                materializationIndex = materializationIndex++
+            )
+            index += 2
+        } else {
+            out += MobileEpubMergedSection(
+                entry = current.entry,
+                startChildIndex = current.startChildIndex,
+                endChildIndexExclusive = current.endChildIndexExclusive,
+                absorbedEntries = emptyList(),
+                materializationIndex = materializationIndex++
+            )
+            index += 1
+        }
+    }
+    return out
+}
+
+/**
  * Android's exact fragment-section ordering and collision policy after a platform HTML adapter
  * maps fragment IDs/names to direct body-child indices.
  */
@@ -280,6 +415,68 @@ private const val MOBILE_EPUB_SERIES_TYPE_PROPERTY = "collection-type"
 private const val MOBILE_EPUB_SERIES_TYPE_VALUE = "series"
 private const val MOBILE_EPUB_GROUP_POSITION_PROPERTY = "group-position"
 
+private val MobileOpfMetaOpenTagRegex = Regex("""<(?:[\w.-]+:)?meta\s+[^>]*>""", RegexOption.IGNORE_CASE)
+private val MobileOpfMetaCloseTagRegex = Regex("""</(?:[\w.-]+:)?meta\s*>""", RegexOption.IGNORE_CASE)
+private val MobileXmlTagRegex = Regex("<[^>]*>")
+
+/** Raw `<meta>` element parsed from an OPF metadata block with its source range. */
+internal data class MobileOpfMetaElementRange(
+    val element: MobileEpubMetaElement,
+    val start: Int,
+    val end: Int
+)
+
+/**
+ * Parses every OPF `<meta>` element from a package document, matching both the
+ * unprefixed and prefixed (`opf:meta`) spellings Calibre mixes inside one
+ * `<metadata>` block, keeping document order.
+ */
+internal fun parseMobileOpfMetaElementRanges(opf: String): List<MobileOpfMetaElementRange> {
+    return MobileOpfMetaOpenTagRegex.findAll(opf).mapNotNull { match ->
+        val openTag = match.value
+        val text: String?
+        val end: Int
+        if (openTag.endsWith("/>")) {
+            text = null
+            end = match.range.last + 1
+        } else {
+            val close = MobileOpfMetaCloseTagRegex.find(opf, startIndex = match.range.last + 1)
+                ?: return@mapNotNull null
+            text = opf.substring(match.range.last + 1, close.range.first)
+                .replace(MobileXmlTagRegex, " ")
+                .decodeEpubEntities()
+                .trim()
+                .takeIf { it.isNotEmpty() }
+            end = close.range.last + 1
+        }
+        MobileOpfMetaElementRange(
+            element = MobileEpubMetaElement(
+                id = openTag.metaAttribute("id"),
+                name = openTag.metaAttribute("name"),
+                property = openTag.metaAttribute("property"),
+                content = openTag.metaAttribute("content"),
+                text = text,
+                refines = openTag.metaAttribute("refines")
+            ),
+            start = match.range.first,
+            end = end
+        )
+    }.toList()
+}
+
+/** Public OPF `<meta>` parser shared by the Android and desktop metadata extractors. */
+fun parseMobileOpfMetaElements(opf: String): List<MobileEpubMetaElement> =
+    parseMobileOpfMetaElementRanges(opf).map { it.element }
+
+private fun String.metaAttribute(name: String): String? =
+    Regex("""\b${Regex.escape(name)}\s*=\s*(['"])(.*?)\1""", RegexOption.IGNORE_CASE)
+        .find(this)
+        ?.groupValues
+        ?.get(2)
+        ?.decodeEpubEntities()
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+
 private fun MobileEpubMetaElement.value(): String? =
     content?.takeIf(String::isNotBlank) ?: text?.takeIf(String::isNotBlank)
 
@@ -289,6 +486,50 @@ private fun MobileEpubMetaElement.refinedTargetId(): String? =
 private fun String.normalizeMobileEpubText(): String? =
     replace(Regex("\\s+"), " ").trim().takeIf { it.isNotEmpty() }
 
+/** A `belongs-to-collection` group refined as `collection-type` = `series`. */
+private data class MobileOpfSeriesCollection(
+    val id: String,
+    val collection: MobileEpubMetaElement,
+    val refinements: List<MobileEpubMetaElement>
+)
+
+private fun mobileOpfSeriesCollections(metaElements: List<MobileEpubMetaElement>): List<MobileOpfSeriesCollection> {
+    val refinementsByTargetId = mutableMapOf<String, MutableList<MobileEpubMetaElement>>()
+    metaElements.forEach { element ->
+        val targetId = element.refinedTargetId() ?: return@forEach
+        if (element.property.isNullOrBlank()) return@forEach
+        refinementsByTargetId.getOrPut(targetId) { mutableListOf() }.add(element)
+    }
+    return metaElements.mapNotNull { element ->
+        if (!element.property.equals(MOBILE_EPUB_COLLECTION_PROPERTY, ignoreCase = true)) return@mapNotNull null
+        // Collection elements without an id are skipped because refines cannot attach to them.
+        val id = element.id?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+        val refinements = refinementsByTargetId[id].orEmpty()
+        val isSeriesCollection = refinements.any {
+            it.property.equals(MOBILE_EPUB_SERIES_TYPE_PROPERTY, ignoreCase = true) &&
+                it.value().equals(MOBILE_EPUB_SERIES_TYPE_VALUE, ignoreCase = true)
+        }
+        if (!isSeriesCollection) null
+        else MobileOpfSeriesCollection(id = id, collection = element, refinements = refinements)
+    }
+}
+
+/** Ids of EPUB 3 series collections so editors can replace them in lockstep with the reader. */
+internal fun mobileOpfSeriesCollectionIds(metaElements: List<MobileEpubMetaElement>): Set<String> =
+    mobileOpfSeriesCollections(metaElements).map { it.id }.toSet()
+
+/** Picks a free `<meta id>` for a rewritten series collection, preferring the id being replaced. */
+internal fun mobileOpfUniqueMetaId(takenIds: Set<String>, preferredId: String?): String {
+    preferredId?.takeIf { it.isNotBlank() && it !in takenIds }?.let { return it }
+    var counter = 1
+    var candidate = "calibre-series"
+    while (candidate in takenIds) {
+        counter++
+        candidate = "calibre-series-$counter"
+    }
+    return candidate
+}
+
 /**
  * Mirrors Calibre's OPF3 reader precedence (`read_series`): prefer an EPUB 3
  * `belongs-to-collection` element refined as a series, where `group-position`
@@ -296,25 +537,9 @@ private fun String.normalizeMobileEpubText(): String? =
  * `calibre:series_index` name/content metas, keeping Android's last-entry-wins rule.
  */
 fun resolveMobileEpubSeries(metaElements: List<MobileEpubMetaElement>): MobileEpubSeriesMetadata? {
-    val refinementsByTargetId = mutableMapOf<String, MutableList<MobileEpubMetaElement>>()
-    metaElements.forEach { element ->
-        val targetId = element.refinedTargetId() ?: return@forEach
-        if (element.property.isNullOrBlank()) return@forEach
-        refinementsByTargetId.getOrPut(targetId) { mutableListOf() }.add(element)
-    }
-
-    metaElements.forEach { element ->
-        if (!element.property.equals(MOBILE_EPUB_COLLECTION_PROPERTY, ignoreCase = true)) return@forEach
-        // Collection elements without an id are skipped because refines cannot attach to them.
-        val id = element.id?.takeIf(String::isNotBlank) ?: return@forEach
-        val seriesName = element.value()?.normalizeMobileEpubText() ?: return@forEach
-        val refinements = refinementsByTargetId[id].orEmpty()
-        val isSeriesCollection = refinements.any {
-            it.property.equals(MOBILE_EPUB_SERIES_TYPE_PROPERTY, ignoreCase = true) &&
-                it.value().equals(MOBILE_EPUB_SERIES_TYPE_VALUE, ignoreCase = true)
-        }
-        if (!isSeriesCollection) return@forEach
-        val groupPosition = refinements.firstOrNull {
+    mobileOpfSeriesCollections(metaElements).forEach { group ->
+        val seriesName = group.collection.value()?.normalizeMobileEpubText() ?: return@forEach
+        val groupPosition = group.refinements.firstOrNull {
             it.property.equals(MOBILE_EPUB_GROUP_POSITION_PROPERTY, ignoreCase = true)
         }?.value()?.toDoubleOrNull()
         return MobileEpubSeriesMetadata(name = seriesName, index = groupPosition)

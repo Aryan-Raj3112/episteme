@@ -18,7 +18,6 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.OutputStream
-import java.net.URL
 import java.nio.file.Files
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
@@ -370,23 +369,14 @@ private class OpdsStreamComicPageSource(
     }
 
     private fun streamPageUrl(): String {
-        return effectiveTemplate()
+        // Like the mobile clients, use the feed-advertised template verbatim.
+        // Rewriting the host to the catalog authority can downgrade HTTPS to
+        // HTTP and break CDN-hosted streams.
+        return urlTemplate
             .replace("{pageNumber}", pageIndex.toString())
             .replace("{page}", pageIndex.toString())
             .replace("{maxWidth}", "1600")
             .replace("{maxHeight}", "2400")
-    }
-
-    private fun effectiveTemplate(): String {
-        val catalogUrl = catalog?.url ?: return urlTemplate
-        if (!urlTemplate.startsWith("http", ignoreCase = true)) return urlTemplate
-        return runCatching {
-            val oldUrl = URL(urlTemplate)
-            val newUrl = URL(catalogUrl)
-            val oldBase = "${oldUrl.protocol}://${oldUrl.authority}"
-            val newBase = "${newUrl.protocol}://${newUrl.authority}"
-            urlTemplate.replace(oldBase, newBase)
-        }.getOrDefault(urlTemplate)
     }
 
     private fun errorPageBytes(): ByteArray {

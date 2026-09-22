@@ -360,6 +360,33 @@ class SharedEpubPackageLoaderTest {
     }
 
     @Test
+    fun `metadata adapter reads calibre epub3 series written as prefixed opf metas`() {
+        val archive = MapEpubArchive(
+            mapOf(
+                "META-INF/container.xml" to "<container><rootfiles><rootfile full-path=\"book.opf\"/></rootfiles></container>".encodeToByteArray(),
+                "book.opf" to """
+                    <package version="3.0"><metadata>
+                      <dc:title>Exhalation: Stories</dc:title>
+                      <dc:creator>Ted Chiang</dc:creator>
+                      <meta content="2019-04-18T00:00:00Z" name="created"/>
+                      <meta content="Knopf" name="imprint"/>
+                      <opf:meta refines="#title" property="title-type">main</opf:meta>
+                      <opf:meta property="belongs-to-collection" id="id-2">1, aryan</opf:meta>
+                      <opf:meta refines="#id-2" property="collection-type">series</opf:meta>
+                      <opf:meta refines="#id-2" property="group-position">1</opf:meta>
+                    </metadata><manifest/><spine/></package>
+                """.trimIndent().encodeToByteArray()
+            )
+        )
+
+        val book = SharedEpubPackageLoader.load(archive, "calibre-prefixed-series", "exhalation.epub")
+
+        assertEquals("Exhalation: Stories", book.title)
+        assertEquals("1, aryan", book.seriesName)
+        assertEquals(1.0, book.seriesIndex)
+    }
+
+    @Test
     fun `manifest attributes retain Android whitespace and case semantics`() {
         val archive = MapEpubArchive(
             mapOf(
@@ -575,8 +602,48 @@ class SharedEpubPackageLoaderTest {
     }
 
     @Test
-    fun `materializes fragment toc entries in one spine document as logical chapters`() {
+    fun `front matter crumbs and half titles fold into readable chapters`() {
         val archive = MapEpubArchive(
+            mapOf(
+                "META-INF/container.xml" to "<container><rootfiles><rootfile full-path='OPS/book.opf'/></rootfiles></container>".encodeToByteArray(),
+                "OPS/book.opf" to """
+                    <package><metadata><title>Crumbs</title></metadata><manifest>
+                      <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+                      <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+                    </manifest><spine toc="ncx"><itemref idref="chapter"/></spine></package>
+                """.trimIndent().encodeToByteArray(),
+                "OPS/toc.ncx" to """
+                    <ncx><navMap>
+                      <navPoint><navLabel><text>Book Title</text></navLabel><content src="chapter.xhtml#t"/>
+                        <navPoint><navLabel><text>Line A</text></navLabel><content src="chapter.xhtml#a"/></navPoint>
+                        <navPoint><navLabel><text>Line B</text></navLabel><content src="chapter.xhtml#b"/></navPoint>
+                      </navPoint>
+                      <navPoint><navLabel><text>Half Title</text></navLabel><content src="chapter.xhtml#half"/>
+                        <navPoint><navLabel><text>Real Chapter</text></navLabel><content src="chapter.xhtml#ch"/></navPoint>
+                      </navPoint>
+                    </navMap></ncx>
+                """.trimIndent().encodeToByteArray(),
+                "OPS/chapter.xhtml" to """
+                    <html><body><h1 id="t">Book Title</h1><h4 id="a">Line A</h4><h4 id="b">Line B</h4>
+                    <h2 id="half">Half Title</h2><h2 id="ch">Real Chapter</h2><p>${"Body text. ".repeat(120)}</p></body></html>
+                """.trimIndent().encodeToByteArray()
+            )
+        )
+
+        val book = SharedEpubPackageLoader.load(archive, "crumbs", "crumbs.epub")
+
+        // Title crumbs fold into one chapter; half-title folds into its chapter.
+        assertEquals(listOf("Book Title", "Half Title"), book.chapters.map(SharedEpubChapter::title))
+        assertEquals(listOf("t", "half"), book.chapters.map(SharedEpubChapter::fragmentId))
+        assertTrue(book.chapters[0].plainText.contains("Line A"))
+        assertTrue(book.chapters[0].plainText.contains("Line B"))
+        assertTrue(book.chapters[1].plainText.contains("Real Chapter"))
+        // TOC keeps every row for navigation by fragment.
+        assertEquals(listOf("t", "a", "b", "half", "ch"), book.tableOfContents.map { it.fragmentId })
+    }
+
+    @Test
+    fun `materializes fragment toc entries in one spine document as logical chapters`() {        val archive = MapEpubArchive(
             mapOf(
                 "META-INF/container.xml" to "<container><rootfiles><rootfile full-path='OPS/book.opf'/></rootfiles></container>".encodeToByteArray(),
                 "OPS/book.opf" to """

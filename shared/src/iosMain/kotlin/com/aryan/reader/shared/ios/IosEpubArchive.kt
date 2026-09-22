@@ -65,6 +65,11 @@ import com.aryan.reader.shared.reader.SharedEpubChapter
 import com.aryan.reader.shared.reader.SharedEpubPackageLoader
 import com.aryan.reader.shared.reader.SharedEpubTocEntry
 import com.aryan.reader.shared.reader.SharedLruMemoryCache
+import com.aryan.reader.shared.reader.mobileOpfSeriesCollectionIds
+import com.aryan.reader.shared.reader.mobileOpfUniqueMetaId
+import com.aryan.reader.shared.reader.parseMobileOpfMetaElementRanges
+import com.aryan.reader.shared.reader.parseMobileOpfMetaElements
+import com.aryan.reader.shared.reader.resolveMobileEpubSeries
 import com.aryan.reader.shared.reader.sharedEpubOpenTrace
 import com.aryan.reader.shared.reader.sharedEpubOpenTraceElapsedMs
 import com.aryan.reader.shared.reader.sharedEpubOpenTraceMark
@@ -217,12 +222,13 @@ internal fun rewriteIosEpubMetadata(
     val verifiedOpf = rewritten.readText(opfPath)
         ?: error("Rewritten EPUB failed metadata validation.")
     val verifiedCoverPath = verifiedOpf.findIosEpubCoverPath(opfPath)
+    val verifiedSeries = resolveMobileEpubSeries(parseMobileOpfMetaElements(verifiedOpf))
     return IosEpubMetadataWriteResult(
         title = verifiedOpf.iosXmlElementText("title"),
         author = verifiedOpf.iosXmlElementText("creator"),
         description = verifiedOpf.iosXmlElementText("description"),
-        seriesName = verifiedOpf.iosMetaContent("calibre:series"),
-        seriesIndex = verifiedOpf.iosMetaContent("calibre:series_index")?.toDoubleOrNull(),
+        seriesName = verifiedSeries?.name,
+        seriesIndex = verifiedSeries?.index,
         coverBytes = verifiedCoverPath?.let(rewritten::readBytes),
     )
 }
@@ -293,12 +299,13 @@ private fun extractIosEpubPresentation(book: BookItem): IosBookPresentation {
         val parent = opfPath.substringBeforeLast('/', "")
         (if (parent.isBlank()) href else "$parent/$href").normalizeIosZipPathSegments()
     }
+    val series = resolveMobileEpubSeries(parseMobileOpfMetaElements(opf))
     return IosBookPresentation(
         title = title,
         author = author,
         coverBytes = coverPath?.let(archive::readBytes),
-        seriesName = opf.iosMetaContent("calibre:series"),
-        seriesIndex = opf.iosMetaContent("calibre:series_index")?.toDoubleOrNull(),
+        seriesName = series?.name,
+        seriesIndex = series?.index,
     )
 }
 
@@ -1261,6 +1268,15 @@ private fun String.rewriteIosOpfMetadata(
         "calibre:series_index",
         seriesIndex?.formatIosSeriesIndex(),
     )
+    val packageVersion = Regex(
+        """<package\b[^>]*\bversion\s*=\s*["']([^"']+)["']""",
+        RegexOption.IGNORE_CASE,
+    ).find(this)?.groupValues?.get(1)
+    metadataBody = metadataBody.upsertIosSeriesCollection(
+        seriesName = seriesName,
+        seriesIndex = seriesIndex,
+        supportsSeriesCollection = packageVersion?.startsWith("3") == true,
+    )
 
     var output = replaceRange(
         metadataMatch.range,
@@ -1335,6 +1351,54 @@ private fun String.upsertIosMetaContent(name: String, value: String?): String {
         output = output.removeRange(duplicate.range)
     }
     return output
+}
+
+/**
+ * Keeps the EPUB 3 `belongs-to-collection` series group in lockstep with the legacy
+ * `calibre:series` metas. The reader prefers the EPUB 3 form, so a stale group would
+ * shadow edits; the group is only written for version 3 packages, where `property`
+ * and `refines` metas are valid.
+ */
+private fun String.upsertIosSeriesCollection(
+    seriesName: String?,
+    seriesIndex: Double?,
+    supportsSeriesCollection: Boolean,
+): String {
+    val normalized = seriesName?.trim()?.takeIf(String::isNotBlank)
+    val ranges = parseMobileOpfMetaElementRanges(this)
+    val elements = ranges.map { it.element }
+    val seriesIds = mobileOpfSeriesCollectionIds(elements)
+    val preferredId = seriesIds.firstOrNull()
+    var output = this
+    for (index in ranges.indices.reversed()) {
+        val element = elements[index]
+        val id = element.id
+        val refinesTarget = element.refines?.removePrefix("#")
+        val isSeriesCollection = id != null && id in seriesIds &&
+            element.property.equals("belongs-to-collection", ignoreCase = true)
+        val isSeriesRefinement = refinesTarget != null && refinesTarget in seriesIds
+        if (isSeriesCollection || isSeriesRefinement) {
+            output = output.removeRange(ranges[index].start until ranges[index].end)
+        }
+    }
+    if (normalized == null || !supportsSeriesCollection) return output
+
+    val takenIds = Regex("""\bid\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        .findAll(output)
+        .map { it.groupValues[1] }
+        .toSet()
+    val id = mobileOpfUniqueMetaId(takenIds, preferredId)
+    return output + buildString {
+        append("<meta property=\"belongs-to-collection\" id=\"").append(id.escapeIosXmlAttribute())
+        append("\">").append(normalized.escapeIosXmlText()).append("</meta>")
+        append("<meta refines=\"#").append(id.escapeIosXmlAttribute())
+        append("\" property=\"collection-type\">series</meta>")
+        if (seriesIndex != null) {
+            append("<meta refines=\"#").append(id.escapeIosXmlAttribute())
+            append("\" property=\"group-position\">").append(seriesIndex.formatIosSeriesIndex())
+            append("</meta>")
+        }
+    }
 }
 
 private fun String.upsertIosCoverManifestItem(preferredId: String, href: String): String {

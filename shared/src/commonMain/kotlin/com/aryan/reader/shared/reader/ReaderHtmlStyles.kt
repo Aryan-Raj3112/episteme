@@ -44,7 +44,12 @@ internal fun readerDocumentStyles(
             }
             html, body {
               min-height: 100%;
-              margin: 0;
+              /* Android benchmark (epub_reader.js) uses !important for body
+                 padding/width so publication CSS cannot widen the side gaps.
+                 Shared must do the same or book CSS with !important would
+                 stack on top of the inner --reader-vertical-page-width margins
+                 on iOS while Android stays at exactly 16px. */
+              margin: 0 !important;
               background: var(--reader-bg);
               color: var(--reader-fg);
               font-family: var(--reader-family);
@@ -55,6 +60,12 @@ internal fun readerDocumentStyles(
               /* iOS parity with Android's suppressed ActionMode: the reader page
                  draws its own selection menu, so never show WebKit's callout. */
               -webkit-touch-callout: none;
+              /* iOS WKWebView auto-inflates small text and reflows on DOM
+                 mutations (e.g. wrapping a highlight span). Android's
+                 epub_reader.js pins this to 100%; shared must do the same or
+                 creating a highlight visibly shifts content on iOS only. */
+              -webkit-text-size-adjust: 100%;
+              text-size-adjust: 100%;
             }
             html {
               scrollbar-color: var(--reader-scrollbar-thumb) var(--reader-scrollbar-track);
@@ -69,10 +80,10 @@ internal fun readerDocumentStyles(
               height: auto !important;
             }
             html.reader-vertical-root {
-              width: 100%;
-              max-width: 100%;
+              width: 100% !important;
+              max-width: 100% !important;
               min-width: 0;
-              overflow-x: hidden;
+              overflow-x: hidden !important;
               overflow-y: scroll;
               scrollbar-width: thin;
             }
@@ -97,22 +108,53 @@ internal fun readerDocumentStyles(
               background: var(--reader-scrollbar-thumb-hover);
             }
             body {
-              box-sizing: border-box;
-              padding: var(--reader-margin-y) var(--reader-margin-x);
+              box-sizing: border-box !important;
+              padding: var(--reader-margin-y) var(--reader-margin-x) !important;
               overflow-wrap: anywhere;
               position: relative;
+              width: 100% !important;
+              max-width: 100% !important;
+              overflow-x: hidden !important;
             }
             body.reader-vertical {
-              width: 100%;
-              max-width: 100%;
+              width: 100% !important;
+              max-width: 100% !important;
               height: auto !important;
               min-height: 100vh;
               min-height: 100dvh;
               min-width: 0;
-              overflow-x: hidden;
+              overflow-x: hidden !important;
               overflow-y: auto;
-              padding: var(--reader-vertical-margin-y) 0;
+              padding: var(--reader-vertical-margin-y) 0 !important;
+              /*
+               * iOS WKWebView runs with contentInsetAdjustmentBehavior=never and the
+               * Compose PageInfo bar overlays the WebView, so the document owns the
+               * bottom clearance: reader margin plus the home-indicator safe area.
+               * This keeps the chapter end above the bar instead of showing a gap
+               * that only disappears after the first scroll.
+               */
+              padding-bottom: calc(var(--reader-vertical-margin-y) + env(safe-area-inset-bottom, 0px)) !important;
               scrollbar-gutter: stable;
+            }
+            /*
+             * Android benchmark parity (epub_reader.js has no scrollbar-gutter
+             * and no custom webkit-scrollbar width): touch WebViews use overlay
+             * scrollbars with zero reservation, so the side gaps stay exactly
+             * --reader-margin-x (16px default). Desktop keeps the stable gutter
+             * + 12px custom track to avoid shifts between chapters. Without this,
+             * iOS WKWebView honors the 12px track + stable gutter as classic
+             * scrollbars while Android overlays, leaving iOS narrower with
+             * visibly larger left/right gaps than the Android default.
+             */
+            @media (hover: none) {
+              body.reader-vertical {
+                scrollbar-gutter: auto;
+              }
+              html.reader-vertical-root::-webkit-scrollbar,
+              body.reader-vertical::-webkit-scrollbar {
+                width: 0;
+                height: 0;
+              }
             }
             body.reader-paginated {
               height: 100vh;
@@ -357,17 +399,80 @@ internal fun readerDocumentStyles(
               max-width: 100% !important;
               height: auto !important;
             }
+            /*
+             * Placeholder for figures whose image file is missing from the archive
+             * (Gutenberg img_ marker spans). Keeps the caption visible instead of a gap.
+             */
+            .reader-content figure.reader-missing-figure {
+              display: block;
+              width: auto !important;
+              margin: 1.2em auto !important;
+              padding: 1em 1.2em !important;
+              border: 1px dashed color-mix(in srgb, var(--reader-fg) 35%, transparent) !important;
+              border-radius: 8px;
+              text-align: center !important;
+              font-style: italic;
+              color: color-mix(in srgb, var(--reader-fg) 82%, var(--reader-bg));
+              background: color-mix(in srgb, var(--reader-fg) 4%, transparent);
+            }
+            /*
+             * Shoulder-note headings (Standard Ebooks div.aside: print-style
+             * float-right sidebars) cannot survive virtualized chunks: the float
+             * context breaks across chunk attach/detach and the headings drop
+             * out of paint. Linearize them the way the publisher's own narrow
+             * fallback does; borders, margins and small-caps are preserved.
+             */
+            .reader-content div.aside {
+              float: none !important;
+              clear: both !important;
+              max-width: 100% !important;
+            }
             .reader-highlight {
               background: var(--reader-highlight);
               color: inherit;
               border-radius: 2px;
             }
+            /*
+             * Wrapping text in a highlight marker must never change layout.
+             * Publication CSS is injected verbatim above, so a rule like
+             * `span { padding: 2px }` or `span { display: inline-block }`
+             * would newly match the inserted marker and look exactly like
+             * "padding gets added and content shifts" when highlighting.
+             * Pin every box/layout property that affects inline flow; paint
+             * (background / text-decoration) stays in the per-color rules and
+             * inline style declarations below.
+             */
             span[class*="user-highlight-"],
-            mark.reader-user-highlight {
+            mark.reader-user-highlight,
+            .reader-user-highlight,
+            .reader-highlight {
+              display: inline !important;
+              padding: 0 !important;
+              margin: 0 !important;
+              border: 0 !important;
+              outline: 0 !important;
+              box-shadow: none !important;
+              vertical-align: baseline !important;
+              line-height: inherit !important;
+              letter-spacing: inherit !important;
+              word-spacing: inherit !important;
+              text-indent: 0 !important;
+              float: none !important;
+              clear: none !important;
+              position: static !important;
+              left: auto !important;
+              right: auto !important;
+              top: auto !important;
+              bottom: auto !important;
+              transform: none !important;
               border-radius: 2px;
-              cursor: pointer;
               -webkit-box-decoration-break: clone;
               box-decoration-break: clone;
+            }
+            span[class*="user-highlight-"],
+            mark.reader-user-highlight,
+            .reader-user-highlight {
+              cursor: pointer;
             }
             ::highlight(reader-tts-highlight) {
               background: rgba(125, 211, 252, 0.52);

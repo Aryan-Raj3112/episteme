@@ -1,7 +1,7 @@
 package com.aryan.reader
 
 import android.util.Xml
-import com.aryan.reader.shared.reader.MobileEpubMetaElement
+import com.aryan.reader.shared.reader.parseMobileOpfMetaElements
 import com.aryan.reader.shared.reader.resolveMobileEpubSeries
 import org.xmlpull.v1.XmlPullParser
 import java.io.InputStream
@@ -36,8 +36,7 @@ internal object EmbeddedEbookMetadataExtractor {
     private const val MOBI_EXTH_SERIES_RECORD_TYPE = 508
     private const val MOBI_EXTH_SERIES_INDEX_RECORD_TYPE = 509
 
-    private val META_CLOSE_TAG_REGEX = Regex("""</\s*meta\s*>""", RegexOption.IGNORE_CASE)
-    private val TAG_REGEX = Regex("<[^>]*>")
+    private val OPF_ITEM_TAG_REGEX = Regex("""<(?:[\w.-]+:)?item\s+[^>]*>""", RegexOption.IGNORE_CASE)
 
     private val ebookCoverTypes = setOf(FileType.EPUB, FileType.MOBI, FileType.FB2)
     private val rasterCoverExtensions = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
@@ -106,7 +105,7 @@ internal object EmbeddedEbookMetadataExtractor {
             null
         }
 
-        val series = resolveMobileEpubSeries(parseOpfMetaElements(opf))
+        val series = resolveMobileEpubSeries(parseMobileOpfMetaElements(opf))
         return EmbeddedEbookMetadata(
             title = opf.tagText("title"),
             author = opf.tagText("creator"),
@@ -115,38 +114,6 @@ internal object EmbeddedEbookMetadataExtractor {
             seriesIndex = series?.index,
             cover = cover
         )
-    }
-
-    /**
-     * Extracts every OPF `<meta>` element so the shared resolver can read both the legacy
-     * Calibre name/content form and the EPUB 3 belongs-to-collection/refines form.
-     */
-    private fun parseOpfMetaElements(opf: String): List<MobileEpubMetaElement> {
-        return Regex("""<meta\s+[^>]*>""", RegexOption.IGNORE_CASE)
-            .findAll(opf)
-            .mapNotNull { match ->
-                val openTag = match.value
-                val text = if (openTag.endsWith("/>")) {
-                    null
-                } else {
-                    META_CLOSE_TAG_REGEX.find(opf, startIndex = match.range.last + 1)?.let { close ->
-                        opf.substring(match.range.last + 1, close.range.first)
-                            .replace(TAG_REGEX, " ")
-                            .decodeEntities()
-                            .trim()
-                            .takeIf { it.isNotEmpty() }
-                    }
-                }
-                MobileEpubMetaElement(
-                    id = openTag.attr("id").decodedAttrValue(),
-                    name = openTag.attr("name").decodedAttrValue(),
-                    property = openTag.attr("property").decodedAttrValue(),
-                    content = openTag.attr("content").decodedAttrValue(),
-                    text = text,
-                    refines = openTag.attr("refines").decodedAttrValue()
-                )
-            }
-            .toList()
     }
 
     private fun readFirstZipTextEntry(
@@ -209,7 +176,7 @@ internal object EmbeddedEbookMetadataExtractor {
     }
 
     private fun parseEpubManifest(opf: String): List<EpubManifestItem> {
-        return Regex("""<item\s+[^>]*>""", RegexOption.IGNORE_CASE)
+        return OPF_ITEM_TAG_REGEX
             .findAll(opf)
             .mapNotNull { match ->
                 val item = match.value
@@ -230,11 +197,9 @@ internal object EmbeddedEbookMetadataExtractor {
     }
 
     private fun findExplicitEpubCover(opf: String, manifest: List<EpubManifestItem>): EpubManifestItem? {
-        val coverId = Regex("""<meta\s+[^>]*>""", RegexOption.IGNORE_CASE)
-            .findAll(opf)
-            .firstOrNull { it.value.attr("name").equals("cover", ignoreCase = true) }
-            ?.value
-            ?.attr("content")
+        val coverId = parseMobileOpfMetaElements(opf)
+            .firstOrNull { it.name.equals("cover", ignoreCase = true) }
+            ?.content
             ?.takeIf { it.isNotBlank() }
 
         return manifest.firstOrNull { it.id == coverId }
@@ -636,8 +601,6 @@ internal object EmbeddedEbookMetadataExtractor {
             ?.trim()
             ?.takeIf { it.isNotBlank() }
     }
-
-    private fun String.decodedAttrValue(): String? = decodeEntities().trim().takeIf { it.isNotEmpty() }
 
     private fun String.decodeEntities(): String {
         return replace("&nbsp;", " ")

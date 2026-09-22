@@ -66,6 +66,7 @@ import com.aryan.reader.shared.AppThemeMode
 import com.aryan.reader.shared.CustomAppTheme
 import com.aryan.reader.shared.SharedFeaturePolicy
 import com.aryan.reader.shared.UserData
+import com.aryan.reader.shared.accountInitial
 
 enum class SharedAppTab {
     LIBRARY,
@@ -437,7 +438,7 @@ private fun SharedSidebarHeader(
                     if (avatarContent != null) {
                         avatarContent(currentUser, Modifier.size(42.dp))
                     } else {
-                        SharedInitialAvatar(initial = currentUser.initial(), modifier = Modifier.size(42.dp))
+                        SharedInitialAvatar(initial = currentUser.accountInitial(), modifier = Modifier.size(42.dp))
                     }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
@@ -520,14 +521,6 @@ private fun SharedInitialAvatar(
             Text(initial, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         }
     }
-}
-
-private fun UserData.initial(): String {
-    return (displayName ?: email ?: "E")
-        .trim()
-        .firstOrNull()
-        ?.uppercase()
-        ?: "E"
 }
 
 @Composable

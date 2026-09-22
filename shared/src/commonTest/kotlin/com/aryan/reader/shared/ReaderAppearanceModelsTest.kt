@@ -3,6 +3,7 @@ package com.aryan.reader.shared
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
@@ -28,6 +29,37 @@ class ReaderAppearanceModelsTest {
         assertTrue(shouldReserveEpubPageInfoBarSpace(PageInfoMode.DEFAULT, false, false))
         assertFalse(shouldReserveEpubPageInfoBarSpace(PageInfoMode.SYNC, true, false))
         assertFalse(shouldReserveEpubPageInfoBarSpace(PageInfoMode.DEFAULT, true, true))
+    }
+
+    @Test
+    fun `webview bottom reserve covers the full page info bar height`() {
+        // iOS chrome-hidden bar grows a bottom safe pad: the WebView must reserve
+        // content row + pad, otherwise the page shows through below the bar.
+        assertEquals(
+            51.dp,
+            pageInfoBarBottomReserve(PageInfoPosition.BOTTOM, PageInfoMode.DEFAULT, false, true, 25.dp, 26.dp)
+        )
+        // Android benchmark (no safe pad) reserves exactly the content row.
+        assertEquals(
+            25.dp,
+            pageInfoBarBottomReserve(PageInfoPosition.BOTTOM, PageInfoMode.DEFAULT, false, true, 25.dp, 0.dp)
+        )
+        assertEquals(
+            0.dp,
+            pageInfoBarBottomReserve(PageInfoPosition.TOP, PageInfoMode.DEFAULT, false, true, 25.dp, 26.dp)
+        )
+        assertEquals(
+            0.dp,
+            pageInfoBarBottomReserve(PageInfoPosition.BOTTOM, PageInfoMode.HIDDEN, false, true, 25.dp, 0.dp)
+        )
+        assertEquals(
+            0.dp,
+            pageInfoBarBottomReserve(PageInfoPosition.BOTTOM, PageInfoMode.SYNC, true, true, 25.dp, 0.dp)
+        )
+        assertEquals(
+            0.dp,
+            pageInfoBarBottomReserve(PageInfoPosition.BOTTOM, PageInfoMode.DEFAULT, false, false, 25.dp, 26.dp)
+        )
     }
 
     @Test

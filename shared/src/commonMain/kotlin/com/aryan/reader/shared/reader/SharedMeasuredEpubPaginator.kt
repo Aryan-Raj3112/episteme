@@ -44,7 +44,23 @@ import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTableCell
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
+import com.aryan.reader.paginatedreader.adjustPaginationSplitForSemanticRubies
+import com.aryan.reader.paginatedreader.endOffsetForColumnPrefix
+import com.aryan.reader.paginatedreader.isTateChuYoko
+import com.aryan.reader.paginatedreader.isVerticalSemanticBlock
+import com.aryan.reader.paginatedreader.segmentBlocksByWritingMode
+import com.aryan.reader.paginatedreader.layoutVerticalParagraph
+import com.aryan.reader.paginatedreader.isVerticalWriting
+import com.aryan.reader.paginatedreader.lineHeightWithRubyReserve
+import com.aryan.reader.paginatedreader.paginateVerticalFlow
 import com.aryan.reader.paginatedreader.planPaginationStackFragmentation
+import com.aryan.reader.paginatedreader.sliceSemanticRubies
+import com.aryan.reader.paginatedreader.verticalGlyphCache
+import com.aryan.reader.paginatedreader.verticalPitchPx
+import com.aryan.reader.paginatedreader.RubyAnnotation
+import com.aryan.reader.paginatedreader.toRubyAnnotation
+import com.aryan.reader.paginatedreader.VerticalGlyphMeasurer
+import androidx.compose.ui.geometry.Size
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -205,7 +221,7 @@ class SharedMeasuredEpubPaginator(
         }
 
         val pages = mutableListOf<ReaderPage>()
-        val queue = ArrayDeque<SemanticBlock>().apply { addAll(sourceBlocks) }
+        val queue = ArrayDeque<SemanticBlock>()
         var pageBlocks = mutableListOf<SemanticBlock>()
         var pageBlockFits = mutableListOf<MeasuredPageBlockFit>()
         var usedHeight = 0
@@ -271,105 +287,231 @@ class SharedMeasuredEpubPaginator(
         }
 
         var processedBlocks = 0
-        while (queue.isNotEmpty()) {
-            currentCoroutineContext().ensureActive()
-            processedBlocks += 1
-            if (processedBlocks % 8 == 0) yield()
-            val block = queue.removeFirst()
-            val blockHeight = measureBlock(block, geometry, baseStyle, settings)
-            val spaceBeforeBlock = block.collapsedMarginBefore(pageBlocks.lastOrNull(), settings)
-            val requiredHeight = blockHeight + spaceBeforeBlock
-            val fitsCurrent = requiredHeight <= geometry.pageHeightPx - usedHeight
-            if (fitsCurrent) {
-                addPageBlock(block, blockHeight, spaceBeforeBlock)
-                continue
-            }
-
-            val remainingHeight = (geometry.pageHeightPx - usedHeight).coerceAtLeast(0)
-            val splitAvailableHeight = (remainingHeight - spaceBeforeBlock).coerceAtLeast(0)
-            val split = splitBlock(block, splitAvailableHeight, geometry, baseStyle, settings)
-            if (split != null && split.first.hasReadableContent()) {
-                val splitHeight = measureBlock(split.first, geometry, baseStyle, settings)
-                if (spaceBeforeBlock + splitHeight <= remainingHeight) {
-                    logEpubPagination {
-                        "split_current block=${block.kindName()} blockPx=$blockHeight splitPx=$splitHeight " +
-                            "spaceBeforePx=$spaceBeforeBlock remainingPx=$remainingHeight " +
-                            "splitAvailablePx=$splitAvailableHeight usedPx=$usedHeight " +
-                            "pageHeightPx=${geometry.pageHeightPx} chapter=$chapterIndex"
-                    }
-                    addPageBlock(split.first, splitHeight, spaceBeforeBlock)
-                    if (split.second.hasReadableContent()) queue.addFirst(split.second)
-                    emitPage("split_current")
+        suspend fun drainHorizontalBlocks() {
+            while (queue.isNotEmpty()) {
+                currentCoroutineContext().ensureActive()
+                processedBlocks += 1
+                if (processedBlocks % 8 == 0) yield()
+                val block = queue.removeFirst()
+                val blockHeight = measureBlock(block, geometry, baseStyle, settings)
+                val spaceBeforeBlock = block.collapsedMarginBefore(pageBlocks.lastOrNull(), settings)
+                val requiredHeight = blockHeight + spaceBeforeBlock
+                val fitsCurrent = requiredHeight <= geometry.pageHeightPx - usedHeight
+                if (fitsCurrent) {
+                    addPageBlock(block, blockHeight, spaceBeforeBlock)
                     continue
                 }
-                logEpubPageFit {
-                    "page_fit layer=split_rejected block=${block.kindName()} chapter=$chapterIndex " +
-                        "spaceBeforePx=$spaceBeforeBlock splitPx=$splitHeight remainingPx=$remainingHeight " +
-                        "splitAvailablePx=$splitAvailableHeight pageHeightPx=${geometry.pageHeightPx}"
-                }
-            }
 
-            emitPage("before_block")
-            val newPageSpaceBefore = block.collapsedMarginBefore(previous = null, settings)
-            if (blockHeight + newPageSpaceBefore <= geometry.pageHeightPx) {
-                addPageBlock(block, blockHeight, newPageSpaceBefore)
-                continue
-            }
+                val remainingHeight = (geometry.pageHeightPx - usedHeight).coerceAtLeast(0)
+                val splitAvailableHeight = (remainingHeight - spaceBeforeBlock).coerceAtLeast(0)
+                val split = splitBlock(block, splitAvailableHeight, geometry, baseStyle, settings)
+                if (split != null && split.first.hasReadableContent()) {
+                    val splitHeight = measureBlock(split.first, geometry, baseStyle, settings)
+                    if (spaceBeforeBlock + splitHeight <= remainingHeight) {
+                        logEpubPagination {
+                            "split_current block=${block.kindName()} blockPx=$blockHeight splitPx=$splitHeight " +
+                                "spaceBeforePx=$spaceBeforeBlock remainingPx=$remainingHeight " +
+                                "splitAvailablePx=$splitAvailableHeight usedPx=$usedHeight " +
+                                "pageHeightPx=${geometry.pageHeightPx} chapter=$chapterIndex"
+                        }
+                        addPageBlock(split.first, splitHeight, spaceBeforeBlock)
+                        if (split.second.hasReadableContent()) queue.addFirst(split.second)
+                        emitPage("split_current")
+                        continue
+                    }
+                    logEpubPageFit {
+                        "page_fit layer=split_rejected block=${block.kindName()} chapter=$chapterIndex " +
+                            "spaceBeforePx=$spaceBeforeBlock splitPx=$splitHeight remainingPx=$remainingHeight " +
+                            "splitAvailablePx=$splitAvailableHeight pageHeightPx=${geometry.pageHeightPx}"
+                    }
+                }
 
-            val oversizedAvailableHeight = (geometry.pageHeightPx - newPageSpaceBefore).coerceAtLeast(0)
-            val oversizedSplit = splitBlock(block, oversizedAvailableHeight, geometry, baseStyle, settings)
-            if (oversizedSplit != null && oversizedSplit.first.hasReadableContent()) {
-                val splitHeight = measureBlock(oversizedSplit.first, geometry, baseStyle, settings)
-                val page = listOf(oversizedSplit.first).toReaderPage(
-                    pageIndex = firstPageIndex + pages.size,
-                    chapterIndex = chapterIndex,
-                    chapterTitle = chapter.title
-                )
-                logEpubPagination {
-                    "emit_page reason=split_oversized page=${page.pageIndex + 1} chapter=$chapterIndex " +
-                        "block=${block.kindName()} blockPx=$blockHeight splitPx=$splitHeight " +
-                        "spaceBeforePx=$newPageSpaceBefore pageHeightPx=${geometry.pageHeightPx} " +
-                        "range=${page.startOffset}..${page.endOffset} textChars=${page.text.length}"
+                emitPage("before_block")
+                val newPageSpaceBefore = block.collapsedMarginBefore(previous = null, settings)
+                if (blockHeight + newPageSpaceBefore <= geometry.pageHeightPx) {
+                    addPageBlock(block, blockHeight, newPageSpaceBefore)
+                    continue
                 }
-                logOversizedMeasuredPageFit(
-                    reason = "split_oversized",
-                    page = page,
-                    chapterIndex = chapterIndex,
-                    block = oversizedSplit.first,
-                    blockHeightPx = splitHeight,
-                    spaceBeforePx = newPageSpaceBefore,
-                    pageHeightPx = geometry.pageHeightPx,
-                    topMarginPx = oversizedSplit.first.effectiveTopMarginPx(),
-                    bottomMarginPx = oversizedSplit.first.effectiveBottomMarginPx(settings)
-                )
-                pages += page
-                if (oversizedSplit.second.hasReadableContent()) queue.addFirst(oversizedSplit.second)
-            } else {
-                val page = listOf(block).toReaderPage(
-                    pageIndex = firstPageIndex + pages.size,
-                    chapterIndex = chapterIndex,
-                    chapterTitle = chapter.title
-                )
-                logEpubPagination {
-                    "emit_page reason=unsplittable_oversized page=${page.pageIndex + 1} chapter=$chapterIndex " +
-                        "block=${block.kindName()} blockPx=$blockHeight pageHeightPx=${geometry.pageHeightPx} " +
-                        "range=${page.startOffset}..${page.endOffset} textChars=${page.text.length}"
+
+                val oversizedAvailableHeight = (geometry.pageHeightPx - newPageSpaceBefore).coerceAtLeast(0)
+                val oversizedSplit = splitBlock(block, oversizedAvailableHeight, geometry, baseStyle, settings)
+                if (oversizedSplit != null && oversizedSplit.first.hasReadableContent()) {
+                    val splitHeight = measureBlock(oversizedSplit.first, geometry, baseStyle, settings)
+                    val page = listOf(oversizedSplit.first).toReaderPage(
+                        pageIndex = firstPageIndex + pages.size,
+                        chapterIndex = chapterIndex,
+                        chapterTitle = chapter.title
+                    )
+                    logEpubPagination {
+                        "emit_page reason=split_oversized page=${page.pageIndex + 1} chapter=$chapterIndex " +
+                            "block=${block.kindName()} blockPx=$blockHeight splitPx=$splitHeight " +
+                            "spaceBeforePx=$newPageSpaceBefore pageHeightPx=${geometry.pageHeightPx} " +
+                            "range=${page.startOffset}..${page.endOffset} textChars=${page.text.length}"
+                    }
+                    logOversizedMeasuredPageFit(
+                        reason = "split_oversized",
+                        page = page,
+                        chapterIndex = chapterIndex,
+                        block = oversizedSplit.first,
+                        blockHeightPx = splitHeight,
+                        spaceBeforePx = newPageSpaceBefore,
+                        pageHeightPx = geometry.pageHeightPx,
+                        topMarginPx = oversizedSplit.first.effectiveTopMarginPx(),
+                        bottomMarginPx = oversizedSplit.first.effectiveBottomMarginPx(settings)
+                    )
+                    pages += page
+                    if (oversizedSplit.second.hasReadableContent()) queue.addFirst(oversizedSplit.second)
+                } else {
+                    val page = listOf(block).toReaderPage(
+                        pageIndex = firstPageIndex + pages.size,
+                        chapterIndex = chapterIndex,
+                        chapterTitle = chapter.title
+                    )
+                    logEpubPagination {
+                        "emit_page reason=unsplittable_oversized page=${page.pageIndex + 1} chapter=$chapterIndex " +
+                            "block=${block.kindName()} blockPx=$blockHeight pageHeightPx=${geometry.pageHeightPx} " +
+                            "range=${page.startOffset}..${page.endOffset} textChars=${page.text.length}"
+                    }
+                    logOversizedMeasuredPageFit(
+                        reason = "unsplittable_oversized",
+                        page = page,
+                        chapterIndex = chapterIndex,
+                        block = block,
+                        blockHeightPx = blockHeight,
+                        spaceBeforePx = newPageSpaceBefore,
+                        pageHeightPx = geometry.pageHeightPx,
+                        topMarginPx = block.effectiveTopMarginPx(),
+                        bottomMarginPx = block.effectiveBottomMarginPx(settings)
+                    )
+                    pages += page
                 }
-                logOversizedMeasuredPageFit(
-                    reason = "unsplittable_oversized",
-                    page = page,
-                    chapterIndex = chapterIndex,
-                    block = block,
-                    blockHeightPx = blockHeight,
-                    spaceBeforePx = newPageSpaceBefore,
-                    pageHeightPx = geometry.pageHeightPx,
-                    topMarginPx = block.effectiveTopMarginPx(),
-                    bottomMarginPx = block.effectiveBottomMarginPx(settings)
-                )
-                pages += page
             }
         }
-        emitPage("chapter_end")
+
+        suspend fun drainVerticalBlocks() {
+            if (queue.isEmpty()) return
+            val glyphCaches = mutableMapOf<String, MutableMap<com.aryan.reader.paginatedreader.VerticalGlyphCacheKey, Size>>()
+            fun cacheFor(params: VerticalSemanticTextParams) =
+                glyphCaches.getOrPut(
+                    listOf(
+                        params.fontFamily.toString(),
+                        params.fontWeight.toString(),
+                        params.fontFeatureSettings.orEmpty(),
+                        params.fontSizePx.toString()
+                    ).joinToString("|")
+                ) { verticalGlyphCache() }
+
+            fun expandVerticalFlow(block: SemanticBlock): List<SemanticBlock> =
+                if (block is SemanticFlexContainer && block.isVerticalSemanticBlock() &&
+                    block.style.blockStyle.display != "reader-chant-flow"
+                ) {
+                    block.children.flatMap { expandVerticalFlow(it) }
+                } else {
+                    listOf(block)
+                }
+
+            suspend fun verticalFlowWidth(block: SemanticBlock): Int = when (block) {
+                is SemanticTextBlock -> {
+                    val params = block.verticalTextParams(baseStyle, settings, geometry)
+                    measureVerticalSemanticText(
+                        block, params,
+                        verticalGlyphMeasurer(params), cacheFor(params)
+                    ) + block.style.blockStyle.padding.horizontalPx() +
+                        block.style.blockStyle.horizontalBorderPx()
+                }
+                is SemanticImage -> {
+                    val columnHeightPx = (geometry.pageHeightPx -
+                        block.style.blockStyle.padding.verticalPx() -
+                        block.style.blockStyle.verticalBorderPx()).coerceAtLeast(48).toFloat()
+                    measureVerticalSemanticImage(
+                        block, geometry.pageWidthPx, columnHeightPx, settings
+                    ) + block.style.blockStyle.padding.horizontalPx() +
+                        block.style.blockStyle.horizontalBorderPx()
+                }
+                is SemanticSpacer -> 0
+                else -> geometry.pageWidthPx
+            }
+
+            fun verticalSpaceBefore(previous: SemanticBlock?, current: SemanticBlock): Int {
+                val left = current.style.blockStyle.margin.left.toPxIfSpecified()
+                if (previous == null) return 0
+                val previousRight = previous.style.blockStyle.margin.right.toPxIfSpecified()
+                return maxOf(previousRight, left)
+            }
+
+            suspend fun verticalFlowSplit(
+                block: SemanticBlock,
+                availableWidthPx: Int
+            ): Pair<SemanticBlock, SemanticBlock>? {
+                if (block !is SemanticTextBlock || availableWidthPx <= 0) return null
+                val params = block.verticalTextParams(baseStyle, settings, geometry)
+                val padH = block.style.blockStyle.padding.horizontalPx() +
+                    block.style.blockStyle.horizontalBorderPx()
+                return splitVerticalSemanticText(
+                    block, params, (availableWidthPx - padH).coerceAtLeast(0),
+                    verticalGlyphMeasurer(params), cacheFor(params)
+                )
+            }
+
+            // Horizontal fallbacks (tables, lists, …) are pre-split with the
+            // tested horizontal path so they always fit their own page.
+            val ready = ArrayDeque<SemanticBlock>()
+            for (source in queue.flatMap { expandVerticalFlow(it) }) {
+                currentCoroutineContext().ensureActive()
+                if (source is SemanticTextBlock || source is SemanticImage || source is SemanticSpacer) {
+                    ready.add(source)
+                    continue
+                }
+                var pending: SemanticBlock? = source
+                var guard = 0
+                while (pending != null && guard++ < 32) {
+                    currentCoroutineContext().ensureActive()
+                    val fallback = pending
+                    val height = measureBlock(fallback, geometry, baseStyle, settings) +
+                        fallback.collapsedMarginBefore(null, settings)
+                    if (height <= geometry.pageHeightPx) {
+                        ready.add(fallback)
+                        pending = null
+                    } else {
+                        val split = splitBlock(fallback, geometry.pageHeightPx, geometry, baseStyle, settings)
+                        if (split == null || !split.first.hasReadableContent()) {
+                            ready.add(fallback)
+                            pending = null
+                        } else {
+                            ready.add(split.first)
+                            pending = if (split.second.hasReadableContent()) split.second else null
+                        }
+                    }
+                }
+            }
+            queue.clear()
+            paginateVerticalFlow(
+                blocks = ready.toList(),
+                contentWidthPx = geometry.pageWidthPx,
+                widthOf = { verticalFlowWidth(it) },
+                spaceBefore = { previous, current -> verticalSpaceBefore(previous, current) },
+                splitForWidth = { block, availableWidthPx -> verticalFlowSplit(block, availableWidthPx) },
+                isFullWidth = { it !is SemanticTextBlock && it !is SemanticImage && it !is SemanticSpacer },
+                hasContent = { it.hasReadableContent() },
+                onEmitPage = { pageBlocks ->
+                    pages += pageBlocks.toReaderPage(
+                        pageIndex = firstPageIndex + pages.size,
+                        chapterIndex = chapterIndex,
+                        chapterTitle = chapter.title
+                    )
+                }
+            )
+        }
+
+        for (segment in segmentBlocksByWritingMode(sourceBlocks, SemanticBlock::isVerticalSemanticBlock)) {
+            currentCoroutineContext().ensureActive()
+            queue.addAll(segment.blocks)
+            if (segment.isVertical) {
+                drainVerticalBlocks()
+            } else {
+                drainHorizontalBlocks()
+            }
+        }
         val chapterPages = pages.ifEmpty {
             listOf(
                 ReaderPage(
@@ -929,6 +1071,202 @@ class SharedMeasuredEpubPaginator(
         }
     }
 
+    // ------------------------------------------------------------------
+    // Vertical-rl pagination. Text flows top-to-bottom into columns stacked
+    // right-to-left (see VerticalTextEngine); pages are assembled
+    // width-first through paginateVerticalFlow. Measurement and rendering
+    // share layoutVerticalParagraph, so they can never disagree.
+    // ------------------------------------------------------------------
+
+    private data class VerticalSemanticTextParams(
+        val fontSizePx: Float,
+        val lineHeightEm: Float,
+        val columnHeightPx: Float,
+        val fontFamily: FontFamily?,
+        val fontWeight: FontWeight?,
+        val fontFeatureSettings: String?,
+        val textAlign: TextAlign,
+        val tcyRanges: List<IntRange>
+    )
+
+    private fun SemanticTextBlock.verticalTextParams(
+        baseStyle: TextStyle,
+        settings: ReaderSettings,
+        geometry: MeasuredPageGeometry
+    ): VerticalSemanticTextParams {
+        val resolved = textStyle(baseStyle, settings)
+        val fontSize = resolved.fontSize.takeIf { it.isSpecified } ?: baseStyle.fontSize
+        val fontSizePx = with(density) { fontSize.toPx() }.coerceAtLeast(1f)
+        val lineHeightEm = resolved.lineHeight.takeIf { it.isSpecified }?.let { lineHeight ->
+            when {
+                lineHeight.isEm -> lineHeight.value
+                lineHeight.isSp -> lineHeight.value / fontSize.value.coerceAtLeast(0.01f)
+                else -> settings.lineSpacing
+            }
+        } ?: settings.lineSpacing
+        val verticalDecorations = blockDecorationVerticalPx() + effectiveTopMarginPx() +
+            effectiveBottomMarginPx(settings)
+        val columnHeightPx = (geometry.pageHeightPx - verticalDecorations).coerceAtLeast(48).toFloat()
+        val tcyRanges = spans.mapNotNull { span ->
+            if (!span.style.isTateChuYoko() || span.end <= span.start) {
+                null
+            } else {
+                span.start..(span.end - 1)
+            }
+        }
+        // Advances use the reader font in both measurement and drawing so the
+        // two can never disagree; CJK upright advances are em-based anyway.
+        return VerticalSemanticTextParams(
+            fontSizePx = fontSizePx,
+            lineHeightEm = lineHeightEm,
+            columnHeightPx = columnHeightPx,
+            fontFamily = baseStyle.fontFamily,
+            fontWeight = baseStyle.fontWeight,
+            fontFeatureSettings = resolveSharedReaderFontFeatureSettings(
+                this.style.spanStyle.fontFeatureSettings,
+                blockStyleFontVariantNumeric()
+            ),
+            textAlign = resolveSharedReaderTextAlign(
+                cssTextAlign = this.style.paragraphStyle.textAlign,
+                fallbackTextAlign = baseStyle.textAlign
+            ),
+            tcyRanges = tcyRanges
+        )
+    }
+
+    private fun SemanticTextBlock.blockStyleFontVariantNumeric(): String? = when (this) {
+        is SemanticParagraph -> style.fontVariantNumeric
+        is SemanticHeader -> style.fontVariantNumeric
+        is SemanticListItem -> style.fontVariantNumeric
+        else -> null
+    }
+
+    private fun SemanticTextBlock.blockDecorationVerticalPx(): Int {
+        return style.blockStyle.padding.verticalPx() + style.blockStyle.verticalBorderPx()
+    }
+
+    private fun verticalGlyphMeasurer(params: VerticalSemanticTextParams): VerticalGlyphMeasurer =
+        object : VerticalGlyphMeasurer {
+            private fun uprightStyle(sizePx: Float): TextStyle = TextStyle(
+                fontSize = with(density) { sizePx.toSp() },
+                fontFamily = params.fontFamily,
+                fontWeight = params.fontWeight,
+                fontFeatureSettings = listOfNotNull(
+                    params.fontFeatureSettings?.takeIf { it.isNotBlank() },
+                    "\"vert\""
+                ).joinToString(", ").takeIf { it.isNotBlank() }
+            )
+
+            private fun runStyle(sizePx: Float): TextStyle = TextStyle(
+                fontSize = with(density) { sizePx.toSp() },
+                fontFamily = params.fontFamily,
+                fontWeight = params.fontWeight
+            )
+
+            // Called inside withContext(Dispatchers.Main) by pagination and
+            // directly on Main by rendering; measurement itself is synchronous.
+            override fun measureUpright(text: String, fontSizePx: Float): Size =
+                textMeasurer.measure(text, uprightStyle(fontSizePx)).size.let { size ->
+                    Size(size.width.toFloat(), size.height.toFloat())
+                }
+
+            override fun measureHorizontal(text: String, fontSizePx: Float): Size =
+                textMeasurer.measure(text, runStyle(fontSizePx)).size.let { size ->
+                    Size(size.width.toFloat(), size.height.toFloat())
+                }
+        }
+
+    private fun SemanticTextBlock.toVerticalRubies(): List<RubyAnnotation> =
+        rubies.map { it.toRubyAnnotation() }
+
+    private suspend fun measureVerticalSemanticText(
+        block: SemanticTextBlock,
+        params: VerticalSemanticTextParams,
+        measurer: VerticalGlyphMeasurer,
+        glyphCache: MutableMap<com.aryan.reader.paginatedreader.VerticalGlyphCacheKey, Size>
+    ): Int {
+        if (block.text.isEmpty()) return 0
+        // TextMeasurer is Main-bound; one hop per block (glyph sizes cached).
+        val layout = withContext(Dispatchers.Main) {
+            layoutVerticalParagraph(
+                text = block.text,
+                rubies = block.toVerticalRubies(),
+                tcyRanges = params.tcyRanges,
+                fontSizePx = params.fontSizePx,
+                lineHeightEm = params.lineHeightEm,
+                columnHeightPx = params.columnHeightPx,
+                textAlign = params.textAlign,
+                measurer = measurer,
+                cache = glyphCache
+            )
+        }
+        val horizontalDecorations = block.style.blockStyle.padding.horizontalPx() +
+            block.style.blockStyle.horizontalBorderPx()
+        return (layout.widthPx + horizontalDecorations).roundToInt().coerceAtLeast(0)
+    }
+
+    private suspend fun splitVerticalSemanticText(
+        block: SemanticTextBlock,
+        params: VerticalSemanticTextParams,
+        availableWidthPx: Int,
+        measurer: VerticalGlyphMeasurer,
+        glyphCache: MutableMap<com.aryan.reader.paginatedreader.VerticalGlyphCacheKey, Size>
+    ): Pair<SemanticTextBlock, SemanticTextBlock>? {
+        if (block.text.isBlank() || availableWidthPx <= 0) return null
+        val pitch = verticalPitchPx(params.fontSizePx, params.lineHeightEm, block.rubies.isNotEmpty())
+        var headColumns = (availableWidthPx / pitch).toInt().coerceAtLeast(1)
+        val full = withContext(Dispatchers.Main) {
+            layoutVerticalParagraph(
+                text = block.text,
+                rubies = block.toVerticalRubies(),
+                tcyRanges = params.tcyRanges,
+                fontSizePx = params.fontSizePx,
+                lineHeightEm = params.lineHeightEm,
+                columnHeightPx = params.columnHeightPx,
+                textAlign = params.textAlign,
+                measurer = measurer,
+                cache = glyphCache
+            )
+        }
+        if (full.columns.size <= headColumns) return null
+        val orphans = block.style.blockStyle.orphans.coerceAtLeast(1)
+        val widows = block.style.blockStyle.widows.coerceAtLeast(1)
+        if (headColumns < orphans) return null
+        val tailColumns = full.columns.size - headColumns
+        if (tailColumns < widows) {
+            headColumns -= (widows - tailColumns)
+            if (headColumns < orphans) return null
+        }
+        val endOffset = full.endOffsetForColumnPrefix(headColumns)
+        if (endOffset <= 0 || endOffset >= block.text.length) return null
+        // Column breaks from the engine are kinsoku/ruby legal by construction.
+        val head = block.sliceText(0, endOffset)
+        val tail = block.sliceText(endOffset, block.text.length).asPaginationContinuation()
+        if (!head.hasReadableContent() || !tail.hasReadableContent()) return null
+        return head to tail
+    }
+
+    private fun measureVerticalSemanticImage(
+        block: SemanticImage,
+        contentWidthPx: Int,
+        columnHeightPx: Float,
+        settings: ReaderSettings
+    ): Int {
+        if (settings.hideImages) return 0
+        val intrinsicWidth = block.intrinsicWidth?.takeIf { it > 0f }
+        val intrinsicHeight = block.intrinsicHeight?.takeIf { it > 0f }
+        if (intrinsicWidth == null || intrinsicHeight == null) return contentWidthPx
+        val imageScale = settings.imageScale.coerceIn(0.5f, 2.0f)
+        val aspect = intrinsicHeight / intrinsicWidth
+        var width = minOf(intrinsicWidth * imageScale, contentWidthPx.toFloat())
+        var height = width * aspect
+        if (height > columnHeightPx) {
+            height = columnHeightPx
+            width = (height / aspect).coerceAtLeast(1f)
+        }
+        return width.roundToInt().coerceAtLeast(1)
+    }
+
     private fun Dp.toPxInt(): Int = with(density) { toPx().roundToInt() }
 
     private fun com.aryan.reader.paginatedreader.BoxBorders.verticalPx(): Int {
@@ -1072,7 +1410,11 @@ private fun measuredPageGeometryTerms(
     val pageVerticalMargin = settings.resolvedVerticalMargin.scaleCssPx(scale)
     val configuredPageWidth = settings.pageWidth.scaleCssPx(scale).coerceAtLeast(1)
     val usesSpreadPageSlot = settings.usesMeasuredPaginatedSpreadPageSlot()
-    val gutter = if (usesSpreadPageSlot) MeasuredSpreadGutterPx.scaleCssPx(scale) else 0
+    val gutter = if (usesSpreadPageSlot) {
+        (settings.pageSpreadGutterDp * scale).roundToInt().coerceAtLeast(0)
+    } else {
+        0
+    }
     val singlePageContentWidth = (safeWidth - (pageHorizontalMargin * 2)).coerceAtLeast(1)
     val twoPageAvailableOuterWidth = ((safeWidth - gutter).coerceAtLeast(1) / 2).coerceAtLeast(1)
     val twoPageAvailableContentWidth = (twoPageAvailableOuterWidth - (pageHorizontalMargin * 2)).coerceAtLeast(1)
@@ -1119,6 +1461,11 @@ internal fun measureImageSize(
         width != null && height != null -> {
             val style = block.style.blockStyle
             val contentMaxWidth = maxWidthPx.toFloat()
+            // Contain-fit inside the page box: tall images shrink in width so
+            // the aspect ratio survives and the image always fits the screen.
+            // Mirrors computeImageRenderSizePx on Android so measure == render.
+            val maxHeight = (geometry.pageHeightPx * 0.86f).roundToInt().coerceAtLeast(24).toFloat()
+            val aspect = height / width
             val baseWidth = if (style.width.isSpecified && style.width > 0.dp) {
                 with(density) { style.width.toPx().roundToInt() }.toFloat()
             } else {
@@ -1129,11 +1476,14 @@ internal fun measureImageSize(
                 scaledWidth = scaledWidth.coerceAtMost(with(density) { style.maxWidth.toPx().roundToInt() } * imageScale)
             }
             scaledWidth = scaledWidth.coerceAtMost(contentMaxWidth)
-            val measuredWidth = scaledWidth.roundToInt().coerceAtLeast(1)
-            val measuredHeight = (scaledWidth * (height / width)).roundToInt()
-            return measuredWidth to measuredHeight.coerceIn(
+            var scaledHeight = scaledWidth * aspect
+            if (scaledHeight > maxHeight) {
+                scaledHeight = maxHeight
+                scaledWidth = (scaledHeight / aspect).coerceAtLeast(1f)
+            }
+            return scaledWidth.roundToInt().coerceAtLeast(1) to scaledHeight.roundToInt().coerceIn(
                 24,
-                (geometry.pageHeightPx * 0.86f).roundToInt().coerceAtLeast(24)
+                maxHeight.roundToInt()
             )
         }
     }
@@ -1155,9 +1505,7 @@ internal fun measureImageSize(
     return measuredWidth to coercedHeight
 }
 
-private const val MeasuredSpreadGutterPx = 28
-
-private fun ReaderSettings.usesMeasuredPaginatedSpreadPageSlot(): Boolean {
+    private fun ReaderSettings.usesMeasuredPaginatedSpreadPageSlot(): Boolean {
     return isTwoPageSpreadEnabled()
 }
 
@@ -1216,7 +1564,7 @@ internal fun paginationStackPrefixCountThatFits(
     return prefixCount
 }
 
-private fun List<SemanticBlock>.toReaderPage(
+internal fun List<SemanticBlock>.toReaderPage(
     pageIndex: Int,
     chapterIndex: Int,
     chapterTitle: String
@@ -1363,9 +1711,19 @@ private fun SemanticTextBlock.textStyle(baseStyle: TextStyle, settings: ReaderSe
         } else {
             baseStyle.lineHeight
         }
+    // Vertical furigana consumes real column pitch beside its base; reserve
+    // it in measurement exactly as the renderer does so pages never mismatch.
+    // Horizontal ruby overhangs into the leading like browsers, with no
+    // reserved growth.
+    val rubyAwareLineHeight = lineHeightWithRubyReserve(
+        lineHeight,
+        if (fontSize.isSpecified) fontSize else baseStyle.fontSize,
+        rubies.isNotEmpty(),
+        style.isVerticalWriting()
+    )
     return baseStyle.copy(
         fontSize = fontSize,
-        lineHeight = lineHeight,
+        lineHeight = rubyAwareLineHeight,
         fontFamily = style.spanStyle.fontFamily ?: baseStyle.fontFamily,
         fontWeight = if (this is SemanticHeader) FontWeight.Bold else baseStyle.fontWeight,
         textAlign = resolveSharedReaderTextAlign(
@@ -1437,22 +1795,26 @@ private fun SemanticTextBlock.sliceText(start: Int, end: Int): SemanticTextBlock
             span.copy(start = spanStart - safeStart, end = spanEnd - safeStart)
         }
     }
+    val slicedRubies = sliceSemanticRubies(rubies, safeStart, safeEnd)
     val nextOffset = startCharOffsetInSource + safeStart
     return when (this) {
         is SemanticParagraph -> copy(
             text = slicedText,
             spans = slicedSpans,
-            startCharOffsetInSource = nextOffset
+            startCharOffsetInSource = nextOffset,
+            rubies = slicedRubies
         )
         is SemanticHeader -> copy(
             text = slicedText,
             spans = slicedSpans,
-            startCharOffsetInSource = nextOffset
+            startCharOffsetInSource = nextOffset,
+            rubies = slicedRubies
         )
         is SemanticListItem -> copy(
             text = slicedText,
             spans = slicedSpans,
-            startCharOffsetInSource = nextOffset
+            startCharOffsetInSource = nextOffset,
+            rubies = slicedRubies
         )
         else -> SemanticParagraph(
             text = slicedText,
@@ -1461,7 +1823,8 @@ private fun SemanticTextBlock.sliceText(start: Int, end: Int): SemanticTextBlock
             elementId = elementId,
             cfi = cfi,
             startCharOffsetInSource = nextOffset,
-            blockIndex = blockIndex
+            blockIndex = blockIndex,
+            rubies = slicedRubies
         )
     }
 }
@@ -1470,7 +1833,10 @@ internal fun splitSemanticTextBlockAtOffsetForPagination(
     block: SemanticTextBlock,
     splitOffset: Int
 ): Pair<SemanticTextBlock, SemanticTextBlock>? {
-    val safeSplit = splitOffset.coerceIn(0, block.text.length)
+    // Ruby runs are atomic: never break between a base character and its reading.
+    val rubySafeSplit = adjustPaginationSplitForSemanticRubies(block.rubies, splitOffset)
+        ?: return null
+    val safeSplit = rubySafeSplit.coerceIn(0, block.text.length)
     var firstEnd = safeSplit
     while (firstEnd > 0 && block.text[firstEnd - 1].isWhitespace()) {
         firstEnd--

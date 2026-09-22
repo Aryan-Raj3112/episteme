@@ -94,6 +94,10 @@ fun SharedAiSettingsScreen(
     onSettingsChange: (ReaderAiByokSettings) -> Unit,
     cloudCacheSummary: ReaderTtsCacheSummary? = null,
     onClearCloudTtsCache: () -> Unit = {},
+    // Temporary iOS launch scope (see IosFeatureGating): iOS passes false to
+    // hide cloud TTS model/voice/cache controls while the TTS logic stays.
+    // Defaults stay true so Android behavior remains the benchmark.
+    showCloudTts: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     var currentSettings by remember(settings) { mutableStateOf(settings) }
@@ -217,65 +221,69 @@ fun SharedAiSettingsScreen(
                     updateSettings(currentSettings.copy(recapModel = it))
                 }
             }
-            SharedAiModelSelector(
-                strings.cloudTts,
-                strings.cloudTtsDescription,
-                currentSettings.ttsModel,
-                listOf(ReaderAiModelOption("gemini", GEMINI_CLOUD_TTS_MODEL)),
-                strings,
-            ) { updateSettings(currentSettings.copy(ttsModel = it)) }
-            if (currentSettings.ttsModel == GEMINI_CLOUD_TTS_MODEL_ID) {
-                Text("Cloud TTS voice", style = MaterialTheme.typography.titleMedium)
-                ExposedDropdownMenuBox(
-                    expanded = ttsVoiceMenuExpanded,
-                    onExpandedChange = { ttsVoiceMenuExpanded = it },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    val selectedVoice = ReaderCloudTtsVoices.firstOrNull { it.id == currentSettings.ttsSpeakerId }
-                        ?: ReaderCloudTtsVoices.first()
-                    OutlinedTextField(
-                        value = "${selectedVoice.name} · ${selectedVoice.description}",
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Voice") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = ttsVoiceMenuExpanded) },
-                        modifier = Modifier.fillMaxWidth().menuAnchor(),
-                    )
-                    ExposedDropdownMenu(
+            // Intentional temporary iOS scope: cloud TTS controls are hidden
+            // while the cloud TTS logic and cache handling are kept for later.
+            if (showCloudTts) {
+                SharedAiModelSelector(
+                    strings.cloudTts,
+                    strings.cloudTtsDescription,
+                    currentSettings.ttsModel,
+                    listOf(ReaderAiModelOption("gemini", GEMINI_CLOUD_TTS_MODEL)),
+                    strings,
+                ) { updateSettings(currentSettings.copy(ttsModel = it)) }
+                if (currentSettings.ttsModel == GEMINI_CLOUD_TTS_MODEL_ID) {
+                    Text("Cloud TTS voice", style = MaterialTheme.typography.titleMedium)
+                    ExposedDropdownMenuBox(
                         expanded = ttsVoiceMenuExpanded,
-                        onDismissRequest = { ttsVoiceMenuExpanded = false },
+                        onExpandedChange = { ttsVoiceMenuExpanded = it },
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        ReaderCloudTtsVoices.forEach { voice ->
-                            DropdownMenuItem(
-                                text = {
-                                    Column {
-                                        Text(voice.name)
-                                        Text(voice.description, style = MaterialTheme.typography.bodySmall)
-                                    }
-                                },
-                                onClick = {
-                                    updateSettings(currentSettings.copy(ttsSpeakerId = voice.id))
-                                    ttsVoiceMenuExpanded = false
-                                },
-                                trailingIcon = if (voice.id == currentSettings.ttsSpeakerId) {
-                                    { Icon(Icons.Default.Check, contentDescription = null) }
-                                } else null,
-                            )
+                        val selectedVoice = ReaderCloudTtsVoices.firstOrNull { it.id == currentSettings.ttsSpeakerId }
+                            ?: ReaderCloudTtsVoices.first()
+                        OutlinedTextField(
+                            value = "${selectedVoice.name} · ${selectedVoice.description}",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Voice") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = ttsVoiceMenuExpanded) },
+                            modifier = Modifier.fillMaxWidth().menuAnchor(),
+                        )
+                        ExposedDropdownMenu(
+                            expanded = ttsVoiceMenuExpanded,
+                            onDismissRequest = { ttsVoiceMenuExpanded = false },
+                        ) {
+                            ReaderCloudTtsVoices.forEach { voice ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(voice.name)
+                                            Text(voice.description, style = MaterialTheme.typography.bodySmall)
+                                        }
+                                    },
+                                    onClick = {
+                                        updateSettings(currentSettings.copy(ttsSpeakerId = voice.id))
+                                        ttsVoiceMenuExpanded = false
+                                    },
+                                    trailingIcon = if (voice.id == currentSettings.ttsSpeakerId) {
+                                        { Icon(Icons.Default.Check, contentDescription = null) }
+                                    } else null,
+                                )
+                            }
                         }
                     }
-                }
-                cloudCacheSummary?.let { cache ->
-                    Text(
+                    cloudCacheSummary?.let { cache ->
+                        Text(
+                            if (cache.hasCachedAudio) {
+                                "Cached cloud audio: ${cache.cachedChunkCount} chunks · ${cache.currentVoiceLabel}"
+                            } else {
+                                "No cached cloud audio"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                         if (cache.hasCachedAudio) {
-                            "Cached cloud audio: ${cache.cachedChunkCount} chunks · ${cache.currentVoiceLabel}"
-                        } else {
-                            "No cached cloud audio"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (cache.hasCachedAudio) {
-                        TextButton(onClick = onClearCloudTtsCache) { Text("Clear cached cloud audio") }
+                            TextButton(onClick = onClearCloudTtsCache) { Text("Clear cached cloud audio") }
+                        }
                     }
                 }
             }

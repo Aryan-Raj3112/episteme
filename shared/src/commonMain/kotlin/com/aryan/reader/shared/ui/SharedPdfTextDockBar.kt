@@ -2,7 +2,9 @@ package com.aryan.reader.shared.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -17,6 +19,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.shared.pdf.RichParagraphUiState
+import com.aryan.reader.shared.pdf.SharedPdfRichTextAlign
 
 data class SharedPdfTextDockBarLabels(
     val selectFontFamily: String,
@@ -27,6 +31,12 @@ data class SharedPdfTextDockBarLabels(
     val underline: String,
     val strikethrough: String,
     val insertTextBox: String,
+    val numberedList: String,
+    val bulletedList: String,
+    val textAlignment: String,
+    val alignLeft: String,
+    val alignCenter: String,
+    val alignRight: String,
 )
 
 data class SharedPdfTextDockBarPainters(
@@ -37,6 +47,20 @@ data class SharedPdfTextDockBarPainters(
     val underline: Painter,
     val strikethrough: Painter,
     val textBox: Painter,
+    val numberedList: Painter,
+    val bulletedList: Painter,
+    val alignLeft: Painter,
+    val alignCenter: Painter,
+    val alignRight: Painter,
+)
+
+/** Second-row paragraph controls (lists + alignment). Null hides the row (legacy text boxes). */
+data class SharedPdfTextDockParagraphControls(
+    val state: RichParagraphUiState,
+    val onNumberedListClick: () -> Unit,
+    val onBulletedListClick: () -> Unit,
+    val onAlignmentClick: () -> Unit,
+    val onAlignmentSelected: (SharedPdfRichTextAlign) -> Unit,
 )
 
 @Composable
@@ -63,39 +87,84 @@ fun SharedPdfTextDockBar(
     onInsertTextBox: () -> Unit,
     textColorIndicator: @Composable (Color) -> Unit,
     fontSizePopup: @Composable BoxScope.() -> Unit,
+    paragraphControls: SharedPdfTextDockParagraphControls? = null,
+    alignmentPopup: @Composable BoxScope.() -> Unit = {},
 ) {
     Column(Modifier.fillMaxWidth()) {
         Surface(Modifier.fillMaxWidth().height(48.dp), color = Color(0xFFF0F0F0), shadowElevation = 8.dp) {
-            Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-                SharedPdfTextDockBarCell {
-                    SharedPdfTextDockPainterButton(isFontFamilySelected, painters.fonts, labels.selectFontFamily, onFontFamilyClick)
-                }
-                SharedPdfTextDockBarCell {
-                    fontSizePopup()
-                    Row(Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onFontSizeClick).padding(horizontal = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                        Text(fontSize.toString(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = Color.Black)
-                        Icon(Icons.Default.KeyboardArrowDown, labels.selectFontSize, tint = Color.Gray, modifier = Modifier.size(16.dp))
+            Box(Modifier.fillMaxSize()) {
+                alignmentPopup()
+                Row(
+                    Modifier.fillMaxSize().horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    SharedPdfTextDockBarCell {
+                        SharedPdfTextDockPainterButton(isFontFamilySelected, painters.fonts, labels.selectFontFamily, onFontFamilyClick)
                     }
-                }
-                SharedPdfTextDockBarCell {
-                    Box(Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).clickable(onClick = onTextColorClick), contentAlignment = Alignment.Center) {
-                        textColorIndicator(textColor)
+                    SharedPdfTextDockBarCell {
+                        fontSizePopup()
+                        Row(Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onFontSizeClick).padding(horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                            Text(fontSize.toString(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = Color.Black)
+                            Icon(Icons.Default.KeyboardArrowDown, labels.selectFontSize, tint = Color.Gray, modifier = Modifier.size(16.dp))
+                        }
                     }
-                }
-                SharedPdfTextDockBarCell {
-                    Box(Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).clickable(onClick = onBackgroundColorClick), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(0.dp, Alignment.CenterVertically)) {
-                            Icon(painters.background, labels.fontBackground, Modifier.size(17.dp), tint = Color.Black)
-                            Box(Modifier.width(16.dp).height(2.dp).background(backgroundColor))
+                    SharedPdfTextDockBarCell {
+                        Box(Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).clickable(onClick = onTextColorClick), contentAlignment = Alignment.Center) {
+                            textColorIndicator(textColor)
+                        }
+                    }
+                    SharedPdfTextDockBarCell {
+                        Box(Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).clickable(onClick = onBackgroundColorClick), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(0.dp, Alignment.CenterVertically)) {
+                                Icon(painters.background, labels.fontBackground, Modifier.size(17.dp), tint = Color.Black)
+                                Box(Modifier.width(16.dp).height(2.dp).background(backgroundColor))
+                            }
+                        }
+                    }
+                    SharedPdfTextDockBarCell { SharedPdfTextDockPainterButton(isBold, painters.bold, labels.bold, onBoldClick) }
+                    SharedPdfTextDockBarCell { SharedPdfTextDockPainterButton(isItalic, painters.italic, labels.italic, onItalicClick) }
+                    SharedPdfTextDockBarCell { SharedPdfTextDockPainterButton(isUnderline, painters.underline, labels.underline, onUnderlineClick) }
+                    SharedPdfTextDockBarCell { SharedPdfTextDockPainterButton(isStrikethrough, painters.strikethrough, labels.strikethrough, onStrikethroughClick) }
+                    SharedPdfTextDockBarCell { SharedPdfTextDockPainterButton(false, painters.textBox, labels.insertTextBox, onInsertTextBox) }
+                    if (paragraphControls != null) {
+                        SharedPdfTextDockBarCell {
+                            SharedPdfTextDockPainterButton(
+                                paragraphControls.state.isNumbered,
+                                painters.numberedList,
+                                labels.numberedList,
+                                paragraphControls.onNumberedListClick,
+                            )
+                        }
+                        SharedPdfTextDockBarCell {
+                            SharedPdfTextDockPainterButton(
+                                paragraphControls.state.isBulleted,
+                                painters.bulletedList,
+                                labels.bulletedList,
+                                paragraphControls.onBulletedListClick,
+                            )
+                        }
+                        Box(
+                            Modifier.width(64.dp).fillMaxHeight(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            val currentAlignPainter = when (paragraphControls.state.alignment) {
+                                SharedPdfRichTextAlign.CENTER -> painters.alignCenter
+                                SharedPdfRichTextAlign.RIGHT -> painters.alignRight
+                                SharedPdfRichTextAlign.LEFT -> painters.alignLeft
+                            }
+                            Row(
+                                Modifier.clip(RoundedCornerShape(8.dp))
+                                    .clickable(onClick = paragraphControls.onAlignmentClick)
+                                    .padding(horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(currentAlignPainter, labels.textAlignment, tint = Color.Black.copy(alpha = .8f), modifier = Modifier.size(20.dp))
+                                Icon(Icons.Default.KeyboardArrowDown, labels.textAlignment, tint = Color.Gray, modifier = Modifier.size(16.dp))
+                            }
                         }
                     }
                 }
-                SharedPdfTextDockBarCell { SharedPdfTextDockPainterButton(isBold, painters.bold, labels.bold, onBoldClick) }
-                SharedPdfTextDockBarCell { SharedPdfTextDockPainterButton(isItalic, painters.italic, labels.italic, onItalicClick) }
-                SharedPdfTextDockBarCell { SharedPdfTextDockPainterButton(isUnderline, painters.underline, labels.underline, onUnderlineClick) }
-                SharedPdfTextDockBarCell { SharedPdfTextDockPainterButton(isStrikethrough, painters.strikethrough, labels.strikethrough, onStrikethroughClick) }
-                SharedPdfTextDockBarCell { SharedPdfTextDockPainterButton(false, painters.textBox, labels.insertTextBox, onInsertTextBox) }
             }
         }
         Spacer(Modifier.height(bottomDockPadding))
@@ -103,8 +172,8 @@ fun SharedPdfTextDockBar(
 }
 
 @Composable
-private fun RowScope.SharedPdfTextDockBarCell(content: @Composable BoxScope.() -> Unit) {
-    Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center, content = content)
+private fun SharedPdfTextDockBarCell(content: @Composable BoxScope.() -> Unit) {
+    Box(Modifier.width(48.dp).fillMaxHeight(), contentAlignment = Alignment.Center, content = content)
 }
 
 @Composable

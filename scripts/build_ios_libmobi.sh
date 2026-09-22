@@ -15,7 +15,7 @@ developer_directory="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer
 sdk_path="$(DEVELOPER_DIR="$developer_directory" xcrun --sdk "$sdk_name" --show-sdk-path)"
 
 mkdir -p "$output_directory/objects"
-rm -f "$output_directory/objects/"*.o "$output_directory/libmobi.dylib"
+rm -f "$output_directory/objects/"*.o "$output_directory/libmobi.dylib" "$output_directory/libmobi.a"
 
 deployment_flag="-miphoneos-version-min=16.0"
 if [ "$sdk_name" = "iphonesimulator" ]; then
@@ -51,14 +51,11 @@ DEVELOPER_DIR="$developer_directory" xcrun --sdk "$sdk_name" clang \
   -c "$bridge_directory/mobi_reader_bridge.c" \
   -o "$output_directory/objects/mobi_reader_bridge.o"
 
-DEVELOPER_DIR="$developer_directory" xcrun --sdk "$sdk_name" clang \
-  -arch "$arch_name" \
-  -isysroot "$sdk_path" \
-  "$deployment_flag" \
-  -dynamiclib \
-  -Wl,-install_name,@rpath/libmobi.dylib \
-  -Wl,-current_version,0.12 \
-  -Wl,-compatibility_version,0.12 \
-  -o "$output_directory/libmobi.dylib" \
-  "$output_directory/objects/"*.o \
-  -lz
+# Static archive: libmobi is linked into the static ReaderShared framework,
+# so the final app needs nothing embedded. A loose .dylib in
+# Payload/*.app/Frameworks is rejected by App Store Connect (ITMS-90426),
+# so this script must not produce one.
+DEVELOPER_DIR="$developer_directory" xcrun --sdk "$sdk_name" libtool \
+  -static \
+  -o "$output_directory/libmobi.a" \
+  "$output_directory/objects/"*.o

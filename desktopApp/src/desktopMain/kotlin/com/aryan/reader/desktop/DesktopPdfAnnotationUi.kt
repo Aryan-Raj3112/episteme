@@ -907,6 +907,7 @@ private fun PdfInkTool.desktopLabel(): String {
         PdfInkTool.TEXT -> readerString("desktop_text_note", "Text note")
         PdfInkTool.ERASER -> readerString("content_desc_eraser", "Eraser")
         PdfInkTool.NONE -> readerString("label_none", "None")
+        PdfInkTool.SELECT -> readerString("content_desc_select", "Select")
     }
 }
 

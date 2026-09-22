@@ -314,6 +314,21 @@ internal fun String.sharedMobileEpubHighlightIdOrNull(): String? {
         ?.takeIf(String::isNotBlank)
 }
 
+/** Common tag for highlight-shift diagnostics across WebView JS and native. */
+internal const val SharedMobileEpubHighlightShiftTag = "HIGHLIGHT_SHIFT"
+
+/** Bridge method posted by readerHighlightShiftLog in the shared document. */
+internal const val SharedMobileEpubHighlightShiftBridgeMethod = "readerHighlightShiftLog"
+
+internal fun String.sharedMobileEpubHighlightShiftMessageOrNull(): String? {
+    return runCatching { SharedMobileEpubJson.parseToJsonElement(this).jsonObject }
+        .getOrNull()
+        ?.get("message")
+        ?.jsonPrimitive
+        ?.contentOrNull
+        ?.takeIf(String::isNotBlank)
+}
+
 /**
  * Android parity (ChapterWebView restoreHighlights): the authoritative highlight list
  * is pushed into the WebView via window.readerApplyHighlights instead of reloading the
@@ -570,16 +585,21 @@ internal fun sharedMobileEpubNavigationScript(
         locator.cfi?.let { put("cfi", it) }
     }
     val fragmentJson = fragment?.let(::JsonPrimitive)?.toString() ?: "null"
-    val chunkInjection = if (targetChunkIndex != null && targetChunkHtml != null) {
+    // Small chunks stay inline for instant landing. Large chunks go through the
+    // chunk bridge (bounded evaluateJavaScript payloads); the script polls for
+    // the target after requesting so deep links into big chapters still land.
+    val chunkInjection = if (targetChunkIndex != null && targetChunkHtml != null &&
+        targetChunkHtml.length <= ReaderHtmlDocumentBuilder.MaxInlineVirtualChunkChars
+    ) {
         "if (window.readerVirtualization) window.readerVirtualization.provideChunk($targetChunkIndex, ${JsonPrimitive(targetChunkHtml)});"
+    } else if (targetChunkIndex != null && targetChunkHtml != null) {
+        "if (window.readerVirtualization && window.readerVirtualization.requestChunk) window.readerVirtualization.requestChunk($targetChunkIndex);"
     } else {
         ""
     }
-    return """
-        (function () {
-          var locator = $locatorJson;
-          var fragment = $fragmentJson;
-          $chunkInjection
+    val needsChunkWait = targetChunkIndex != null && targetChunkHtml != null &&
+        targetChunkHtml.length > ReaderHtmlDocumentBuilder.MaxInlineVirtualChunkChars
+    val scrollBody = """
           if (fragment) {
             var chapter = null;
             if (locator.chapterIndex !== undefined && locator.chapterIndex !== null) {
@@ -592,12 +612,47 @@ internal fun sharedMobileEpubNavigationScript(
             }
             if (target) {
               target.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'auto' });
-              return;
+              return true;
             }
           }
-          if (window.readerScrollToLocator) window.readerScrollToLocator(locator, { source: 'ios_mobile' });
-        })();
+          if (window.readerScrollToLocator) {
+            try {
+              var handled = window.readerScrollToLocator(locator, { source: 'ios_mobile' });
+              if (handled !== false) return true;
+            } catch (_) {}
+          }
+          return false;
     """.trimIndent()
+    return if (needsChunkWait) {
+        """
+        (function () {
+          var locator = $locatorJson;
+          var fragment = $fragmentJson;
+          $chunkInjection
+          function attempt() {
+        $scrollBody
+          }
+          if (attempt()) return;
+          var tries = 0;
+          var timer = window.setInterval(function () {
+            tries++;
+            try {
+              if (attempt()) { window.clearInterval(timer); return; }
+            } catch (_) {}
+            if (tries >= 40) window.clearInterval(timer);
+          }, 125);
+        })();
+        """.trimIndent()
+    } else {
+        """
+        (function () {
+          var locator = $locatorJson;
+          var fragment = $fragmentJson;
+          $chunkInjection
+        $scrollBody
+        })();
+        """.trimIndent()
+    }
 }
 
 internal fun sharedMobileEpubTtsNavigationScript(locator: ReaderLocator?): String {
@@ -615,16 +670,21 @@ internal fun sharedMobileEpubTtsNavigationScript(locator: ReaderLocator?): Strin
 }
 
 internal fun sharedMobileEpubSearchNavigationScript(result: SharedMobileEpubSearchResult, query: String, chunkHtml: String?): String {
-    val injection = chunkHtml?.let { "if(window.readerVirtualization)window.readerVirtualization.provideChunk(${result.chunkIndex},${JsonPrimitive(it)});" }.orEmpty()
-    return """
-        (function(){
-          $injection
+    val injection = when {
+        chunkHtml == null -> ""
+        chunkHtml.length <= ReaderHtmlDocumentBuilder.MaxInlineVirtualChunkChars ->
+            "if(window.readerVirtualization)window.readerVirtualization.provideChunk(${result.chunkIndex},${JsonPrimitive(chunkHtml)});"
+        else ->
+            "if(window.readerVirtualization&&window.readerVirtualization.requestChunk)window.readerVirtualization.requestChunk(${result.chunkIndex});"
+    }
+    val needsWait = chunkHtml != null && chunkHtml.length > ReaderHtmlDocumentBuilder.MaxInlineVirtualChunkChars
+    val highlightBody = """
           var chunk=document.querySelector('[data-reader-chunk-index="${result.chunkIndex}"]');
           var query=${JsonPrimitive(query)};
           document.querySelectorAll('.reader-ios-search-hit').forEach(function(hit){
             var parent=hit.parentNode; while(hit.firstChild)parent.insertBefore(hit.firstChild,hit); parent.removeChild(hit); parent.normalize();
           });
-          if(!chunk)return;
+          if(!chunk||!chunk.innerHTML.trim())return false;
           var walker=document.createTreeWalker(chunk,NodeFilter.SHOW_TEXT);
           var node,occurrence=0,target=null,needle=query.toLocaleLowerCase();
           while((node=walker.nextNode())&&!target){
@@ -643,8 +703,27 @@ internal fun sharedMobileEpubSearchNavigationScript(result: SharedMobileEpubSear
             }
           }
           (target||chunk).scrollIntoView({block:'center',behavior:'auto'});
-        })();
+          return true;
     """.trimIndent()
+    return if (needsWait) {
+        """
+        (function(){
+          $injection
+          function attempt(){
+        $highlightBody
+          }
+          if(attempt())return;
+          var tries=0;var timer=window.setInterval(function(){tries++;try{if(attempt()){window.clearInterval(timer);return;}}catch(_){}if(tries>=40)window.clearInterval(timer);},125);
+        })();
+        """.trimIndent()
+    } else {
+        """
+        (function(){
+          $injection
+        $highlightBody
+        })();
+        """.trimIndent()
+    }
 }
 
 

@@ -78,7 +78,7 @@ kotlin {
                 project.file("src/nativeInterop/cinterop/mobi_reader_bridge.h")
             )
             inputs.file(rootProject.file("scripts/build_ios_libmobi.sh"))
-            outputs.file(outputDirectory.resolve("libmobi.dylib"))
+            outputs.file(outputDirectory.resolve("libmobi.a"))
             commandLine(
                 "sh",
                 rootProject.file("scripts/build_ios_libmobi.sh").absolutePath,
@@ -118,6 +118,13 @@ kotlin {
                         "-I${rootProject.file("app/src/main/cpp/libmobi/src").absolutePath}",
                         "-I${project.file("src/nativeInterop/cinterop").absolutePath}"
                     )
+                    // Static link (same pattern as libarchive): the archive is
+                    // merged into the static ReaderShared framework, so Xcode
+                    // must not link or embed any libmobi dylib.
+                    extraOpts(
+                        "-libraryPath", mobiRoot.get().asFile.absolutePath,
+                        "-staticLibrary", "libmobi.a"
+                    )
                     tasks.named(interopProcessingTaskName).configure {
                         dependsOn(buildMobiTask)
                     }
@@ -141,9 +148,7 @@ kotlin {
             binaryOption("bundleId", "com.aryan.reader.shared")
             linkerOpts(
                 "-L${pdfiumRoot.dir("lib").asFile.absolutePath}",
-                "-lpdfium",
-                "-L${mobiRoot.get().asFile.absolutePath}",
-                "-lmobi"
+                "-lpdfium"
             )
             isStatic = true
         }

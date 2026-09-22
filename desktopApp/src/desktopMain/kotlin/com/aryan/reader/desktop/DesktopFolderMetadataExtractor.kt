@@ -4,9 +4,9 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.SharedFileCapabilities
-import com.aryan.reader.shared.reader.MobileEpubMetaElement
 import com.aryan.reader.shared.reader.SharedBookLoadSemanticMode
 import com.aryan.reader.shared.reader.SharedJvmBookLoader
+import com.aryan.reader.shared.reader.parseMobileOpfMetaElements
 import com.aryan.reader.shared.reader.resolveMobileEpubSeries
 import java.awt.Color
 import java.awt.Font
@@ -43,8 +43,7 @@ object DesktopFolderMetadataExtractor {
     private const val MAX_TEXT_SOURCE_CHARS = 256 * 1024
     private const val MAX_PREVIEW_TEXT_CHARS = 2_400
 
-    private val META_CLOSE_TAG_REGEX = Regex("""</\s*meta\s*>""", RegexOption.IGNORE_CASE)
-    private val TAG_REGEX = Regex("<[^>]*>")
+    private val OPF_ITEM_TAG_REGEX = Regex("""<(?:[\w.-]+:)?item\s+[^>]*>""", RegexOption.IGNORE_CASE)
 
     private val textMetadataTypes = setOf(
         FileType.PDF,
@@ -262,7 +261,7 @@ object DesktopFolderMetadataExtractor {
                     }
                 }
 
-            val series = resolveMobileEpubSeries(parseOpfMetaElements(opf))
+            val series = resolveMobileEpubSeries(parseMobileOpfMetaElements(opf))
             return ExtractedBookMetadata(
                 title = opf.tagText("title"),
                 author = opf.tagText("creator"),
@@ -274,38 +273,6 @@ object DesktopFolderMetadataExtractor {
         }
     }
 
-    /**
-     * Extracts every OPF `<meta>` element so the shared resolver can read both the legacy
-     * Calibre name/content form and the EPUB 3 belongs-to-collection/refines form.
-     */
-    private fun parseOpfMetaElements(opf: String): List<MobileEpubMetaElement> {
-        return Regex("""<meta\s+[^>]*>""", RegexOption.IGNORE_CASE)
-            .findAll(opf)
-            .mapNotNull { match ->
-                val openTag = match.value
-                val text = if (openTag.endsWith("/>")) {
-                    null
-                } else {
-                    META_CLOSE_TAG_REGEX.find(opf, startIndex = match.range.last + 1)?.let { close ->
-                        opf.substring(match.range.last + 1, close.range.first)
-                            .replace(TAG_REGEX, " ")
-                            .decodeEntities()
-                            .trim()
-                            .takeIf { it.isNotEmpty() }
-                    }
-                }
-                MobileEpubMetaElement(
-                    id = openTag.attr("id").decodedAttrValue(),
-                    name = openTag.attr("name").decodedAttrValue(),
-                    property = openTag.attr("property").decodedAttrValue(),
-                    content = openTag.attr("content").decodedAttrValue(),
-                    text = text,
-                    refines = openTag.attr("refines").decodedAttrValue()
-                )
-            }
-            .toList()
-    }
-
     private fun parseEpubRootfilePath(containerXml: String): String? {
         return Regex("""<rootfile\b[^>]*\bfull-path=["']([^"']+)["'][^>]*>""", RegexOption.IGNORE_CASE)
             .find(containerXml)
@@ -315,7 +282,7 @@ object DesktopFolderMetadataExtractor {
     }
 
     private fun parseEpubManifest(opf: String): List<EpubManifestItem> {
-        return Regex("""<item\s+[^>]*>""", RegexOption.IGNORE_CASE)
+        return OPF_ITEM_TAG_REGEX
             .findAll(opf)
             .mapNotNull { match ->
                 val item = match.value
@@ -336,11 +303,9 @@ object DesktopFolderMetadataExtractor {
     }
 
     private fun findEpubCover(opf: String, manifest: List<EpubManifestItem>): EpubManifestItem? {
-        val coverId = Regex("""<meta\s+[^>]*>""", RegexOption.IGNORE_CASE)
-            .findAll(opf)
-            .firstOrNull { it.value.attr("name").equals("cover", ignoreCase = true) }
-            ?.value
-            ?.attr("content")
+        val coverId = parseMobileOpfMetaElements(opf)
+            .firstOrNull { it.name.equals("cover", ignoreCase = true) }
+            ?.content
             ?.takeIf { it.isNotBlank() }
         return manifest.firstOrNull { it.id == coverId }
             ?: manifest.firstOrNull { it.properties.split(Regex("\\s+")).any { property -> property == "cover-image" } }
@@ -692,8 +657,6 @@ object DesktopFolderMetadataExtractor {
             ?.trim()
             .orEmpty()
     }
-
-    private fun String.decodedAttrValue(): String? = decodeEntities().trim().takeIf { it.isNotEmpty() }
 
     private fun String.decodeEntities(): String {
         return replace("&nbsp;", " ")

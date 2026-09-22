@@ -1,13 +1,9 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.addPathNodes
-import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.unit.dp
 
 object SharedReaderIcons {
@@ -41,18 +37,14 @@ object SharedReaderIcons {
             viewportWidth = 960.0f,
             viewportHeight = 960.0f
         ).apply {
-            path(
-                fill = SolidColor(Color(0xFF000000)),
-                fillAlpha = 1.0f,
-                stroke = null,
-                strokeAlpha = 1.0f,
-                strokeLineWidth = 1.0f,
-                strokeLineCap = StrokeCap.Butt,
-                strokeLineJoin = StrokeJoin.Miter,
-                strokeLineMiter = 4.0f,
-                pathFillType = PathFillType.NonZero
-            ) {
-                addPathNodes(pathData)
-            }
+            // Android benchmark parity: use the same PathParser + addPath pattern
+            // as the working Material icons (FilledIcons.materialIcon). The previous
+            // path() + addPathNodes() variant rendered nothing on iOS while the
+            // Material Menu/Search icons (PathParser) stayed visible, leaving only
+            // hamburger + search visible in the bottom toolbar.
+            addPath(
+                pathData = PathParser().parsePathString(pathData).toNodes(),
+                fill = SolidColor(Color.Black)
+            )
         }.build()
 }

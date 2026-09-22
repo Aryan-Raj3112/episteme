@@ -83,6 +83,17 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `vertical documents cover the viewport and clear the home indicator`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+        )
+
+        assertTrue(html.contains("viewport-fit=cover"))
+        assertTrue(html.contains("env(safe-area-inset-bottom, 0px)"))
+    }
+
+    @Test
     fun `plain text fallback preserves txt line breaks and spacing`() {
         val text = """
             [ID]          72694621
@@ -244,7 +255,7 @@ class ReaderHtmlDocumentBuilderTest {
             page = ReaderPage(0, 0, "One", "alpha beta", 0, 10),
             settings = ReaderSettings()
         )
-        val localWrapIndex = html.indexOf("wrapRangeTextSegments(localRange")
+        val localWrapIndex = html.indexOf("paintRangeWithUserHighlightRegistry(localRange")
         val bridgeSendIndex = html.indexOf("sendReaderHighlightCreated(payload, 0)")
 
         assertTrue(html.contains("function sendReaderHighlightCreated(payload, attempt)"))
@@ -269,7 +280,7 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("function applyHighlightTextFallback(highlight)"))
         assertTrue(html.contains("applyHighlightTextFallback(highlight);"))
         assertTrue(html.contains("normalizedRangeForText(content, expectedText, false)"))
-        assertTrue(html.contains("wrapRangeTextSegments(range, function ()"))
+        assertTrue(html.contains("paintRangeWithUserHighlightRegistry(range, paintParamsForHighlight("))
         assertFalse(html.contains("function paintUserHighlightRange("))
         assertFalse(html.contains("reader-user-highlight-layer"))
         assertFalse(html.contains("reader-user-highlight-rect"))
@@ -563,10 +574,10 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(
             Regex(
                 "html\\.reader-vertical-root \\{\\s*" +
-                    "width: 100%;\\s*" +
-                    "max-width: 100%;\\s*" +
+                    "width: 100% !important;\\s*" +
+                    "max-width: 100% !important;\\s*" +
                     "min-width: 0;\\s*" +
-                    "overflow-x: hidden;\\s*" +
+                    "overflow-x: hidden !important;\\s*" +
                     "overflow-y: scroll;\\s*" +
                     "scrollbar-width: thin;",
             ).containsMatchIn(html),
@@ -574,6 +585,14 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("html.reader-vertical-root::-webkit-scrollbar"))
         assertFalse(html.contains("html.reader-vertical-root::-webkit-scrollbar,\n                body.reader-vertical::-webkit-scrollbar {\n                  width: 0;"))
         assertTrue(html.contains("scrollbar-gutter: stable;"))
+        // Android benchmark parity: touch WebViews (iOS WKWebView + Android
+        // WebView) must use overlay scrollbars with zero reservation so side
+        // gaps stay exactly --reader-margin-x. Desktop keeps stable gutter.
+        assertTrue(html.contains("@media (hover: none)"))
+        assertTrue(html.contains("scrollbar-gutter: auto;"))
+        // Body box must beat publication CSS like Android's !important padding.
+        assertTrue(html.contains("margin: 0 !important;"))
+        assertTrue(html.contains("padding: var(--reader-margin-y) var(--reader-margin-x) !important;"))
     }
 
     @Test
@@ -652,18 +671,18 @@ class ReaderHtmlDocumentBuilderTest {
         )
         val verticalBodyCss = Regex(
             "body\\.reader-vertical \\{\\s*" +
-                "width: 100%;\\s*" +
-                "max-width: 100%;\\s*" +
+                "width: 100% !important;\\s*" +
+                "max-width: 100% !important;\\s*" +
                 "height: auto !important;\\s*" +
                 "min-height: 100vh;\\s*" +
                 "min-height: 100dvh;\\s*" +
                 "min-width: 0;\\s*" +
-                "overflow-x: hidden;\\s*" +
+                "overflow-x: hidden !important;\\s*" +
                 "overflow-y: auto;\\s*" +
-                "padding: var\\(--reader-vertical-margin-y\\) 0;"
+                "padding: var\\(--reader-vertical-margin-y\\) 0 !important;"
         )
 
-        assertTrue(html.contains("--reader-vertical-margin-y: 16px;"))
+        assertTrue(html.contains("--reader-vertical-margin-y: 5px;"))
         assertTrue(html.contains("--reader-vertical-content-width: 92ch;"))
         assertTrue(html.contains("--reader-vertical-page-width: max(0px, calc(100% - (var(--reader-margin-x) * 2)));"))
         assertFalse(html.contains("body.reader-vertical .chapter,"))
@@ -1005,6 +1024,11 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("""id="reader-selection-start-handle""""))
         assertTrue(html.contains("""id="reader-selection-end-handle""""))
         assertTrue(html.contains("beginSelectionHandleDrag('start'"))
+        // iOS WKWebView draws native handles; the shared script must leave
+        // handle display/drag to WebKit there while keeping custom handles
+        // for Android/desktop WebViews.
+        assertTrue(html.contains("readerUsesNativeSelectionHandles"))
+        assertTrue(html.contains("window.readerIosNativeSelectionHandles === true"))
         assertTrue(html.contains("requestSelectionHandleUpdate(event)"))
         assertTrue(html.contains("document.addEventListener('selectstart'"))
         assertTrue(html.contains("EPUB_SELECTION_DEBUG"))
@@ -1047,7 +1071,7 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
-    fun `annotation script selects style, sends styleId payloads and uses trimmed range`() {
+    fun `annotation script selects style and sends styleId payloads and uses trimmed range`() {
         val script = readerHtmlAnnotationScript()
 
         assertTrue(script.contains("if (action === 'select-style')"))
@@ -1137,7 +1161,7 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("var cfi = readerHighlightCfiForRange(firstSegment, lastSegment, chapterIndex, startOffset, endOffset);"))
         assertTrue(html.contains("return startPoint + '|' + endPoint;"))
         assertTrue(html.contains("payloads.forEach(function (payload)"))
-        assertTrue(html.contains("wrapRangeTextSegments(segment.range"))
+        assertTrue(html.contains("paintRangeWithUserHighlightRegistry(segment.range"))
     }
 
     @Test
@@ -1534,6 +1558,265 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains(".reader-virtual-chunk"))
         assertTrue(html.contains("contain: inline-size"))
         assertTrue(html.contains(".reader-content :where(*)"))
+    }
+
+    @Test
+    fun `contrast fixup mirrors pagination thresholds and restores author styles`() {
+        val script = readerHtmlThemeFixupScript()
+
+        assertTrue(script.contains("window.readerAdjustAuthorColorsForContrast"))
+        // Pagination parity: neutral low-contrast text -> theme text, light bgs cleared on dark.
+        assertTrue(script.contains("4.5"))
+        assertTrue(script.contains("0.2"))
+        assertTrue(script.contains("0.5"))
+        // Restore-on-theme-switch so author inline styles survive toggling.
+        assertTrue(script.contains("data-reader-orig-color"))
+        assertTrue(script.contains("data-reader-orig-bg"))
+        // Reader-owned and saturated content must be left alone.
+        assertTrue(script.contains("a[href]"))
+        assertTrue(script.contains("user-highlight"))
+        // Virtualized chunks arriving after theme application are re-fixed.
+        assertTrue(script.contains("__readerLastContrastArgs"))
+        assertTrue(script.contains("MutationObserver"))
+    }
+
+    @Test
+    fun `appearance update script reapplies author contrast fixup`() {
+        val darkScript = ReaderHtmlDocumentBuilder.appearanceUpdateScript(
+            settings = ReaderSettings(darkMode = true)
+        )
+        assertTrue(darkScript.contains("window.readerAdjustAuthorColorsForContrast"))
+        assertTrue(darkScript.contains("true"))
+        assertTrue(darkScript.contains("#171a17"))
+        assertTrue(darkScript.contains("#e7e3d8"))
+
+        val lightScript = ReaderHtmlDocumentBuilder.appearanceUpdateScript(
+            settings = ReaderSettings(darkMode = false)
+        )
+        assertTrue(lightScript.contains("window.readerAdjustAuthorColorsForContrast"))
+        assertTrue(lightScript.contains("false"))
+    }
+
+    @Test
+    fun `vertical document includes contrast fixup for verbatim book css`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+        )
+
+        assertTrue(html.contains("window.readerAdjustAuthorColorsForContrast"))
+        assertTrue(html.contains("data-reader-orig-color"))
+    }
+
+    @Test
+    fun `section wrapped chapter chunks by inner nodes instead of one giant chunk`() {
+        val inner = (0 until 45).joinToString("") { index -> "<p id=\"p$index\">Paragraph $index</p>" }
+        val book = SharedEpubBook(
+            id = "wrapped-book",
+            fileName = "wrapped.epub",
+            title = "Wrapped",
+            chapters = listOf(
+                SharedEpubChapter(
+                    "chapter",
+                    "Chapter",
+                    "Paragraph",
+                    htmlContent = "<section id=\"the-path-to-rome\">$inner</section>"
+                )
+            )
+        )
+
+        val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(book, chapterIndex = 0)
+
+        assertEquals(3, chunks.size)
+        assertTrue(chunks[0].contains("id=\"p0\""))
+        assertTrue(chunks[2].contains("id=\"p44\""))
+        assertFalse(chunks[0].contains("<section"))
+    }
+
+    @Test
+    fun `small single container stays intact`() {
+        val inner = (0 until 3).joinToString("") { index -> "<p id=\"q$index\">Q $index</p>" }
+        val book = SharedEpubBook(
+            id = "small-book",
+            fileName = "small.epub",
+            title = "Small",
+            chapters = listOf(
+                SharedEpubChapter(
+                    "chapter",
+                    "Chapter",
+                    "Q",
+                    htmlContent = "<div class=\"wrapper\">$inner</div>"
+                )
+            )
+        )
+
+        val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(book, chapterIndex = 0)
+
+        assertEquals(1, chunks.size)
+        assertTrue(chunks[0].contains("<div"))
+    }
+
+    @Test
+    fun `huge single node chapter splits into bounded chunks`() {
+        val bigText = buildString {
+            repeat(30_000) { append("word ") }
+        }
+        val body = "<pre>$bigText</pre>"
+        val book = SharedEpubBook(
+            id = "big-book",
+            fileName = "big.epub",
+            title = "Big",
+            chapters = listOf(SharedEpubChapter("chapter", "Chapter", bigText, htmlContent = body))
+        )
+
+        val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(book, chapterIndex = 0)
+
+        assertTrue(chunks.size > 1, "Single huge <pre> must split, got ${chunks.size}")
+        assertTrue(
+            chunks.all { it.length <= ReaderHtmlDocumentBuilder.MaxVirtualReaderChunkChars },
+            "All chunks bounded, sizes=${chunks.map { it.length }}"
+        )
+        assertTrue(chunks.all { it.contains("<pre") && it.contains("</pre>") })
+    }
+
+    @Test
+    fun `distant illustration chunks reserve image space in placeholders`() {
+        val textChunks = (0 until 4).map { index -> "<p>Paragraph $index</p>" }
+        val figureChunk = """<figure><img src="../images/a.png" alt="A"></figure>"""
+        val chunks = textChunks + figureChunk
+        val book = SharedEpubBook(
+            id = "illustrated-book",
+            fileName = "illustrated.epub",
+            title = "Illustrated",
+            chapters = listOf(SharedEpubChapter("chapter", "Chapter", "Paragraph", htmlContent = "<p>x</p>"))
+        )
+
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = book,
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+            renderedChapterRange = 0..0,
+            virtualizedChapterChunks = mapOf(0 to chunks),
+            virtualizedInitialChunkIndex = 0
+        )
+
+        // One figure node (72px) plus one illustration allowance (280px).
+        assertTrue(html.contains("data-reader-chunk-index=\"4\" style=\"height: 352px\""))
+        assertTrue(html.contains("data-reader-chunk-index=\"2\" style=\"height: 72px\""))
+    }
+
+    @Test
+    fun `virtualization bridge retries when native bridge arrives late`() {
+        val body = (0 until 45).joinToString("") { index -> "<p id=\"p$index\">Paragraph $index</p>" }
+        val book = SharedEpubBook(
+            id = "virtual-book",
+            fileName = "virtual.epub",
+            title = "Virtual",
+            chapters = listOf(SharedEpubChapter("chapter", "Chapter", "Paragraph", htmlContent = body))
+        )
+        val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(book, chapterIndex = 0)
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = book,
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+            renderedChapterRange = 0..0,
+            virtualizedChapterChunks = mapOf(0 to chunks),
+        )
+
+        assertTrue(html.contains("requestChunk"))
+        assertTrue(html.contains("bridgeRetries"))
+        assertTrue(html.contains("request(index);"))
+    }
+
+    @Test
+    fun `highlight markers are layout neutral so creating one cannot shift content`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+        )
+
+        // Publication CSS is injected verbatim; highlight spans must pin every
+        // box/layout property or a `span { padding: ... }` rule newly matches
+        // the inserted marker (iOS "padding gets added and content shifts").
+        assertTrue(html.contains("span[class*=\"user-highlight-\"]"))
+        assertTrue(html.contains("display: inline !important;"))
+        assertTrue(html.contains("padding: 0 !important;"))
+        assertTrue(html.contains("margin: 0 !important;"))
+        assertTrue(html.contains("border: 0 !important;"))
+        assertTrue(html.contains("vertical-align: baseline !important;"))
+        assertTrue(html.contains("line-height: inherit !important;"))
+        assertTrue(html.contains("float: none !important;"))
+        assertTrue(html.contains("position: static !important;"))
+        // Paint-only properties must remain: background per palette, radius kept.
+        assertTrue(html.contains("border-radius: 2px;"))
+        assertTrue(html.contains(".user-highlight-yellow"))
+    }
+
+    @Test
+    fun `documents pin text size adjust so ios does not reflow on highlight dom mutation`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+        )
+
+        // Android epub_reader.js pins this; WKWebView otherwise auto-inflates
+        // text and reflows when highlight spans are inserted.
+        assertTrue(html.contains("-webkit-text-size-adjust: 100%;"))
+        assertTrue(html.contains("text-size-adjust: 100%;"))
+    }
+
+    @Test
+    fun `highlight shift diagnostics share one tag and bridge method`() {
+        val navigation = readerHtmlNavigationScript("[]")
+        assertTrue(navigation.contains("HIGHLIGHT_SHIFT"))
+        assertTrue(navigation.contains("readerHighlightShiftLog"))
+        assertTrue(navigation.contains("readerHighlightShiftDocSnapshot"))
+        assertTrue(navigation.contains("readerHighlightShiftBlockSnapshot"))
+        assertTrue(navigation.contains("readerHighlightShiftMarkerSnapshot"))
+        assertTrue(navigation.contains("readerHighlightShiftRangeRects"))
+        assertTrue(navigation.contains("parts="))
+        assertTrue(navigation.contains("text-align-last"))
+    }
+
+    @Test
+    fun `user highlights paint without dom mutation when registry supported`() {
+        val annotation = readerHtmlAnnotationScript()
+        assertTrue(annotation.contains("window.CSS.highlights"))
+        assertTrue(annotation.contains("readerUserHighlightPaintName"))
+        assertTrue(annotation.contains("paintRangeWithUserHighlightRegistry"))
+        assertTrue(annotation.contains("reconcileUserHighlightRegistry"))
+        assertTrue(annotation.contains("adoptServerRenderedHighlightMarkers"))
+        assertTrue(annotation.contains("new Highlight()"))
+        assertTrue(annotation.contains("::highlight("))
+        // DOM-span path stays as fallback for engines without the API.
+        assertTrue(annotation.contains("function wrapRangeTextSegments"))
+    }
+
+    @Test
+    fun `registry highlight taps resolve through hit testing`() {
+        val selection = readerHtmlSelectionScript()
+        assertTrue(selection.contains("userHighlightIdFromPoint"))
+        assertTrue(selection.contains("caretRangeFromPoint"))
+    }
+
+    @Test
+    fun `highlight wrap and reconcile paths emit before after shift logs`() {
+        val annotation = readerHtmlAnnotationScript()
+        assertTrue(annotation.contains("wrap_before"))
+        assertTrue(annotation.contains("wrap_after"))
+        assertTrue(annotation.contains("create_before"))
+        assertTrue(annotation.contains("apply_create"))
+        assertTrue(annotation.contains("reconcile_before"))
+        assertTrue(annotation.contains("reconcile_after"))
+    }
+
+    @Test
+    fun `highlight inline style declarations never carry box padding`() {
+        val argb = 0xFF123456.toInt()
+        assertFalse(highlightStyleDeclarations(HighlightStyle.BACKGROUND, argb).contains("padding"))
+        assertFalse(highlightStyleDeclarations(HighlightStyle.UNDERLINE, argb).contains("padding"))
+        assertFalse(highlightStyleDeclarations(HighlightStyle.WAVY_UNDERLINE, argb).contains("padding"))
+        assertFalse(highlightStyleDeclarations(HighlightStyle.STRIKETHROUGH, argb).contains("padding"))
+        // Background highlights are paint-only: background color, no box metrics.
+        assertTrue(highlightStyleDeclarations(HighlightStyle.BACKGROUND, argb).contains("background-color"))
     }
 
     private fun repeatedWordBook(text: String): SharedEpubBook {

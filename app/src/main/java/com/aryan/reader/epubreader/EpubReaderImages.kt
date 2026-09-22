@@ -139,12 +139,14 @@ private fun Element.readerImageDimension(attribute: String): Int? {
 
 private fun Element.readerTopLevelBodyChildIndex(): Int? {
     val body = ownerDocument()?.body() ?: return null
-    var topLevel: Element = this
-    while (topLevel.parent() != null && topLevel.parent() != body) {
-        topLevel = topLevel.parent() ?: break
+    val effective = effectiveReaderChunkNodes(body.childNodes().toList())
+    var node: org.jsoup.nodes.Node? = this
+    while (node != null) {
+        val index = effective.indexOf(node)
+        if (index >= 0) return index
+        node = node.parent()
     }
-    if (topLevel.parent() != body) return null
-    return body.childNodes().indexOf(topLevel).takeIf { it >= 0 }
+    return null
 }
 
 private fun resolveReaderImageSource(

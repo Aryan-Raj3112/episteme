@@ -20,6 +20,9 @@ import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.ui.SharedMobileEpubLocalTts
 import com.aryan.reader.shared.ui.SharedMobileEpubLocalTtsState
 import com.aryan.reader.shared.ui.SharedMobileEpubVoice
+import com.aryan.reader.shared.ui.sharedMobileEpubVoiceQualityForAndroidQuality
+import com.aryan.reader.shared.ui.sortedForTtsDisplay
+import com.aryan.reader.shared.ui.toggleSharedMobileTtsVoiceFavorite
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -53,6 +56,10 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
         private set
     override var speechPitch by mutableStateOf(loadTtsPitch(appContext))
         private set
+    private var previewSampleTextState by mutableStateOf(effectiveTtsPreviewSampleText(appContext))
+    override val previewSampleText: String get() = previewSampleTextState
+    private var favoriteVoiceState by mutableStateOf(loadTtsFavoriteVoices(appContext))
+    override val favoriteVoiceIdentifiers: Set<String> get() = favoriteVoiceState
     override var availableVoices by mutableStateOf(emptyList<SharedMobileEpubVoice>())
         private set
     override var selectedVoiceIdentifier by mutableStateOf(loadNativeVoice(appContext))
@@ -146,6 +153,17 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
         controller.setPlaybackParameters(speechRate, speechPitch)
     }
 
+    override fun setPreviewSampleText(text: String) {
+        saveTtsPreviewSampleText(appContext, text)
+        previewSampleTextState = effectiveTtsPreviewSampleText(appContext)
+    }
+
+    override fun toggleFavoriteVoice(identifier: String) {
+        if (identifier.isBlank()) return
+        favoriteVoiceState = toggleSharedMobileTtsVoiceFavorite(favoriteVoiceState, identifier)
+        saveTtsFavoriteVoices(appContext, favoriteVoiceState)
+    }
+
     override fun setVoice(identifier: String?) {
         selectedVoiceIdentifier = identifier?.takeIf { it.isNotBlank() }
         appContext.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE).edit().apply {
@@ -160,8 +178,17 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
             val engine = previewEngine ?: return@TextToSpeech
             if (status != TextToSpeech.SUCCESS) return@TextToSpeech
             availableVoices = engine.voices.orEmpty().map { voice ->
-                SharedMobileEpubVoice(voice.name, voice.name, voice.locale?.displayName.orEmpty())
-            }.sortedWith(compareBy(SharedMobileEpubVoice::language, SharedMobileEpubVoice::name))
+                val locale = voice.locale
+                SharedMobileEpubVoice(
+                    identifier = voice.name,
+                    name = voice.name,
+                    language = locale?.displayName?.takeIf { it.isNotBlank() }
+                        ?: runCatching { locale?.toLanguageTag() }.getOrNull()?.takeIf { it.isNotBlank() }
+                        ?: voice.name,
+                    languageTag = runCatching { locale?.toLanguageTag().orEmpty() }.getOrDefault(""),
+                    quality = sharedMobileEpubVoiceQualityForAndroidQuality(voice.quality),
+                )
+            }.sortedForTtsDisplay()
             identifier?.let { id -> engine.voices?.firstOrNull { it.name == id } }?.let { engine.voice = it }
             engine.setSpeechRate(speechRate)
             engine.setPitch(speechPitch)
@@ -171,7 +198,7 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
                 @Suppress("OVERRIDE_DEPRECATION")
                 override fun onError(utteranceId: String?) = releasePreviewEngine()
             })
-            engine.speak(PreviewText, TextToSpeech.QUEUE_FLUSH, Bundle.EMPTY, PreviewId)
+            engine.speak(previewSampleText, TextToSpeech.QUEUE_FLUSH, Bundle.EMPTY, PreviewId)
         }
     }
 
@@ -198,7 +225,6 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
 
     private companion object {
         const val PreviewId = "shared-reader-preview"
-        const val PreviewText = "This is a sample of the selected reading voice."
     }
 }
 

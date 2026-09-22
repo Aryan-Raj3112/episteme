@@ -6,7 +6,7 @@ import kotlin.test.assertNull
 
 class SharedOpdsStreamRequestTest {
     @Test
-    fun `page URL expands page and width and rewrites persisted catalog authority`() {
+    fun `page URL expands page and width and keeps the advertised host verbatim`() {
         val reference = OpdsStreamReference(
             id = "book",
             count = 12,
@@ -15,11 +15,28 @@ class SharedOpdsStreamRequestTest {
         )
 
         assertEquals(
-            "https://catalog.example/page/7?width=1600",
+            "https://cdn.example/page/7?width=1600",
             SharedOpdsStreamRequest.buildPageUrl(
                 reference = reference,
                 pageIndex = 7,
-                catalogUrl = "https://catalog.example/opds",
+            ),
+        )
+    }
+
+    @Test
+    fun `page URL never downgrades https templates to an http catalog host`() {
+        val reference = OpdsStreamReference(
+            id = "book",
+            count = 12,
+            urlTemplate = "https://cdn.example/page/{pageNumber}?width={maxWidth}&q=https://catalog.example/opds",
+            catalogId = "catalog",
+        )
+
+        assertEquals(
+            "https://cdn.example/page/7?width=1600&q=https://catalog.example/opds",
+            SharedOpdsStreamRequest.buildPageUrl(
+                reference = reference,
+                pageIndex = 7,
             ),
         )
     }

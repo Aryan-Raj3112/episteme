@@ -169,7 +169,8 @@ class SharedPdfAnnotationUiTest {
 
     @Test
     fun `ink preview flourish stays inside the icon canvas`() {
-        // Same stroke clamps as drawInkPreview: pens 1.2..5px, highlighters 5..16px.
+        // Representative stroke px for the fits check (drawInkPreview itself
+        // uses Android-parity base*1000px widths via the ink pipeline).
         val canvases = listOf(44f to 100f, 44f to 150f, 88f to 200f, 132f to 300f, 200f to 120f)
         for ((width, height) in canvases) {
             val penExtents = sharedPdfInkPreviewCommands(isHighlighter = false, straight = false)

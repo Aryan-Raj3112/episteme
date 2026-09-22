@@ -136,4 +136,18 @@
         <item quantity="one">Ordner %1$d</item>
         <item quantity="other">Ordner %1$d</item>
     </plurals>
+    <!-- Search results count label. %1$d = number of results.
+         German (CLDR): one = Ergebnis (1), other = Ergebnisse (0, 2+).
+         Example: 12 → "12 Ergebnisse". -->
+    <plurals name="unified_library_search_results">
+        <item quantity="one">%1$d Ergebnis</item>
+        <item quantity="other">%1$d Ergebnisse</item>
+    </plurals>
+    <!-- Listening-queue item count. %1$d = number of items.
+         German (CLDR): one = Element, other = Elemente.
+         Example: 5 → "5 Elemente". -->
+    <plurals name="listen_item_count">
+        <item quantity="one">%1$d Element</item>
+        <item quantity="other">%1$d Elemente</item>
+    </plurals>
 </resources>

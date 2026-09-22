@@ -1,6 +1,7 @@
 package com.aryan.reader.shared.pdf
 
 import com.aryan.reader.shared.DockLocation
+import kotlin.math.roundToInt
 
 /**
  * Android-parity policy for the PDF annotation dock.
@@ -40,7 +41,8 @@ fun isSharedPdfAnnotationDockSticky(
 fun isSharedPdfAnnotationDrawingActive(
     selectedTool: PdfInkTool,
     isDockMinimized: Boolean,
-): Boolean = selectedTool != PdfInkTool.NONE && selectedTool != PdfInkTool.TEXT && !isDockMinimized
+): Boolean = selectedTool != PdfInkTool.NONE && selectedTool != PdfInkTool.TEXT &&
+    selectedTool != PdfInkTool.SELECT && !isDockMinimized
 
 fun isSharedPdfTextDockDrawingActive(
     selectedTool: PdfInkTool,
@@ -65,6 +67,11 @@ fun isSharedPdfAnnotationEraserActive(
     selectedTool: PdfInkTool,
     isMinimized: Boolean,
 ): Boolean = !isMinimized && selectedTool == PdfInkTool.ERASER
+
+fun isSharedPdfAnnotationSelectActive(
+    selectedTool: PdfInkTool,
+    isMinimized: Boolean,
+): Boolean = !isMinimized && selectedTool == PdfInkTool.SELECT
 
 /**
  * Resolves which tool a dock tap should activate, mirroring
@@ -115,4 +122,26 @@ fun sharedPdfAnnotationDockTopYPx(
     DockLocation.TOP -> 0f
     DockLocation.BOTTOM -> boxHeightPx - dockHeightPx
     DockLocation.FLOATING -> dockOffsetYPx
+}
+
+/**
+ * Android parity (`ReaderPopupSizing.readerModalMaxHeightDp` as called from
+ * `ToolSettingsPopup.kt`): caps the tool-settings popup height to a fraction
+ * of the available height so it scrolls instead of overflowing on small
+ * screens. Pure math, dp-in/dp-out.
+ */
+fun sharedPdfPopupMaxHeightDp(
+    availableHeightDp: Int,
+    fraction: Float = 0.8f,
+    verticalMarginDp: Int = 64,
+    preferredMinHeightDp: Int = 240,
+): Int {
+    val usableHeight = (availableHeightDp - verticalMarginDp).coerceAtLeast(1)
+    val proportionalHeight = (availableHeightDp * fraction).roundToInt().coerceAtLeast(1)
+    val cappedHeight = minOf(usableHeight, proportionalHeight)
+    return if (usableHeight >= preferredMinHeightDp) {
+        cappedHeight.coerceAtLeast(preferredMinHeightDp)
+    } else {
+        usableHeight
+    }
 }

@@ -25,7 +25,8 @@ class EpubReaderPreferencesAndAnnotationsTest {
             "reader_page_info_mode" to Int.MAX_VALUE,
             "reader_page_info_position" to -20,
             "reader_font_family" to "missing",
-            "reader_text_align" to "diagonal"
+            "reader_text_align" to "diagonal",
+            "reader_page_spread_mode" to "triple"
         )
         val context = contextWithPrefs(SETTINGS_PREFS_NAME to prefs)
 
@@ -44,6 +45,8 @@ class EpubReaderPreferencesAndAnnotationsTest {
         assertEquals(ReaderTextAlign.DEFAULT, format.textAlign)
         assertNull(format.customPath)
         assertFalse(loadNativeVerticalRenderer(context))
+        assertEquals(ReaderPageSpreadMode.SINGLE, loadPageSpreadMode(context))
+        assertEquals(DEFAULT_SPREAD_GAP_DP_VAL, loadSpreadGapDp(context), 0.0001f)
     }
 
     @Test
@@ -162,6 +165,7 @@ class EpubReaderPreferencesAndAnnotationsTest {
         saveHideImages(context, true)
         saveFormatIsLocal(context, "book", true)
         saveNativeVerticalRenderer(context, true)
+        savePageSpreadMode(context, ReaderPageSpreadMode.TWO_PAGE)
 
         assertEquals(1.35f, loadTtsSpeechRate(context), 0.0001f)
         assertEquals(0.85f, loadTtsPitch(context), 0.0001f)
@@ -177,7 +181,50 @@ class EpubReaderPreferencesAndAnnotationsTest {
         assertTrue(loadHideImages(context))
         assertTrue(loadFormatIsLocal(context, "book"))
         assertTrue(loadNativeVerticalRenderer(context))
+        assertEquals(ReaderPageSpreadMode.TWO_PAGE, loadPageSpreadMode(context))
         assertEquals(0f, loadHorizontalMargin(context), 0.0001f)
+    }
+
+    @Test
+    fun `spread gap rounds trips globally and locally with coercion`() {
+        val prefs = TestSharedPreferences()
+        val context = contextWithPrefs(SETTINGS_PREFS_NAME to prefs)
+
+        saveSpreadGapDp(context, 32f)
+        assertEquals(32f, loadSpreadGapDp(context), 0.0001f)
+
+        saveSpreadGapDp(context, 500f)
+        assertEquals(MAX_SPREAD_GAP_DP_VAL, loadSpreadGapDp(context), 0.0001f)
+
+        saveLocalReaderSettings(
+            context = context,
+            bookId = "book",
+            fontSize = DEFAULT_FONT_SIZE_VAL,
+            lineHeight = DEFAULT_LINE_HEIGHT_VAL,
+            paragraphGap = DEFAULT_PARAGRAPH_GAP_VAL,
+            imageSize = DEFAULT_IMAGE_SIZE_VAL,
+            horizontalMargin = DEFAULT_HORIZONTAL_MARGIN_VAL,
+            verticalMargin = DEFAULT_VERTICAL_MARGIN_VAL,
+            fontFamily = ReaderFont.ORIGINAL,
+            customFontPath = null,
+            textAlign = ReaderTextAlign.DEFAULT,
+            spreadGapDp = 12f
+        )
+        assertEquals(12f, loadFormatSettings(context, bookId = "book", isLocal = true).spreadGapDp, 0.0001f)
+        saveReaderSettings(
+            context = context,
+            fontSize = DEFAULT_FONT_SIZE_VAL,
+            lineHeight = DEFAULT_LINE_HEIGHT_VAL,
+            paragraphGap = DEFAULT_PARAGRAPH_GAP_VAL,
+            imageSize = DEFAULT_IMAGE_SIZE_VAL,
+            horizontalMargin = DEFAULT_HORIZONTAL_MARGIN_VAL,
+            verticalMargin = DEFAULT_VERTICAL_MARGIN_VAL,
+            fontFamily = ReaderFont.ORIGINAL,
+            customFontPath = null,
+            textAlign = ReaderTextAlign.DEFAULT,
+            spreadGapDp = 24f
+        )
+        assertEquals(24f, loadFormatSettings(context, bookId = "book", isLocal = false).spreadGapDp, 0.0001f)
     }
 
     @Test

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -92,6 +93,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.shared.pdf.PdfInkTool
@@ -712,7 +714,11 @@ internal fun SharedPdfAnnotationToolSettingsPanel(
     onStrokeWidthChange: (Float) -> Unit,
     onPaletteChange: (List<Int>) -> Unit,
     isHighlighterSnapEnabled: Boolean,
-    onHighlighterSnapChange: (Boolean) -> Unit
+    onHighlighterSnapChange: (Boolean) -> Unit,
+    // Android parity (ToolSettingsPopup maxPopupHeight): caps the popup so it
+    // scrolls instead of overflowing on small screens. Null keeps the
+    // unconstrained desktop behavior.
+    maxHeight: Dp? = null,
 ) {
     val isEraser = panel == SharedPdfAnnotationSettingsPanel.ERASER
     val isHighlighter = panel == SharedPdfAnnotationSettingsPanel.HIGHLIGHTER
@@ -777,10 +783,13 @@ internal fun SharedPdfAnnotationToolSettingsPanel(
         shadowElevation = 12.dp,
         modifier = Modifier
             .width(360.dp)
+            .then(if (maxHeight != null) Modifier.heightIn(max = maxHeight) else Modifier)
             .padding(12.dp)
     ) {
         Column(
-            modifier = Modifier.padding(20.dp),
+            modifier = Modifier
+                .padding(20.dp)
+                .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (isEraser) {
@@ -1112,7 +1121,7 @@ private fun SharedPdfSettingsToolItem(
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun SharedPdfStyledPropertySlider(
+internal fun SharedPdfStyledPropertySlider(
     value: Float,
     onValueChange: (Float) -> Unit,
     valueRange: ClosedFloatingPointRange<Float>,

@@ -1,6 +1,7 @@
 package com.aryan.reader.shared
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.reader.DefaultPdfReaderSettings
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -138,6 +139,19 @@ data class UserData(
     val email: String?
 )
 
+/**
+ * First-letter avatar text shared by every account surface. Apple sign-in
+ * never provides a photo and only sends the name/email on the first
+ * authorization, so account UI must always cope with partial identity.
+ */
+fun UserData.accountInitial(): String {
+    return (displayName ?: email ?: "E")
+        .trim()
+        .firstOrNull()
+        ?.uppercase()
+        ?: "E"
+}
+
 data class NavigationEvent(
     val route: String,
     val bookId: String? = null,
@@ -191,6 +205,23 @@ data class AppFontPreference(
         fun custom(customFontId: String): AppFontPreference {
             return AppFontPreference(AppFontPreferenceKind.CUSTOM, customFontId).sanitized()
         }
+    }
+}
+
+/**
+ * Shared baseline for the app-text font (Android benchmark).
+ *
+ * Built-in kinds resolve to a platform-independent [FontFamily]. SYSTEM and
+ * CUSTOM resolve to null here: SYSTEM means the platform default typography,
+ * while CUSTOM needs a platform file lookup that lives in the platform layer.
+ */
+fun AppFontPreference.toBaselineAppFontFamily(): FontFamily? {
+    return when (sanitized().kind) {
+        AppFontPreferenceKind.SYSTEM -> null
+        AppFontPreferenceKind.SERIF -> FontFamily.Serif
+        AppFontPreferenceKind.SANS_SERIF -> FontFamily.SansSerif
+        AppFontPreferenceKind.MONOSPACE -> FontFamily.Monospace
+        AppFontPreferenceKind.CUSTOM -> null
     }
 }
 

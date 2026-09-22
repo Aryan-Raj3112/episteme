@@ -168,10 +168,16 @@ fun SharedPdfRichTextLayer(
         } ?: return@Box
 
         val measureResult = remember(textToRender, editorWidth, density) {
+            // Fixed-width layout: CENTER/RIGHT align across the whole editor.
+            // maxWidth-only would size to content, pinning alignment to a
+            // narrow strip (right edge near the text instead of the page).
             textMeasurer.measure(
                 text = textToRender,
                 style = TextStyle(fontSize = 16.sp),
-                constraints = Constraints(maxWidth = editorWidth.toInt()),
+                constraints = Constraints(
+                    minWidth = editorWidth.toInt(),
+                    maxWidth = editorWidth.toInt(),
+                ),
                 density = density
             )
         }

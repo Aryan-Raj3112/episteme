@@ -41,6 +41,11 @@ fun SharedMobilePdfTextDock(
     popupsBelowBar: Boolean = false,
     // Android parity: hides the rich-text cursor while a popup is open.
     onPopupStateChange: (Boolean) -> Unit = {},
+    // Second-row paragraph controls (lists + alignment). Null hides the row.
+    paragraphState: RichParagraphUiState? = null,
+    onNumberedListClick: () -> Unit = {},
+    onBulletedListClick: () -> Unit = {},
+    onAlignmentSelected: (SharedPdfRichTextAlign) -> Unit = {},
 ) {
     val state = rememberPdfTextDockState(onPopupStateChange)
     var textPalette by remember { mutableStateOf(SharedPdfTextAnnotationDefaults.textColorPalette.map(::Color)) }
@@ -129,10 +134,16 @@ fun SharedMobilePdfTextDock(
                 readerString("content_desc_font_background", "Font background"), readerString("content_desc_bold", "Bold"),
                 readerString("content_desc_italic", "Italic"), readerString("content_desc_underline", "Underline"),
                 readerString("content_desc_strikethrough", "Strikethrough"), readerString("content_desc_insert_text_box", "Insert text box"),
+                readerString("content_desc_numbered_list", "Numbered list"), readerString("content_desc_bulleted_list", "Bulleted list"),
+                readerString("content_desc_text_alignment", "Text alignment"),
+                readerString("content_desc_align_left", "Align left"), readerString("content_desc_align_center", "Align center"),
+                readerString("content_desc_align_right", "Align right"),
             ),
             painters = SharedPdfTextDockBarPainters(
                 painterResource(Res.drawable.fonts), painterResource(Res.drawable.font_background), painterResource(Res.drawable.format_bold),
                 painterResource(Res.drawable.format_italic), painterResource(Res.drawable.format_underlined), painterResource(Res.drawable.strikethrough), painterResource(Res.drawable.text_box),
+                painterResource(Res.drawable.format_list_numbered), painterResource(Res.drawable.format_list_bulleted),
+                painterResource(Res.drawable.format_align_left), painterResource(Res.drawable.format_align_center), painterResource(Res.drawable.format_align_right),
             ),
             onFontFamilyClick = { state.togglePopup(PdfTextDockPopup.FONT_FAMILY) }, onFontSizeClick = { state.togglePopup(PdfTextDockPopup.FONT_SIZE) },
             onTextColorClick = { state.showPalettePopup(PdfTextDockPopup.COLOR) }, onBackgroundColorClick = { state.showPalettePopup(PdfTextDockPopup.BACKGROUND) },
@@ -141,6 +152,33 @@ fun SharedMobilePdfTextDock(
             onUnderlineClick = { update(spanStyle.copy(textDecoration = sharedPdfDockDecoration(!style.isUnderline, style.isStrikeThrough))) },
             onStrikethroughClick = { update(spanStyle.copy(textDecoration = sharedPdfDockDecoration(style.isUnderline, !style.isStrikeThrough))) },
             onInsertTextBox = onInsertTextBox,
+            paragraphControls = paragraphState?.let { paragraph ->
+                SharedPdfTextDockParagraphControls(
+                    state = paragraph,
+                    onNumberedListClick = onNumberedListClick,
+                    onBulletedListClick = onBulletedListClick,
+                    onAlignmentClick = { state.togglePopup(PdfTextDockPopup.ALIGNMENT) },
+                    onAlignmentSelected = { onAlignmentSelected(it); state.dismiss() },
+                )
+            },
+            alignmentPopup = {
+                if (state.popup == PdfTextDockPopup.ALIGNMENT && paragraphState != null) SharedPdfTextDockPopupDp(
+                    state::dismiss,
+                    if (popupsBelowBar) Alignment.BottomCenter else Alignment.TopCenter,
+                    if (popupsBelowBar) 55.dp else (-55).dp,
+                ) {
+                    SharedPdfTextDockAlignmentPopupContent(
+                        selected = paragraphState.alignment,
+                        alignLeftPainter = painterResource(Res.drawable.format_align_left),
+                        alignCenterPainter = painterResource(Res.drawable.format_align_center),
+                        alignRightPainter = painterResource(Res.drawable.format_align_right),
+                        alignLeftDescription = readerString("content_desc_align_left", "Align left"),
+                        alignCenterDescription = readerString("content_desc_align_center", "Align center"),
+                        alignRightDescription = readerString("content_desc_align_right", "Align right"),
+                        onSelected = { onAlignmentSelected(it); state.dismiss() },
+                    )
+                }
+            },
             textColorIndicator = { color -> Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy((-3).dp)) {
                 Text("A", color = Color.Black, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Box(Modifier.width(16.dp).height(2.dp).background(color))

@@ -721,7 +721,7 @@ fun SharedSupportProjectScreen(
         SharedUtilityHeader(
             icon = { Icon(Icons.Default.Favorite, contentDescription = null, modifier = Modifier.size(52.dp)) },
             title = readerString("desktop_support_episteme", "Support Episteme"),
-            body = readerString("desktop_support_episteme_desc", "Contributions help keep the reader improving across Android and desktop.")
+            body = readerString("desktop_support_episteme_desc", "Contributions help me improve Episteme across all platforms.")
         )
         SharedUtilityOptionCard(
             title = readerString("desktop_github_sponsors", "GitHub Sponsors"),

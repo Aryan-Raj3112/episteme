@@ -152,6 +152,67 @@ internal fun topLevelMobileShelves(shelves: List<Shelf>): List<Shelf> = shelves.
     shelf.type != ShelfType.TAG && shelf.parentShelfId == null
 }
 
+/**
+ * File-manager style breadcrumb entry for shelf navigation.
+ * A null [id] represents the shelves root (rendered as a home icon).
+ */
+data class SharedShelfBreadcrumbEntry(
+    val id: String?,
+    val name: String,
+)
+
+/**
+ * Builds the root-to-current breadcrumb path for [currentShelfId] by walking
+ * [parentShelfId] links. Android benchmark: the same walk drives both the
+ * legacy shelf detail back stack and the unified shelves section.
+ *
+ * Missing parents terminate the walk at the deepest resolvable ancestor so a
+ * stale selection never hides the current shelf. Cycles are guarded by visited
+ * tracking. A null/blank/missing [currentShelfId] resolves to root only.
+ */
+fun shelfBreadcrumbPath(
+    shelves: List<Shelf>,
+    currentShelfId: String?,
+    rootName: String = "",
+): List<SharedShelfBreadcrumbEntry> = genericShelfBreadcrumbPath(
+    currentShelfId = currentShelfId,
+    lookup = { id -> shelves.firstOrNull { it.id == id } },
+    idOf = { it.id },
+    nameOf = { it.name },
+    parentIdOf = { it.parentShelfId },
+    rootName = rootName,
+)
+
+/**
+ * Generic breadcrumb path builder for platform shelf models (e.g. Android's
+ * [com.aryan.reader.Shelf]) that mirror the shared parent-link structure.
+ */
+fun <S> genericShelfBreadcrumbPath(
+    currentShelfId: String?,
+    lookup: (String) -> S?,
+    idOf: (S) -> String,
+    nameOf: (S) -> String,
+    parentIdOf: (S) -> String?,
+    rootName: String = "",
+): List<SharedShelfBreadcrumbEntry> {
+    val ancestors = ArrayDeque<SharedShelfBreadcrumbEntry>()
+    val visited = mutableSetOf<String>()
+    var cursor = currentShelfId?.takeIf { it.isNotBlank() }?.let(lookup)
+    while (cursor != null) {
+        val id = idOf(cursor)
+        if (!visited.add(id)) break
+        ancestors.addFirst(SharedShelfBreadcrumbEntry(id = id, name = nameOf(cursor)))
+        val parentId = parentIdOf(cursor)?.takeIf { it.isNotBlank() } ?: break
+        if (parentId in visited) break
+        cursor = lookup(parentId)
+        if (cursor == null) break
+    }
+    return buildList {
+        add(SharedShelfBreadcrumbEntry(id = null, name = rootName))
+        addAll(ancestors)
+    }
+}
+
 internal enum class SharedMobileShelfTapIntent {
     OPEN,
     TOGGLE_SELECTION,

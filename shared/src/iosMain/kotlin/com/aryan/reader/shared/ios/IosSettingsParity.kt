@@ -40,6 +40,7 @@ internal fun SharedSettingsAction.iosDisposition(): IosSettingsActionDisposition
     SharedSettingsAction.CUSTOM_FONTS,
     SharedSettingsAction.SIGN_IN,
     SharedSettingsAction.SIGN_OUT,
+    SharedSettingsAction.DELETE_ACCOUNT,
     SharedSettingsAction.FOLDER_SYNC,
     SharedSettingsAction.TTS_SETTINGS,
     SharedSettingsAction.HIDE_READER_AI,

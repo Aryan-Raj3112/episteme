@@ -210,4 +210,25 @@ class SharedNativePaginatedPageTurnTest {
         // RTL: next page is to the right, so a rightward drag moves forward.
         assertEquals(0.5f, sharedPaginatedDragPositionPages(0.5f, 1, rightToLeftPagination = true))
         assertEquals(-1f, sharedPaginatedDragPositionPages(-0.5f, 2, rightToLeftPagination = true))
+    }
+
+    @Test
+    fun `turn layers keep the beneath set opaque and the top set transparent`() {
+        val paper = androidx.compose.ui.graphics.Color(0xFFFFFCF5)
+        val transparent = androidx.compose.ui.graphics.Color.Transparent
+        // Settled content stays fully opaque.
+        assertEquals(
+            paper to paper,
+            sharedPaginatedTurnLayerBackgrounds(turnActive = false, overlayFirst = false, baseBackground = paper)
+        )
+        // Forward turn: main (incoming) beneath opaque, overlay (outgoing) on top transparent.
+        assertEquals(
+            paper to transparent,
+            sharedPaginatedTurnLayerBackgrounds(turnActive = true, overlayFirst = false, baseBackground = paper)
+        )
+        // Backward turn: overlay beneath opaque, main (incoming) on top transparent.
+        assertEquals(
+            transparent to paper,
+            sharedPaginatedTurnLayerBackgrounds(turnActive = true, overlayFirst = true, baseBackground = paper)
+        )
     }}

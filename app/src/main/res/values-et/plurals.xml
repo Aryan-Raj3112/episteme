@@ -136,4 +136,18 @@
         <item quantity="one">(%1$d osa)</item>
         <item quantity="other">(%1$d osa)</item>
     </plurals>
+    <!-- Search results count label. %1$d = number of results.
+         Estonian (CLDR): one = tulemus (1, including 1,0), other = tulemust
+         (2+, fractions). Only two categories exist in Estonian.
+         Example: 12 → "12 tulemust". -->
+    <plurals name="unified_library_search_results">
+        <item quantity="one">%1$d tulemus</item>
+        <item quantity="other">%1$d tulemust</item>
+    </plurals>
+    <!-- Listening-queue item count. %1$d = number of items.
+         Estonian (CLDR): one = üksus, other = üksust. Example: 5 → "5 üksust". -->
+    <plurals name="listen_item_count">
+        <item quantity="one">%1$d üksus</item>
+        <item quantity="other">%1$d üksust</item>
+    </plurals>
 </resources>

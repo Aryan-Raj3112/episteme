@@ -76,11 +76,11 @@ class IosReaderFormatPersistenceTest {
             assertEquals(1000, restoredDefault.fontWeight)
             assertEquals(0.5f, restoredDefault.letterSpacing)
             assertEquals(1.45f, restoredDefault.lineSpacing)
-            assertEquals(144, restoredDefault.margin)
+            assertEquals(48, restoredDefault.margin)
             assertEquals(0f, restoredDefault.paragraphSpacing)
             assertEquals(2f, restoredDefault.imageScale)
             assertEquals(0, restoredDefault.horizontalMargin)
-            assertEquals(144, restoredDefault.verticalMargin)
+            assertEquals(48, restoredDefault.verticalMargin)
             assertEquals(ReaderReadingMode.PAGINATED, restoredDefault.readingMode)
             assertEquals(SharedReaderTextAlign.JUSTIFY, restoredDefault.textAlign)
 
@@ -88,10 +88,10 @@ class IosReaderFormatPersistenceTest {
             assertEquals(9, restoredBook.readerSettings?.fontSize)
             assertEquals(4.35f, restoredBook.readerSettings?.lineSpacing)
             assertEquals(0, restoredBook.readerSettings?.resolvedHorizontalMargin)
-            assertEquals(144, restoredBook.readerSettings?.resolvedVerticalMargin)
+            assertEquals(48, restoredBook.readerSettings?.resolvedVerticalMargin)
             assertEquals(9, restoredBook.readerLocalFormatSettings?.fontSize)
             assertEquals(4.35f, restoredBook.readerLocalFormatSettings?.lineSpacing)
-            assertEquals(144, restoredBook.readerLocalFormatSettings?.margin)
+            assertEquals(48, restoredBook.readerLocalFormatSettings?.margin)
 
             // PDF settings are intentionally outside the EPUB migration boundary.
             assertEquals(legacySettings, restored.books.first { it.id == "pdf-book" }.readerSettings)

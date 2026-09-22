@@ -204,4 +204,23 @@
         <item quantity="many">Foldery %1$d</item>
         <item quantity="other">Foldery %1$d</item>
     </plurals>
+    <!-- Search results count label. %1$d = number of results.
+         Polish (CLDR): one = wynik (1), few = wyniki (2-4), many = wyników (5+, 0),
+         other = wyniku (fractions, e.g. 1,5). Keep all four categories.
+         Example: 12 → "12 wyników". -->
+    <plurals name="unified_library_search_results">
+        <item quantity="one">%1$d wynik</item>
+        <item quantity="few">%1$d wyniki</item>
+        <item quantity="many">%1$d wyników</item>
+        <item quantity="other">%1$d wyniku</item>
+    </plurals>
+    <!-- Listening-queue item count. %1$d = number of items.
+         Polish (CLDR): one = element, few = elementy, many = elementów, other = elementu.
+         Example: 5 → "5 elementów". -->
+    <plurals name="listen_item_count">
+        <item quantity="one">%1$d element</item>
+        <item quantity="few">%1$d elementy</item>
+        <item quantity="many">%1$d elementów</item>
+        <item quantity="other">%1$d elementu</item>
+    </plurals>
 </resources>

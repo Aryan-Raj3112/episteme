@@ -304,6 +304,13 @@ object SharedEpubPackageLoader {
             bodyExtractTotalMs += bodyMs
             val rewriteMark = sharedEpubOpenTraceMark()
             val body = bodyOnly.rewriteEpubHtmlResources(item.absPath, ::dataUri)
+                // Image-heavy chapters stall scrolling while bitmaps decode and
+                // layouts shift; hints keep offscreen work lazy and real bounds
+                // reserve space before first paint.
+                .withReaderImageLoadingHints()
+                .withReaderImageDimensions { src ->
+                    parseSharedEpubResourceUrl(src)?.let { resourceBytes(it.entryPath) }
+                }
             val rewriteMs = sharedEpubOpenTraceElapsedMs(rewriteMark)
             resourceRewriteTotalMs += rewriteMs
             val plainTextMark = sharedEpubOpenTraceMark()
@@ -424,10 +431,14 @@ private fun materializeEpubTocSections(
     body: String,
     entries: List<SharedEpubTocEntry>
 ): List<SharedEpubLogicalSection> {
-    if (entries.size < 2) return emptyList()
+    if (entries.size < 2) {
+        return emptyList()
+    }
     val distinctEntries = entries.distinctBy(SharedEpubTocEntry::fragmentId)
     val requestedFragments = distinctEntries.mapNotNull { it.fragmentId }.toSet()
-    if (requestedFragments.size < 2) return emptyList()
+    if (requestedFragments.size < 2) {
+        return emptyList()
+    }
     val tokens = sharedEpubXmlTokens(body).toList()
     val rootStart = tokens.firstOrNull { token ->
         token.value.startsWith('<') && !token.value.startsWith("</") &&
@@ -484,21 +495,30 @@ private fun materializeEpubTocSections(
         }
     }
 
-    val ranges = mobileEpubLogicalSectionRanges(
+    val merged = mobileEpubMergedChapterSections(
         entries = distinctEntries,
         bodyChildCount = childRanges.size,
         fragmentId = SharedEpubTocEntry::fragmentId,
         idChildIndex = fragmentIdChildIndex::get,
-        nameChildIndex = fragmentNameChildIndex::get
+        nameChildIndex = fragmentNameChildIndex::get,
+        depthOf = SharedEpubTocEntry::depth,
+        sectionTextLength = { startChild, endChild ->
+            body.substring(childRanges[startChild].first, childRanges[endChild - 1].last + 1).epubHtmlToText().length
+        },
+        sectionHasMedia = { startChild, endChild ->
+            body.substring(childRanges[startChild].first, childRanges[endChild - 1].last + 1)
+                .containsMobileEpubSectionMedia()
+        }
     )
-    return ranges.mapNotNull { range ->
-        val entry = range.entry
-        val startOffset = childRanges[range.startChildIndex].first
-        val endOffset = childRanges[range.endChildIndexExclusive - 1].last + 1
+    return merged.mapNotNull { section ->
+        val entry = section.entry
+        val startOffset = childRanges[section.startChildIndex].first
+        val endOffset = childRanges[section.endChildIndexExclusive - 1].last + 1
+        val html = body.substring(startOffset, endOffset)
         SharedEpubLogicalSection(
             entry = entry,
             fragmentId = entry.fragmentId ?: return@mapNotNull null,
-            html = body.substring(startOffset, endOffset)
+            html = html
         )
     }
 }
@@ -508,6 +528,15 @@ private data class SharedEpubLogicalSection(
     val fragmentId: String,
     val html: String
 )
+
+internal fun String.containsMobileEpubSectionMedia(): Boolean {
+    if (length < 4) return false
+    return contains("<img", ignoreCase = true) ||
+        contains("<table", ignoreCase = true) ||
+        contains("<svg", ignoreCase = true) ||
+        contains("<video", ignoreCase = true) ||
+        contains("<audio", ignoreCase = true)
+}
 
 private data class SharedEpubFontObfuscation(
     val key: ByteArray,
@@ -641,6 +670,13 @@ private fun String.sanitizeEpubCss(): String =
     replace(Regex("(?i)</style"), "<\\/style")
         .replace(Regex("(?i)javascript\\s*:"), "")
         .replace(Regex("(?i)expression\\s*\\("), "blocked(")
+        // Reader pages clip horizontally: a negative first-line indent without a
+        // compensating hanging flag paints off the page (Gutenberg blockquote -2em).
+        // Zero the negative length, mirroring the native text-indent clamp.
+        .replace(
+            Regex("(?i)(text-indent\\s*:\\s*)-[0-9]*\\.?[0-9]+(?:em|rem|ex|ch|px|pt|pc|in|cm|mm|%|vw|vh|vmin|vmax)?"),
+            "$1 0"
+        )
 
 private fun String.rewriteEpubHtmlResources(ownerPath: String, dataUri: (String) -> String?): String {
     var output = replace(Regex("""(?is)\b(src|poster|href|xlink:href)\s*=\s*([\"'])(.*?)\2""")) { match ->

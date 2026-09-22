@@ -59,6 +59,7 @@ class SharedNativePaginatedReaderInteractionTest {
     @Test
     fun `native selection lookup actions match vertical reader actions`() {
         assertEquals(ReaderExternalLookupAction.DICTIONARY, SharedNativeReaderSelectionAction.DEFINE.externalLookupActionOrNull())
+        assertEquals(ReaderExternalLookupAction.DICTIONARY, SharedNativeReaderSelectionAction.DICTIONARY.externalLookupActionOrNull())
         assertEquals(ReaderExternalLookupAction.TRANSLATE, SharedNativeReaderSelectionAction.TRANSLATE.externalLookupActionOrNull())
         assertEquals(ReaderExternalLookupAction.SEARCH, SharedNativeReaderSelectionAction.SEARCH.externalLookupActionOrNull())
         assertNull(SharedNativeReaderSelectionAction.SPEAK.externalLookupActionOrNull())

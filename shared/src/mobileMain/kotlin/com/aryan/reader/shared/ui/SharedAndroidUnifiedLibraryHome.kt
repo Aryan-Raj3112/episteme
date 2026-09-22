@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -68,11 +67,7 @@ fun <T> SharedAndroidUnifiedLibraryHome(
     widthClass: SharedAndroidHomeWidthClass = SharedAndroidHomeWidthClass.COMPACT,
     modifier: Modifier = Modifier,
 ) {
-    val gridCells = when (widthClass) {
-        SharedAndroidHomeWidthClass.COMPACT -> GridCells.Fixed(3)
-        SharedAndroidHomeWidthClass.MEDIUM -> GridCells.Adaptive(140.dp)
-        SharedAndroidHomeWidthClass.EXPANDED -> GridCells.Adaptive(160.dp)
-    }
+    val gridCells = widthClass.bookGridCells()
     Column(modifier.fillMaxSize().padding(horizontal = 20.dp)) {
         continueReading?.let { continueCard(it, Modifier.padding(top = 16.dp)) }
         LazyRow(
@@ -142,6 +137,7 @@ fun <T> SharedAndroidUnifiedLibrarySearch(
     onQueryChange: (String) -> Unit,
     onClose: () -> Unit,
     bookCard: @Composable (T) -> Unit,
+    widthClass: SharedAndroidHomeWidthClass = SharedAndroidHomeWidthClass.COMPACT,
     modifier: Modifier = Modifier,
 ) {
     val focusRequester = androidx.compose.runtime.remember { FocusRequester() }
@@ -170,7 +166,7 @@ fun <T> SharedAndroidUnifiedLibrarySearch(
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(noResultsLabel, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         } else {
             LazyVerticalGrid(
-                columns = GridCells.Fixed(3),
+                columns = widthClass.bookGridCells(),
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(bottom = 24.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),

@@ -170,4 +170,14 @@
         <item quantity="many">Dossiers %1$d</item>
         <item quantity="other">Dossiers %1$d</item>
     </plurals>
+    <plurals name="listen_item_count">
+        <item quantity="one">%1$d élément</item>
+        <item quantity="many">%1$d éléments</item>
+        <item quantity="other">%1$d éléments</item>
+    </plurals>
+    <plurals name="unified_library_search_results">
+        <item quantity="one">%1$d résultat</item>
+        <item quantity="many">%1$d résultats</item>
+        <item quantity="other">%1$d résultats</item>
+    </plurals>
 </resources>

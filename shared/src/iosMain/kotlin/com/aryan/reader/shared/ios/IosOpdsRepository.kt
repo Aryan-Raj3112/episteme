@@ -16,14 +16,22 @@ import com.aryan.reader.shared.opds.SharedOpdsDownloadLocation
 import com.aryan.reader.shared.opds.SharedOpdsDownloadLocationCodec
 import com.aryan.reader.shared.opds.SharedOpdsDownloadNamer
 import com.aryan.reader.shared.opds.SharedOpdsRepository
+import com.aryan.reader.shared.opds.SharedOpdsResumableDownload
 import com.aryan.reader.shared.opds.SharedOpdsStreamRequest
 import com.aryan.reader.shared.opds.SharedOpdsTransferProgress
+import com.aryan.reader.shared.opds.SharedOpdsText
 import com.aryan.reader.shared.reader.SharedLruMemoryCache
 import com.aryan.reader.shared.reader.sharedSha256Hex
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.pin
 import kotlinx.cinterop.usePinned
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -84,10 +92,12 @@ import platform.posix.memcpy
 import kotlin.math.roundToLong
 
 private const val ProgressUpdateIntervalMs = 200L
+private const val DownloadResourceTimeoutSeconds = 24.0 * 60.0 * 60.0
 
 internal class IosOpdsRepository(
     private val folderFileAdditionHandler: (folderName: String, sourcePath: String, fileName: String) -> String? = { _, _, _ -> null },
     private val httpClient: IosOpdsHttpClient = IosUrlSessionHttpClient(),
+    private val retrySleep: suspend (Long) -> Unit = { delay(it) },
 ) : SharedOpdsRepository {
     private val parser = IosOpdsParser()
     private val coverDataCache = SharedLruMemoryCache<String, NSData>(maxEntries = 64)
@@ -135,7 +145,11 @@ internal class IosOpdsRepository(
                 error("HTTP ${response.statusCode}")
             }
             if (response.body.isBlank()) error("Empty response body")
-            parser.parse(response.body, url)
+            // Parsing runs off the main thread: large feeds must not freeze
+            // the loading UI. Android parses on Dispatchers.IO for the same reason.
+            withContext(Dispatchers.Default) {
+                parser.parse(response.body, url)
+            }
         }
     }
 
@@ -156,8 +170,6 @@ internal class IosOpdsRepository(
         onProgress: (SharedOpdsTransferProgress) -> Unit = {},
     ): Result<IosOpdsDownloadResult> {
         return runCatching {
-            val extension: String
-            val fileName: String
             val fileUrl = documentsDirectoryUrl()
                 ?: error("Could not access iOS Documents directory")
             val temporaryDirectoryUrl = NSURL.fileURLWithPath(
@@ -177,44 +189,224 @@ internal class IosOpdsRepository(
                 ) ?: error("Could not create temporary destination URL")
                 destinationPath = responseUrl.path
                     ?: error("Could not locate temporary download path")
-                require(
-                    NSFileManager.defaultManager.createFileAtPath(
-                        destinationPath,
-                        contents = null,
-                        attributes = null,
-                    )
-                ) {
-                    "Could not create temporary download file"
+                val tempPath: String = destinationPath
+                    ?: error("Could not locate temporary download path")
+                fun openFreshFile() {
+                    require(
+                        NSFileManager.defaultManager.createFileAtPath(
+                            tempPath,
+                            contents = null,
+                            attributes = null,
+                        )
+                    ) {
+                        "Could not create temporary download file"
+                    }
+                    outputHandle = NSFileHandle.fileHandleForWritingAtPath(tempPath)
+                        ?: error("Could not open temporary download file")
                 }
-                val downloadHandle = NSFileHandle.fileHandleForWritingAtPath(destinationPath)
-                    ?: error("Could not open temporary download file")
-                outputHandle = downloadHandle
+                // Recreate the temp file so a ranged retry that the server
+                // answers with 200 OK (Range ignored) can restart cleanly
+                // before any byte of the new response is appended.
+                fun restartFile() {
+                    runCatching { outputHandle?.closeFile() }
+                    outputHandle = null
+                    NSFileManager.defaultManager.removeItemAtPath(tempPath, error = null)
+                    openFreshFile()
+                }
+                openFreshFile()
 
+                var totalWritten = 0L
+                var totalBytes: Long? = null
+                var etag: String? = null
+                var restarts = 0
                 var lastProgressTimestamp = 0L
-                val response = fetch(
-                    acquisition.url,
-                    username,
-                    password,
-                    onData = { data, receivedBytes, totalBytes ->
-                        downloadHandle.writeData(data)
-                        val now = currentTimestamp()
-                        val isFinalChunk = totalBytes != null && receivedBytes >= totalBytes
-                        if (isFinalChunk || now - lastProgressTimestamp >= ProgressUpdateIntervalMs) {
-                            onProgress(SharedOpdsTransferProgress(receivedBytes, totalBytes))
-                            lastProgressTimestamp = now
-                        }
-                    },
-                )
-                outputHandle?.closeFile()
-                outputHandle = null
-                if (response.statusCode !in 200..299) error("HTTP ${response.statusCode}")
+                var finalHeaders: Map<String, String> = emptyMap()
+                var attempt = 0
 
-                extension = SharedOpdsDownloadNamer.resolveExtension(
+                fun emitProgress(force: Boolean = false) {
+                    val now = currentTimestamp()
+                    val isFinalChunk = totalBytes != null && totalWritten >= (totalBytes ?: Long.MAX_VALUE)
+                    if (force || isFinalChunk || now - lastProgressTimestamp >= ProgressUpdateIntervalMs) {
+                        onProgress(SharedOpdsTransferProgress(totalWritten, totalBytes))
+                        lastProgressTimestamp = now
+                    }
+                }
+
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    attempt += 1
+                    val offset = totalWritten
+                    val headers = buildMap {
+                        if (offset > 0L) {
+                            put("Range", SharedOpdsResumableDownload.rangeHeader(offset))
+                            etag?.let { put("If-Range", it) }
+                        }
+                    }
+                    var attemptStatus = 0
+                    var attemptHeaders: Map<String, String> = emptyMap()
+                    var callbackError: Throwable? = null
+                    var discardBody = false
+                    try {
+                        val transport = httpClient.fetch(
+                            url = acquisition.url,
+                            username = username,
+                            password = password,
+                            headers = headers,
+                            resourceTimeoutSeconds = DownloadResourceTimeoutSeconds,
+                            onResponse = { status, responseHeaders ->
+                                // Runs on the URL session thread: never throw
+                                // across to the ObjC runtime, capture instead.
+                                runCatching {
+                                    attemptStatus = status
+                                    attemptHeaders = responseHeaders
+                                    // Error pages share no bytes with the book:
+                                    // never append them to the partial file.
+                                    discardBody = status != 206 && status !in 200..299
+                                    when {
+                                        status == 206 && offset > 0L -> {
+                                            val firstByte = SharedOpdsResumableDownload.parseContentRangeFirstByte(
+                                                responseHeaders.headerValue("Content-Range")
+                                            )
+                                            if (firstByte == 0L) {
+                                                restartFile()
+                                                totalWritten = 0L
+                                            } else if (firstByte != null && firstByte != offset) {
+                                                // Unexpected range; fall through and let the
+                                                // end-of-attempt validation retry cleanly.
+                                            }
+                                            SharedOpdsResumableDownload.resolveTotal(
+                                                statusCode = status,
+                                                contentRange = responseHeaders.headerValue("Content-Range"),
+                                                contentLength = SharedOpdsResumableDownload.parseContentLength(
+                                                    responseHeaders.headerValue("Content-Length")
+                                                ),
+                                                offset = totalWritten,
+                                            )?.let { totalBytes = it }
+                                            responseHeaders.headerValue("ETag")?.let { etag = it }
+                                        }
+                                        status in 200..299 && status != 206 && offset > 0L -> {
+                                            // Server ignored Range: the bytes arriving
+                                            // below are the full representation, so
+                                            // restart before appending anything.
+                                            if (restarts < SharedOpdsResumableDownload.MaxRestarts) {
+                                                restarts += 1
+                                            }
+                                            restartFile()
+                                            totalWritten = 0L
+                                            totalBytes = SharedOpdsResumableDownload.parseContentLength(
+                                                responseHeaders.headerValue("Content-Length")
+                                            )
+                                            responseHeaders.headerValue("ETag")?.let { etag = it }
+                                        }
+                                        status in 200..299 -> {
+                                            totalBytes = SharedOpdsResumableDownload.resolveTotal(
+                                                statusCode = status,
+                                                contentRange = responseHeaders.headerValue("Content-Range"),
+                                                contentLength = SharedOpdsResumableDownload.parseContentLength(
+                                                    responseHeaders.headerValue("Content-Length")
+                                                ),
+                                                offset = 0L,
+                                            )
+                                            responseHeaders.headerValue("ETag")?.let { etag = it }
+                                        }
+                                        else -> Unit
+                                    }
+                                    emitProgress()
+                                }.onFailure { callbackError = it }
+                            },
+                            onData = { data, _, _ ->
+                                runCatching {
+                                    if (!discardBody) {
+                                        val handle = outputHandle ?: error("Download file is closed")
+                                        handle.writeData(data)
+                                        totalWritten += data.length.toLong()
+                                        emitProgress()
+                                    }
+                                }.onFailure { callbackError = it }
+                            },
+                        )
+                        callbackError?.let { throw it }
+                        transport.error?.let { nsError ->
+                            throw IosOpdsNetworkException(nsError)
+                        }
+                        val status = transport.transportStatusCode()
+                            .takeIf { it != 0 } ?: attemptStatus.takeIf { it != 0 } ?: 200
+                        val responseHeaders = transport.transportHeaders()
+                            .takeIf { it.isNotEmpty() } ?: attemptHeaders
+                        finalHeaders = responseHeaders
+                        when {
+                            status == 416 && offset > 0L -> {
+                                // Range not satisfiable: the representation likely
+                                // changed. Restart once, then fail if it persists.
+                                if (restarts < SharedOpdsResumableDownload.MaxRestarts && attempt < SharedOpdsResumableDownload.MaxAttempts) {
+                                    restarts += 1
+                                    restartFile()
+                                    totalWritten = 0L
+                                    totalBytes = null
+                                    etag = null
+                                    retrySleep(
+                                        SharedOpdsResumableDownload.retryDelayMs(
+                                            attempt,
+                                            SharedOpdsResumableDownload.parseRetryAfterMs(
+                                                responseHeaders.headerValue("Retry-After")
+                                            )
+                                        )
+                                    )
+                                    continue
+                                }
+                                error("HTTP $status")
+                            }
+                            status in 200..299 || status == 206 -> {
+                                if (totalBytes != null && totalWritten < totalBytes!!) {
+                                    if (attempt >= SharedOpdsResumableDownload.MaxAttempts) {
+                                        error("Incomplete download: received $totalWritten of $totalBytes bytes")
+                                    }
+                                    retrySleep(
+                                        SharedOpdsResumableDownload.retryDelayMs(attempt, null)
+                                    )
+                                    continue
+                                }
+                                emitProgress(force = true)
+                                break
+                            }
+                            SharedOpdsResumableDownload.isRetryableHttpStatus(status) -> {
+                                if (attempt >= SharedOpdsResumableDownload.MaxAttempts) error("HTTP $status")
+                                retrySleep(
+                                    SharedOpdsResumableDownload.retryDelayMs(
+                                        attempt,
+                                        SharedOpdsResumableDownload.parseRetryAfterMs(
+                                            responseHeaders.headerValue("Retry-After")
+                                        )
+                                    )
+                                )
+                                continue
+                            }
+                            else -> error("HTTP $status")
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: IosOpdsNetworkException) {
+                        if (e.isCancelled) throw CancellationException(e.message)
+                        if (!SharedOpdsResumableDownload.isRetryableNetworkError(e.domain, e.code)) throw e
+                        if (attempt >= SharedOpdsResumableDownload.MaxAttempts) throw e
+                        retrySleep(SharedOpdsResumableDownload.retryDelayMs(attempt, null))
+                        continue
+                    }
+                }
+
+                if (totalWritten == 0L) error("Empty response body")
+                if (totalBytes != null && totalWritten != totalBytes) {
+                    error("Incomplete download: received $totalWritten of $totalBytes bytes")
+                }
+                runCatching { outputHandle?.closeFile() }
+                outputHandle = null
+
+                val extension = SharedOpdsDownloadNamer.resolveExtension(
                     acquisition = acquisition,
-                    contentDisposition = response.headerValue("Content-Disposition"),
+                    contentDisposition = finalHeaders.headerValue("Content-Disposition"),
                     urlPathSegment = acquisition.url.substringBefore('?').substringBefore('#').substringAfterLast('/'),
                 )
-                fileName = SharedOpdsDownloadNamer.cleanFileName(entry.title, extension)
+                val fileName = SharedOpdsDownloadNamer.cleanFileName(entry.title, extension)
 
                 if (destinationFolder != null) {
                     val managedPath = folderFileAdditionHandler(
@@ -319,7 +511,6 @@ internal class IosOpdsRepository(
             reference = reference,
             pageIndex = pageIndex,
             maxWidth = maxWidth,
-            catalogUrl = catalog?.url,
         )
         val response = fetchBinary(url, catalog?.username, catalog?.password)
         val data = response.data?.toByteArray()
@@ -583,8 +774,42 @@ private data class IosHttpResponse(
 internal data class IosUrlSessionResponse(
     val data: NSData?,
     val response: NSURLResponse?,
-    val error: NSError?
+    val error: NSError?,
+    val statusCodeOverride: Int? = null,
+    val headersOverride: Map<String, String>? = null,
 )
+
+internal class IosOpdsNetworkException(
+    val domain: String?,
+    val code: Long?,
+    message: String,
+) : Exception(message) {
+    constructor(error: NSError) : this(
+        domain = error.domain,
+        code = error.code,
+        message = error.localizedDescription,
+    )
+
+    val isCancelled: Boolean
+        get() = domain == "NSURLErrorDomain" && code == -999L
+}
+
+internal fun IosUrlSessionResponse.transportStatusCode(): Int {
+    statusCodeOverride?.let { return it }
+    return (response as? NSHTTPURLResponse)?.statusCode?.toInt() ?: 0
+}
+
+internal fun IosUrlSessionResponse.transportHeaders(): Map<String, String> {
+    headersOverride?.let { return it }
+    return (response as? NSHTTPURLResponse)?.allHeaderFields
+        ?.mapNotNull { (key, value) -> (key as? String)?.let { it to value.toString() } }
+        ?.toMap()
+        .orEmpty()
+}
+
+internal fun Map<String, String>.headerValue(name: String): String? {
+    return entries.firstOrNull { (key, _) -> key.equals(name, ignoreCase = true) }?.value
+}
 
 internal interface IosOpdsHttpClient {
     suspend fun fetch(
@@ -592,6 +817,8 @@ internal interface IosOpdsHttpClient {
         username: String?,
         password: String?,
         headers: Map<String, String> = emptyMap(),
+        resourceTimeoutSeconds: Double? = null,
+        onResponse: ((Int, Map<String, String>) -> Unit)? = null,
         onData: ((NSData, Long, Long?) -> Unit)? = null,
     ): IosUrlSessionResponse
 }
@@ -607,6 +834,8 @@ internal class IosUrlSessionHttpClient : IosOpdsHttpClient {
         username: String?,
         password: String?,
         headers: Map<String, String>,
+        resourceTimeoutSeconds: Double?,
+        onResponse: ((Int, Map<String, String>) -> Unit)?,
         onData: ((NSData, Long, Long?) -> Unit)?,
     ): IosUrlSessionResponse {
         val nsUrl = NSURL.URLWithString(url.trim()) ?: error("Invalid URL: $url")
@@ -629,6 +858,7 @@ internal class IosUrlSessionHttpClient : IosOpdsHttpClient {
             val delegate = IosUrlSessionDelegate(
                 username = username,
                 password = password,
+                onResponse = onResponse,
                 onData = onData,
                 onComplete = { result ->
                     if (continuation.isActive) {
@@ -638,7 +868,11 @@ internal class IosUrlSessionHttpClient : IosOpdsHttpClient {
             )
             val configuration = NSURLSessionConfiguration.defaultSessionConfiguration.apply {
                 setTimeoutIntervalForRequest(45.0)
-                setTimeoutIntervalForResource(90.0)
+                // Book downloads can run for many minutes on slow links;
+                // the default 90s resource timeout surfaced as
+                // "network connection was lost". Keep short timeouts for
+                // feeds/covers and use a long budget for downloads.
+                setTimeoutIntervalForResource(resourceTimeoutSeconds ?: 90.0)
             }
             val session = NSURLSession.sessionWithConfiguration(
                 configuration = configuration,
@@ -658,6 +892,7 @@ internal class IosUrlSessionHttpClient : IosOpdsHttpClient {
 private class IosUrlSessionDelegate(
     private val username: String?,
     private val password: String?,
+    private val onResponse: ((Int, Map<String, String>) -> Unit)?,
     private val onData: ((NSData, Long, Long?) -> Unit)?,
     private val onComplete: (Result<IosUrlSessionResponse>) -> Unit
 ) : NSObject(), NSURLSessionDataDelegateProtocol {
@@ -675,6 +910,15 @@ private class IosUrlSessionDelegate(
     ) {
         response = didReceiveResponse
         expectedBytes = didReceiveResponse.expectedContentLength.takeIf { it > 0L }
+        onResponse?.let { callback ->
+            val httpResponse = didReceiveResponse as? NSHTTPURLResponse
+            val statusCode = httpResponse?.statusCode?.toInt() ?: 200
+            val headers = httpResponse?.allHeaderFields
+                ?.mapNotNull { (key, value) -> (key as? String)?.let { it to value.toString() } }
+                ?.toMap()
+                .orEmpty()
+            callback(statusCode, headers)
+        }
         completionHandler(NSURLSessionResponseAllow)
     }
 
@@ -755,7 +999,8 @@ private fun base64Encode(bytes: ByteArray): String {
     return output.toString()
 }
 
-private class IosOpdsParser {
+/** Visible for testing: feed parsing must stay linear on link-heavy catalogs. */
+internal class IosOpdsParser {
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -1057,7 +1302,7 @@ private class IosOpdsParser {
 
     private fun resolveUrl(baseUrl: String, href: String): String {
         if (href.startsWith("http://") || href.startsWith("https://") || href.startsWith("opds-pse://")) return href
-        val baseMatch = Regex("""^(https?://[^/]+)(/.*)?$""").find(baseUrl) ?: return href
+        val baseMatch = OriginPattern.find(baseUrl) ?: return href
         val origin = baseMatch.groupValues[1]
         val path = baseMatch.groupValues.getOrNull(2).orEmpty()
         return when {
@@ -1106,7 +1351,7 @@ private class IosOpdsParser {
         }
     }
 
-    private fun String.relTokens(): List<String> = trim().split(Regex("""\s+""")).filter { it.isNotBlank() }
+    private fun String.relTokens(): List<String> = trim().split(whitespaceRegex).filter { it.isNotBlank() }
     private fun String.isDownloadableMediaType(): Boolean {
         val normalized = lowercase().substringBefore(';').trim()
         return normalized in DownloadableMediaTypes || DownloadableMediaTypeHints.any { normalized.contains(it) }
@@ -1116,6 +1361,7 @@ private class IosOpdsParser {
 
     private companion object {
         private const val PseStreamRel = "http://vaemendis.net/opds-pse/stream"
+        private val OriginPattern = Regex("""^(https?://[^/]+)(/.*)?$""")
         private const val ImageTypeCoverPriority = 1
         private const val GenericCoverPriority = 2
         private const val ThumbnailCoverPriority = 3
@@ -1157,15 +1403,11 @@ private data class XmlElement(
         fun firstText(xml: String, tag: String): String = findAll(xml, tag).firstOrNull()?.text.orEmpty()
 
         fun findAll(xml: String, tag: String): List<XmlElement> {
-            val tagName = Regex.escape(tag)
-            val pattern = Regex(
-                """<([A-Za-z0-9_:-]*:?$tagName)\b([^>]*)>(.*?)</\1>|<([A-Za-z0-9_:-]*:?$tagName)\b([^>]*)/>""",
-                setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
-            )
+            val pattern = findPattern(tag)
             return pattern.findAll(xml).map { match ->
-                val name = match.groupValues[1].ifBlank { match.groupValues[4] }
-                val attrs = match.groupValues[2].ifBlank { match.groupValues[5] }
-                val body = match.groupValues[3]
+                val name = match.groupValues[1].ifBlank { match.groupValues[3] }
+                val attrs = match.groupValues[2].ifBlank { match.groupValues[4] }
+                val body = match.groupValues[5]
                 XmlElement(
                     name = name,
                     attributes = parseAttributes(attrs),
@@ -1177,19 +1419,53 @@ private data class XmlElement(
 
         private fun parseAttributes(source: String): Map<String, String> {
             val attrs = linkedMapOf<String, String>()
-            Regex("""([A-Za-z0-9_:-]+)\s*=\s*(['"])(.*?)\2""", RegexOption.DOT_MATCHES_ALL)
+            attributePattern
                 .findAll(source)
                 .forEach { match -> attrs[match.groupValues[1]] = match.groupValues[3].decodeXmlEntities() }
             return attrs
         }
+
+        /**
+         * Element patterns are compiled once and shared: recompiling per tag
+         * cost ~230k Pattern compilations on a 1500-entry feed.
+         * The immutable map is safe for concurrent parses.
+         */
+        private val findPatterns: Map<String, Regex> = listOf(
+            "Url", "feed", "title", "link", "entry", "author", "name", "uri",
+            "category", "publisher", "published", "updated", "language", "meta",
+            "summary", "content", "id"
+        ).associateWith(::compileFindPattern)
+
+        private fun findPattern(tag: String): Regex {
+            return findPatterns[tag] ?: compileFindPattern(tag)
+        }
+
+        private fun compileFindPattern(tag: String): Regex {
+            val tagName = Regex.escape(tag)
+            // Self-closing alternative first: void elements (e.g. <link/>)
+            // must match immediately instead of scanning the rest of the
+            // document for a closing tag that never comes.
+            return Regex(
+                """<([A-Za-z0-9_:-]*:?$tagName)\b([^>]*)/>|<([A-Za-z0-9_:-]*:?$tagName)\b([^>]*)>(.*?)</\3>""",
+                setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+            )
+        }
+
+        private val attributePattern =
+            Regex("""([A-Za-z0-9_:-]+)\s*=\s*(['"])(.*?)\2""", RegexOption.DOT_MATCHES_ALL)
     }
 }
 
+private val whitespaceRegex = Regex("""\s+""")
+private val breakRegex = Regex("""<br\s*/?>""", RegexOption.IGNORE_CASE)
+private val paragraphCloseRegex = Regex("""</p\s*>""", RegexOption.IGNORE_CASE)
+
 private fun String.stripXml(): String {
-    return replace(Regex("""<br\s*/?>""", RegexOption.IGNORE_CASE), "\n")
-        .replace(Regex("""</p\s*>""", RegexOption.IGNORE_CASE), "\n\n")
-        .replace(Regex("""<[^>]+>"""), " ")
-        .replace(Regex("""\s+"""), " ")
+    return SharedOpdsText.stripXmlTags(
+        replace(breakRegex, "\n")
+            .replace(paragraphCloseRegex, "\n\n")
+    )
+        .replace(whitespaceRegex, " ")
 }
 
 private fun String.decodeXmlEntities(): String {

@@ -619,6 +619,8 @@ internal fun DesktopReaderScreen(
                 handleDesktopSelectionAction(DesktopReaderSelectionAction.SPEAK, text, locator)
             SharedNativeReaderSelectionAction.SEARCH ->
                 handleDesktopSelectionAction(DesktopReaderSelectionAction.SEARCH, text, locator)
+            SharedNativeReaderSelectionAction.DICTIONARY ->
+                onExternalLookup(ReaderExternalLookupAction.DICTIONARY, text)
             SharedNativeReaderSelectionAction.TRANSLATE ->
                 onExternalLookup(ReaderExternalLookupAction.TRANSLATE, text)
             SharedNativeReaderSelectionAction.NOTE -> Unit

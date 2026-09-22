@@ -29,6 +29,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.serialization.Serializable
@@ -127,7 +128,11 @@ class AnnotationSettingsRepository(context: Context) {
         scope.launch {
             val storedSettings = loadSettings()
             if (!hasLocalChanges.get()) {
-                _settings.value = storedSettings
+                // Re-check inside the atomic update so a toggle that lands between the
+                // check and the write is never clobbered by the stale disk snapshot.
+                _settings.update { current ->
+                    if (hasLocalChanges.get()) current else storedSettings
+                }
             }
         }
     }
@@ -142,6 +147,7 @@ class AnnotationSettingsRepository(context: Context) {
                 InkType.HIGHLIGHTER_ROUND -> ToolConfig("#8CFFEB3B".toColorInt(), 0.035f)
                 InkType.ERASER -> ToolConfig(android.graphics.Color.WHITE, 0.03f)
                 InkType.TEXT -> ToolConfig(android.graphics.Color.BLACK, 0.02f)
+                InkType.SELECT -> ToolConfig(android.graphics.Color.BLACK, 0.008f)
             }
         }
     }
@@ -163,9 +169,11 @@ class AnnotationSettingsRepository(context: Context) {
         }
     }
 
-    private fun saveSettings(newSettings: AnnotationToolSettings) {
+    private fun saveSettings(transform: (AnnotationToolSettings) -> AnnotationToolSettings) {
         hasLocalChanges.set(true)
-        _settings.update { newSettings }
+        // Atomic read-modify-write: concurrent toggles, color/thickness/tool updates
+        // can no longer be lost by overwriting each other with a stale snapshot.
+        val newSettings = _settings.updateAndGet(transform)
         scope.launch {
             val jsonString = json.encodeToString(newSettings)
             prefs().edit { putString(keySettings, jsonString) }
@@ -173,44 +181,50 @@ class AnnotationSettingsRepository(context: Context) {
     }
 
     fun updateSelectedTool(tool: InkType) {
-        var currentSettings = _settings.value.copy(selectedToolName = tool.name)
+        saveSettings { current ->
+            var updated = current.copy(selectedToolName = tool.name)
 
-        if (tool == InkType.PEN || tool == InkType.FOUNTAIN_PEN || tool == InkType.PENCIL) {
-            currentSettings = currentSettings.copy(lastActivePenType = tool.name)
-        } else if (tool == InkType.HIGHLIGHTER || tool == InkType.HIGHLIGHTER_ROUND) {
-            currentSettings = currentSettings.copy(lastActiveHighlighterType = tool.name) // ADD THIS
+            if (tool == InkType.PEN || tool == InkType.FOUNTAIN_PEN || tool == InkType.PENCIL) {
+                updated = updated.copy(lastActivePenType = tool.name)
+            } else if (tool == InkType.HIGHLIGHTER || tool == InkType.HIGHLIGHTER_ROUND) {
+                updated = updated.copy(lastActiveHighlighterType = tool.name) // ADD THIS
+            }
+
+            updated
         }
-
-        saveSettings(currentSettings)
     }
 
     fun updateToolColor(tool: InkType, color: Color) {
-        val currentMap = _settings.value.toolConfigs.toMutableMap()
-        val currentConfig = currentMap[tool.name] ?: getDefaultConfig(tool)
-        currentMap[tool.name] = currentConfig.copy(colorArgb = color.toArgb())
-        saveSettings(_settings.value.copy(toolConfigs = currentMap))
+        saveSettings { current ->
+            val currentMap = current.toolConfigs.toMutableMap()
+            val currentConfig = currentMap[tool.name] ?: getDefaultConfig(tool)
+            currentMap[tool.name] = currentConfig.copy(colorArgb = color.toArgb())
+            current.copy(toolConfigs = currentMap)
+        }
     }
 
     fun updateToolThickness(tool: InkType, thickness: Float) {
-        val currentMap = _settings.value.toolConfigs.toMutableMap()
-        val currentConfig = currentMap[tool.name] ?: getDefaultConfig(tool)
-        currentMap[tool.name] = currentConfig.copy(thickness = thickness)
-        saveSettings(_settings.value.copy(toolConfigs = currentMap))
+        saveSettings { current ->
+            val currentMap = current.toolConfigs.toMutableMap()
+            val currentConfig = currentMap[tool.name] ?: getDefaultConfig(tool)
+            currentMap[tool.name] = currentConfig.copy(thickness = thickness)
+            current.copy(toolConfigs = currentMap)
+        }
     }
 
     fun updatePenPalette(colors: List<Color>) {
-        saveSettings(_settings.value.copy(penPaletteArgb = colors.map { it.toArgb() }))
+        saveSettings { current -> current.copy(penPaletteArgb = colors.map { it.toArgb() }) }
     }
 
     fun updateHighlighterPalette(colors: List<Color>) {
-        saveSettings(_settings.value.copy(highlighterPaletteArgb = colors.map { it.toArgb() }))
+        saveSettings { current -> current.copy(highlighterPaletteArgb = colors.map { it.toArgb() }) }
     }
 
     fun updateHighlighterSnap(enabled: Boolean) {
-        saveSettings(_settings.value.copy(isHighlighterSnapEnabled = enabled))
+        saveSettings { current -> current.copy(isHighlighterSnapEnabled = enabled) }
     }
 
     fun updateTextStyle(style: TextStyleConfig) {
-        saveSettings(_settings.value.copy(textStyle = style))
+        saveSettings { current -> current.copy(textStyle = style) }
     }
 }

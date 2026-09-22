@@ -11,6 +11,7 @@ import com.aryan.reader.paginatedreader.SemanticParagraph
 import com.aryan.reader.paginatedreader.SemanticSpacer
 import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTableCell
+import com.aryan.reader.paginatedreader.isReaderMissingFigure
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -293,5 +294,42 @@ class SharedEpubSemanticBlocksTest {
         val bold = p.spans.single { it.style.spanStyle.fontWeight == FontWeight.Bold }
         assertEquals(2, bold.start)
         assertEquals(3, bold.end)
+    }
+
+    @Test
+    fun `missing figure marker folds into captioned placeholder`() {
+        val result = blocks(
+            """<div class="figcenter"><span class="caption">SHOOTING A LEOPARD.</span>""" +
+                """<p class="ralign">[p. 213.</p>""" +
+                """<span title="" id="img_images_illus001.png">SHOOTING A LEOPARD</span></div>"""
+        )
+
+        assertEquals(1, result.size)
+        val placeholder = result.single() as SemanticParagraph
+        assertEquals("[Illustration] SHOOTING A LEOPARD.", placeholder.text)
+        assertTrue(placeholder.style.isReaderMissingFigure())
+    }
+
+    @Test
+    fun `empty missing figure marker yields bare placeholder`() {
+        val result = blocks(
+            """<div class="figcenter" style="width: 640px">""" +
+                """<span title="" id="img_images_butterflies.jpg"></span></div>"""
+        )
+
+        assertEquals(1, result.size)
+        val placeholder = result.single() as SemanticParagraph
+        assertEquals("[Illustration]", placeholder.text)
+        assertTrue(placeholder.style.isReaderMissingFigure())
+    }
+
+    @Test
+    fun `figures with real images are untouched`() {
+        val result = blocks(
+            """<div class="figcenter"><img src="a.jpg" alt="A"/><span class="caption">Cap</span></div>"""
+        )
+
+        assertTrue(result.none { it.style.isReaderMissingFigure() })
+        assertTrue(result.any { it is SemanticParagraph && (it as SemanticParagraph).text.contains("Cap") })
     }
 }

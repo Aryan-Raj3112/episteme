@@ -41,8 +41,13 @@ internal data class SharedXmlDocumentNode(
 
     fun firstChildNamed(name: String): SharedXmlDocumentNode? = children.firstOrNull { it.name == name }
 
-    fun androidMetadataChildren(primaryName: String, fallbackName: String): List<SharedXmlDocumentNode> =
-        children.filter { it.name == primaryName }.ifEmpty { children.filter { it.name == fallbackName } }
+    /**
+     * Direct children matching any of [names], in document order. Calibre EPUB 3
+     * packages mix unprefixed and `opf:`-prefixed metas in one block, so both
+     * spellings must be collected instead of falling back when one form exists.
+     */
+    fun androidMetadataChildren(vararg names: String): List<SharedXmlDocumentNode> =
+        children.filter { node -> names.any { node.name == it } }
 
     fun toMobileEpubMetaElement(): MobileEpubMetaElement = MobileEpubMetaElement(
         id = attribute("id")?.decodeEpubEntities(),

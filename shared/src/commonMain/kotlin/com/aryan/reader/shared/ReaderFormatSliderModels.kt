@@ -1,5 +1,6 @@
 package com.aryan.reader.shared
 
+import com.aryan.reader.shared.reader.DefaultReaderPageSpreadGutterDp
 import com.aryan.reader.shared.reader.ReaderSettings
 import kotlin.math.roundToInt
 
@@ -13,11 +14,15 @@ import kotlin.math.roundToInt
  * the stable portability benchmark used by Android's settings bridge and by
  * the shared renderer; they describe the value represented by a 1.0x slider
  * position, not a replacement for Android's runtime typography.
+ *
+ * Margins use 16px because both Android surfaces render a 1.0x margin as 16
+ * (native 16.dp in PaginatedReader, 16px in epub_reader.js), so a 1.0x slider
+ * looks the same on Android and on shared/iOS readers.
  */
 object AndroidEpubFormatBenchmark {
     const val baseFontSizeSp: Float = 18f
     const val baseLineSpacing: Float = 1.45f
-    const val baseMarginPx: Float = 48f
+    const val baseMarginPx: Float = 16f
 }
 
 enum class AndroidEpubFormatSlider {
@@ -27,6 +32,12 @@ enum class AndroidEpubFormatSlider {
     IMAGE_SIZE,
     HORIZONTAL_MARGIN,
     VERTICAL_MARGIN,
+    /**
+     * Gap between the two pages of a two-page spread, in dp (absolute, not a
+     * multiplier — there is no typographic base for a gutter). Only applies
+     * when the spread mode is two-page.
+     */
+    SPREAD_GAP,
 }
 
 data class AndroidEpubFormatSliderSpec(
@@ -63,6 +74,12 @@ object AndroidEpubFormatSliders {
     val imageSize = AndroidEpubFormatSliderSpec(minimum = 0.5f, maximum = 2f)
     val horizontalMargin = AndroidEpubFormatSliderSpec(minimum = 0f, maximum = 3f)
     val verticalMargin = AndroidEpubFormatSliderSpec(minimum = 0f, maximum = 3f)
+    val spreadGap = AndroidEpubFormatSliderSpec(
+        minimum = 0f,
+        maximum = 48f,
+        step = 2f,
+        default = DefaultReaderPageSpreadGutterDp
+    )
 
     fun forSlider(slider: AndroidEpubFormatSlider): AndroidEpubFormatSliderSpec = when (slider) {
         AndroidEpubFormatSlider.FONT_SIZE -> fontSize
@@ -71,10 +88,11 @@ object AndroidEpubFormatSliders {
         AndroidEpubFormatSlider.IMAGE_SIZE -> imageSize
         AndroidEpubFormatSlider.HORIZONTAL_MARGIN -> horizontalMargin
         AndroidEpubFormatSlider.VERTICAL_MARGIN -> verticalMargin
+        AndroidEpubFormatSlider.SPREAD_GAP -> spreadGap
     }
 }
 
-/** The six Android EPUB format positions in canonical multiplier space. */
+/** The six Android EPUB format positions in canonical multiplier space, plus the absolute spread gap. */
 data class AndroidEpubFormatSliderValues(
     val fontSize: Float = 1f,
     val lineHeight: Float = 1f,
@@ -82,6 +100,7 @@ data class AndroidEpubFormatSliderValues(
     val imageSize: Float = 1f,
     val horizontalMargin: Float = 1f,
     val verticalMargin: Float = 1f,
+    val spreadGapDp: Float = DefaultReaderPageSpreadGutterDp,
 ) {
     /** Sanitizes persisted values while preserving fractional values between steps. */
     fun clamped(): AndroidEpubFormatSliderValues = copy(
@@ -91,6 +110,7 @@ data class AndroidEpubFormatSliderValues(
         imageSize = AndroidEpubFormatSliders.imageSize.clamp(imageSize),
         horizontalMargin = AndroidEpubFormatSliders.horizontalMargin.clamp(horizontalMargin),
         verticalMargin = AndroidEpubFormatSliders.verticalMargin.clamp(verticalMargin),
+        spreadGapDp = AndroidEpubFormatSliders.spreadGap.clamp(spreadGapDp),
     )
 
     /** Values produced by the Android/shared slider controls. */
@@ -101,6 +121,7 @@ data class AndroidEpubFormatSliderValues(
         imageSize = AndroidEpubFormatSliders.imageSize.snap(imageSize),
         horizontalMargin = AndroidEpubFormatSliders.horizontalMargin.snap(horizontalMargin),
         verticalMargin = AndroidEpubFormatSliders.verticalMargin.snap(verticalMargin),
+        spreadGapDp = AndroidEpubFormatSliders.spreadGap.snap(spreadGapDp),
     )
 }
 
@@ -120,6 +141,7 @@ fun ReaderSettings.toAndroidEpubFormatSliderValues(): AndroidEpubFormatSliderVal
         imageSize = imageScale,
         horizontalMargin = horizontalMargin,
         verticalMargin = verticalMargin,
+        spreadGapDp = pageSpreadGutterDp,
     ).clamped()
 }
 
@@ -143,6 +165,7 @@ fun AndroidEpubFormatSliderValues.toReaderSettings(base: ReaderSettings = Reader
         verticalMargin = verticalMargin,
         paragraphSpacing = values.paragraphGap,
         imageScale = values.imageSize,
+        pageSpreadGutterDp = values.spreadGapDp,
     )
 }
 
@@ -181,6 +204,7 @@ fun ReaderSettings.withAndroidEpubFormatSliderValue(
                 verticalMargin = nextVertical,
             )
         }
+        AndroidEpubFormatSlider.SPREAD_GAP -> copy(pageSpreadGutterDp = normalized)
     }
 }
 

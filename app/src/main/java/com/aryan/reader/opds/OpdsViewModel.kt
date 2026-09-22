@@ -127,6 +127,8 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
                 Timber.e(e, "Download error")
                 val message = if (e is OpdsDownloadFailedException) {
                     e.message.orEmpty()
+                } else if (OpdsRepository.isCertificateError(e)) {
+                    context.getString(R.string.opds_error_certificate)
                 } else {
                     context.getString(R.string.opds_error_download_error, e.message.orEmpty())
                 }

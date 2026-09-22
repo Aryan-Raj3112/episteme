@@ -42,6 +42,7 @@ import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockFullBar
 import com.aryan.reader.shared.pdf.isSharedPdfAnnotationEraserActive
 import com.aryan.reader.shared.pdf.isSharedPdfAnnotationHighlighterActive
 import com.aryan.reader.shared.pdf.isSharedPdfAnnotationPenActive
+import com.aryan.reader.shared.pdf.isSharedPdfAnnotationSelectActive
 import com.aryan.reader.shared.pdf.isSharedPdfAnnotationTextActive
 import com.aryan.reader.shared.pdf.resolveSharedPdfAnnotationDockToolClick
 
@@ -50,7 +51,7 @@ import com.aryan.reader.shared.pdf.resolveSharedPdfAnnotationDockToolClick
  *
  * Benchmark: `app/.../pdf/AnnotationDock.kt` (behavior + layout).
  * Shared-first so iOS renders the same toolbar as Android:
- * close, minimize, stylus-only, pen / highlighter / text / eraser,
+ * close, minimize, stylus-only, select / pen / highlighter / text / eraser,
  * undo + redo. Sticky (TOP/BOTTOM) renders full-width rectangular with no
  * shadow; floating renders as a pill; floating + minimized collapses to the
  * 48dp circle. Minimized dims tools to 30% and disables them, matching
@@ -161,6 +162,18 @@ fun SharedPdfAndroidAnnotationDock(
                             )
                         }
                     }
+
+                    // Android parity (AnnotationDock.kt Select/Edit cell): sits
+                    // before the pen group and activates SELECT directly.
+                    SharedPdfDockIcon(
+                        tool = PdfInkTool.SELECT,
+                        isActive = isSharedPdfAnnotationSelectActive(selectedTool, isMinimized),
+                        tintColor = if (isMinimized) Color.Gray else Color.White,
+                        description = readerString("content_desc_select_mode", "Select"),
+                        sizeDp = buttonSize,
+                        iconSizeDp = iconSize,
+                        onClick = { if (!isMinimized) onToolClick(PdfInkTool.SELECT) },
+                    )
 
                     val isPenActive = isSharedPdfAnnotationPenActive(selectedTool, isMinimized)
                     SharedPdfDockIcon(
@@ -330,6 +343,11 @@ private fun SharedPdfDockIcon(
                 tint = tintColor,
                 modifier = Modifier.size(iconSizeDp),
             )
+            PdfInkTool.SELECT -> SharedPdfAndroidPathIcon(
+                pathData = SharedPdfAndroidLassoSelectPath,
+                tint = tintColor,
+                modifier = Modifier.size(iconSizeDp),
+            )
         }
     }
 }
@@ -365,6 +383,7 @@ fun SharedPdfAndroidToolSettingsPopup(
     isHighlighterSnapEnabled: Boolean,
     onHighlighterSnapChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    maxHeight: androidx.compose.ui.unit.Dp? = null,
 ) {
     val isEraser = selectedTool == PdfInkTool.ERASER
     val isHighlighter = selectedTool in SharedPdfAnnotationHighlighterTools
@@ -401,6 +420,7 @@ fun SharedPdfAndroidToolSettingsPopup(
             onPaletteChange = onPaletteChange,
             isHighlighterSnapEnabled = isHighlighterSnapEnabled,
             onHighlighterSnapChange = onHighlighterSnapChange,
+            maxHeight = maxHeight,
         )
     }
 }

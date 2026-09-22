@@ -11,6 +11,7 @@ import platform.Foundation.NSData
 import platform.Foundation.NSError
 import platform.Foundation.NSMutableData
 import platform.Foundation.NSUserDefaults
+import platform.Foundation.dataWithLength
 import platform.posix.memcpy
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -118,6 +119,8 @@ private class RecordingIosOpdsHttpClient(
         username: String?,
         password: String?,
         headers: Map<String, String>,
+        resourceTimeoutSeconds: Double?,
+        onResponse: ((Int, Map<String, String>) -> Unit)?,
         onData: ((NSData, Long, Long?) -> Unit)?,
     ): IosUrlSessionResponse {
         calls += Call(url, username, password)

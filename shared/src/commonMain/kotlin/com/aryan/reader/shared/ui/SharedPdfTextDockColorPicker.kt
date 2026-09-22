@@ -13,7 +13,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
@@ -68,41 +67,62 @@ fun SharedPdfTextDockColorPicker(
         value = hsv.value
     }
 
-    Surface(shape = RoundedCornerShape(16.dp), color = Color(0xFF2C2C2C), modifier = Modifier.width(320.dp)) {
-        Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack, modifier = Modifier.size(24.dp)) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, labels.back, tint = Color.White)
-                }
-                Text(labels.spectrum, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
-                    color = Color.White, modifier = Modifier.padding(start = 12.dp))
+    // Android parity (ToolSettingsPopup.kt ColorPickerDialog): dark 0xFF2C2C2C
+    // surface, pill title, 220dp rectangular spectrum, brightness slider,
+    // 64x36 compare + hex + RGB, Back (gray, returns to palette) + Done
+    // (white, applies). onBack preserves the palette-return flow.
+    Surface(shape = RoundedCornerShape(24.dp), color = Color(0xFF2C2C2C), modifier = Modifier.width(320.dp)) {
+        Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier
+                    .background(Color(0xFF3E3E3E), RoundedCornerShape(16.dp))
+                    .padding(horizontal = 24.dp, vertical = 8.dp)
+            ) {
+                Text(
+                    labels.spectrum,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White
+                )
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(20.dp))
             SharedPdfTextDockSpectrumBox(hue, saturation, currentColor, { h, s -> hue = h; saturation = s },
-                Modifier.fillMaxWidth().height(160.dp))
-            Spacer(Modifier.height(16.dp))
+                Modifier.fillMaxWidth().height(220.dp))
+            Spacer(Modifier.height(20.dp))
             val gradient = remember(hue, saturation) {
                 Brush.horizontalGradient(listOf(Color.Black, pdfTextDockHsvColor(hue, saturation, 1f)))
             }
-            SharedPdfTextDockGradientSlider(value, { value = it }, currentColor, gradient)
-            Spacer(Modifier.height(16.dp))
+            SharedPdfTextDockBrightnessSlider(value, { value = it }, gradient)
+            Spacer(Modifier.height(24.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                SharedPdfTextDockColorCompare(lockedInitialColor, currentColor, Modifier.width(48.dp).height(36.dp))
-                Column(Modifier.weight(1.5f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(labels.hex, color = Color.Gray, fontSize = 11.sp, maxLines = 1)
+                SharedPdfTextDockColorCompare(lockedInitialColor, currentColor, Modifier.width(64.dp).height(36.dp))
+                Column(Modifier.weight(1.6f), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(labels.hex, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
                     Spacer(Modifier.height(4.dp))
                     SharedPdfTextDockHexInput(currentColor, ::updateFromColor)
                 }
-                Row(Modifier.weight(2.5f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(Modifier.weight(2.4f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     SharedPdfTextDockRgbInputColumn(labels.red, currentColor.red, { updateFromColor(currentColor.copy(red = it)) }, Modifier.weight(1f))
                     SharedPdfTextDockRgbInputColumn(labels.green, currentColor.green, { updateFromColor(currentColor.copy(green = it)) }, Modifier.weight(1f))
                     SharedPdfTextDockRgbInputColumn(labels.blue, currentColor.blue, { updateFromColor(currentColor.copy(blue = it)) }, Modifier.weight(1f))
                 }
             }
-            Spacer(Modifier.height(16.dp))
-            Button(onClick = { onColorSelected(currentColor) }, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
-                modifier = Modifier.fillMaxWidth().height(40.dp), contentPadding = PaddingValues(0.dp)) {
-                Text(labels.done, fontSize = 14.sp)
+            Spacer(Modifier.height(24.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onBack) {
+                    Text(labels.back, color = Color.Gray)
+                }
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = { onColorSelected(currentColor) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
+                ) {
+                    Text(labels.done)
+                }
             }
         }
     }
@@ -192,6 +212,39 @@ private fun SharedPdfTextDockSpectrumBox(hue: Float, saturation: Float, currentC
             drawCircle(Color.Black.copy(alpha = .25f), radius + 1.dp.toPx(), center.copy(y = center.y + 1.dp.toPx()))
             drawCircle(currentColor.copy(alpha = 1f), radius, center)
             drawCircle(Color.White, radius, center, style = Stroke(2.dp.toPx()))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SharedPdfTextDockBrightnessSlider(value: Float, onValueChange: (Float) -> Unit, brush: Brush) {
+    // Android parity (BrightnessSlider): plain drag gradient, white thumb, no
+    // steppers or percent bubble.
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(24.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    fun update(offset: Offset) {
+                        onValueChange((offset.x / size.width.toFloat()).coerceIn(0f, 1f))
+                    }
+                    update(down.position)
+                    drag(down.id) { it.consume(); update(it.position) }
+                }
+            }
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            drawRect(brush = brush)
+            val x = value.coerceIn(0f, 1f) * size.width
+            drawCircle(
+                color = Color.White,
+                radius = 8.dp.toPx(),
+                center = Offset(x, size.height / 2f)
+            )
         }
     }
 }

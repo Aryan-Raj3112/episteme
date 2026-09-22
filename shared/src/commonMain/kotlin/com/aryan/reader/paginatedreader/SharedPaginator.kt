@@ -254,3 +254,105 @@ suspend fun paginateReaderBlocks(
     if (currentPageContent.isNotEmpty()) commitPage("final")
     return pages
 }
+
+/** Consecutive same-writing-mode slice of a chapter (mode switches break pages). */
+data class WritingModeSegment<T : Any>(
+    val isVertical: Boolean,
+    val blocks: List<T>
+)
+
+/** Groups consecutive blocks by writing mode; empty groups are dropped. */
+fun <T : Any> segmentBlocksByWritingMode(
+    blocks: List<T>,
+    isVertical: (T) -> Boolean
+): List<WritingModeSegment<T>> {
+    if (blocks.isEmpty()) return emptyList()
+    val segments = mutableListOf<WritingModeSegment<T>>()
+    var currentVertical = isVertical(blocks.first())
+    var current = mutableListOf<T>()
+    for (block in blocks) {
+        val vertical = isVertical(block)
+        if (vertical != currentVertical && current.isNotEmpty()) {
+            segments += WritingModeSegment(currentVertical, current.toList())
+            current = mutableListOf()
+            currentVertical = vertical
+        }
+        current += block
+    }
+    if (current.isNotEmpty()) segments += WritingModeSegment(currentVertical, current.toList())
+    return segments
+}
+
+/**
+ * Width-based page assembly for vertical-rl flow. Columns stack
+ * right-to-left; a page holds whatever fits [contentWidthPx]. Full-width
+ * fallback blocks (tables, lists rendered horizontally) always own their
+ * page segment. Callers pre-split oversize fallback blocks; text splits
+ * through [splitForWidth], which must keep ruby runs atomic.
+ */
+suspend fun <T : Any> paginateVerticalFlow(
+    blocks: List<T>,
+    contentWidthPx: Int,
+    widthOf: suspend (T) -> Int,
+    spaceBefore: (previous: T?, current: T) -> Int,
+    splitForWidth: suspend (T, availableWidthPx: Int) -> Pair<T, T>?,
+    isFullWidth: (T) -> Boolean,
+    hasContent: (T) -> Boolean,
+    onEmitPage: (List<T>) -> Unit
+) {
+    if (blocks.isEmpty() || contentWidthPx <= 0) return
+    val queue = ArrayDeque(blocks)
+    var page = mutableListOf<T>()
+    var usedWidth = 0
+
+    fun emit() {
+        if (page.isEmpty()) return
+        onEmitPage(page.toList())
+        page = mutableListOf()
+        usedWidth = 0
+    }
+
+    while (queue.isNotEmpty()) {
+        coroutineContext.ensureActive()
+        val block = queue.removeFirst()
+        if (isFullWidth(block)) {
+            emit()
+            onEmitPage(listOf(block))
+            continue
+        }
+        val space = spaceBefore(page.lastOrNull(), block)
+        val width = widthOf(block)
+        if (usedWidth + space + width <= contentWidthPx) {
+            if (hasContent(block) || page.isNotEmpty()) {
+                page += block
+                usedWidth += space + width
+            }
+            continue
+        }
+        val available = (contentWidthPx - usedWidth - space).coerceAtLeast(0)
+        val split = if (available > 0) splitForWidth(block, available) else null
+        if (split != null && hasContent(split.first)) {
+            page += split.first
+            if (hasContent(split.second)) queue.addFirst(split.second)
+            emit()
+            continue
+        }
+        if (page.isNotEmpty()) {
+            emit()
+            queue.addFirst(block)
+            continue
+        }
+        // Fresh page but still too wide: split for the full width, else force.
+        val fullSplit = splitForWidth(block, (contentWidthPx - space).coerceAtLeast(0))
+        if (fullSplit != null && hasContent(fullSplit.first)) {
+            page += fullSplit.first
+            if (hasContent(fullSplit.second)) queue.addFirst(fullSplit.second)
+            emit()
+        } else {
+            page += block
+            usedWidth += space + width
+            emit()
+        }
+    }
+    emit()
+}

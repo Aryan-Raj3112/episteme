@@ -7,6 +7,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import com.aryan.reader.paginatedreader.CssStyle
 import com.aryan.reader.paginatedreader.SemanticBlock
+import com.aryan.reader.paginatedreader.isEbookmakerImageMarkerId
+import com.aryan.reader.paginatedreader.readerMissingFigureText
+import com.aryan.reader.paginatedreader.withReaderMissingFigure
+import com.aryan.reader.paginatedreader.SemanticFlexContainer
 import com.aryan.reader.paginatedreader.SemanticHeader
 import com.aryan.reader.paginatedreader.SemanticImage
 import com.aryan.reader.paginatedreader.SemanticList
@@ -17,6 +21,7 @@ import com.aryan.reader.paginatedreader.SemanticSpacer
 import com.aryan.reader.paginatedreader.SemanticSpan
 import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTableCell
+import com.aryan.reader.paginatedreader.SemanticTextBlock
 
 /**
  * Converts a chapter's (sanitized and resource-rewritten) XHTML body into the same
@@ -86,6 +91,59 @@ private class SharedSemanticDomElement(
     fun attribute(localName: String): String? = attributes[localName]
 
     fun elementId(): String? = attribute("id")?.trim()?.takeIf(String::isNotBlank)
+
+    /** Ebookmaker figure frame: `<div class="figcenter">`/`<figure>` whose image was stripped. */
+    fun isMissingFigureContainer(): Boolean {
+        val isFrame = localName == "figure" ||
+            attribute("class")?.split(Regex("\\s+"))?.any { it.equals("figcenter", ignoreCase = true) } == true
+        if (!isFrame) return false
+        return findEbookmakerImageMarker() != null && !containsElementNamed("img")
+    }
+
+    fun findEbookmakerImageMarker(): SharedSemanticDomElement? {
+        val stack = ArrayDeque<SharedSemanticDomNode>()
+        children.forEach { stack.addLast(it) }
+        while (stack.isNotEmpty()) {
+            val node = stack.removeLast()
+            if (node is SharedSemanticDomElement) {
+                if (node.localName == "span" && node.elementId()?.isEbookmakerImageMarkerId() == true) {
+                    return node
+                }
+                node.children.forEach { stack.addLast(it) }
+            }
+        }
+        return null
+    }
+
+    fun findCaptionElement(): SharedSemanticDomElement? {
+        val stack = ArrayDeque<SharedSemanticDomNode>()
+        children.forEach { stack.addLast(it) }
+        while (stack.isNotEmpty()) {
+            val node = stack.removeLast()
+            if (node is SharedSemanticDomElement) {
+                if (node.localName == "span" &&
+                    node.attribute("class")?.split(Regex("\\s+"))?.any { it.equals("caption", ignoreCase = true) } == true
+                ) {
+                    return node
+                }
+                node.children.forEach { stack.addLast(it) }
+            }
+        }
+        return null
+    }
+
+    private fun containsElementNamed(name: String): Boolean {
+        val stack = ArrayDeque<SharedSemanticDomNode>()
+        children.forEach { stack.addLast(it) }
+        while (stack.isNotEmpty()) {
+            val node = stack.removeLast()
+            if (node is SharedSemanticDomElement) {
+                if (node.localName == name) return true
+                node.children.forEach { stack.addLast(it) }
+            }
+        }
+        return false
+    }
 
     val isBlockElement: Boolean get() = localName in SharedEpubBlockTags
 
@@ -392,6 +450,48 @@ private class SharedEpubSemanticBlockBuilder(
     }
 
     private fun buildContainer(element: SharedSemanticDomElement, target: MutableList<SemanticBlock>) {
+        if (element.isMissingFigureContainer()) {
+            val temp = mutableListOf<SemanticBlock>()
+            buildContainerChildren(element, temp)
+            foldMissingFigureChildren(element, temp)?.let { placeholder ->
+                target += placeholder
+                return
+            }
+            target += temp
+            return
+        }
+        buildContainerChildren(element, target)
+    }
+
+    /**
+     * Folds an image-less figure (ebookmaker `<span id="img_...">` marker, no `<img>`) into a
+     * single missing-figure placeholder, mirroring the JVM parser. The placeholder borrows the
+     * first text block's source offset so page clipping and locators keep working.
+     */
+    private fun foldMissingFigureChildren(
+        element: SharedSemanticDomElement,
+        children: List<SemanticBlock>
+    ): SemanticBlock? {
+        if (children.any { it is SemanticTable || it is SemanticImage || it is SemanticList || it is SemanticMath || it is SemanticFlexContainer }) {
+            return null
+        }
+        val marker = element.findEbookmakerImageMarker() ?: return null
+        val captionElement = element.findCaptionElement()
+        val caption = captionElement?.let { buildLocalText(listOf(it)).text }
+            ?: buildLocalText(listOf(marker)).text
+        val anchor = children.filterIsInstance<SemanticTextBlock>().firstOrNull()
+        return SemanticParagraph(
+            text = readerMissingFigureText(caption),
+            spans = emptyList(),
+            style = CssStyle().withReaderMissingFigure(),
+            elementId = element.elementId() ?: marker.elementId(),
+            cfi = element.cfiPath(),
+            startCharOffsetInSource = anchor?.startCharOffsetInSource ?: 0,
+            blockIndex = nextBlockIndex++
+        )
+    }
+
+    private fun buildContainerChildren(element: SharedSemanticDomElement, target: MutableList<SemanticBlock>) {
         val buffer = mutableListOf<SharedSemanticDomNode>()
         var chunkOrdinal = 0
 

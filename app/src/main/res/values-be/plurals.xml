@@ -204,4 +204,23 @@
         <item quantity="many">Тэчкі %1$d</item>
         <item quantity="other">Тэчкі %1$d</item>
     </plurals>
+    <!-- Search results count label. %1$d = number of results.
+         Belarusian (CLDR): one = вынік (1, 21, 31…), few = вынікі (2-4),
+         many = вынікаў (5-20, 0, 11-14), other = выніку (fractions).
+         Keep all four categories. Example: 12 → "12 вынікаў". -->
+    <plurals name="unified_library_search_results">
+        <item quantity="one">%1$d вынік</item>
+        <item quantity="few">%1$d вынікі</item>
+        <item quantity="many">%1$d вынікаў</item>
+        <item quantity="other">%1$d выніку</item>
+    </plurals>
+    <!-- Listening-queue item count. %1$d = number of items.
+         Belarusian (CLDR): one = элемент, few = элементы, many = элементаў, other = элементу.
+         Example: 5 → "5 элементаў". -->
+    <plurals name="listen_item_count">
+        <item quantity="one">%1$d элемент</item>
+        <item quantity="few">%1$d элементы</item>
+        <item quantity="many">%1$d элементаў</item>
+        <item quantity="other">%1$d элементу</item>
+    </plurals>
 </resources>

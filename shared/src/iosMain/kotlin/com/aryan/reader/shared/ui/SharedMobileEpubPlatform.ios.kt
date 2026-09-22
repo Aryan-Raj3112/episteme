@@ -14,6 +14,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.UIKitInteropInteractionMode
 import androidx.compose.ui.viewinterop.UIKitInteropProperties
 import androidx.compose.ui.viewinterop.UIKitView
@@ -22,6 +24,7 @@ import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderExternalLookupService
+import com.aryan.reader.shared.isReaderExternalHref
 import com.aryan.reader.shared.normalizeReaderHref
 import com.aryan.reader.shared.LocalTtsInterruptionAction
 import com.aryan.reader.shared.LocalTtsInterruptionEvent
@@ -63,22 +66,28 @@ import kotlinx.cinterop.useContents
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSData
 import platform.Foundation.NSError
-import platform.Foundation.NSNumber
 import platform.Foundation.NSMutableData
 import platform.Foundation.NSURL
 import platform.Foundation.NSURLResponse
 import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.NSRange
+import platform.Foundation.NSBundle
+import platform.Foundation.NSLocale
+import platform.Foundation.NSLocaleIdentifier
 import platform.Foundation.NSUserDefaults
 import platform.Foundation.dataWithLength
 import platform.UIKit.UIApplication
 import platform.UIKit.UIColor
+import platform.UIKit.UIEdgeInsetsMake
+import platform.UIKit.UIScrollViewContentInsetAdjustmentBehavior
 import platform.UIKit.UIActivityViewController
 import platform.UIKit.UIModalPresentationFullScreen
 import platform.UIKit.UIReferenceLibraryViewController
 import platform.WebKit.WKScriptMessage
 import platform.WebKit.WKScriptMessageHandlerProtocol
 import platform.WebKit.WKNavigation
+import platform.WebKit.WKNavigationAction
+import platform.WebKit.WKNavigationActionPolicy
 import platform.WebKit.WKNavigationDelegateProtocol
 import platform.WebKit.WKUserContentController
 import platform.WebKit.WKUserScript
@@ -91,6 +100,8 @@ import platform.AVFAudio.AVSpeechBoundary
 import platform.AVFAudio.AVSpeechSynthesizer
 import platform.AVFAudio.AVSpeechSynthesizerDelegateProtocol
 import platform.AVFAudio.AVSpeechSynthesisVoice
+import platform.AVFAudio.AVSpeechSynthesisVoiceQualityEnhanced
+import platform.AVFAudio.AVSpeechSynthesisVoiceQualityPremium
 import platform.AVFAudio.AVSpeechUtterance
 import platform.AVFAudio.AVAudioSession
 import platform.AVFAudio.AVAudioSessionCategoryPlayback
@@ -148,6 +159,7 @@ internal actual fun SharedMobileEpubWebView(
     positionController: SharedMobileEpubWebViewController?,
     streamPageLoader: SharedMobileEpubStreamPageLoader?,
     streamPageUnavailableLabel: String,
+    contentBackgroundArgb: Long,
     modifier: Modifier
 ) {
     val latestBridgeMessage by rememberUpdatedState(onBridgeMessage)
@@ -176,7 +188,8 @@ internal actual fun SharedMobileEpubWebView(
                 appearanceScript = appearanceScript,
                 navigationScript = navigationScript,
                 navigationRequestId = navigationRequestId,
-                highlightsApplyScript = highlightsApplyScript
+                highlightsApplyScript = highlightsApplyScript,
+                contentBackgroundArgb = contentBackgroundArgb
             )
         },
         onRelease = coordinator::release,
@@ -192,6 +205,22 @@ internal actual fun openSharedMobileEpubExternalLink(url: String): Boolean {
     val target = NSURL.URLWithString(normalized) ?: return false
     return UIApplication.sharedApplication.openURL(target)
 }
+
+// iPhone corner radii (~13-16pt) curve into the benchmark 16.dp side padding,
+// so the edge-pinned clock/percentage gain room that safeDrawing cannot
+// provide (it reports 0 horizontally in portrait).
+internal actual val sharedMobileEpubPageInfoCornerClearance: Dp = 8.dp
+
+// With menus hidden the bar would sit flush at the bottom edge, inside the
+// corner curve. Always lifting it above the home-indicator zone keeps the
+// clock/percentage on straight screen edges; the bar background still extends
+// to the bottom edge underneath.
+internal actual val sharedMobileEpubPageInfoAlwaysApplyBottomSafeInset: Boolean = true
+
+// The tinted info-bar color renders as a visible step against the page, making
+// the bar look like a floating strip. The exact opaque reader background
+// continues the page seamlessly (texture overlay is unchanged).
+internal actual val sharedMobileEpubPageInfoMatchesReaderBackground: Boolean = true
 
 internal object IosReaderLookupServices {
     var dictionary: ReaderExternalLookupService = ReaderExternalLookupService.SYSTEM
@@ -253,9 +282,52 @@ internal actual fun rememberSharedMobileEpubLocalTts(): SharedMobileEpubLocalTts
 private const val IosReaderTtsRateKey = "reader.tts.speechRate"
 private const val IosReaderTtsPitchKey = "reader.tts.pitch"
 private const val IosReaderTtsVoiceKey = "reader.tts.voiceIdentifier"
+private const val IosReaderTtsSampleTextKey = "reader.tts.previewSampleText"
+private const val IosReaderTtsFavoritesKey = "reader.tts.favoriteVoices"
 
 private fun NSUserDefaults.readerTtsFloat(key: String, fallback: Float): Float {
     return if (objectForKey(key) == null) fallback else doubleForKey(key).toFloat()
+}
+
+/**
+ * Android benchmark parity: the shared sheet groups by localized display
+ * name (e.g. "English (United States)"), not the raw BCP-47 tag ("en-US").
+ */
+private fun iosTtsLanguageDisplayName(languageTag: String): String {
+    val trimmed = languageTag.trim()
+    if (trimmed.isBlank()) return ""
+    val localeIdentifier = trimmed.replace('-', '_')
+    val display = runCatching {
+        val preferred = (NSBundle.mainBundle.preferredLocalizations.firstOrNull() as? String)
+            ?.replace('-', '_')
+            ?.takeIf { it.isNotBlank() }
+            ?: "en"
+        NSLocale(localeIdentifier = preferred)
+            .displayNameForKey(NSLocaleIdentifier, localeIdentifier)
+    }.getOrNull()?.takeIf { it.isNotBlank() }
+    return display ?: trimmed
+}
+
+private fun iosTtsFavoriteVoices(preferences: NSUserDefaults): Set<String> =
+    runCatching { preferences.stringArrayForKey(IosReaderTtsFavoritesKey) as? List<*> }
+        .getOrNull()
+        .orEmpty()
+        .mapNotNull { it as? String }
+        .filter { it.isNotBlank() }
+        .toSet()
+
+private fun iosTtsVoiceQuality(voice: AVSpeechSynthesisVoice): SharedMobileEpubVoiceQuality {
+    val quality = runCatching { voice.quality }.getOrNull()
+    if (quality == AVSpeechSynthesisVoiceQualityPremium) return SharedMobileEpubVoiceQuality.PREMIUM
+    if (quality == AVSpeechSynthesisVoiceQualityEnhanced) return SharedMobileEpubVoiceQuality.ENHANCED
+    // Identifier heuristic: same-name voices (e.g. two "Nicky" entries) only
+    // differ by compact vs premium bundle once downloaded.
+    val identifier = runCatching { voice.identifier }.getOrNull().orEmpty().lowercase()
+    return when {
+        identifier.contains("premium") -> SharedMobileEpubVoiceQuality.PREMIUM
+        identifier.contains("enhanced") -> SharedMobileEpubVoiceQuality.ENHANCED
+        else -> SharedMobileEpubVoiceQuality.STANDARD
+    }
 }
 
 private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
@@ -287,17 +359,26 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         preferences.readerTtsFloat(IosReaderTtsPitchKey, 1f).coerceIn(0.5f, 2f)
     )
         private set
+    private var previewSampleTextState by mutableStateOf(
+        effectiveSharedMobileTtsSampleText(preferences.stringForKey(IosReaderTtsSampleTextKey))
+    )
+    override val previewSampleText: String get() = previewSampleTextState
+    private var favoriteVoiceState by mutableStateOf(iosTtsFavoriteVoices(preferences))
+    override val favoriteVoiceIdentifiers: Set<String> get() = favoriteVoiceState
     override val availableVoices: List<SharedMobileEpubVoice> =
         AVSpeechSynthesisVoice.speechVoices()
             .mapNotNull { it as? AVSpeechSynthesisVoice }
             .map { voice ->
+                val languageTag = voice.language.orEmpty()
                 SharedMobileEpubVoice(
                     identifier = voice.identifier,
                     name = voice.name,
-                    language = voice.language
+                    language = iosTtsLanguageDisplayName(languageTag).ifBlank { languageTag },
+                    languageTag = languageTag,
+                    quality = iosTtsVoiceQuality(voice),
                 )
             }
-            .sortedWith(compareBy(SharedMobileEpubVoice::language, SharedMobileEpubVoice::name))
+            .sortedForTtsDisplay()
     override var selectedVoiceIdentifier by mutableStateOf(
         preferences.stringForKey(IosReaderTtsVoiceKey)
             ?.takeIf { saved -> availableVoices.any { it.identifier == saved } }
@@ -382,6 +463,18 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         updateNowPlaying()
     }
 
+    override fun setPreviewSampleText(text: String) {
+        val sanitized = sanitizeSharedMobileTtsSampleText(text)
+        preferences.setObject(sanitized, IosReaderTtsSampleTextKey)
+        previewSampleTextState = effectiveSharedMobileTtsSampleText(sanitized)
+    }
+
+    override fun toggleFavoriteVoice(identifier: String) {
+        if (identifier.isBlank()) return
+        favoriteVoiceState = toggleSharedMobileTtsVoiceFavorite(favoriteVoiceState, identifier)
+        preferences.setObject(favoriteVoiceState.toList(), IosReaderTtsFavoritesKey)
+    }
+
     override fun setVoice(identifier: String?) {
         selectedVoiceIdentifier = identifier
             ?.takeIf { candidate -> availableVoices.any { it.identifier == candidate } }
@@ -396,7 +489,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     override fun previewVoice(identifier: String?) {
         previewSynthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         val utterance = AVSpeechUtterance(
-            string = "This is a sample of the selected reading voice."
+            string = previewSampleText
         ).apply {
             rate = (0.5f * speechRate).coerceIn(0.1f, 1f)
             pitchMultiplier = speechPitch
@@ -702,7 +795,12 @@ private class IosEpubWebViewCoordinator(
     var onBridgeMessage: (String, String) -> Unit
 ) {
     private val messageHandler = IosEpubScriptMessageHandler(::handleBridgeMessage)
-    private val navigationDelegate = IosEpubNavigationDelegate(::documentDidFinishLoading)
+    private val navigationDelegate = IosEpubNavigationDelegate(
+        onFinished = ::documentDidFinishLoading,
+        onFailed = ::documentDidFailLoading,
+        onTerminated = ::documentProcessTerminated,
+        onDecidePolicy = ::shouldCancelNavigation,
+    )
     private val streamPageSchemeHandler = IosOpdsStreamPageSchemeHandler(
         loader = { streamPageLoader },
         unavailablePageLabel = { streamPageUnavailableLabel },
@@ -712,14 +810,15 @@ private class IosEpubWebViewCoordinator(
     private var contentChunks: List<String> = emptyList()
     private var loadedHtmlHash: Int? = null
     private var loadedHtmlLength: Int = -1
+    private var lastHtml: String? = null
     private var appliedAppearanceHash: Int? = null
     private var appliedHighlightsHash: Int? = null
     private var appliedNavigationRequestId: Long = Long.MIN_VALUE
+    private var appliedBackgroundArgb: Long? = null
     private var latestAppearanceScript: String = ""
     private var latestNavigationScript: String? = null
     private var latestNavigationRequestId: Long = Long.MIN_VALUE
     private var latestHighlightsApplyScript: String = ""
-    private var pendingScrollRestore: Pair<Double, Double>? = null
     private var htmlLoadStartMark: TimeSource.Monotonic.ValueTimeMark? = null
     private var reportedFirstPosition: Boolean = false
 
@@ -749,9 +848,18 @@ private class IosEpubWebViewCoordinator(
         return WKWebView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0), configuration = configuration).apply {
             activeWebView = this
             navigationDelegate = this@IosEpubWebViewCoordinator.navigationDelegate
-            opaque = false
-            backgroundColor = UIColor.clearColor
-            scrollView.backgroundColor = UIColor.clearColor
+            opaque = true
+            backgroundColor = UIColor.whiteColor
+            scrollView.backgroundColor = UIColor.whiteColor
+            // Compose owns the safe area (PageInfo reserve + bar insets) and the
+            // HTML owns the home-indicator bottom clearance, so WebKit must not
+            // add its own automatic bottom inset. That inset lifts the chapter
+            // end above the PageInfo bar and leaves a gap that only vanishes
+            // after the first scroll.
+            scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentBehavior.UIScrollViewContentInsetAdjustmentNever
+            scrollView.automaticallyAdjustsScrollIndicatorInsets = false
+            scrollView.contentInset = UIEdgeInsetsMake(0.0, 0.0, 0.0, 0.0)
+            scrollView.scrollIndicatorInsets = UIEdgeInsetsMake(0.0, 0.0, 0.0, 0.0)
             scrollView.bounces = true
             scrollView.alwaysBounceVertical = true
             scrollView.alwaysBounceHorizontal = false
@@ -766,29 +874,32 @@ private class IosEpubWebViewCoordinator(
         appearanceScript: String,
         navigationScript: String?,
         navigationRequestId: Long,
-        highlightsApplyScript: String
+        highlightsApplyScript: String,
+        contentBackgroundArgb: Long
     ) {
         activeWebView = webView
         this.contentChunks = contentChunks
+        if (appliedBackgroundArgb != contentBackgroundArgb) {
+            appliedBackgroundArgb = contentBackgroundArgb
+            val nativeBackground = contentBackgroundArgb.toIosReaderColor()
+            webView.opaque = true
+            webView.backgroundColor = nativeBackground
+            webView.scrollView.backgroundColor = nativeBackground
+        }
         latestAppearanceScript = appearanceScript
         latestNavigationScript = navigationScript
         latestNavigationRequestId = navigationRequestId
         latestHighlightsApplyScript = highlightsApplyScript
         val htmlHash = html.hashCode()
         if (loadedHtmlHash != htmlHash || loadedHtmlLength != html.length) {
-            // Android parity (ChapterWebView): highlight changes never reach here — the
-            // document renders without highlights and they are applied in place through
-            // the highlights payload, so a reload only happens for real document changes.
-            // Restore the exact scroll position only when the reload was not triggered
-            // by an explicit navigation (chapter/link/TOC); those re-run the navigation
-            // script which owns the landing position.
-            pendingScrollRestore = if (appliedNavigationRequestId == navigationRequestId) {
-                captureScrollForReload(webView)
-            } else {
-                null
-            }
+            // Android parity: highlight changes never reach here — the document
+            // renders without highlights and they are applied in place through
+            // the highlights payload, so a reload only happens for real document
+            // changes. Like Android, a reload lands via the navigation script;
+            // no async scroll capture (it raced the reload on big chapters).
             loadedHtmlHash = htmlHash
             loadedHtmlLength = html.length
+            lastHtml = html
             appliedAppearanceHash = null
             appliedHighlightsHash = null
             appliedNavigationRequestId = Long.MIN_VALUE
@@ -802,58 +913,112 @@ private class IosEpubWebViewCoordinator(
         val appearanceHash = appearanceScript.hashCode()
         if (appliedAppearanceHash != appearanceHash) {
             appliedAppearanceHash = appearanceHash
-            webView.evaluateJavaScript(appearanceScript, completionHandler = null)
+            evaluateReaderScript(webView, appearanceScript, "appearance")
         }
         val highlightsHash = highlightsApplyScript.hashCode()
         if (highlightsApplyScript.isNotBlank() && appliedHighlightsHash != highlightsHash) {
             appliedHighlightsHash = highlightsHash
-            webView.evaluateJavaScript(highlightsApplyScript, completionHandler = null)
+            evaluateReaderScript(webView, highlightsApplyScript, "highlights")
         }
         if (
             navigationScript != null &&
             appliedNavigationRequestId != navigationRequestId
         ) {
             appliedNavigationRequestId = navigationRequestId
-            webView.evaluateJavaScript(navigationScript, completionHandler = null)
+            evaluateReaderScript(webView, navigationScript, "navigation")
         }
     }
 
-    private fun captureScrollForReload(webView: WKWebView): Pair<Double, Double>? {
-        if (loadedHtmlHash == null) return null
-        return pendingScrollRestore ?: run {
-            webView.evaluateJavaScript(
-                "window.scrollY === undefined ? null : [window.scrollX, window.scrollY]",
-                completionHandler = { result, _ ->
-                    val pair = (result as? List<*>)?.let { list ->
-                        val x = (list.getOrNull(0) as? NSNumber)?.doubleValue
-                        val y = (list.getOrNull(1) as? NSNumber)?.doubleValue
-                        if (x != null && y != null) x to y else null
-                    }
-                    if (pair != null) pendingScrollRestore = pair
-                }
-            )
-            null
+    private fun evaluateReaderScript(webView: WKWebView, script: String, kind: String) {
+        if (script.isBlank()) return
+        webView.evaluateJavaScript(script) { _, error ->
+            if (error != null) {
+                sharedEpubOpenTrace { "webview evaluateFailed kind=$kind chars=${script.length} error=${error.localizedDescription}" }
+            }
         }
     }
 
     private fun documentDidFinishLoading(webView: WKWebView) {
         val loadMs = htmlLoadStartMark?.let { sharedEpubOpenTraceElapsedMs(it) }
         sharedEpubOpenTrace { "webview didFinishNavigation ms=${loadMs?.let { sharedEpubOpenTraceMs(it) } ?: "?"}" }
-        if (latestAppearanceScript.isNotBlank()) {
-            webView.evaluateJavaScript(latestAppearanceScript, completionHandler = null)
-            appliedAppearanceHash = latestAppearanceScript.hashCode()
+        // Sequence appearance -> highlights -> navigation so a big chapter
+        // finishes layout before the navigation scroll runs (Android parity).
+        val appearance = latestAppearanceScript.takeIf { it.isNotBlank() }
+        val highlights = latestHighlightsApplyScript.takeIf { it.isNotBlank() }
+        val navigation = latestNavigationScript
+        fun applyNavigation() {
+            if (navigation == null) return
+            webView.evaluateJavaScript(navigation) { _, error ->
+                if (error != null) {
+                    sharedEpubOpenTrace { "webview evaluateFailed kind=navigation chars=${navigation.length} error=${error.localizedDescription}" }
+                } else {
+                    appliedNavigationRequestId = latestNavigationRequestId
+                }
+            }
         }
-        if (latestHighlightsApplyScript.isNotBlank()) {
-            webView.evaluateJavaScript(latestHighlightsApplyScript, completionHandler = null)
-            appliedHighlightsHash = latestHighlightsApplyScript.hashCode()
+        fun applyHighlights() {
+            if (highlights == null) {
+                applyNavigation()
+                return
+            }
+            webView.evaluateJavaScript(highlights) { _, error ->
+                if (error != null) {
+                    sharedEpubOpenTrace { "webview evaluateFailed kind=highlights chars=${highlights.length} error=${error.localizedDescription}" }
+                } else {
+                    appliedHighlightsHash = highlights.hashCode()
+                }
+                applyNavigation()
+            }
         }
-        latestNavigationScript?.let { script ->
-            webView.evaluateJavaScript(script, completionHandler = null)
-            appliedNavigationRequestId = latestNavigationRequestId
+        if (appearance == null) {
+            applyHighlights()
+            return
         }
-        pendingScrollRestore?.let { (x, y) ->
-            pendingScrollRestore = null
-            webView.evaluateJavaScript("window.scrollTo($x, $y);", completionHandler = null)
+        webView.evaluateJavaScript(appearance) { _, error ->
+            if (error != null) {
+                sharedEpubOpenTrace { "webview evaluateFailed kind=appearance chars=${appearance.length} error=${error.localizedDescription}" }
+            } else {
+                appliedAppearanceHash = appearance.hashCode()
+            }
+            applyHighlights()
+        }
+    }
+
+    private fun documentDidFailLoading(webView: WKWebView, error: NSError) {
+        val loadMs = htmlLoadStartMark?.let { sharedEpubOpenTraceElapsedMs(it) }
+        sharedEpubOpenTrace {
+            "webview didFailNavigation ms=${loadMs?.let { sharedEpubOpenTraceMs(it) } ?: "?"} " +
+                "error=${error.localizedDescription} code=${error.code}"
+        }
+    }
+
+    private fun documentProcessTerminated(webView: WKWebView) {
+        sharedEpubOpenTrace { "webview contentProcessTerminated" }
+        // WKWebView kills the content process under memory pressure (likely for
+        // a big chapter). Reload the last document when this view is still active.
+        loadedHtmlHash = null
+        loadedHtmlLength = -1
+        appliedAppearanceHash = null
+        appliedHighlightsHash = null
+        appliedNavigationRequestId = Long.MIN_VALUE
+        val html = lastHtml
+        if (html != null && webView == activeWebView) {
+            htmlLoadStartMark = sharedEpubOpenTraceMark()
+            reportedFirstPosition = false
+            sharedEpubOpenTrace { "webview reloadAfterTerminate chars=${html.length}" }
+            webView.loadHTMLString(html, baseURL = null)
+        }
+    }
+
+    private fun shouldCancelNavigation(urlString: String?): Boolean {
+        val raw = urlString?.trim().orEmpty()
+        if (raw.isBlank() || raw == "about:blank") return false
+        val normalized = normalizeReaderHref(raw)
+        return if (isReaderExternalHref(normalized)) {
+            openSharedMobileEpubExternalLink(normalized)
+            true
+        } else {
+            false
         }
     }
 
@@ -879,9 +1044,13 @@ private class IosEpubWebViewCoordinator(
             sharedEpubOpenTrace { "webview chunkProvide start index=$index chunkChars=${chunk.length}" }
             activeWebView?.evaluateJavaScript(
                 "window.readerVirtualization && window.readerVirtualization.provideChunk($index, ${JsonPrimitive(chunk)});",
-                completionHandler = null
-            )
-            sharedEpubOpenTrace { "webview chunkProvide dispatched index=$index dispatchMs=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(provideMark))}" }
+            ) { _, error ->
+                if (error != null) {
+                    sharedEpubOpenTrace { "webview chunkProvide failed index=$index error=${error.localizedDescription}" }
+                } else {
+                    sharedEpubOpenTrace { "webview chunkProvide dispatched index=$index dispatchMs=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(provideMark))}" }
+                }
+            }
             return
         }
         onBridgeMessage(method, payload)
@@ -912,12 +1081,21 @@ private class IosEpubWebViewCoordinator(
         contentChunks = emptyList()
         loadedHtmlHash = null
         loadedHtmlLength = -1
+        lastHtml = null
         appliedHighlightsHash = null
+        appliedBackgroundArgb = null
         latestHighlightsApplyScript = ""
-        pendingScrollRestore = null
         htmlLoadStartMark = null
         reportedFirstPosition = false
     }
+}
+
+private fun Long.toIosReaderColor(): UIColor {
+    val alpha = ((this ushr 24) and 0xFF).toDouble() / 255.0
+    val red = ((this ushr 16) and 0xFF).toDouble() / 255.0
+    val green = ((this ushr 8) and 0xFF).toDouble() / 255.0
+    val blue = (this and 0xFF).toDouble() / 255.0
+    return UIColor.colorWithRed(red, green, blue, alpha)
 }
 
 private class IosEpubResourceSchemeHandler : NSObject(), WKURLSchemeHandlerProtocol {
@@ -1056,10 +1234,46 @@ private fun ByteArray.toNSData(): NSData {
 }
 
 private class IosEpubNavigationDelegate(
-    private val onFinished: (WKWebView) -> Unit
+    private val onFinished: (WKWebView) -> Unit,
+    private val onFailed: (WKWebView, NSError) -> Unit,
+    private val onTerminated: (WKWebView) -> Unit,
+    private val onDecidePolicy: (String?) -> Boolean,
 ) : NSObject(), WKNavigationDelegateProtocol {
     override fun webView(webView: WKWebView, didFinishNavigation: WKNavigation?) {
         onFinished(webView)
+    }
+
+    @ObjCSignatureOverride
+    override fun webView(webView: WKWebView, didFailNavigation: WKNavigation?, withError: NSError) {
+        onFailed(webView, withError)
+    }
+
+    @ObjCSignatureOverride
+    override fun webView(webView: WKWebView, didFailProvisionalNavigation: WKNavigation?, withError: NSError) {
+        onFailed(webView, withError)
+    }
+
+    override fun webViewWebContentProcessDidTerminate(webView: WKWebView) {
+        onTerminated(webView)
+    }
+
+    override fun webView(
+        webView: WKWebView,
+        decidePolicyForNavigationAction: WKNavigationAction,
+        decisionHandler: (WKNavigationActionPolicy) -> Unit
+    ) {
+        // Android parity (shouldOverrideUrlLoading): external links leave the
+        // reader; anything else (including about:blank for loadHTMLString and
+        // reader-epub-res resources) stays in the WebView.
+        val cancel = try {
+            onDecidePolicy(decidePolicyForNavigationAction.request.URL?.absoluteString)
+        } catch (_: Exception) {
+            false
+        }
+        decisionHandler(
+            if (cancel) WKNavigationActionPolicy.WKNavigationActionPolicyCancel
+            else WKNavigationActionPolicy.WKNavigationActionPolicyAllow
+        )
     }
 }
 
@@ -1094,6 +1308,10 @@ private val IosEpubBridgeBootstrapScript = """
         callNative: function (method, payload) { return post(method, payload); }
       };
       window.readerDisableLinkFallback = true;
+      // WKWebView draws its own native selection handles; showing the reader's
+      // custom teardrop handles on top would double them. The shared selection
+      // script checks this flag and leaves handle display/drag to WebKit.
+      window.readerIosNativeSelectionHandles = true;
       if (!window.readerIosPointerBridgeInstalled) {
         window.readerIosPointerBridgeInstalled = true;
         var start = null;

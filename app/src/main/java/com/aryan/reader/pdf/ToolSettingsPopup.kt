@@ -428,7 +428,7 @@ fun ToolSettingsPopup(
 }
 
 @Composable
-private fun ColorPickerDialog(
+internal fun ColorPickerDialog(
     initialColor: Color,
     onDismiss: () -> Unit,
     onColorSelected: (Color) -> Unit
@@ -647,7 +647,7 @@ private fun PenItem(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun StyledPropertySlider(
+internal fun StyledPropertySlider(
     value: Float,
     onValueChange: (Float) -> Unit,
     valueRange: ClosedFloatingPointRange<Float>, isOpacity: Boolean,

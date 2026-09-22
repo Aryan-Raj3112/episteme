@@ -109,6 +109,52 @@ class SharedSelectionMenuPlacementTest {
 
         assertEquals(SharedSelectionMenuRect(left = 50f, top = 80f, right = 130f, bottom = 120f), result)
     }
+
+    @Test
+    fun `ink selection bar prefers above like android`() {
+        // Selection mid-screen with room above: bar sits 108px above the
+        // selection top (Android aboveClearance), not below it.
+        val (x, y) = sharedPdfInkSelectionEditBarOffset(
+            selectionLeft = 300f,
+            selectionTop = 400f,
+            selectionRight = 380f,
+            selectionBottom = 440f,
+            containerWidth = 800f,
+            containerHeight = 1200f,
+            barWidthPx = 240f,
+            barHeightPx = 60f,
+            topInsetPx = 0f,
+            edgeMarginPx = 8f,
+            aboveClearancePx = 108f,
+            belowGapPx = 12f,
+        )
+
+        assertEquals(220, x)
+        assertEquals(292, y)
+    }
+
+    @Test
+    fun `ink selection bar falls below when no room above header`() {
+        // Selection near the top: aboveY (40-108) is below the header inset,
+        // so the bar falls back below the selection + 12px gap.
+        val (x, y) = sharedPdfInkSelectionEditBarOffset(
+            selectionLeft = 300f,
+            selectionTop = 40f,
+            selectionRight = 380f,
+            selectionBottom = 70f,
+            containerWidth = 800f,
+            containerHeight = 1200f,
+            barWidthPx = 240f,
+            barHeightPx = 60f,
+            topInsetPx = 0f,
+            edgeMarginPx = 8f,
+            aboveClearancePx = 108f,
+            belowGapPx = 12f,
+        )
+
+        assertEquals(220, x)
+        assertEquals(82, y)
+    }
 }
 
 private fun SharedSelectionMenuPlacementResult.rect(

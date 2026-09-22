@@ -295,9 +295,9 @@ class ReaderActionReducerTest {
 
         assertEquals(27, updated.reader.settings.fontSize)
         assertEquals(1.74f, updated.reader.settings.lineSpacing, 0.0001f)
-        assertEquals(96, updated.reader.settings.margin)
-        assertEquals(24, updated.reader.settings.resolvedHorizontalMargin)
-        assertEquals(96, updated.reader.settings.resolvedVerticalMargin)
+        assertEquals(32, updated.reader.settings.margin)
+        assertEquals(8, updated.reader.settings.resolvedHorizontalMargin)
+        assertEquals(32, updated.reader.settings.resolvedVerticalMargin)
         assertEquals(0.8f, updated.reader.settings.paragraphSpacing, 0.0001f)
         assertEquals(1.3f, updated.reader.settings.imageScale, 0.0001f)
         assertEquals("Mono", updated.reader.settings.fontFamily)

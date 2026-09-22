@@ -65,7 +65,7 @@ internal fun document(
         <html lang="${documentLanguage.escapeHtml()}" class="${if (settings.readingMode == ReaderReadingMode.PAGINATED) "reader-paginated-root" else "reader-vertical-root"}">
         <head>
           <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
           <title>${title.escapeHtml()}</title>
           $styles
         </head>

@@ -4,7 +4,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.reader.ReaderReadingMode
+import com.aryan.reader.shared.reader.DefaultReaderPageSpreadGutterDp
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import kotlin.math.max
@@ -68,6 +71,31 @@ fun shouldReserveEpubPageInfoBarSpace(
     return shouldShowEpubPageInfoBar(pageInfoMode, showReaderChrome)
 }
 
+/**
+ * Bottom space a WebView reader must reserve for a BOTTOM PageInfo bar so book
+ * text never slides under the bar or peeks through its safe-area extension.
+ *
+ * This is the bar's full height ([contentHeight] + [bottomPad]), not just the
+ * content row: where the visible bar grows a bottom safe pad (iOS with chrome
+ * hidden), reserving only the content row leaves a gap below the bar where the
+ * page shows through. Returns 0.dp unless the bar actually occupies bottom
+ * space (BOTTOM position, really shown, and reserving per
+ * [shouldReserveEpubPageInfoBarSpace]).
+ */
+fun pageInfoBarBottomReserve(
+    pageInfoPosition: PageInfoPosition,
+    pageInfoMode: PageInfoMode,
+    showReaderChrome: Boolean,
+    barVisible: Boolean,
+    contentHeight: Dp,
+    bottomPad: Dp
+): Dp {
+    if (pageInfoPosition != PageInfoPosition.BOTTOM) return 0.dp
+    if (!barVisible) return 0.dp
+    if (!shouldReserveEpubPageInfoBarSpace(pageInfoMode, showReaderChrome, isNativeVerticalMode = false)) return 0.dp
+    return contentHeight + bottomPad
+}
+
 fun stepEpubFormatValue(
     value: Float,
     delta: Float,
@@ -93,7 +121,8 @@ data class FormatSettings(
     val textAlign: ReaderTextAlign,
     val verticalMargin: Float = 1.0f,
     val fontWeight: Int = 0,
-    val letterSpacing: Float = 0f
+    val letterSpacing: Float = 0f,
+    val spreadGapDp: Float = DefaultReaderPageSpreadGutterDp
 )
 
 enum class ReaderTexture(val id: String, val displayName: String, val assetPath: String) {
@@ -238,7 +267,8 @@ fun ReaderSettings.withReaderFormatFrom(format: ReaderSettings): ReaderSettings 
     fontFamily = format.fontFamily,
     customFontPath = format.customFontPath,
     paragraphSpacing = format.paragraphSpacing,
-    imageScale = format.imageScale
+    imageScale = format.imageScale,
+    pageSpreadGutterDp = format.pageSpreadGutterDp
 )
 
 fun ReaderTheme.toReaderSettings(base: ReaderSettings = ReaderSettings()): ReaderSettings {
@@ -358,7 +388,10 @@ private object ReaderAppearanceDefaults {
     const val lineSpacing = 1.45f
     const val minLineSpacing = 1.0f
     const val maxLineSpacing = 2.8f
-    const val marginPx = 48f
+    // 1.0x margin base. Matches AndroidEpubFormatBenchmark.baseMarginPx and the
+    // Android benchmark (native 16.dp, WebView 16px at 1.0x). maxMarginPx keeps
+    // headroom for larger values persisted before the alignment.
+    const val marginPx = 16f
     const val minMarginPx = 0
     const val maxMarginPx = 160
     const val minParagraphSpacing = 0.5f

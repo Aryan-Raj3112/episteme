@@ -99,6 +99,8 @@ object SharedPdfInkRenderer {
 
         return when (annotation.tool) {
             PdfInkTool.NONE -> null
+            // SELECT is a mode, never stored on ink: nothing to render.
+            PdfInkTool.SELECT -> null
             PdfInkTool.PENCIL -> {
                 val path = annotation.points.toSmoothPath(widthPx, heightPx)
                 val velocityAlpha = annotation.points.velocityAlpha(widthPx, heightPx)
@@ -355,6 +357,8 @@ fun PdfInkTool.sharedPdfStrokeWidthRange(): ClosedFloatingPointRange<Float> {
         PdfInkTool.PEN,
         PdfInkTool.FOUNTAIN_PEN,
         PdfInkTool.PENCIL -> 0.001f..0.015f
+        // SELECT never draws; share the pen range for the edit-bar slider.
+        PdfInkTool.SELECT -> 0.001f..0.015f
     }
 }
 

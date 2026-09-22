@@ -84,7 +84,12 @@ data class ReaderSettings(
     val fontWeight: Int = 0,
     val letterSpacing: Float = 0f,
     val lineSpacing: Float = 1.45f,
-    val margin: Int = 48,
+    /**
+     * Default page margin in px. Matches the Android benchmark: both Android
+     * surfaces render a 1.0x margin as 16 (native 16.dp, WebView 16px), so the
+     * shared default and [AndroidEpubFormatBenchmark.baseMarginPx] use 16.
+     */
+    val margin: Int = 16,
     val darkMode: Boolean = false,
     val readingMode: ReaderReadingMode = ReaderReadingMode.VERTICAL,
     val textAlign: SharedReaderTextAlign = SharedReaderTextAlign.START,
@@ -104,6 +109,7 @@ data class ReaderSettings(
     val pageInfoMode: PageInfoMode = PageInfoMode.DEFAULT,
     val pageInfoPosition: PageInfoPosition = PageInfoPosition.BOTTOM,
     val pageSpreadMode: ReaderPageSpreadMode = ReaderPageSpreadMode.SINGLE,
+    val pageSpreadGutterDp: Float = DefaultReaderPageSpreadGutterDp,
     val rightToLeftPagination: Boolean = false,
     val tapToNavigateEnabled: Boolean = true,
     val pageTurnAnimationEnabled: Boolean = false,
@@ -120,6 +126,31 @@ data class ReaderSettings(
     val resolvedHorizontalMargin: Int get() = horizontalMargin ?: margin
     val resolvedVerticalMargin: Int get() = verticalMargin ?: margin
 }
+
+/**
+ * Android benchmark parity: the native Android paginated reader
+ * (`PaginatedReaderScreen`) has no page-width cap and fills
+ * `maxWidth - 2 * margin`. Shared mobile (iOS) must ignore the persisted
+ * [ReaderSettings.pageWidth] (default 760, desktop-adjustable 520..1100) so it
+ * renders full-width like Android instead of letterboxing on wide screens
+ * such as iPad. Desktop keeps the adjustable cap.
+ *
+ * The value is larger than any real viewport (even scaled by [densityScale] in
+ * `scaleCssPx`: 100_000 * 4 = 400_000 < Int.MAX_VALUE) so the shared
+ * `min(available, configured)` / `coerceAtMost(configured)` geometry becomes a
+ * no-op and pagination stays identical to rendering.
+ */
+const val UncappedReaderPageWidthPx = 100_000
+
+/**
+ * Default gap between the two pages of a two-page spread, in dp. Applies to
+ * both the shared measured paginator slot math and the Android paginated
+ * reader. Adjustable via the format settings' Spread Gap control.
+ */
+const val DefaultReaderPageSpreadGutterDp = 20f
+
+fun ReaderSettings.withUncappedPageWidth(): ReaderSettings =
+    copy(pageWidth = UncappedReaderPageWidthPx)
 
 /**
  * Defaults for a new PDF reader session.
@@ -158,6 +189,7 @@ data class ReaderLayoutSignature(
     val paragraphSpacing: Float,
     val imageScale: Float,
     val pageSpreadMode: ReaderPageSpreadMode,
+    val pageSpreadGutterDp: Float,
     val customFontPath: String?,
     val hideImages: Boolean
 )
@@ -187,6 +219,7 @@ fun ReaderSettings.layoutSignature(): ReaderLayoutSignature {
         paragraphSpacing = paragraphSpacing,
         imageScale = imageScale,
         pageSpreadMode = pageSpreadMode,
+        pageSpreadGutterDp = pageSpreadGutterDp,
         customFontPath = customFontPath,
         hideImages = hideImages
     )

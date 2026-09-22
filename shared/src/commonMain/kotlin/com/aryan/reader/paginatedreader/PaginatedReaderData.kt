@@ -91,7 +91,9 @@ data class BlockStyle(
     @ProtoNumber(44) val visibility: String? = null,
     @ProtoNumber(45) val objectFit: String? = null,
     @ProtoNumber(46) val objectPosition: String? = null,
-    @ProtoNumber(47) val backgroundImage: String? = null
+    @ProtoNumber(47) val backgroundImage: String? = null,
+    /** Normalized publication `writing-mode` for this block (vertical-rl or null). */
+    @ProtoNumber(48) val writingMode: String? = null
 ) {
     fun merge(other: BlockStyle): BlockStyle {
         return BlockStyle(
@@ -151,7 +153,8 @@ data class BlockStyle(
             visibility = other.visibility ?: this.visibility,
             objectFit = other.objectFit ?: this.objectFit,
             objectPosition = other.objectPosition ?: this.objectPosition,
-            backgroundImage = other.backgroundImage ?: this.backgroundImage
+            backgroundImage = other.backgroundImage ?: this.backgroundImage,
+            writingMode = other.writingMode ?: this.writingMode
         )
     }
 }
@@ -184,6 +187,29 @@ sealed interface TextContentBlock : ContentBlock {
     val content: AnnotatedString
     val startCharOffsetInSource: Int
     val endCharOffsetInSource: Int
+    /** Furigana readings over base-text ranges. Base text stays in [content]; readings render above (horizontal) or to the right (vertical). */
+    val rubies: List<RubyAnnotation>
+}
+
+/**
+ * One furigana (ruby) annotation. [baseStart]/[baseEnd] are offsets into the
+ * owning block's base text; [reading] is rendered as small annotation text and
+ * never participates in selection, search, TTS or pagination measurement.
+ */
+@Serializable
+data class RubyAnnotation(
+    @ProtoNumber(1) val baseStart: Int,
+    @ProtoNumber(2) val baseEnd: Int,
+    @ProtoNumber(3) val reading: String,
+    /**
+     * EPUB-specified `<rt>` font size as a fraction of the base size (null
+     * means the browser default). Threaded through splits/copies unchanged.
+     */
+    @ProtoNumber(4) val readingScale: Float? = null
+) {
+    /** Effective reading size fraction: EPUB value or the browser default. */
+    fun effectiveReadingScale(): Float =
+        readingScale?.takeIf { it.isFinite() && it > 0f } ?: RubyReadingFontScale
 }
 
 @Serializable
@@ -196,7 +222,8 @@ data class ParagraphBlock(
     @ProtoNumber(6) override val startCharOffsetInSource: Int = 0,
     @ProtoNumber(7) override val endCharOffsetInSource: Int = -1,
     @ProtoNumber(8) override val blockIndex: Int,
-    @ProtoNumber(9) override val expectedHeight: Int = 0
+    @ProtoNumber(9) override val expectedHeight: Int = 0,
+    @ProtoNumber(10) override val rubies: List<RubyAnnotation> = emptyList()
 ) : TextContentBlock
 
 @Serializable
@@ -224,7 +251,8 @@ data class HeaderBlock(
     @ProtoNumber(7) override val startCharOffsetInSource: Int = 0,
     @ProtoNumber(8) override val endCharOffsetInSource: Int = -1,
     @ProtoNumber(9) override val blockIndex: Int,
-    @ProtoNumber(10) override val expectedHeight: Int = 0
+    @ProtoNumber(10) override val expectedHeight: Int = 0,
+    @ProtoNumber(11) override val rubies: List<RubyAnnotation> = emptyList()
 ) : TextContentBlock
 
 @Serializable
@@ -247,7 +275,8 @@ data class QuoteBlock(
     @ProtoNumber(6) override val startCharOffsetInSource: Int = 0,
     @ProtoNumber(7) override val endCharOffsetInSource: Int = -1,
     @ProtoNumber(8) override val blockIndex: Int,
-    @ProtoNumber(9) override val expectedHeight: Int = 0
+    @ProtoNumber(9) override val expectedHeight: Int = 0,
+    @ProtoNumber(10) override val rubies: List<RubyAnnotation> = emptyList()
 ) : TextContentBlock
 
 @Serializable
@@ -261,7 +290,8 @@ data class ListItemBlock(
     @ProtoNumber(7) override val startCharOffsetInSource: Int = 0,
     @ProtoNumber(8) override val endCharOffsetInSource: Int = -1,
     @ProtoNumber(9) override val blockIndex: Int,
-    @ProtoNumber(10) override val expectedHeight: Int = 0
+    @ProtoNumber(10) override val expectedHeight: Int = 0,
+    @ProtoNumber(11) override val rubies: List<RubyAnnotation> = emptyList()
 ) : TextContentBlock
 
 @Serializable
@@ -336,7 +366,13 @@ data class CssStyle(
     @ProtoNumber(16) @Serializable(with = DpSerializer::class) val textUnderlineOffset: Dp = Dp.Unspecified,
     @ProtoNumber(17) val whiteSpace: String? = null,
     @ProtoNumber(18) val verticalAlign: String? = null,
-    @ProtoNumber(19) val customProperties: Map<String, String> = emptyMap()
+    @ProtoNumber(19) val customProperties: Map<String, String> = emptyMap(),
+    /** Normalized `writing-mode` (`vertical-rl`, `horizontal-tb` or null when unspecified). Includes `-webkit-`/`-epub-` prefixed sources. */
+    @ProtoNumber(20) val writingMode: String? = null,
+    /** Normalized `text-combine-upright` value (`all`, `digits …` or null). Marks tate-chu-yoko runs. */
+    @ProtoNumber(21) val textCombine: String? = null,
+    /** Normalized `word-break` value (`normal`, `break-all`, … or null). Includes prefixed sources. */
+    @ProtoNumber(22) val wordBreak: String? = null
 ) {
     fun merge(other: CssStyle): CssStyle {
         return CssStyle(
@@ -358,10 +394,21 @@ data class CssStyle(
             textUnderlineOffset = if (other.textUnderlineOffset.isSpecified) other.textUnderlineOffset else this.textUnderlineOffset,
             whiteSpace = other.whiteSpace ?: this.whiteSpace,
             verticalAlign = other.verticalAlign ?: this.verticalAlign,
-            customProperties = this.customProperties + other.customProperties
+            customProperties = this.customProperties + other.customProperties,
+            writingMode = other.writingMode ?: this.writingMode,
+            textCombine = other.textCombine ?: this.textCombine,
+            wordBreak = other.wordBreak ?: this.wordBreak
         )
     }
 }
+
+/** True when this style requests vertical Japanese layout (`vertical-rl` / `vertical-lr`). */
+fun CssStyle.isVerticalWriting(): Boolean =
+    writingMode == "vertical-rl" || writingMode == "vertical-lr"
+
+/** True when this span is a tate-chu-yoko run (`text-combine-upright: all`). */
+fun CssStyle.isTateChuYoko(): Boolean =
+    textCombine?.lowercase()?.trim() == "all"
 
 @Serializable
 data class CssSelector(

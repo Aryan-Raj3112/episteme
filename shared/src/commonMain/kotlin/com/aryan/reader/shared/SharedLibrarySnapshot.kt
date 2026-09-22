@@ -751,6 +751,7 @@ private fun JsonElement.asReaderSettingsOrNull(
         pageSpreadMode = obj.string("pageSpreadMode")
             ?.let { runCatching { ReaderPageSpreadMode.valueOf(it) }.getOrNull() }
             ?: defaults.pageSpreadMode,
+        pageSpreadGutterDp = obj.float("pageSpreadGutterDp") ?: defaults.pageSpreadGutterDp,
         rightToLeftPagination = obj.boolean("rightToLeftPagination", defaults.rightToLeftPagination),
         tapToNavigateEnabled = obj.boolean("tapToNavigateEnabled", defaults.tapToNavigateEnabled),
         pageTurnAnimationEnabled = obj.boolean("pageTurnAnimationEnabled", defaults.pageTurnAnimationEnabled),
@@ -921,6 +922,7 @@ private fun ReaderSettings?.asJson(): JsonElement {
             "pageInfoMode" to JsonPrimitive(settings.pageInfoMode.name),
             "pageInfoPosition" to JsonPrimitive(settings.pageInfoPosition.name),
             "pageSpreadMode" to JsonPrimitive(settings.pageSpreadMode.name),
+            "pageSpreadGutterDp" to JsonPrimitive(settings.pageSpreadGutterDp),
             "rightToLeftPagination" to JsonPrimitive(settings.rightToLeftPagination),
             "tapToNavigateEnabled" to JsonPrimitive(settings.tapToNavigateEnabled),
             "pageTurnAnimationEnabled" to JsonPrimitive(settings.pageTurnAnimationEnabled),

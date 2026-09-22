@@ -14,6 +14,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
@@ -84,6 +86,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -111,11 +114,11 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
@@ -146,7 +149,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageShader
@@ -166,6 +171,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -177,6 +184,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalViewConfiguration
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.DockLocation
@@ -229,16 +237,27 @@ import com.aryan.reader.shared.pdf.SharedPdfAnnotationHighlighterTools
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationPenTools
 import com.aryan.reader.shared.pdf.isPdfTextDockTopAnchored
 import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockInBottomHalf
+import com.aryan.reader.shared.pdf.sharedPdfPopupMaxHeightDp
 import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockSticky
 import com.aryan.reader.shared.pdf.pdfTextDockKeyboardLiftPx
 import com.aryan.reader.shared.pdf.pdfTextDockRestingBottomPadding
 import com.aryan.reader.shared.pdf.sharedPdfAnnotationDockTopYPx
 import com.aryan.reader.shared.pdf.shouldShowPdfTextDock
 import com.aryan.reader.shared.pdf.toSharedPdfRichSpanStyle
+import com.aryan.reader.shared.pdf.SharedPdfRichListType
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfBookmark
+import com.aryan.reader.shared.pdf.SharedPdfDemoAnnotations
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
+import com.aryan.reader.shared.pdf.SharedPdfInkSelection
+import com.aryan.reader.shared.pdf.SharedPdfSelectionTransform
+import com.aryan.reader.shared.pdf.applySharedPdfSelectionTransform
+import com.aryan.reader.shared.pdf.findSharedPdfSelectionHandleHit
+import com.aryan.reader.shared.pdf.sharedPdfSelectionHandlePositions
+import com.aryan.reader.shared.pdf.sharedPdfSelectionTouchSlopPx
+import com.aryan.reader.shared.pdf.sharedPdfSelectionUnionBounds
+import com.aryan.reader.shared.pdf.sharedPdfStrokeWidthRange
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
 import com.aryan.reader.shared.pdf.SharedPdfTextAnnotationDefaults
@@ -260,6 +279,7 @@ import com.aryan.reader.shared.pdf.buildSharedPdfVirtualPageLayout
 import com.aryan.reader.shared.pdf.sharedPdfPdfPageIndexAt
 import com.aryan.reader.shared.pdf.sharedPdfDisplayIndexFor
 import com.aryan.reader.shared.pdf.sharedPdfNearestPdfPageIndex
+import com.aryan.reader.shared.pdf.sharedPdfResolveInkStrokeOwner
 import com.aryan.reader.shared.pdf.reduce
 import com.aryan.reader.shared.pdf.sharedPdfPageRangeLabel
 import com.aryan.reader.shared.pdf.SharedPdfKeyboardNavigationAction
@@ -384,6 +404,7 @@ fun SharedMobilePdfReaderScreen(
     initialShowBottomToolbar: Boolean = true,
     onShowBottomToolbarChange: (Boolean) -> Unit = {},
     isPdfExportBusy: Boolean = false,
+    isDebugBuild: Boolean = false,
 ) {
     SharedMobilePdfReaderHost(
         book = book,
@@ -466,6 +487,7 @@ fun SharedMobilePdfReaderScreen(
         onSystemUiRelease = onSystemUiRelease,
         modifier = modifier,
         hostConfig = SharedPdfReaderHostConfig.fullScreen(book.id),
+        isDebugBuild = isDebugBuild,
     )
 }
 
@@ -561,6 +583,11 @@ fun SharedMobilePdfReaderHost(
     isSplitPane: Boolean = false,
     summaryCache: SharedSummaryCache? = null,
     aiCredits: Int? = null,
+    /**
+     * Android parity (PdfToolbars includeDebugActions = BuildConfig.DEBUG):
+     * debug builds expose the "Try Episteme" demo artwork action.
+     */
+    isDebugBuild: Boolean = false,
 ) {
     val readerSessionKey = hostConfig.sessionKey
     val ownsSystemUi = hostConfig.owns(SharedPdfReaderGlobalResource.SYSTEM_UI)
@@ -652,6 +679,15 @@ fun SharedMobilePdfReaderHost(
     var annotationSnapPreview by remember(readerSessionKey) { mutableStateOf<DockLocation?>(null) }
     var isAnnotationDockMinimized by remember(readerSessionKey) { mutableStateOf(false) }
     var showAnnotationToolSettings by remember(readerSessionKey) { mutableStateOf(false) }
+    // Android parity (AnnotationSettingsRepository.selectedTool survives edit-mode
+    // toggles): shared edit mode IS the selected tool (NONE = off), so the last
+    // non-NONE tool is remembered here and restored when edit mode reopens —
+    // e.g. highlighter stays selected after closing + reopening edit mode.
+    var lastEditTool by remember(readerSessionKey, initialReaderState) {
+        mutableStateOf(
+            initialReaderState?.selectedTool?.takeIf { it != PdfInkTool.NONE } ?: PdfInkTool.PEN
+        )
+    }
     // Android-parity text dock placement (benchmark: PdfViewerScreen text dock
     // chrome): draggable TOP / BOTTOM / FLOATING like the pen dock, kept
     // in-memory like the pen dock above (Android persists both to prefs).
@@ -963,7 +999,7 @@ fun SharedMobilePdfReaderHost(
             SharedMobilePdfSystemUiMode.ALWAYS_HIDE -> 0.dp
         }
     }
-    val pdfBottomChromePadding = if (isSplitPane) 56.dp else 56.dp + effectiveBottomSystemInset
+    val pdfBottomChromePadding = sharedMobilePdfBottomChromePadding(effectiveBottomSystemInset, isSplitPane)
     // Android parity: standard top/bottom bars hide while annotating
     // (benchmark: showStandardBars = showBars && !isEditMode). The floating
     // annotation dock overlay owns edit-mode chrome instead.
@@ -978,7 +1014,7 @@ fun SharedMobilePdfReaderHost(
     val isPdfTtsPlayingOrLoading =
         pdfTts.state == SharedMobileEpubLocalTtsState.SPEAKING || pendingTtsStart != null ||
             cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
-    val pdfSliderBottomPadding = pdfBottomChromePadding + if (isJumpHistoryVisible) 40.dp else 0.dp
+    val pdfSliderBottomPadding = sharedMobilePdfSliderBottomPadding(pdfBottomChromePadding, isJumpHistoryVisible)
     // In Always Show mode vertical content is anchored below the status bar
     // so the first page never draws underneath it. In Sync with Menus the
     // content stays edge-to-edge under the status bar so showing the menu
@@ -1011,10 +1047,48 @@ fun SharedMobilePdfReaderHost(
     }
     var canvasSize by remember(readerSessionKey) { mutableStateOf(IntSize.Zero) }
     val activeStroke = remember(readerSessionKey, readerState.pageIndex) { mutableStateListOf<PdfPagePoint>() }
+    // Single-stroke ownership (Android parity: one drawingState at a time).
+    // The pdf page index that owns the in-flight stroke, or null when no
+    // stroke is in flight. Any visible page may claim it, which is what
+    // allows free drawing like Android; a second concurrent claim is
+    // rejected so points from two pages can never interleave in one stroke.
+    var activeStrokeOwnerPdfPage by remember(readerSessionKey) { mutableStateOf<Int?>(null) }
     // Android parity (PdfViewerScreen erasedAnnotationsFromStroke): ink hit by
     // the current erase drag, grouped per page. Live-removed immediately for
     // eraser feedback; recorded as ONE undo step on stroke end.
     val erasedInStroke = remember(readerSessionKey) { mutableStateMapOf<Int, MutableList<SharedPdfAnnotation>>() }
+    // SELECT-tool state (benchmark: PdfViewerScreen inkSelection + gesture
+    // snapshots + lasso trail). Snapshots hold gesture-start annotations for
+    // absolute (drift-free) transforms; preview holds the live-dragged
+    // versions rendered over the stored list until commit or revert.
+    var inkSelection by remember(readerSessionKey) { mutableStateOf(SharedPdfInkSelection()) }
+    var inkSelectionSnapshots by remember(readerSessionKey) { mutableStateOf<Map<String, SharedPdfAnnotation>>(emptyMap()) }
+    var inkSelectionPreview by remember(readerSessionKey) { mutableStateOf<Map<String, SharedPdfAnnotation>>(emptyMap()) }
+    var inkLassoPageIndex by remember(readerSessionKey) { mutableStateOf<Int?>(null) }
+    var inkLassoTrail by remember(readerSessionKey) { mutableStateOf<List<Offset>>(emptyList()) }
+    var activeSelectionRotation by remember(readerSessionKey) { mutableStateOf<Float?>(null) }
+    // True while the screen-level handle overlay runs a transform session.
+    // Pages stand down for that gesture (set at grab time, cleared when the
+    // session ends, so a second finger mid-drag cannot start a rival page
+    // session the way Android's single stream structurally prevents).
+    var handleTransformInFlight by remember(readerSessionKey) { mutableStateOf(false) }
+    // Page surface window rects keyed by PDF page index: anchors the floating
+    // selection edit bar under the zoom transform.
+    val selectionPageWindowRects = remember(readerSessionKey) { mutableStateMapOf<Int, Rect>() }
+    var readerContainerWindowRect by remember(readerSessionKey) { mutableStateOf(Rect.Zero) }
+    var readerContainerSize by remember(readerSessionKey) { mutableStateOf(IntSize.Zero) }
+
+    // Declared with state (above its first caller in dock clicks): drops the
+    // box/handles/edit bar and any in-flight gesture data.
+    fun clearInkSelection() {
+        pdfInkSelectionLog { "state.clear" }
+        inkSelection = SharedPdfInkSelection()
+        inkSelectionSnapshots = emptyMap()
+        inkSelectionPreview = emptyMap()
+        inkLassoPageIndex = null
+        inkLassoTrail = emptyList()
+        activeSelectionRotation = null
+    }
     var textStyle by remember(readerSessionKey) { mutableStateOf(SharedPdfTextStyleConfig()) }
     var textDraft by remember(readerSessionKey) { mutableStateOf<SharedPdfTextDraft?>(null) }
     // Android parity: minimized dock stops all annotation input
@@ -1027,6 +1101,20 @@ fun SharedMobilePdfReaderHost(
     fun dispatch(action: SharedPdfReaderAction) {
         readerState = readerState.reduce(action)
     }
+
+    // Android parity (PdfViewerScreen onGenerateDemoAnnotations + onImportSvg
+    // demo_art.svg): debug-only "Try Episteme!" ink artwork on the current
+    // pdf page. Each stroke dispatches AnnotationAdded so undo/redo + sidecar
+    // persistence behave like hand-drawn ink.
+    fun drawDebugDemoAnnotations() {
+        val targetPage = readerState.currentNearestPdfPageIndex ?: currentPdfIndex
+        val demo = SharedPdfDemoAnnotations.generate(
+            pageIndex = targetPage,
+            baseTimestamp = currentTimestamp(),
+        )
+        demo.forEach { dispatch(SharedPdfReaderAction.AnnotationAdded(it)) }
+    }
+
     fun stopPdfTtsSession() {
         if (ownsTts) pdfTts.stop()
         if (ownsTts) cloudTts?.stop()
@@ -1254,24 +1342,6 @@ fun SharedMobilePdfReaderHost(
         }
     }
 
-    fun activeToolConfig(tool: PdfInkTool) = SharedPdfAnnotationDefaults.configFor(tool).let { config ->
-        when (tool) {
-            PdfInkTool.HIGHLIGHTER -> config.copy(
-                colorArgb = readerState.highlighterPalette.getOrElse(0) {
-                    SharedPdfHighlighterPalette.defaultColors.first()
-                },
-            )
-            PdfInkTool.HIGHLIGHTER_ROUND -> config.copy(
-                colorArgb = readerState.highlighterPalette.getOrElse(1) {
-                    SharedPdfHighlighterPalette.defaultColors.getOrElse(1) {
-                        SharedPdfHighlighterPalette.defaultColors.first()
-                    }
-                },
-            )
-            else -> config
-        }
-    }
-
     fun updatePdfHighlighterPalette(palette: SharedPdfHighlighterPalette) {
         val sanitized = palette.sanitized()
         dispatch(SharedPdfReaderAction.HighlighterPaletteChanged(sanitized.colors))
@@ -1283,17 +1353,26 @@ fun SharedMobilePdfReaderHost(
         onPdfHighlighterSnapChange(enabled)
     }
 
+    // Android parity (AnnotationSettingsRepository.updateSelectedTool): switching
+    // tools only changes the selected tool (plus last-pen/highlighter recall in
+    // the reducer). Per-tool color/width persist in toolConfigs and are recalled
+    // by ToolSelected itself — never reset to defaults here, or the toolsettings
+    // selection would not stick across switches.
     fun setTool(tool: PdfInkTool) {
         if (tool != PdfInkTool.TEXT && readerState.selectedTool == PdfInkTool.TEXT && textDraft != null) {
             dismissTextDraft()
         }
-        dispatch(SharedPdfReaderAction.ToolSelected(tool))
         if (tool != PdfInkTool.NONE) {
-            activeToolConfig(tool).let { config ->
-                dispatch(SharedPdfReaderAction.ColorSelected(config.colorArgb.takeIf { it != 0 } ?: readerState.selectedColorArgb))
-                dispatch(SharedPdfReaderAction.StrokeWidthChanged(config.strokeWidth))
-            }
+            lastEditTool = tool
         }
+        dispatch(SharedPdfReaderAction.ToolSelected(tool))
+    }
+
+    // Android parity (edit toggle keeps the tool): opening edit mode restores
+    // the last tool instead of always resetting to PEN; closing clears to NONE
+    // but keeps lastEditTool for the next open.
+    fun toggleEditMode() {
+        setTool(if (readerState.selectedTool == PdfInkTool.NONE) lastEditTool else PdfInkTool.NONE)
     }
 
     // Android-parity annotation dock interactions (benchmark:
@@ -1304,6 +1383,14 @@ fun SharedMobilePdfReaderHost(
     fun onAnnotationDockToolClick(clicked: PdfInkTool) {
         if (clicked == PdfInkTool.TEXT) {
             setTool(PdfInkTool.TEXT)
+            showAnnotationToolSettings = false
+            clearInkSelection()
+            return
+        }
+        // Android parity (AnnotationDock SELECT branch): activates directly,
+        // no settings popup, keeps the current selection.
+        if (clicked == PdfInkTool.SELECT) {
+            setTool(PdfInkTool.SELECT)
             showAnnotationToolSettings = false
             return
         }
@@ -1316,10 +1403,12 @@ fun SharedMobilePdfReaderHost(
             scope.launch {
                 delay(250)
                 setTool(clicked)
+                clearInkSelection()
                 showAnnotationToolSettings = true
             }
         } else {
             setTool(clicked)
+            clearInkSelection()
         }
     }
 
@@ -1363,6 +1452,8 @@ fun SharedMobilePdfReaderHost(
     }
 
     fun finishInkStroke(pageIndex: Int, eraserOverride: Boolean = false) {
+        // The gesture is over: release stroke ownership on every path below.
+        activeStrokeOwnerPdfPage = null
         // Android parity: minimized dock stops drawing
         // (isDrawingActive = isEditMode && !isDockMinimized).
         if (isAnnotationDockMinimized && !eraserOverride) {
@@ -1400,14 +1491,29 @@ fun SharedMobilePdfReaderHost(
 
     // Android parity (onDrawStartStable): a stroke beginning while the
     // tool-settings popup is open only dismisses the popup — the touch draws
-    // nothing. Returns true when the stroke was swallowed.
+    // nothing. A stroke starting on another page while one is already in
+    // flight is likewise swallowed so points from two pages can never
+    // interleave in the single shared stroke list. Returns true when the
+    // stroke was swallowed.
     fun onInkStrokeStart(pageIndex: Int): Boolean {
         if (showAnnotationToolSettings) {
             showAnnotationToolSettings = false
             activeStroke.clear()
+            activeStrokeOwnerPdfPage = null
             return true
         }
+        if (sharedPdfResolveInkStrokeOwner(activeStrokeOwnerPdfPage, pageIndex) != pageIndex) {
+            return true
+        }
+        activeStrokeOwnerPdfPage = pageIndex
         return false
+    }
+
+    // Releases a claim made in [onInkStrokeStart] when the gesture ends
+    // without [finishInkStroke] (cancelled or swallowed), so a stale owner
+    // can never block later strokes.
+    fun onInkStrokeEnd(pageIndex: Int) {
+        if (activeStrokeOwnerPdfPage == pageIndex) activeStrokeOwnerPdfPage = null
     }
 
     // Android parity (onDrawStable eraser branch): live-removes hit ink and
@@ -1423,6 +1529,175 @@ fun SharedMobilePdfReaderHost(
         if (fresh.isEmpty()) return
         erasedInStroke.getOrPut(pageIndex) { mutableListOf() }.addAll(fresh)
         dispatch(SharedPdfReaderAction.AnnotationsRemovedLive(fresh.mapTo(mutableSetOf()) { it.id }))
+    }
+
+    // SELECT-tool handlers (benchmark: PdfViewerScreen selection block).
+    /** Selected annotations with the live transform preview applied. */
+    fun selectedInkAnnotations(): List<SharedPdfAnnotation> {
+        val page = inkSelection.pageIndex ?: return emptyList()
+        val preview = inkSelectionPreview
+        return readerState.annotations
+            .filter { it.pageIndex == page && it.id in inkSelection.selectedIds }
+            .map { preview[it.id] ?: it }
+    }
+
+    fun onSelectionTap(pageIndex: Int, annotationId: String?) {
+        pdfInkSelectionLog { "state.tap page=$pageIndex id=$annotationId" }
+        when {
+            annotationId == null -> clearInkSelection()
+            annotationId.isEmpty() -> Unit
+            else -> {
+                inkSelection = SharedPdfInkSelection(pageIndex, setOf(annotationId))
+                inkSelectionSnapshots = emptyMap()
+                inkSelectionPreview = emptyMap()
+                inkLassoPageIndex = null
+                inkLassoTrail = emptyList()
+                activeSelectionRotation = null
+            }
+        }
+    }
+
+    fun onSelectionLasso(pageIndex: Int, annotationIds: Set<String>) {
+        pdfInkSelectionLog { "state.lasso page=$pageIndex ids=$annotationIds" }
+        inkSelection = SharedPdfInkSelection(pageIndex, annotationIds)
+        inkSelectionSnapshots = emptyMap()
+        inkSelectionPreview = emptyMap()
+        inkLassoPageIndex = null
+        inkLassoTrail = emptyList()
+        activeSelectionRotation = null
+    }
+
+    fun onSelectionLassoProgress(pageIndex: Int, trail: List<Offset>?) {
+        if (trail == null) {
+            inkLassoPageIndex = null
+            inkLassoTrail = emptyList()
+        } else {
+            inkLassoPageIndex = pageIndex
+            inkLassoTrail = trail
+        }
+    }
+
+    fun onSelectionTransformStart(pageIndex: Int) {
+        val selected = readerState.annotations
+            .filter { it.pageIndex == pageIndex && it.id in inkSelection.selectedIds }
+        pdfInkSelectionLog { "state.transformStart page=$pageIndex snapshots=${selected.size}" }
+        inkSelectionSnapshots = selected.associateBy { it.id }
+        inkSelectionPreview = inkSelectionSnapshots
+    }
+
+    fun onSelectionTransformUpdate(
+        pageIndex: Int,
+        transform: SharedPdfSelectionTransform,
+        aspectRatio: Float,
+    ) {
+        val snapshots = inkSelectionSnapshots
+        if (snapshots.isEmpty()) return
+        val updated = applySharedPdfSelectionTransform(
+            annotations = snapshots.values.toList(),
+            ids = inkSelection.selectedIds,
+            transform = transform,
+            pageAspectRatio = aspectRatio,
+        )
+        inkSelectionPreview = updated.associateBy { it.id }
+        activeSelectionRotation = (transform as? SharedPdfSelectionTransform.Rotate)?.angleDegrees
+    }
+
+    fun onSelectionTransformEnd(commit: Boolean) {
+        pdfInkSelectionLog {
+            "state.transformEnd commit=$commit snapshots=${inkSelectionSnapshots.size} " +
+                "preview=${inkSelectionPreview.size}"
+        }
+        val snapshots = inkSelectionSnapshots
+        inkSelectionSnapshots = emptyMap()
+        activeSelectionRotation = null
+        if (commit && snapshots.isNotEmpty()) {
+            val before = snapshots.values.toList()
+            val after = before.map { inkSelectionPreview[it.id] ?: it }
+            inkSelectionPreview = emptyMap()
+            dispatch(SharedPdfReaderAction.SelectionTransformCommitted(before, after))
+        } else {
+            inkSelectionPreview = emptyMap()
+        }
+    }
+
+    fun duplicateInkSelection() {
+        val page = inkSelection.pageIndex ?: return
+        val selected = selectedInkAnnotations()
+        if (selected.isEmpty()) return
+        val stamp = currentTimestamp()
+        val copies = selected.mapIndexed { index, annotation ->
+            annotation.copy(
+                id = "shared_pdf_selection_copy_${stamp}_${index}_${annotation.id}",
+                points = annotation.points.map { point ->
+                    point.copy(
+                        x = (point.x + 0.03f).coerceIn(0f, 1f),
+                        y = (point.y + 0.03f).coerceIn(0f, 1f),
+                    )
+                },
+            )
+        }
+        dispatch(SharedPdfReaderAction.SelectionDuplicatedCommitted(copies))
+        inkSelection = SharedPdfInkSelection(page, copies.map { it.id }.toSet())
+        inkSelectionSnapshots = emptyMap()
+        inkSelectionPreview = emptyMap()
+    }
+
+    fun deleteInkSelection() {
+        val selected = selectedInkAnnotations()
+        if (selected.isEmpty()) return
+        dispatch(SharedPdfReaderAction.SelectionDeletedCommitted(selected))
+        clearInkSelection()
+    }
+
+    /**
+     * Captures the gesture-start snapshot on the first style tick so slider
+     * drags and spectrum swipes preview live and commit once (benchmark:
+     * Android `selectionStyleSnapshot` + `StyleChange` on finish).
+     */
+    fun selectionStyleLive(map: (SharedPdfAnnotation) -> SharedPdfAnnotation) {
+        if (inkSelectionSnapshots.isEmpty()) {
+            val page = inkSelection.pageIndex ?: return
+            if (inkSelection.selectedIds.isEmpty()) return
+            inkSelectionSnapshots = readerState.annotations
+                .filter { it.pageIndex == page }
+                .associateBy { it.id }
+        }
+        inkSelectionPreview = inkSelectionSnapshots.values.map { annotation ->
+            if (annotation.id in inkSelection.selectedIds) map(annotation) else annotation
+        }.associateBy { it.id }
+    }
+
+    fun selectionStyleCommit() {
+        val snapshots = inkSelectionSnapshots
+        inkSelectionSnapshots = emptyMap()
+        if (snapshots.isNotEmpty()) {
+            val after = snapshots.values.map { inkSelectionPreview[it.id] ?: it }
+            inkSelectionPreview = emptyMap()
+            dispatch(SharedPdfReaderAction.SelectionTransformCommitted(snapshots.values.toList(), after))
+        } else {
+            inkSelectionPreview = emptyMap()
+        }
+    }
+
+    /** Drops an uncommitted style preview (spectrum dismissed without save). */
+    fun revertSelectionStyle() {
+        inkSelectionSnapshots = emptyMap()
+        inkSelectionPreview = emptyMap()
+    }
+
+    fun selectionColorLive(color: Color) {
+        val rgb = color.toArgb() and 0x00FFFFFF
+        selectionStyleLive { annotation ->
+            // Android parity: recoloring a highlighter keeps its alpha.
+            val keepAlpha = annotation.tool == PdfInkTool.HIGHLIGHTER ||
+                annotation.tool == PdfInkTool.HIGHLIGHTER_ROUND
+            val newArgb = if (keepAlpha) {
+                (annotation.colorArgb and 0xFF000000.toInt()) or rgb
+            } else {
+                color.toArgb()
+            }
+            annotation.copy(colorArgb = newArgb)
+        }
     }
 
     fun addTextHighlight(
@@ -1472,6 +1747,22 @@ fun SharedMobilePdfReaderHost(
         }
         if (isAnnotationDockMinimized) {
             activeStroke.clear()
+            activeStrokeOwnerPdfPage = null
+        }
+    }
+
+    // The stroke list above is keyed on the current page, so a page turn wipes
+    // it; the owner must reset together or later strokes stay blocked.
+    LaunchedEffect(readerSessionKey, readerState.pageIndex) {
+        activeStrokeOwnerPdfPage = null
+    }
+
+    // Android parity (PdfViewerScreen LaunchedEffect(isEditMode)): leaving
+    // SELECT mode drops the box/handles/edit bar so they never linger over
+    // the reader after back nav, toolbar toggle, or dock close.
+    LaunchedEffect(readerSessionKey, readerState.selectedTool) {
+        if (readerState.selectedTool != PdfInkTool.SELECT) {
+            clearInkSelection()
         }
     }
 
@@ -1769,9 +2060,7 @@ fun SharedMobilePdfReaderHost(
                             isAllTextHighlightLoading = isAllTextHighlightLoading,
                             onToggleHighlights = ::toggleAllTextHighlights,
                             onHighlighterTool = { setTool(readerState.lastActiveHighlighterTool) },
-                            onEditMode = {
-                                setTool(if (readerState.selectedTool == PdfInkTool.NONE) PdfInkTool.PEN else PdfInkTool.NONE)
-                            },
+                            onEditMode = ::toggleEditMode,
                             onShowSlider = {
                                 // Android parity: opening the slider reveals the
                                 // chrome (it renders in the bottom-chrome zone).
@@ -1840,7 +2129,9 @@ fun SharedMobilePdfReaderHost(
                             applySystemBarInsets = !isSplitPane && mobilePdfSystemBarsVisibility(
                                 systemUiMode.toReaderSystemUiMode(),
                                 showChrome,
-                            ).statusBarsVisible
+                            ).statusBarsVisible,
+                            isDebugBuild = isDebugBuild,
+                            onDrawDebugDemoAnnotations = ::drawDebugDemoAnnotations,
                         )
                         if (
                             pdfTabsEnabled &&
@@ -1876,6 +2167,7 @@ fun SharedMobilePdfReaderHost(
                         onOpenDrawer = { scope.launch { drawerState.open() } },
                         onSearch = { dispatch(SharedPdfReaderAction.SearchOpened) },
                         onToolSelected = ::setTool,
+                        editModeOpenTool = lastEditTool,
                         ttsState = if (cloudTtsAvailable) {
                             if (cloudTtsState.isPlaying) SharedMobileEpubLocalTtsState.SPEAKING
                             else if (cloudTtsState.isPaused || cloudTtsState.isLoading) SharedMobileEpubLocalTtsState.PAUSED
@@ -1916,10 +2208,123 @@ fun SharedMobilePdfReaderHost(
                 }
             }
         ) { _ ->
+            // SELECT host bundle (single param per page-container layer).
+            // Function references are stable; the page detector reads state
+            // through updated-state so live previews never cancel in-flight
+            // gestures. Built below, after the selection geometry it needs.
+            // Edit-bar anchor inputs: selection union bounds in the content
+            // box's px, mapped from the selection page's window rect under
+            // the zoom transform.
+            val selectionEditState = remember(inkSelection, readerState.annotations, inkSelectionPreview) {
+                val selected = selectedInkAnnotations()
+                SharedPdfSelectionEditState(
+                    selected = selected,
+                    union = sharedPdfSelectionUnionBounds(selected),
+                    color = selected.map { it.colorArgb and 0x00FFFFFF }.distinct().singleOrNull()?.let {
+                        Color(selected.first().colorArgb)
+                    },
+                    thickness = selected.firstOrNull()?.strokeWidth,
+                    thicknessRange = selected.firstOrNull()?.tool?.sharedPdfStrokeWidthRange()
+                        ?: (0.001f..0.015f),
+                )
+            }
+            val selectionBarRect = remember(
+                selectionEditState.union,
+                inkSelection.pageIndex,
+                selectionPageWindowRects,
+                readerContainerWindowRect,
+            ) {
+                val page = inkSelection.pageIndex
+                val union = selectionEditState.union
+                val surface = if (page != null) selectionPageWindowRects[page] else null
+                if (page == null || union == null || surface == null ||
+                    surface.width <= 0f || surface.height <= 0f
+                ) {
+                    null
+                } else {
+                    Rect(
+                        surface.left + union.left * surface.width - readerContainerWindowRect.left,
+                        surface.top + union.top * surface.height - readerContainerWindowRect.top,
+                        surface.left + union.right * surface.width - readerContainerWindowRect.left,
+                        surface.top + union.bottom * surface.height - readerContainerWindowRect.top,
+                    )
+                }
+            }
+            // Handle-overlay ownership + geometry. The overlay installs touch
+            // handling ONLY while it owns a live selection page (SELECT tool,
+            // non-empty selection with union bounds on a laid-out page);
+            // otherwise it composes nothing and stays out of the hit path
+            // entirely — an always-on full-screen detector starves the pages
+            // and scroll beneath it on iOS. Sized to the selection page plus
+            // a grab margin (the rotate handle floats above the box) and
+            // positioned in container space; touches anywhere else never hit
+            // it, so tap / scroll / lasso on other pages work untouched.
+            val selectionViewTouchSlop = sharedPdfSelectionTouchSlopPx(
+                // Android parity (scaledTouchSlop ≈ 8dp): floor the SELECT
+                // slop so taps can't degrade into phantom moves on platforms
+                // reporting a tiny slop (tap-to-select parity).
+                platformTouchSlopPx = LocalViewConfiguration.current.touchSlop,
+                minTouchSlopPx = with(density) { 8.dp.toPx() },
+            )
+            val selectionOverlayMarginPx = with(density) { 72.dp.toPx() }
+            val selectionOverlayPage = inkSelection.pageIndex
+            val selectionOverlaySurface = selectionOverlayPage?.let { selectionPageWindowRects[it] }
+            val selectionOverlayOwnsPage = readerStateForPages.selectedTool == PdfInkTool.SELECT &&
+                !inkSelection.isEmpty &&
+                selectionEditState.union != null &&
+                selectionOverlayPage != null &&
+                selectionOverlaySurface != null &&
+                selectionOverlaySurface.width > 0f &&
+                selectionOverlaySurface.height > 0f
+            val overlaySurfaceRect = if (selectionOverlayOwnsPage) selectionOverlaySurface else null
+            val selectionOverlayOrigin = if (overlaySurfaceRect != null) {
+                Offset(
+                    overlaySurfaceRect.left - readerContainerWindowRect.left - selectionOverlayMarginPx,
+                    overlaySurfaceRect.top - readerContainerWindowRect.top - selectionOverlayMarginPx,
+                )
+            } else {
+                Offset.Zero
+            }
+            val selectionOverlaySizePx = if (overlaySurfaceRect != null) {
+                IntSize(
+                    (overlaySurfaceRect.width + selectionOverlayMarginPx * 2).roundToInt(),
+                    (overlaySurfaceRect.height + selectionOverlayMarginPx * 2).roundToInt(),
+                )
+            } else {
+                IntSize.Zero
+            }
+            val selectionHost = remember(
+                inkSelection,
+                inkLassoPageIndex,
+                inkLassoTrail,
+                inkSelectionPreview,
+                activeSelectionRotation,
+                handleTransformInFlight,
+                selectionOverlayOwnsPage,
+                selectionOverlayPage,
+            ) {
+                SharedPdfInkSelectionPageHost(
+                    selection = inkSelection,
+                    lassoPageIndex = inkLassoPageIndex,
+                    lassoTrail = inkLassoTrail,
+                    previewById = inkSelectionPreview,
+                    activeRotationDegrees = activeSelectionRotation,
+                    onTap = ::onSelectionTap,
+                    onLasso = ::onSelectionLasso,
+                    onLassoProgress = ::onSelectionLassoProgress,
+                    onTransformStart = ::onSelectionTransformStart,
+                    onTransformUpdate = ::onSelectionTransformUpdate,
+                    onTransformEnd = ::onSelectionTransformEnd,
+                    isHandleTransformInFlight = handleTransformInFlight,
+                    overlayOwnedPageIndex = if (selectionOverlayOwnsPage) selectionOverlayPage else null,
+                )
+            }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(sharedMobilePdfViewerBackground(activeTheme, readerState.displayMode))
+                    .onGloballyPositioned { readerContainerWindowRect = it.boundsInWindow() }
+                    .onSizeChanged { readerContainerSize = it }
                     .focusRequester(pdfReaderFocusRequester)
                     .focusable()
                     .onPreviewKeyEvent { event ->
@@ -1975,6 +2380,7 @@ fun SharedMobilePdfReaderHost(
                         ttsPageIndex = ttsPageIndex.takeIf { pdfTts.isSessionActive || pendingTtsStart != null },
                         ttsHighlightBounds = ttsHighlightBounds,
                         activeStroke = activeStroke,
+                        activeStrokeOwnerPdfPage = activeStrokeOwnerPdfPage,
                         customFontFamilies = customPdfFontFamilies,
                         highlighterSnapEnabled = readerState.isHighlighterSnapEnabled,
                         isStylusOnlyMode = isStylusOnlyMode,
@@ -1990,10 +2396,13 @@ fun SharedMobilePdfReaderHost(
                         onVisiblePageChanged = { dispatch(SharedPdfReaderAction.GoToPage(it)) },
                         onCanvasSizeChanged = { canvasSize = it },
                         onFinishInkStroke = { page, eraserOverride -> finishInkStroke(page, eraserOverride) },
+                        onInkStrokeEnd = ::onInkStrokeEnd,
                         eraserStrokeWidth = readerState.toolConfigs[PdfInkTool.ERASER]?.strokeWidth
                             ?: SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER).strokeWidth,
                         onInkStrokeStart = ::onInkStrokeStart,
                         onEraseAnnotations = ::onEraseAnnotations,
+                        selectionHost = selectionHost,
+                        onPageSurfaceWindowRectChanged = { page, rect -> selectionPageWindowRects[page] = rect },
                         onExternalLink = { url -> if (ownsGlobalModal) pendingExternalLink = url },
                         onInternalLink = { navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, it), reason = PdfNavigationReason.INTERNAL_LINK) },
                         onExistingHighlightTap = { noteAnnotationId = it.id },
@@ -2049,6 +2458,7 @@ fun SharedMobilePdfReaderHost(
                         ttsPageIndex = ttsPageIndex.takeIf { pdfTts.isSessionActive || pendingTtsStart != null },
                         ttsHighlightBounds = ttsHighlightBounds,
                         activeStroke = activeStroke,
+                        activeStrokeOwnerPdfPage = activeStrokeOwnerPdfPage,
                         customFontFamilies = customPdfFontFamilies,
                         highlighterSnapEnabled = readerState.isHighlighterSnapEnabled,
                         isStylusOnlyMode = isStylusOnlyMode,
@@ -2082,10 +2492,13 @@ fun SharedMobilePdfReaderHost(
                         onToggleChrome = { showChrome = !showChrome },
                         onCanvasSizeChanged = { canvasSize = it },
                         onFinishInkStroke = { page, eraserOverride -> finishInkStroke(page, eraserOverride) },
+                        onInkStrokeEnd = ::onInkStrokeEnd,
                         eraserStrokeWidth = readerState.toolConfigs[PdfInkTool.ERASER]?.strokeWidth
                             ?: SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER).strokeWidth,
                         onInkStrokeStart = ::onInkStrokeStart,
                         onEraseAnnotations = ::onEraseAnnotations,
+                        selectionHost = selectionHost,
+                        onPageSurfaceWindowRectChanged = { page, rect -> selectionPageWindowRects[page] = rect },
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -2109,8 +2522,12 @@ fun SharedMobilePdfReaderHost(
                             )
                         },
                         onScrubPreview = { pdfSliderScrubbingPage = it },
+                        // Android parity (PdfViewerScreen slider): full-width
+                        // bare bar with inner 12/6.dp padding owned by the
+                        // slider itself. No outer horizontal inset — the bar
+                        // sits above the jump bar via bottom padding only.
                         modifier = Modifier
-                            .padding(start = 16.dp, end = 16.dp, bottom = pdfSliderBottomPadding)
+                            .padding(bottom = pdfSliderBottomPadding)
                     )
                 }
                 pdfSliderScrubbingPage?.let { scrubPage ->
@@ -2221,8 +2638,218 @@ fun SharedMobilePdfReaderHost(
                         modifier = Modifier.padding(bottom = ttsBottomPadding)
                     )
                 }
+                // Selection handle overlay: present ONLY while it owns the
+                // selection page (see above). It owns all nine handles plus —
+                // on a handle miss — the page's tap / move / lasso dispatch
+                // (the shared detector, in container space), so the selection
+                // page is handled in exactly one place and nothing below it
+                // needs the touch. Slop is raw screen px, no zoom compensation
+                // needed; a handle hit consumes the down in the Initial pass.
+                val latestHandleUnion by rememberUpdatedState(selectionEditState.union)
+                val latestHandleSelPage by rememberUpdatedState(inkSelection.pageIndex)
+                val latestHandlePageRects by rememberUpdatedState(selectionPageWindowRects)
+                val latestHandleContainer by rememberUpdatedState(readerContainerWindowRect)
+                val latestHandleTool by rememberUpdatedState(readerStateForPages.selectedTool)
+                val latestHandleStylusOnly by rememberUpdatedState(isStylusOnlyMode)
+                val latestHandleOrigin by rememberUpdatedState(selectionOverlayOrigin)
+                val latestTouchSlopPx by rememberUpdatedState(selectionViewTouchSlop)
+                val latestSelectionZoom by rememberUpdatedState(pdfZoomCamera.scale)
+                val latestReaderAnnotations by rememberUpdatedState(readerState.annotations)
+                if (selectionOverlayOwnsPage) {
+                    val overlayWidthDp = with(density) { selectionOverlaySizePx.width.toDp() }
+                    val overlayHeightDp = with(density) { selectionOverlaySizePx.height.toDp() }
+                    Box(
+                        Modifier
+                            .align(Alignment.TopStart)
+                            .offset {
+                                IntOffset(
+                                    selectionOverlayOrigin.x.roundToInt(),
+                                    selectionOverlayOrigin.y.roundToInt(),
+                                )
+                            }
+                            .size(overlayWidthDp, overlayHeightDp)
+                            .pointerInput(inkSelection.pageIndex) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(
+                                        requireUnconsumed = false,
+                                        pass = PointerEventPass.Initial,
+                                    )
+                                    if (latestHandleTool != PdfInkTool.SELECT) return@awaitEachGesture
+                                    if (latestHandleStylusOnly && down.type == PointerType.Touch) {
+                                        pdfInkSelectionLog { "overlay.skip reason=stylus-only-touch" }
+                                        return@awaitEachGesture
+                                    }
+                                    val union = latestHandleUnion
+                                    if (union == null) return@awaitEachGesture
+                                    val selPage = latestHandleSelPage ?: return@awaitEachGesture
+                                    val container = latestHandleContainer
+                                    if (container == Rect.Zero) return@awaitEachGesture
+                                    val surface = latestHandlePageRects[selPage] ?: return@awaitEachGesture
+                                    if (surface.width <= 0f || surface.height <= 0f) return@awaitEachGesture
+                                    val origin = latestHandleOrigin
+                                    val downContainer = down.position + origin
+                                    val pageLocal = Rect(
+                                        surface.left - container.left,
+                                        surface.top - container.top,
+                                        surface.right - container.left,
+                                        surface.bottom - container.top,
+                                    )
+                                    val aspect = (pageLocal.width / pageLocal.height)
+                                        .takeIf { it.isFinite() && it > 0f } ?: 1f
+                                    fun toNormPos(containerPos: Offset): PdfPagePoint {
+                                        return PdfPagePoint(
+                                            x = ((containerPos.x - pageLocal.left) / pageLocal.width).coerceIn(0f, 1f),
+                                            y = ((containerPos.y - pageLocal.top) / pageLocal.height).coerceIn(0f, 1f),
+                                        )
+                                    }
+                                    val slopPx = 20.dp.toPx()
+                                    val handles = sharedPdfSelectionHandlePositions(union).mapValues { (_, norm) ->
+                                        Offset(
+                                            pageLocal.left + norm.x * pageLocal.width - origin.x,
+                                            pageLocal.top + norm.y * pageLocal.height - origin.y,
+                                        )
+                                    }
+                                    val hitHandle = findSharedPdfSelectionHandleHit(
+                                        handles, down.position, slopPx
+                                    )
+                                    pdfInkSelectionLog {
+                                        "overlay.down container=(${downContainer.x.roundToInt()}," +
+                                            "${downContainer.y.roundToInt()}) slopPx=${slopPx.roundToInt()} " +
+                                            "hit=$hitHandle"
+                                    }
+                                    if (hitHandle != null) {
+                                        down.consume()
+                                        handleTransformInFlight = true
+                                        try {
+                                            runSharedSelectionTransformSession(
+                                                handle = hitHandle,
+                                                selectionBounds = union,
+                                                startNorm = toNormPos(downContainer),
+                                                downId = down.id,
+                                                pageAspectRatio = aspect,
+                                                onTransformStart = { onSelectionTransformStart(selPage) },
+                                                onTransformUpdate = { onSelectionTransformUpdate(selPage, it, aspect) },
+                                                onTransformEnd = ::onSelectionTransformEnd,
+                                                toNorm = { toNormPos(it + origin) },
+                                            )
+                                        } finally {
+                                            handleTransformInFlight = false
+                                        }
+                                        return@awaitEachGesture
+                                    }
+                                    // Handle miss: own this page's tap / move /
+                                    // lasso here with the shared dispatch (the
+                                    // page's own block stands down via
+                                    // overlayOwnedPageIndex, so each gesture is
+                                    // handled exactly once).
+                                    pdfInkSelectionLog { "overlay.delegate page=$selPage" }
+                                    runSharedPdfInkSelectionForDown(
+                                        down = down,
+                                        pageIndex = selPage,
+                                        pageSizePx = IntSize(
+                                            pageLocal.width.roundToInt(),
+                                            pageLocal.height.roundToInt(),
+                                        ),
+                                        pageAspectRatio = aspect,
+                                        touchSlopPx = latestTouchSlopPx,
+                                        zoomProvider = { 1f },
+                                        annotationsProvider = {
+                                            latestReaderAnnotations.filter {
+                                                it.pageIndex == selPage && it.kind == PdfAnnotationKind.INK
+                                            }
+                                        },
+                                        selectionBoundsProvider = { latestHandleUnion },
+                                        onTapResult = { tappedPage, annotationId ->
+                                            onSelectionTap(tappedPage, annotationId)
+                                        },
+                                        onLassoResult = { lassoPage, annotationIds ->
+                                            onSelectionLasso(lassoPage, annotationIds)
+                                        },
+                                        onLassoProgress = { trail ->
+                                            val zoom = latestSelectionZoom.coerceAtLeast(0.01f)
+                                            val surfaceNow = latestHandlePageRects[selPage]
+                                            val containerNow = latestHandleContainer
+                                            val originNow = latestHandleOrigin
+                                            if (surfaceNow == null || surfaceNow.width <= 0f ||
+                                                surfaceNow.height <= 0f
+                                            ) {
+                                                onSelectionLassoProgress(selPage, trail?.let { emptyList() })
+                                            } else {
+                                                val left = surfaceNow.left - containerNow.left
+                                                val top = surfaceNow.top - containerNow.top
+                                                onSelectionLassoProgress(selPage, trail?.map { overlayPos ->
+                                                    val c = overlayPos + originNow
+                                                    Offset((c.x - left) / zoom, (c.y - top) / zoom)
+                                                })
+                                            }
+                                        },
+                                        onTransformStart = { transformPage ->
+                                            onSelectionTransformStart(transformPage)
+                                        },
+                                        onTransformUpdate = { transformPage, transform, transformAspect ->
+                                            onSelectionTransformUpdate(transformPage, transform, transformAspect)
+                                        },
+                                        onTransformEnd = ::onSelectionTransformEnd,
+                                        toNorm = { overlayPos -> toNormPos(overlayPos + latestHandleOrigin) },
+                                    )
+                                }
+                            }
+                    )
+                }
+                // Floating selection edit bar (benchmark: Android
+                // PdfInkSelectionEditBar): HSV entry opens the spectrum
+                // directly, slider edits thickness live, copy duplicates
+                // in place. Gated on the effective (unminimized) tool and
+                // anchored below the selection, fully clamped on-screen.
+                if (readerStateForPages.selectedTool == PdfInkTool.SELECT &&
+                    !inkSelection.isEmpty &&
+                    selectionBarRect != null &&
+                    selectionEditState.selected.isNotEmpty() &&
+                    readerContainerSize.width > 0 &&
+                    readerContainerSize.height > 0
+                ) {
+                    val barThickness = selectionEditState.thickness
+                    if (barThickness != null) {
+                        val styleHasHighlighter = remember(selectionEditState.selected) {
+                            selectionEditState.selected.any {
+                                it.tool == PdfInkTool.HIGHLIGHTER || it.tool == PdfInkTool.HIGHLIGHTER_ROUND
+                            }
+                        }
+                        val stylePalette = remember(
+                            styleHasHighlighter,
+                            readerState.penPalette,
+                            readerState.highlighterPalette,
+                        ) {
+                            if (styleHasHighlighter) readerState.highlighterPalette else readerState.penPalette
+                        }
+                        SharedPdfInkSelectionEditBar(
+                            selectionWindowRect = selectionBarRect,
+                            containerSizePx = readerContainerSize,
+                            selectedColor = selectionEditState.color,
+                            selectionPalette = stylePalette,
+                            onPaletteChange = { next ->
+                                if (styleHasHighlighter) {
+                                    dispatch(SharedPdfReaderAction.HighlighterPaletteChanged(next))
+                                } else {
+                                    dispatch(SharedPdfReaderAction.PenPaletteChanged(next))
+                                }
+                            },
+                            onColorLive = ::selectionColorLive,
+                            onColorReverted = ::revertSelectionStyle,
+                            thickness = barThickness,
+                            thicknessRange = selectionEditState.thicknessRange,
+                            onThicknessChange = { next ->
+                                selectionStyleLive { it.copy(strokeWidth = next) }
+                            },
+                            onThicknessChangeFinished = { selectionStyleCommit() },
+                            canDuplicate = true,
+                            onDuplicate = ::duplicateInkSelection,
+                            onDelete = ::deleteInkSelection,
+                        )
+                    }
+                }
                 if (cloudTts != null) {
-                    AnimatedVisibility(
+                AnimatedVisibility(
                         visible = cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused,
                         enter = slideInVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeIn(tween(PdfChromeMotionDurationMillis)),
                         exit = slideOutVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeOut(tween(PdfChromeMotionDurationMillis)),
@@ -2409,16 +3036,32 @@ fun SharedMobilePdfReaderHost(
                         )
                         val popupAlign = if (popupAboveDock) Alignment.BottomCenter else Alignment.TopCenter
                         val popupMargin = 16.dp
+                        // Android parity: the sticky dock carries system-inset
+                        // padding (home-indicator / status bar) below/above its
+                        // 56dp bar, which the raw dockTopY math doesn't include.
+                        // Without it the inset eats the margin on iOS and the
+                        // popup sits flush against (or overlaps) the dock.
+                        val statusTopDp = with(density) {
+                            WindowInsets.safeDrawing.getTop(density).toDp()
+                        }
+                        val popupDockBottomInset =
+                            if (isSticky && annotationDockLocation == DockLocation.BOTTOM) effectiveBottomSystemInset else 0.dp
+                        val popupDockTopInset =
+                            if (isSticky && annotationDockLocation == DockLocation.TOP) statusTopDp else 0.dp
                         val popupTopPad = if (!popupAboveDock) {
-                            with(density) { (dockTopYPx + annotationDockHeightPx).toDp() } + popupMargin
+                            with(density) { (dockTopYPx + annotationDockHeightPx).toDp() } + popupDockTopInset + popupMargin
                         } else {
                             0.dp
                         }
                         val popupBottomPad = if (popupAboveDock) {
-                            with(density) { (boxMaxHeightPx - dockTopYPx).toDp() } + popupMargin
+                            with(density) { (boxMaxHeightPx - dockTopYPx).toDp() } + popupDockBottomInset + popupMargin
                         } else {
                             0.dp
                         }
+                        // Hoisted: AnimatedVisibility content has its own
+                        // receiver, so BoxWithConstraints maxHeight isn't
+                        // visible inside the popup call below.
+                        val popupMaxHeight = sharedPdfPopupMaxHeightDp(maxHeight.value.roundToInt()).dp
                         Box(modifier = Modifier.fillMaxSize()) {
                             androidx.compose.animation.AnimatedVisibility(
                                 visible = showAnnotationToolSettings,
@@ -2450,6 +3093,11 @@ fun SharedMobilePdfReaderHost(
                                     },
                                     isHighlighterSnapEnabled = readerState.isHighlighterSnapEnabled,
                                     onHighlighterSnapChange = ::updatePdfHighlighterSnap,
+                                    // Android parity (ToolSettingsPopup
+                                    // maxPopupHeight): cap against the reader
+                                    // height so the popup scrolls instead of
+                                    // overflowing on small screens.
+                                    maxHeight = popupMaxHeight,
                                 )
                             }
 
@@ -2492,9 +3140,6 @@ fun SharedMobilePdfReaderHost(
                                     } else {
                                         Modifier.padding(horizontal = 16.dp)
                                     }
-                                val statusTopDp = with(density) {
-                                    WindowInsets.safeDrawing.getTop(density).toDp()
-                                }
                                 val paddingModifier =
                                     if ((annotationDockLocation == DockLocation.TOP || annotationDockLocation == DockLocation.BOTTOM) && !isAnnotationDockDragging) {
                                         Modifier.padding(
@@ -2800,6 +3445,22 @@ fun SharedMobilePdfReaderHost(
                                     dragGestureModifier = textDockDragGesture,
                                     popupsBelowBar = textPopupsBelowBar,
                                     onPopupStateChange = { richTextController.showCursorOverride = !it },
+                                    // Paragraph row is flowing-rich-text only;
+                                    // open drafts stay on the single-row bar.
+                                    paragraphState = if (textDraft != null) {
+                                        null
+                                    } else {
+                                        richTextController.richParagraphUiState()
+                                    },
+                                    onNumberedListClick = {
+                                        richTextController.toggleRichListType(SharedPdfRichListType.NUMBERED)
+                                    },
+                                    onBulletedListClick = {
+                                        richTextController.toggleRichListType(SharedPdfRichListType.BULLET)
+                                    },
+                                    onAlignmentSelected = {
+                                        richTextController.setRichParagraphAlignment(it)
+                                    },
                                 )
                             }
                         }
@@ -3501,7 +4162,9 @@ private fun SharedMobilePdfReaderTopBar(
     topTools: List<PdfReaderTool>,
     toolbarPreferences: PdfToolbarPreferences,
     onCustomizeToolbar: () -> Unit,
-    applySystemBarInsets: Boolean
+    applySystemBarInsets: Boolean,
+    isDebugBuild: Boolean = false,
+    onDrawDebugDemoAnnotations: () -> Unit = {},
 ) {
     val searchFocusRequester = remember { FocusRequester() }
     val searchKeyboardController = LocalSoftwareKeyboardController.current
@@ -3619,6 +4282,14 @@ private fun SharedMobilePdfReaderTopBar(
                                 PdfReaderTool.AI_FEATURES -> if (aiAvailable) SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onOpenAiHub) { Icon(Icons.Default.Ai, contentDescription = null) }
                                 else -> Unit
                             }
+                        }
+                        if (isDebugBuild) {
+                            // Android parity (PdfToolbars includeDebugActions):
+                            // debug-only "Try Episteme!" demo artwork.
+                            SharedMobilePdfTopToolButton(
+                                readerString("tooltip_demo_annotations", "Demo annotations"),
+                                onDrawDebugDemoAnnotations,
+                            ) { Icon(Icons.Filled.BugReport, contentDescription = null) }
                         }
                     }
                 }
@@ -3870,6 +4541,18 @@ private fun SharedMobilePdfReaderTopBar(
                     if (toolbarPreferences.isVisible(PdfReaderTool.SHARE)) SharedMobilePdfOverflowItem(sharedPdfReaderToolTitle(PdfReaderTool.SHARE), leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }, onClick = { showMoreMenu = false; onNativeAction(SharedMobilePdfNativeAction.SHARE) })
                     if (toolbarPreferences.isVisible(PdfReaderTool.SAVE_COPY)) SharedMobilePdfOverflowItem(sharedPdfReaderToolTitle(PdfReaderTool.SAVE_COPY), leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) }, onClick = { showMoreMenu = false; onNativeAction(SharedMobilePdfNativeAction.SAVE_COPY) })
                     if (toolbarPreferences.isVisible(PdfReaderTool.PRINT)) SharedMobilePdfOverflowItem(sharedPdfReaderToolTitle(PdfReaderTool.PRINT), leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) }, onClick = { showMoreMenu = false; onNativeAction(SharedMobilePdfNativeAction.PRINT) })
+                }
+                if (isDebugBuild) {
+                    // Android parity (PdfToolbars import_svg/demo_annotations):
+                    // debug-only "Try Episteme!" demo artwork.
+                    SharedMobilePdfOverflowItem(
+                        readerString("tooltip_demo_annotations", "Demo annotations"),
+                        leadingIcon = { Icon(Icons.Filled.BugReport, contentDescription = null) },
+                        onClick = {
+                            showMoreMenu = false
+                            onDrawDebugDemoAnnotations()
+                        }
+                    )
                 }
                 }
             }
@@ -4180,6 +4863,9 @@ private fun SharedMobilePdfReaderBottomBar(
     onOpenDrawer: () -> Unit,
     onSearch: () -> Unit,
     onToolSelected: (PdfInkTool) -> Unit,
+    // Android parity: reopening edit mode restores the last tool instead of
+    // always resetting to PEN (see toggleEditMode above).
+    editModeOpenTool: PdfInkTool = PdfInkTool.PEN,
     ttsState: SharedMobileEpubLocalTtsState,
     isTtsPlayingOrLoading: Boolean,
             onToggleTts: () -> Unit,
@@ -4239,7 +4925,7 @@ private fun SharedMobilePdfReaderBottomBar(
                         }
                         PdfReaderTool.EDIT_MODE -> SharedMobilePdfBottomToolButton(
                             selected = state.selectedTool != PdfInkTool.NONE,
-                            onClick = { onToolSelected(if (state.selectedTool == PdfInkTool.NONE) PdfInkTool.PEN else PdfInkTool.NONE) },
+                            onClick = { onToolSelected(if (state.selectedTool == PdfInkTool.NONE) editModeOpenTool else PdfInkTool.NONE) },
                         ) { Icon(Icons.Default.Edit, contentDescription = sharedPdfReaderToolTitle(tool)) }
                         PdfReaderTool.TTS_CONTROLS -> SharedMobilePdfBottomToolButton(onClick = onToggleTts) {
                             Icon(
@@ -4336,12 +5022,26 @@ private fun SharedMobilePdfReaderDrawer(
     }
     ModalDrawerSheet(modifier = Modifier.width(348.dp)) {
         Column(Modifier.fillMaxSize()) {
-            TabRow(selectedTabIndex = pagerState.currentPage.coerceAtMost(sections.lastIndex)) {
+            // Android parity (PdfNavigationDrawerContent): scrollable tabs with
+            // single-line labels so long titles (Chapters/Bookmarks/Highlights)
+            // scroll instead of wrapping.
+            ScrollableTabRow(
+                selectedTabIndex = pagerState.currentPage.coerceAtMost(sections.lastIndex),
+                edgePadding = 8.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 sections.forEachIndexed { index, section ->
                     Tab(
                         selected = pagerState.currentPage == index,
                         onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
-                        text = { Text(readerString(section.stringKey, section.fallbackLabel)) }
+                        text = {
+                            Text(
+                                readerString(section.stringKey, section.fallbackLabel),
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     )
                 }
             }

@@ -78,6 +78,61 @@ class OpdsRepositoryTest {
     }
 
     @Test
+    fun `basic authenticator allows empty password for token style setups`() {
+        val request = Request.Builder().url("https://example.org/feed").build()
+        val response = responseFor(request, "Basic realm=\"Catalog\"")
+
+        val usernameOnly = OpdsRepository.OpdsAuthenticator("user", null)
+            .authenticate(null, response)
+        val emptyPassword = OpdsRepository.OpdsAuthenticator("user", "")
+            .authenticate(null, response)
+        val blankUser = OpdsRepository.OpdsAuthenticator("   ", null)
+            .authenticate(null, response)
+
+        assertEquals("Basic dXNlcjo=", usernameOnly?.header("Authorization"))
+        assertEquals("Basic dXNlcjo=", emptyPassword?.header("Authorization"))
+        assertNull(blankUser)
+    }
+
+    @Test
+    fun `digest authenticator allows empty password`() {
+        val request = Request.Builder()
+            .url("https://example.org/catalog/feed")
+            .build()
+        val response = responseFor(
+            request,
+            "Digest realm=\"realm\", nonce=\"abc\", qop=\"auth\""
+        )
+
+        val header = OpdsRepository.OpdsAuthenticator("user", null)
+            .authenticate(null, response)?.header("Authorization").orEmpty()
+
+        assertTrue(header.startsWith("Digest "))
+        assertTrue(header.contains("""username="user""""))
+        assertNotNull(Regex("""response="[a-f0-9]{32}"""").find(header))
+    }
+
+    @Test
+    fun `certificate error detector matches tls trust failures only`() {
+        val handshake = javax.net.ssl.SSLHandshakeException("PKIX path building failed")
+        assertTrue(OpdsRepository.isCertificateError(handshake))
+        assertTrue(OpdsRepository.isCertificateError(RuntimeException("fetch failed", handshake)))
+        assertTrue(
+            OpdsRepository.isCertificateError(
+                java.security.cert.CertificateException("untrusted")
+            )
+        )
+        assertTrue(
+            OpdsRepository.isCertificateError(
+                javax.net.ssl.SSLPeerUnverifiedException("hostname not verified")
+            )
+        )
+        assertTrue(
+            OpdsRepository.isCertificateError(java.io.IOException("timeout")).not()
+        )
+    }
+
+    @Test
     fun `digest authenticator builds digest header with qop opaque and request uri`() {
         val request = Request.Builder()
             .url("https://example.org/catalog/feed?x=1")

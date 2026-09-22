@@ -192,7 +192,12 @@
                 text-align-last: auto !important;
                 letter-spacing: normal !important;
                 word-spacing: normal !important;
-                padding: 0.1em 0;
+                /* Vertical padding on inline markers grows the line box on
+                   WebKit and visibly shifts content when highlighting. */
+                padding: 0 !important;
+                margin: 0 !important;
+                border: 0 !important;
+                vertical-align: baseline !important;
                 border-radius: 3px;
                 -webkit-box-decoration-break: clone;
                 box-decoration-break: clone;
@@ -203,7 +208,35 @@
                 color: #E0E0E0 !important;
             }
 
-            /* User Highlights */
+            /* User Highlights: wrapping text must never change layout.
+               Publication CSS is injected verbatim, so pin every box/layout
+               property or a 'span padding' rule newly matches the
+               inserted marker and shifts content (iOS WebView report). */
+            span[class*="user-highlight-"],
+            mark.reader-user-highlight {
+                display: inline !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                border: 0 !important;
+                outline: 0 !important;
+                box-shadow: none !important;
+                vertical-align: baseline !important;
+                line-height: inherit !important;
+                letter-spacing: inherit !important;
+                word-spacing: inherit !important;
+                text-indent: 0 !important;
+                float: none !important;
+                clear: none !important;
+                position: static !important;
+                left: auto !important;
+                right: auto !important;
+                top: auto !important;
+                bottom: auto !important;
+                transform: none !important;
+                border-radius: 2px;
+                -webkit-box-decoration-break: clone;
+                box-decoration-break: clone;
+            }
             .user-highlight-yellow {
                     background-color: rgba(251, 192, 45, 0.4); cursor: pointer;
                 }
@@ -245,8 +278,9 @@
                 }
                 .user-highlight-white {
                     background-color: rgba(255, 255, 255, 0.4); cursor: pointer;
-                    /* Optional: slight border so white is visible on white paper */
-                    border-bottom: 1px solid rgba(0,0,0,0.1);
+                    /* Optional: slight underline so white is visible on white paper.
+                       box-shadow (not border) so the marker stays layout-neutral. */
+                    box-shadow: inset 0 -1px 0 rgba(0,0,0,0.1);
                 }
 
                 /* Active State (Darkens slightly when pressed) */
@@ -258,6 +292,13 @@
                 background-color: rgba(160, 207, 241, 0.8);
                 color: black;
                 border-radius: 3px;
+                display: inline !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                border: 0 !important;
+                vertical-align: baseline !important;
+                -webkit-box-decoration-break: clone;
+                box-decoration-break: clone;
             }
 
             html.dark-theme mark.search-highlight {
@@ -520,8 +561,10 @@
 
         themeStyleElement.innerHTML = css;
 
-        if (window.adjustInlineColorsForContrast) {
-             window.adjustInlineColorsForContrast(isDark, effectiveBg);
+        if (window.readerAdjustAuthorColorsForContrast) {
+             window.readerAdjustAuthorColorsForContrast(isDark, effectiveBg, effectiveText);
+        } else if (window.adjustInlineColorsForContrast) {
+             window.adjustInlineColorsForContrast(isDark, effectiveBg, effectiveText);
         }
     };
 
@@ -655,52 +698,178 @@
         return[Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
     }
 
-    window.adjustInlineColorsForContrast = function(isDark, bgHex) {
-        var bgRgb = hexToRgb(bgHex);
-        var bgLum = getLuminance(bgRgb.r, bgRgb.g, bgRgb.b);
+    // Contrast fixup shared with pagination (CssParser.adaptColorForTheme):
+    // stylesheet rules like p.P_Plat{color:#000} beat inherited body color, so we must
+    // walk computed styles for all elements, not just [style*="color"]. Neutral
+    // low-contrast text becomes the theme text color; saturated author colors are kept.
+    function readerContrastShouldSkip(el) {
+        if (!el || !el.tagName) return true;
+        var tag = el.tagName.toUpperCase();
+        if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'LINK' || tag === 'META' ||
+            tag === 'IMG' || tag === 'VIDEO' || tag === 'CANVAS' ||
+            tag === 'INPUT' || tag === 'BUTTON' || tag === 'SELECT' || tag === 'TEXTAREA') {
+            return true;
+        }
+        if (el.closest) {
+            if (el.closest('svg')) return true;
+            if (el.closest('a[href]')) return true;
+            if (el.closest('#reader-selection-menu, .reader-selection-handle, #reader-tts-highlight-layer')) return true;
+            if (el.closest('span[class*="user-highlight-"], mark.reader-user-highlight, .reader-highlight')) return true;
+        }
+        return false;
+    }
 
-        var elements = document.querySelectorAll('[style*="color"]');
-        elements.forEach(function(el) {
-            if (el.closest && el.closest('a[href]')) return;
-            var style = window.getComputedStyle(el);
-            var colorStr = style.color;
-            var rgb = rgbStringToRgb(colorStr);
-            if (rgb) {
-                var lum = getLuminance(rgb.r, rgb.g, rgb.b);
-                var l1 = Math.max(bgLum, lum);
-                var l2 = Math.min(bgLum, lum);
-                var contrast = (l1 + 0.05) / (l2 + 0.05);
+    function readerContrastChroma(rgb) {
+        var max = Math.max(rgb.r, rgb.g, rgb.b) / 255;
+        var min = Math.min(rgb.r, rgb.g, rgb.b) / 255;
+        return max - min;
+    }
 
-                if (contrast < 4.5) {
-                    var hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
-                    if (bgLum < 0.5) {
-                        hsl[2] = Math.max(hsl[2], 0.7); // Lighten
-                    } else {
-                        hsl[2] = Math.min(hsl[2], 0.3); // Darken
-                    }
-                    var newRgb = hslToRgb(hsl[0], hsl[1], hsl[2]);
-                    el.style.setProperty('color', `rgb(${newRgb[0]}, ${newRgb[1]}, ${newRgb[2]})`, 'important');
-                }
+    function readerContrastRestore(el) {
+        if (el.hasAttribute('data-reader-orig-color')) {
+            var origColor = el.getAttribute('data-reader-orig-color');
+            var origColorPriority = el.getAttribute('data-reader-orig-color-priority') || '';
+            if (origColor) {
+                el.style.setProperty('color', origColor, origColorPriority);
+            } else {
+                el.style.removeProperty('color');
             }
-        });
+            el.removeAttribute('data-reader-orig-color');
+            el.removeAttribute('data-reader-orig-color-priority');
+        } else if (el.hasAttribute('data-reader-contrast-fg')) {
+            el.style.removeProperty('color');
+            el.removeAttribute('data-reader-contrast-fg');
+        }
+        if (el.hasAttribute('data-reader-orig-bg')) {
+            var origBg = el.getAttribute('data-reader-orig-bg');
+            var origBgPriority = el.getAttribute('data-reader-orig-bg-priority') || '';
+            if (origBg) {
+                el.style.setProperty('background-color', origBg, origBgPriority);
+            } else {
+                el.style.removeProperty('background-color');
+            }
+            el.removeAttribute('data-reader-orig-bg');
+            el.removeAttribute('data-reader-orig-bg-priority');
+        } else if (el.hasAttribute('data-reader-contrast-bg')) {
+            el.style.removeProperty('background-color');
+            el.removeAttribute('data-reader-contrast-bg');
+        }
+    }
 
-        var bgElements = document.querySelectorAll('[style*="background"]');
-        bgElements.forEach(function(el) {
-            var style = window.getComputedStyle(el);
-            var bgStr = style.backgroundColor;
-            if (bgStr && bgStr !== 'rgba(0, 0, 0, 0)' && bgStr !== 'transparent') {
-                var rgb = rgbStringToRgb(bgStr);
+    function readerContrastRemember(el, kind) {
+        if (kind === 'color') {
+            if (!el.hasAttribute('data-reader-orig-color') && !el.hasAttribute('data-reader-contrast-fg')) {
+                el.setAttribute('data-reader-orig-color', el.style.getPropertyValue('color') || '');
+                el.setAttribute('data-reader-orig-color-priority', el.style.getPropertyPriority('color') || '');
+            }
+        } else {
+            if (!el.hasAttribute('data-reader-orig-bg') && !el.hasAttribute('data-reader-contrast-bg')) {
+                el.setAttribute('data-reader-orig-bg', el.style.getPropertyValue('background-color') || '');
+                el.setAttribute('data-reader-orig-bg-priority', el.style.getPropertyPriority('background-color') || '');
+            }
+        }
+    }
+
+    window.readerAdjustAuthorColorsForContrast = function(isDark, bgHex, textHex) {
+        try {
+            var effectiveText = textHex || (isDark ? '#E0E0E0' : '#000000');
+            var bgRgb = hexToRgb(bgHex);
+            var bgLum = getLuminance(bgRgb.r, bgRgb.g, bgRgb.b);
+            if (!document.body) return 0;
+            var previouslyFixed = document.querySelectorAll(
+                '[data-reader-orig-color], [data-reader-orig-bg], [data-reader-contrast-fg], [data-reader-contrast-bg]'
+            );
+            for (var restoreIndex = 0; restoreIndex < previouslyFixed.length; restoreIndex++) {
+                readerContrastRestore(previouslyFixed[restoreIndex]);
+            }
+            var fixed = 0;
+            var elements = document.body.querySelectorAll('*');
+            for (var index = 0; index < elements.length; index++) {
+                var el = elements[index];
+                if (readerContrastShouldSkip(el)) continue;
+                var style = null;
+                try {
+                    style = window.getComputedStyle(el);
+                } catch (e) {
+                    continue;
+                }
+                if (!style) continue;
+                var rgb = rgbStringToRgb(style.color);
                 if (rgb) {
-                    var lum = getLuminance(rgb.r, rgb.g, rgb.b);
-                    if (isDark && lum > 0.5) {
-                        el.style.setProperty('background-color', 'transparent', 'important');
-                    } else if (!isDark && lum < 0.2) {
-                        el.style.setProperty('background-color', 'transparent', 'important');
+                    if (readerContrastChroma(rgb) < 0.2 && contrastRatio(rgb, bgRgb) < 4.5) {
+                        readerContrastRemember(el, 'color');
+                        el.style.setProperty('color', effectiveText, 'important');
+                        el.setAttribute('data-reader-contrast-fg', 'true');
+                        fixed++;
+                    }
+                }
+                var bgStr = style.backgroundColor;
+                if (bgStr && bgStr !== 'rgba(0, 0, 0, 0)' && bgStr !== 'transparent') {
+                    var bgImage = style.backgroundImage;
+                    if (!bgImage || bgImage === 'none') {
+                        var elementBg = rgbStringToRgb(bgStr);
+                        if (elementBg) {
+                            var lum = getLuminance(elementBg.r, elementBg.g, elementBg.b);
+                            var shouldClear = (isDark && lum > 0.5) || (!isDark && lum < 0.2);
+                            if (shouldClear) {
+                                readerContrastRemember(el, 'background');
+                                el.style.setProperty('background-color', 'transparent', 'important');
+                                el.setAttribute('data-reader-contrast-bg', 'true');
+                                fixed++;
+                            }
+                        }
                     }
                 }
             }
-        });
+            window.__readerLastContrastArgs = { isDark: !!isDark, bgHex: bgHex, textHex: effectiveText };
+            return fixed;
+        } catch (e) {
+            return 0;
+        }
     };
+
+    // Legacy name kept for existing native callers; now covers stylesheet colors too.
+    window.adjustInlineColorsForContrast = function(isDark, bgHex, textHex) {
+        return window.readerAdjustAuthorColorsForContrast(isDark, bgHex, textHex);
+    };
+
+    (function installContrastMutationObserver() {
+        if (!window.MutationObserver || window.__readerContrastObserverInstalled) return;
+        window.__readerContrastObserverInstalled = true;
+        var debounce = null;
+        function schedule() {
+            if (debounce !== null) return;
+            debounce = window.setTimeout(function () {
+                debounce = null;
+                var args = window.__readerLastContrastArgs;
+                if (args && window.readerAdjustAuthorColorsForContrast) {
+                    window.readerAdjustAuthorColorsForContrast(args.isDark, args.bgHex, args.textHex);
+                }
+            }, 250);
+        }
+        function observe() {
+            if (!document.body) {
+                window.setTimeout(observe, 300);
+                return;
+            }
+            try {
+                var observer = new MutationObserver(function (mutations) {
+                    for (var i = 0; i < mutations.length; i++) {
+                        if (mutations[i].addedNodes && mutations[i].addedNodes.length) {
+                            schedule();
+                            return;
+                        }
+                    }
+                });
+                observer.observe(document.body, { childList: true, subtree: true });
+            } catch (e) {}
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', observe, { once: true });
+        } else {
+            observe();
+        }
+    })();
 
     function handleHighlightInteraction(e) {
         if (window.getSelection && window.getSelection().toString().trim().length > 0) {
@@ -1002,6 +1171,12 @@
         var newVerticalMargin = parseFloat(verticalMargin);
         var newFontWeight = parseInt(fontWeight, 10);
         var newLetterSpacing = parseFloat(letterSpacing);
+        // CSS vh units resolve to 0 in some Android WebViews (loadDataWithBaseURL +
+        // fixed documentElement height), which turned every `max-height: 92vh` image cap
+        // into a 0px collapse (cover appears, then vanishes once styles apply). Measure
+        // the viewport in JS instead; fall back to no cap rather than a bogus one.
+        var viewportHPx = window.innerHeight || document.documentElement.clientHeight || 0;
+        var newImageMaxHPx = viewportHPx > 0 ? Math.round(viewportHPx * 0.92) : 0;
 
         if (isNaN(newFontSize) || newFontSize < 0.5 || newFontSize > 5.0) newFontSize = 1.0;
         if (isNaN(newLineHeight) || newLineHeight < 1.0 || newLineHeight > 3.0) newLineHeight = 1.0;
@@ -1142,6 +1317,33 @@
                 overflow-wrap: break-word !important;
                 word-break: normal !important;
             }
+            /* Shoulder-note headings (Standard Ebooks div.aside: float right sidebar
+               in print) cannot survive single-column virtualized chunks: the float
+               context breaks across chunk boundaries and the headings vanish from
+               paint. Linearize them the way the publisher's own <=10em fallback
+               does; borders, margins and small-caps are preserved.
+               Visibility guards below are load-bearing: without explicit
+               display/visibility/overflow/position the linearized boxes have been
+               observed as 0-height or fully transparent in The_Path_to_Rome's
+               main chapter on Android WebView (see EpubBlankDiag asides). */
+            div.aside {
+                float: none !important;
+                clear: both !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+                width: auto !important;
+                height: auto !important;
+                min-height: 0 !important;
+                display: block !important;
+                visibility: visible !important;
+                opacity: 1 !important;
+                position: static !important;
+                overflow: visible !important;
+                border: 1px solid currentColor !important;
+                padding: 1em !important;
+                margin: 1em 0 !important;
+                box-sizing: border-box !important;
+            }
             pre, code, samp, kbd, .reader-txt-preformatted {
                 white-space: pre-wrap !important;
                 overflow-wrap: anywhere !important;
@@ -1160,6 +1362,7 @@
         var imageCss = `
             :root {
                 --reader-image-size: ${newImageSize};
+                --reader-image-max-h: ${newImageMaxHPx > 0 ? newImageMaxHPx + "px" : "none"};
             }
             body img,
             body svg,
@@ -1169,16 +1372,50 @@
                 width: auto;
                 max-width: min(100%, calc(100% * var(--reader-image-size))) !important;
                 height: auto !important;
+                /* Book CSS (Standard Ebooks local.css) constrains figure images with
+                   parent-relative max-height (100%/60%). When the figure has no definite
+                   height yet (0px during first layout) that resolves to 0 and collapses
+                   the image to 0x0 even though the bitmap decoded (naturalWidth > 0).
+                   Cap via the JS-measured viewport instead of vh (vh is 0 in some
+                   WebViews): none first so images never collapse, then the px cap. */
+                max-height: none !important;
+                max-height: var(--reader-image-max-h, none) !important;
+                min-width: 0 !important;
+                min-height: 0 !important;
                 display: block !important;
                 float: none !important;
                 margin-left: auto !important;
                 margin-right: auto !important;
                 object-fit: contain !important;
+                visibility: visible !important;
+                opacity: 1 !important;
+            }
+            /* An svg that asks for 100% width (Gutenberg SVG covers) has no intrinsic
+               dimensions, so width:auto above collapses it to 0x0. Honor the author
+               width; height stays auto (aspect from viewBox), still capped by the
+               max-width/max-height above. Fixed-size svgs (math) keep width:auto. */
+            body svg[width="100%"],
+            body .x-ebookmaker-cover svg {
+                width: 100%;
             }
             body p:has(> img:only-child),
             body div:has(> img:only-child),
             body figure {
                 text-align: center !important;
+            }
+            body figure {
+                height: auto !important;
+                min-height: 0 !important;
+                max-height: none !important;
+                width: auto !important;
+                max-width: 100% !important;
+                overflow: visible !important;
+                visibility: visible !important;
+                opacity: 1 !important;
+            }
+            body figure img {
+                max-height: none !important;
+                max-height: var(--reader-image-max-h, none) !important;
             }
         `;
 
@@ -2189,8 +2426,17 @@
                 );
 
                 // FIX: If height has collapsed, manually calculate and set it forcefully.
-                if (img.complete && img.naturalWidth > 0 && img.clientWidth > 0 && img.clientHeight === 0) {
-                    console.log(logTag + ": CORRECTING GEOMETRY for Image #" + index);
+                // Covers both the historical clientWidth>0/height==0 case and the
+                // Standard Ebooks figure collapse where the image is fully 0x0 while
+                // the bitmap decoded (naturalWidth>0). Parent-relative max-height
+                // (100%/60% in local.css) resolving against a 0-height figure is the
+                // usual cause; the imageCss cap (none then the JS-measured px cap) plus
+                // this band-aid recovers paint even if a publication rule still wins.
+                var collapsedHeightOnly = img.complete && img.naturalWidth > 0 && img.clientWidth > 0 && img.clientHeight === 0;
+                var collapsedFully = img.complete && img.naturalWidth > 0 && img.naturalHeight > 0 && img.clientWidth === 0 && img.clientHeight === 0;
+                if (collapsedHeightOnly || collapsedFully) {
+                    console.log(logTag + ": CORRECTING GEOMETRY for Image #" + index + " mode=" + (collapsedFully ? "fully-collapsed-0x0" : "height-only"));
+                    try { console.log("EpubBlankDiag: event=android_img_correct idx=" + index + " mode=" + (collapsedFully ? "0x0" : "h0") + " nat=" + img.naturalWidth + "x" + img.naturalHeight + " client=" + img.clientWidth + "x" + img.clientHeight + " src=" + ((img.getAttribute('src') || '').split('/').pop() || '').slice(-40)); } catch (e) {}
                     const parent = img.parentElement;
 
                     if (parent) {
@@ -2206,14 +2452,43 @@
                         );
                         // Force the parent's height to be determined by its content. This is crucial.
                         parent.style.setProperty("height", "auto", "important");
+                        parent.style.setProperty("max-height", "none", "important");
+                        if (collapsedFully && parent.tagName === "FIGURE") {
+                            parent.style.setProperty("width", "auto", "important");
+                            parent.style.setProperty("max-width", "100%", "important");
+                            parent.style.setProperty("overflow", "visible", "important");
+                        }
                     }
 
-                    const aspectRatio = img.naturalHeight / img.naturalWidth;
-                    const correctHeight = img.clientWidth * aspectRatio;
-
-                    // Remove the conflicting max-height property and then set the explicit height.
+                    // Remove the conflicting max-height property first; on 0x0 images
+                    // clientWidth is 0 so derive width from the figure/content width.
                     img.style.setProperty("max-height", "none", "important");
-                    img.style.setProperty("height", correctHeight + "px", "important");
+                    var targetWidth = img.clientWidth;
+                    if (!targetWidth) {
+                        try {
+                            var host = img.closest ? (img.closest("figure") || img.parentElement) : img.parentElement;
+                            targetWidth = host ? host.clientWidth : 0;
+                        } catch (e) { targetWidth = 0; }
+                    }
+                    if (!targetWidth) {
+                        try { targetWidth = Math.min(img.naturalWidth, (document.documentElement.clientWidth || window.innerWidth || 0) - 32); } catch (e) {}
+                    }
+                    if (targetWidth && targetWidth > 0) {
+                        var aspect = img.naturalHeight / img.naturalWidth;
+                        var h = Math.round(targetWidth * aspect);
+                        // Cap to viewport so portrait scans never blow out scroll range.
+                        try {
+                            var vh = window.innerHeight || document.documentElement.clientHeight || 0;
+                            if (vh > 0 && h > Math.round(vh * 0.92)) h = Math.round(vh * 0.92);
+                        } catch (e) {}
+                        img.style.setProperty("width", targetWidth + "px", "important");
+                        img.style.setProperty("height", h + "px", "important");
+                    } else {
+                        var aspectOnly = img.naturalHeight / img.naturalWidth;
+                        var fallbackW = img.clientWidth || 0;
+                        var correctH = fallbackW * aspectOnly;
+                        img.style.setProperty("height", correctH + "px", "important");
+                    }
 
                     console.log(logTag + ": Corrective styles applied to Image #" + index + ". Verifying height after a short delay for reflow...");
 
@@ -2222,7 +2497,8 @@
                     setTimeout(
                         function () {
                             console.log(logTag + ": Verified height for Image #" + index + ": " + img.clientHeight + "px");
-                            window.reportScrollState(); // Update scroll metrics now that the image has height
+                            try { console.log("EpubBlankDiag: event=android_img_corrected idx=" + index + " now=" + img.clientWidth + "x" + img.clientHeight); } catch (e) {}
+                            if (window.reportScrollState) window.reportScrollState(); // Update scroll metrics now that the image has height
                         },
 
                         150,

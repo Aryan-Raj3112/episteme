@@ -77,6 +77,14 @@ fun SharedMobileAppDrawerContent(
     drawerCapabilities: MobileAppDrawerCapabilities = MobileAppDrawerCapabilities.GLOBAL,
     onAboutClick: (() -> Unit)? = null,
     onSupportProjectClick: (() -> Unit)? = null,
+    // Temporary iOS launch scope (see IosFeatureGating): iOS passes false to
+    // hide cloud sync rows while keeping the sync logic. Defaults stay true
+    // so Android behavior remains the benchmark.
+    showSyncControls: Boolean = true,
+    // Temporary iOS launch scope (see IosFeatureGating): iOS passes false to
+    // hide the credits balance badge and show Pro status instead, while the
+    // credits data and purchase logic stay intact. Defaults stay true.
+    showCreditsBalance: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     ModalDrawerSheet(modifier = modifier) {
@@ -120,10 +128,21 @@ fun SharedMobileAppDrawerContent(
                         ) {
                             Icon(Icons.Default.VerifiedUser, contentDescription = null, modifier = Modifier.size(16.dp))
                             Text(
-                                if (edition == MobileAppEdition.STANDARD) {
-                                    readerString("drawer_standard_version", "Standard version")
-                                } else {
-                                    readerString("credits_count", "%1\$d Credits", credits)
+                                when {
+                                    edition == MobileAppEdition.STANDARD -> {
+                                        readerString("drawer_standard_version", "Standard version")
+                                    }
+                                    // Intentional temporary iOS scope: hide credits
+                                    // balance and emphasize Pro status instead.
+                                    // Credits data/logic is kept for later.
+                                    !showCreditsBalance -> if (isProUser) {
+                                        readerString("drawer_pro_unlocked", "Pro unlocked")
+                                    } else {
+                                        readerString("drawer_upgrade_pro", "Upgrade to Pro")
+                                    }
+                                    else -> {
+                                        readerString("credits_count", "%1\$d Credits", credits)
+                                    }
                                 },
                                 style = MaterialTheme.typography.labelMedium
                             )
@@ -144,22 +163,17 @@ fun SharedMobileAppDrawerContent(
                     onClick = onSignInClick,
                     modifier = Modifier.padding(horizontal = 12.dp).testTag("MobileDrawerSignIn")
                 )
-                Text(
-                    text = account.signedOutDescription ?: if (edition == MobileAppEdition.STANDARD) {
-                        readerString(
-                            "drawer_signed_out_standard_desc",
-                            "Sync account and app settings.",
-                        )
-                    } else {
-                        readerString(
-                            "drawer_signed_out_desc",
-                            "Sync account, Pro features, and credits.",
-                        )
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 10.dp)
-                )
+                // Android parity: no signed-out description line. Android's drawer
+                // shows only the sign-in action plus legal text, so only render
+                // this when a host explicitly provides copy.
+                account.signedOutDescription?.let { description ->
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 28.dp, vertical = 10.dp)
+                    )
+                }
                 account.legalDisclosure?.let { disclosure ->
                     val annotatedDisclosure = buildAnnotatedString {
                         append(disclosure.text)
@@ -237,7 +251,9 @@ fun SharedMobileAppDrawerContent(
             // same gate here so signed-out users do not see a control that
             // cannot be enabled, and make the Pro prerequisite visible in
             // the control state instead of accepting a no-op tap.
-            if (currentUser != null) {
+            // Temporary iOS scope (IosFeatureGating.SHOW_CLOUD_SYNC == false):
+            // the whole sync section is hidden while sync logic is kept.
+            if (currentUser != null && showSyncControls) {
                 NavigationDrawerItem(
                     icon = { Icon(Icons.Default.Sync, contentDescription = null) },
                     label = { Text(readerString("drawer_sync_library", "Sync library")) },
@@ -271,7 +287,9 @@ fun SharedMobileAppDrawerContent(
                 )
             }
 
-            if (currentUser != null && isSyncEnabled) {
+            // Temporary iOS scope: folder backup is part of cloud sync and is
+            // hidden together with the library sync row (logic kept).
+            if (currentUser != null && isSyncEnabled && showSyncControls) {
                 NavigationDrawerItem(
                     icon = { Icon(Icons.Default.FolderSpecial, contentDescription = null) },
                     label = {

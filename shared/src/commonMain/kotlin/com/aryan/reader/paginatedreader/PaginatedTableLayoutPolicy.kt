@@ -8,9 +8,22 @@ import androidx.compose.ui.unit.dp
 private const val StackedDramaTableMinRows = 4
 private const val StackedDramaTableMinTextChars = 160
 private const val StackedDramaTableMaxLeadChars = 40
+private const val StackedTocTableMinRows = 6
+private const val StackedTocTableMinTextChars = 160
+// Stack a TOC-shaped table only when an entry is long enough to wrap badly in a
+// side-by-side column (CONTENTS summaries run 90+ chars); short illustration titles
+// (all under ~40 chars in the wild) stay beside their page reference.
+private const val StackedTocTableMinLongEntryChars = 64
+// Gutenberg illustration indexes use "Frontispiece." (13 chars) as the page
+// reference; keep the page-cell budget above that while still far below the
+// length of genuine two-column data cells.
+private const val StackedTocTableMaxPageCellChars = 16
 private val StackedDramaCellTopGap = 24.dp
 
-fun TableBlock.shouldStackRowsForNarrowPagination(): Boolean {
+fun TableBlock.shouldStackRowsForNarrowPagination(): Boolean =
+    shouldStackDramaRowsForNarrowPagination() || shouldStackTocRowsForNarrowPagination()
+
+private fun TableBlock.shouldStackDramaRowsForNarrowPagination(): Boolean {
     if (rows.isEmpty() || rows.any { it.isEmpty() || it.size > 2 }) return false
     val textChars = rows.sumOf { row -> row.sumOf { cell -> cell.content.sumOf { it.paginationTextCharCount() } } }
     val twoCellRows = rows.count { it.size == 2 }
@@ -25,10 +38,56 @@ fun TableBlock.shouldStackRowsForNarrowPagination(): Boolean {
     return rows.size > 1 || rows.any { it.single().isLikelyDramaSpeakerCell() }
 }
 
+/**
+ * Table-of-contents/index tables (Gutenberg CONTENTS/ILLUSTRATIONS): long tables whose rows
+ * are either single heading cells or (entry text, short page reference) pairs. Long entries
+ * side-by-side on a phone squeeze into a sliver, so they stack full-width; short index
+ * entries fit beside their page reference and stay side-by-side like other renderers.
+ */
+fun TableBlock.shouldStackTocRowsForNarrowPagination(): Boolean {
+    if (rows.size < StackedTocTableMinRows) return false
+    if (rows.any { it.isEmpty() || it.size > 2 }) return false
+    val singleCellRows = rows.count { it.size == 1 }
+    val twoCellRows = rows.count { it.size == 2 }
+    if (singleCellRows == 0 && twoCellRows == 0) return false
+    if (twoCellRows > 0) {
+        val entryPageRows = rows.count { row ->
+            row.size == 2 &&
+                row[0].content.sumOf { it.paginationTextCharCount() } > 0 &&
+                row[1].content.sumOf { it.paginationTextCharCount() } in 1..StackedTocTableMaxPageCellChars
+        }
+        if (entryPageRows != twoCellRows) return false
+        // Stack only when an entry is long enough to wrap badly side-by-side. Short
+        // index entries (illustration titles) render beside their page number.
+        // Single-column shapes (split fragments) skip this: they keep the TOC layout
+        // so fragments stay gapless and measure exactly as estimated.
+        val longEntry = rows.any { row ->
+            row.size == 2 &&
+                row[0].content.sumOf { it.paginationTextCharCount() } > StackedTocTableMinLongEntryChars
+        }
+        if (!longEntry) return false
+    }
+    val textChars = rows.sumOf { row -> row.sumOf { cell -> cell.content.sumOf { it.paginationTextCharCount() } } }
+    if (textChars < StackedTocTableMinTextChars) return false
+    return (singleCellRows + twoCellRows) * 10 >= rows.size * 8
+}
+
 fun TableBlock.rowsForNarrowPaginationLayout(): List<List<TableCell>> =
     if (shouldStackRowsForNarrowPagination()) {
+        // Prefer the plain TOC layout whenever the shape matches it, even if the drama
+        // fallback also matches. Split fragments of a TOC table are single-column rows,
+        // which trip the drama single-column fallback — but drama speaker gaps would make
+        // the fragment remeasure taller than the split estimate, so the paginator rejects
+        // every fragment and force-places the whole table on one page. Genuine drama
+        // tables never match the TOC shape (their dialogue cells exceed the page-ref
+        // budget), so preferring TOC only affects fragments, which stay gapless and
+        // measure exactly as estimated.
+        // TOC-shaped tables stack plainly; drama speaker gaps do not apply to page numbers.
+        val isTocLayout = shouldStackTocRowsForNarrowPagination()
         rows.flatMap { row ->
-            row.mapIndexed { cellIndex, cell -> listOf(cell.withStackedDramaCellSpacing(row, cellIndex)) }
+            row.mapIndexed { cellIndex, cell ->
+                listOf(if (isTocLayout) cell else cell.withStackedDramaCellSpacing(row, cellIndex))
+            }
         }
     } else {
         rows

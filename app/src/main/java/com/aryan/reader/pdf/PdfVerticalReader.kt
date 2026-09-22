@@ -56,6 +56,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -102,12 +103,14 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -202,7 +205,7 @@ private data class PdfCameraAnchorSignature(
     val totalHeightPx: Float,
 )
 
-private data class PdfPageLayout(
+internal data class PdfPageLayout(
     val index: Int,
     val yPx: Int,
     val heightPx: Int,
@@ -253,6 +256,9 @@ private data class DividerLayout(val yPx: Int, val widthPx: Int, val heightPx: I
     val height: Float
         get() = heightPx.toFloat()
 }
+
+/** Page-sized transparent overlay for ink selection (drawn in doc px). */
+internal data class PdfSelectionOverlayLayout(val widthPx: Int, val heightPx: Int, val yPx: Int)
 
 @Suppress("UnusedVariable")
 @SuppressLint("UnusedBoxWithConstraintsScope", "BinaryOperationInTimber")
@@ -334,7 +340,32 @@ internal fun PdfVerticalReader(
     isBubbleZoomModeActive: Boolean = false,
     showPageGap: Boolean = true,
     showPageNumberOverlay: Boolean = true,
-    onDetectBubbles: suspend (Int, Bitmap) -> List<SpeechBubble> = { _, _ -> emptyList() }
+    onDetectBubbles: suspend (Int, Bitmap) -> List<SpeechBubble> = { _, _ -> emptyList() },
+    // Ink selection editing (SELECT tool).
+    inkSelection: PdfInkSelection = PdfInkSelection(),
+    isSelectionTransformActive: Boolean = false,
+    activeSelectionRotationDegrees: Float? = null,
+    onSelectionTapResult: (pageIndex: Int, annotationId: String?) -> Unit = { _, _ -> },
+    onSelectionLassoResult: (pageIndex: Int, annotationIds: Set<String>) -> Unit = { _, _ -> },
+    onSelectionTransformStart: (pageIndex: Int) -> Unit = {},
+    onSelectionTransformUpdate: (pageIndex: Int, transform: PdfSelectionTransform) -> Unit = { _, _ -> },
+    onSelectionTransformEnd: (commit: Boolean) -> Unit = {},
+    onSelectionDelete: () -> Unit = {},
+    onSelectionDuplicate: () -> Unit = {},
+    onSelectionColorLive: (androidx.compose.ui.graphics.Color) -> Unit = {},
+    onSelectionStyleReverted: () -> Unit = {},
+    onSelectionPaletteChange: (List<androidx.compose.ui.graphics.Color>) -> Unit = {},
+    onSelectionThickness: (Float) -> Unit = {},
+    onSelectionThicknessFinished: () -> Unit = {},
+    onSelectionClear: () -> Unit = {},
+    selectionEditColor: androidx.compose.ui.graphics.Color? = null,
+    selectionEditThickness: Float = 0.008f,
+    selectionThicknessRange: ClosedFloatingPointRange<Float> = 0.001f..0.015f,
+    selectionPalette: List<androidx.compose.ui.graphics.Color> = emptyList(),
+    // True when the text toolbar sits at the bottom (sticky bottom or
+    // floating), so cursor-follow keeps the caret above the bar instead of
+    // under it. False when top-anchored.
+    textDockCoversBottom: Boolean = false,
 ) {
     DisposableEffect(state) {
         onDispose {
@@ -347,6 +378,16 @@ internal fun PdfVerticalReader(
     }
     var globalEraserPosition by remember { mutableStateOf<Offset?>(null) }
     var isStylusEraserOverride by remember { mutableStateOf(false) }
+    // In-progress SELECT lasso in document px (null when idle).
+    var selectLassoDocPoints by remember { mutableStateOf<List<Offset>?>(null) }
+    // Measured size of the floating selection edit bar, so it can be kept
+    // fully on-screen when the selection sits near a screen edge.
+    var editBarSizePx by remember { mutableStateOf(IntSize.Zero) }
+    // A lasso abandoned by leaving annotation mode (back nav, toolbar
+    // toggle) must not linger into the next session.
+    LaunchedEffect(isEditMode) {
+        if (!isEditMode) selectLassoDocPoints = null
+    }
     val isDarkMode = activeTheme.isDark || activeTheme.id == "reverse"
     val effectiveReverseColorMode = if (activeTheme.id == "reverse") {
         reverseColorMode
@@ -1230,12 +1271,36 @@ internal fun PdfVerticalReader(
 
         val imeBottom = imeInsets.getBottom(density)
 
+        // Bottom space the text toolbar covers while the keyboard is open.
+        // The cursor-follow window and the scroll clamp both reserve it so a
+        // new line lands above the bar instead of under it.
+        val textDockReservePx = with(density) {
+            if (textDockCoversBottom) PdfTextDockHeight.toPx() else 0f
+        }
+
+        // Cursor-follow arming: typing/tapping re-arms (cursor rect changes),
+        // a manual drag or fling disarms so free scroll sticks instead of
+        // snapping back to the caret on release.
+        var cursorFollowArmed by remember { mutableStateOf(true) }
+        var lastFollowCursorPage by remember { mutableIntStateOf(-1) }
+        var lastFollowCursorRect by remember { mutableStateOf<Rect?>(null) }
+
+        LaunchedEffect(isInteracting, isFlinging) {
+            if ((isInteracting || isFlinging) && cursorFollowArmed) {
+                cursorFollowArmed = false
+                pdfRichCursorTrace(
+                    "follow disarm userScroll interacting=$isInteracting flinging=$isFlinging"
+                )
+            }
+        }
+
         LaunchedEffect(
             headerHeightPx,
             footerHeightPx,
             totalDocHeight,
             screenHeight,
             imeBottom,
+            textDockReservePx,
             isEditMode,
             selectedTool,
             isInteracting,
@@ -1252,7 +1317,7 @@ internal fun PdfVerticalReader(
 
             val isTextEditing = isEditMode && selectedTool == InkType.TEXT && imeBottom > 0
             val effectiveFooterPx = if (isTextEditing) 0f else footerHeightPx
-            val extraScrollForIme = if (isTextEditing) imeBottom.toFloat() else 0f
+            val extraScrollForIme = if (isTextEditing) imeBottom.toFloat() + textDockReservePx else 0f
 
             val minPanY = (screenHeight - effectiveFooterPx - zoomedDocHeight - extraScrollForIme).coerceAtMost(headerHeightPx)
 
@@ -1289,6 +1354,7 @@ internal fun PdfVerticalReader(
             richTextController?.cursorPageIndex,
             richTextController?.cursorRectInPage,
             imeBottom,
+            textDockReservePx,
             density,
             isEditMode,
             selectedTool,
@@ -1305,35 +1371,64 @@ internal fun PdfVerticalReader(
             val pageIndex = controller.cursorPageIndex
             val cursorRect = controller.cursorRectInPage
 
-            if (pageIndex >= 0 && cursorRect != null) {
-                val pageLayout = layoutInfo.find { it.index == pageIndex }
+            if (pageIndex < 0 || cursorRect == null) {
+                pdfRichCursorTrace("follow skip page=$pageIndex rect=null ime=$imeBottom")
+                return@LaunchedEffect
+            }
 
-                if (pageLayout != null) {
-                    val currentPanY = cameraPanY
-                    val currentZoom = cameraZoom
+            if (pageIndex != lastFollowCursorPage || cursorRect != lastFollowCursorRect) {
+                lastFollowCursorPage = pageIndex
+                lastFollowCursorRect = cursorRect
+                if (!cursorFollowArmed) {
+                    pdfRichCursorTrace("follow rearm edit page=$pageIndex rect=${cursorRect.pdfRichCursorSummary()}")
+                }
+                cursorFollowArmed = true
+            }
+            if (!cursorFollowArmed) {
+                pdfRichCursorTrace("follow skip disarmed page=$pageIndex rect=${cursorRect.pdfRichCursorSummary()}")
+                return@LaunchedEffect
+            }
 
-                    val cursorGlobalTopY =
-                        (pageLayout.y + cursorRect.top) * currentZoom + currentPanY
-                    val cursorGlobalBottomY =
-                        (pageLayout.y + cursorRect.bottom) * currentZoom + currentPanY
+            val pageLayout = layoutInfo.find { it.index == pageIndex }
 
-                    val topSafeBuffer = with(density) { 80.dp.toPx() }
+            if (pageLayout != null) {
+                val currentPanY = cameraPanY
+                val currentZoom = cameraZoom
 
-                    val visibleBottom = screenHeight - imeBottom
+                val topSafePx = with(density) { 80.dp.toPx() }
+                val caretPadPx = with(density) { 12.dp.toPx() }
+                val window = PdfCursorFollowWindow(
+                    screenHeightPx = screenHeight,
+                    imeBottomPx = imeBottom.toFloat(),
+                    dockReservePx = if (textDockCoversBottom) textDockReservePx else 0f,
+                    topSafePx = topSafePx,
+                    caretPaddingPx = caretPadPx,
+                )
+                val requiredShift = pdfCursorFollowShift(
+                    cursorTopDocPx = pageLayout.y + cursorRect.top,
+                    cursorBottomDocPx = pageLayout.y + cursorRect.bottom,
+                    zoom = currentZoom,
+                    panY = currentPanY,
+                    window = window,
+                )
+                val cursorTopScreen = (pageLayout.y + cursorRect.top) * currentZoom + currentPanY
+                val cursorBottomScreen = (pageLayout.y + cursorRect.bottom) * currentZoom + currentPanY
+                val visibleBottom = screenHeight - imeBottom - window.dockReservePx
 
-                    var requiredShift = 0f
-
-                    if (cursorGlobalBottomY > (visibleBottom)) {
-                        requiredShift = visibleBottom - cursorGlobalBottomY
-                    } else if (cursorGlobalTopY < topSafeBuffer) {
-                        requiredShift = topSafeBuffer - cursorGlobalTopY
-                    }
-
-                    if (abs(requiredShift) > 10f) {
-                        val targetPanY = currentPanY + requiredShift
-                        panYAnimatable.snapTo(targetPanY)
-                        commitRenderedCamera(currentZoom, cameraPanX, targetPanY)
-                    }
+                if (abs(requiredShift) > 10f) {
+                    val targetPanY = currentPanY + requiredShift
+                    pdfRichCursorTrace(
+                        "follow apply page=$pageIndex cursorScreen=${cursorTopScreen.roundToInt()}..${cursorBottomScreen.roundToInt()} " +
+                            "visible=${topSafePx.roundToInt()}..${visibleBottom.roundToInt()} shift=${requiredShift.roundToInt()} " +
+                            "panY=${currentPanY.roundToInt()}->${targetPanY.roundToInt()}"
+                    )
+                    panYAnimatable.snapTo(targetPanY)
+                    commitRenderedCamera(currentZoom, cameraPanX, targetPanY)
+                } else {
+                    pdfRichCursorTrace(
+                        "follow visible page=$pageIndex cursorScreen=${cursorTopScreen.roundToInt()}..${cursorBottomScreen.roundToInt()} " +
+                            "visible=${topSafePx.roundToInt()}..${visibleBottom.roundToInt()}"
+                    )
                 }
             }
         }
@@ -1524,10 +1619,49 @@ internal fun PdfVerticalReader(
             layoutInfo,
             selectedTool,
             isStylusOnlyMode,
-            isHighlighterSnapEnabled
+            isHighlighterSnapEnabled,
+            inkSelection,
         ) {
             if (!isEditMode) return@pointerInput
             if (selectedTool == InkType.TEXT) return@pointerInput
+
+            if (selectedTool == InkType.SELECT) {
+                detectPdfInkSelectionGestures(
+                    layoutInfo = layoutInfo,
+                    cameraProvider = { PdfSelectionCamera(cameraZoom, cameraPanX, cameraPanY) },
+                    touchSlopPx = viewConfiguration.touchSlop,
+                    handleSlopPx = with(density) { 20.dp.toPx() },
+                    isStylusOnlyMode = isStylusOnlyMode,
+                    selection = inkSelection,
+                    annotationsProvider = { pageIndex ->
+                        allAnnotations()[pageIndex] ?: emptyList()
+                    },
+                    pageAspectProvider = { pageIndex ->
+                        layoutInfo.firstOrNull { it.index == pageIndex }
+                            ?.let { page -> if (page.height > 0f) page.width / page.height else 1f }
+                            ?: 1f
+                    },
+                    onTapResult = { pageIndex, annotationId ->
+                        onSelectionTapResult(pageIndex, annotationId)
+                    },
+                    onLassoResult = { pageIndex, annotationIds ->
+                        onSelectionLassoResult(pageIndex, annotationIds)
+                    },
+                    onLassoProgress = { docPoints ->
+                        selectLassoDocPoints = docPoints
+                    },
+                    onTransformStart = { pageIndex ->
+                        onSelectionTransformStart(pageIndex)
+                    },
+                    onTransformUpdate = { pageIndex, transform ->
+                        onSelectionTransformUpdate(pageIndex, transform)
+                    },
+                    onTransformEnd = { commit ->
+                        onSelectionTransformEnd(commit)
+                    },
+                )
+                return@pointerInput
+            }
 
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
@@ -2265,8 +2399,8 @@ internal fun PdfVerticalReader(
                                                                         "velocity=${PdfVerticalPerfLog.f(this.velocity)} " +
                                                                         "bounds=${PdfVerticalPerfLog.xy(minPanY, headerHeightPx)}"
                                                                 )
-                                                            }
-                                                        }
+    }
+}
                                                     }
                                                 }
                                             }
@@ -2530,6 +2664,60 @@ internal fun PdfVerticalReader(
                                 }
                             }
 
+                            // Page rich-text cursor placement (TEXT tool, no box):
+                            // bitmap space == rich-layer space (targetWidth =
+                            // actualBitmapWidthPx), so only the 10%/8% editor
+                            // margins come off. Box taps and out-of-editor taps
+                            // fall through to the normal single-tap behavior.
+                            val onRichTextTapLambda = remember(
+                                isEditMode,
+                                selectedTool,
+                                selectedTextBoxId,
+                                richTextController,
+                                textBoxes
+                            ) {
+                                { tappedIndex: Int, xBitmap: Float, yBitmap: Float, bitmapW: Float, bitmapH: Float ->
+                                    val controller = richTextController
+                                    if (!isEditMode || selectedTool != InkType.TEXT ||
+                                        selectedTextBoxId != null || controller == null
+                                    ) {
+                                        false
+                                    } else if (textBoxes.any { box ->
+                                            box.pageIndex == tappedIndex &&
+                                                xBitmap >= box.relativeBounds.left * bitmapW &&
+                                                xBitmap <= box.relativeBounds.right * bitmapW &&
+                                                yBitmap >= box.relativeBounds.top * bitmapH &&
+                                                yBitmap <= box.relativeBounds.bottom * bitmapH
+                                        }
+                                    ) {
+                                        pdfRichCursorTrace("tap page=$tappedIndex inBox skip")
+                                        false
+                                    } else {
+                                        val marginX = bitmapW * 0.1f
+                                        val marginY = bitmapH * 0.08f
+                                        val editorX = xBitmap - marginX
+                                        val editorY = yBitmap - marginY
+                                        if (editorX < 0f || editorY < 0f ||
+                                            editorX > bitmapW - marginX * 2f ||
+                                            editorY > bitmapH - marginY * 2f
+                                        ) {
+                                            pdfRichCursorTrace("tap page=$tappedIndex outsideEditor skip")
+                                            false
+                                        } else {
+                                            pdfRichCursorTrace(
+                                                "tap page=$tappedIndex bitmap=(${xBitmap.roundToInt()},${yBitmap.roundToInt()}) " +
+                                                    "editor=(${editorX.roundToInt()},${editorY.roundToInt()})"
+                                            )
+                                            controller.handleTapOnPage(
+                                                tappedIndex,
+                                                Offset(editorX, editorY)
+                                            )
+                                            true
+                                        }
+                                    }
+                                }
+                            }
+
                             val onTranslateTextLambda = remember(onTranslateText) {
                                 { text: String -> onTranslateText(text) }
                             }
@@ -2625,6 +2813,7 @@ internal fun PdfVerticalReader(
                                     searchResultToHighlight = searchResultForPage,
                                     ocrHoverHighlights = stableOcrHighlightRects,
                                     onSingleTap = onSingleTapLambda,
+                                    onRichTextTap = onRichTextTapLambda,
                                     isProUser = isProUser,
                                     onShowDictionaryUpsellDialog = onShowDictionaryUpsellDialog,
                                     onWordSelectedForAiDefinition = onWordSelectedForAiDefinition,
@@ -2800,6 +2989,60 @@ internal fun PdfVerticalReader(
                                         ))
                             }
                         }
+                        // Ink selection overlay: page-sized transparent layer inside
+                        // the zoom/pan transform so doc px == local px. Sized to a
+                        // single page (never the full document: an 800-page doc is
+                        // ~1.2M px tall and cannot be represented in Constraints).
+                        // Hidden whenever annotation mode is off (back nav, toolbar
+                        // toggle, minimized dock) so stale selection state can
+                        // never leave orphan UI on screen.
+                        if (isEditMode && selectedTool == InkType.SELECT) {
+                            val selectionPageIndex = inkSelection.pageIndex
+                            val lassoPageIndex = selectLassoDocPoints?.firstOrNull()?.let { docPoint ->
+                                layoutInfo.firstOrNull { page ->
+                                    docPoint.y >= page.y && docPoint.y <= (page.y + page.height)
+                                }?.index
+                            }
+                            val overlayPageIndex = selectionPageIndex ?: lassoPageIndex
+                            val overlayPage =
+                                layoutInfo.firstOrNull { it.index == overlayPageIndex }
+                            if (overlayPage != null && overlayPage.widthPx > 0 && overlayPage.heightPx > 0) {
+                                key(documentKey, "ink_selection_overlay", overlayPage.index) {
+                                    Box(
+                                        modifier = Modifier.layoutId(
+                                            PdfSelectionOverlayLayout(
+                                                widthPx = overlayPage.widthPx,
+                                                heightPx = overlayPage.heightPx,
+                                                yPx = overlayPage.yPx,
+                                            )
+                                        )
+                                    ) {
+                                        val overlaySelected =
+                                            if (selectionPageIndex == null) {
+                                                emptyList()
+                                            } else {
+                                                (allAnnotations()[selectionPageIndex] ?: emptyList())
+                                                    .filter { it.id in inkSelection.selectedIds }
+                                            }
+                                        PdfInkSelectionCanvas(
+                                            selectedAnnotations = overlaySelected,
+                                            selectionPage = PdfSelectionPageLayout(
+                                                index = overlayPage.index,
+                                                topDoc = overlayPage.y,
+                                                widthDoc = overlayPage.width,
+                                                heightDoc = overlayPage.height,
+                                            ),
+                                            pageWidthDoc = overlayPage.widthPx,
+                                            pageHeightDoc = overlayPage.heightPx,
+                                            lassoDocPoints = selectLassoDocPoints ?: emptyList(),
+                                            cameraZoom = cameraZoom,
+                                            activeRotationDegrees = activeSelectionRotationDegrees,
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 },
                 modifier = Modifier
@@ -2833,6 +3076,18 @@ internal fun PdfVerticalReader(
                                 val placeable = measurable.measure(
                                     Constraints.fixed(
                                         id.widthPx, id.heightPx
+                                    )
+                                )
+                                placeable.place(0, id.yPx)
+                            }
+
+                            is PdfSelectionOverlayLayout -> {
+                                // Single-page sized: always representable, unlike a
+                                // full-document layer on very long documents.
+                                val placeable = measurable.measure(
+                                    Constraints.fixed(
+                                        id.widthPx.coerceAtLeast(1),
+                                        id.heightPx.coerceAtLeast(1)
                                     )
                                 )
                                 placeable.place(0, id.yPx)
@@ -3168,6 +3423,83 @@ internal fun PdfVerticalReader(
                         onDragStart = {},
                         onDrag = { _, _ -> },
                         onDragEnd = {})
+                }
+            }
+        }
+
+        // Ink selection floating edit bar (SELECT tool only, hidden mid-gesture
+        // and whenever annotation mode is off).
+        if (isEditMode && selectedTool == InkType.SELECT && !inkSelection.isEmpty &&
+            selectLassoDocPoints == null && !isSelectionTransformActive
+        ) {
+            val editPageIndex = inkSelection.pageIndex
+            val editPage = layoutInfo.firstOrNull { it.index == editPageIndex }
+            val editSelected = if (editPageIndex == null) {
+                emptyList()
+            } else {
+                (allAnnotations()[editPageIndex] ?: emptyList())
+                    .filter { it.id in inkSelection.selectedIds }
+            }
+            val editBounds = if (editSelected.isNotEmpty()) {
+                pdfSelectionUnionBounds(editSelected)
+            } else {
+                null
+            }
+            if (editPage != null && editBounds != null) {
+                val zoom = cameraZoom
+                val screenLeft = editBounds.left * editPage.width * zoom + cameraPanX
+                val screenRight = editBounds.right * editPage.width * zoom + cameraPanX
+                val screenTop =
+                    (editPage.y + editBounds.top * editPage.height) * zoom + cameraPanY
+                val screenBottom =
+                    (editPage.y + editBounds.bottom * editPage.height) * zoom + cameraPanY
+                // Keep clear of the rotate handle floating above the box.
+                val aboveY = screenTop - with(density) { 108.dp.toPx() }
+                val preferredTopY = if (aboveY > headerHeightPx) {
+                    aboveY
+                } else {
+                    screenBottom + with(density) { 12.dp.toPx() }
+                }
+                // Keep the whole bar on-screen: clamp horizontally by the
+                // measured bar width and vertically by the measured height.
+                // (First frame measures at Zero size; the clamp tightens on
+                // the remeasure pass.)
+                val edgeMarginPx = with(density) { 8.dp.toPx() }
+                val halfScreen = screenWidth / 2f
+                val maxShift =
+                    (halfScreen - editBarSizePx.width / 2f - edgeMarginPx)
+                        .coerceAtLeast(0f)
+                val xShift = (((screenLeft + screenRight) / 2f) - halfScreen)
+                    .coerceIn(-maxShift, maxShift)
+                val topMin = headerHeightPx + edgeMarginPx
+                val topMax = (screenHeight - editBarSizePx.height - edgeMarginPx)
+                    .coerceAtLeast(topMin)
+                val barTopY = preferredTopY.coerceIn(topMin, topMax)
+                Box(modifier = Modifier.fillMaxSize()) {
+                    PdfInkSelectionEditBar(
+                        selectedColor = selectionEditColor,
+                        selectionPalette = selectionPalette,
+                        onPaletteChange = onSelectionPaletteChange,
+                        onColorLive = onSelectionColorLive,
+                        onColorReverted = onSelectionStyleReverted,
+                        thickness = selectionEditThickness,
+                        thicknessRange = selectionThicknessRange,
+                        onThicknessChange = onSelectionThickness,
+                        onThicknessChangeFinished = onSelectionThicknessFinished,
+                        canDuplicate = editSelected.isNotEmpty(),
+                        onDuplicate = onSelectionDuplicate,
+                        onDelete = onSelectionDelete,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .onSizeChanged { editBarSizePx = it }
+                            .offset {
+                                IntOffset(
+                                    xShift.roundToInt(),
+                                    barTopY.roundToInt(),
+                                )
+                            }
+                            .widthIn(max = with(density) { (screenWidth - 16.dp.toPx()).toDp() }),
+                    )
                 }
             }
         }

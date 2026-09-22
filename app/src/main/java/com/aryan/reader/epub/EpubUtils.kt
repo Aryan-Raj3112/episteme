@@ -67,6 +67,16 @@ internal fun File.isInsideOrSame(root: File): Boolean {
 fun Document.selectFirstTag(tag: String): Node? = getElementsByTagName(tag).item(0)
 fun Node.selectFirstChildTag(tag: String) = childElements.find { it.tagName == tag }
 fun Node.selectChildTag(tag: String) = childElements.filter { it.tagName == tag }
+
+/**
+ * Child elements whose local name matches, ignoring any namespace prefix. The OPF
+ * document is parsed namespace-unaware, so `<meta>` and `<opf:meta>` are distinct
+ * tagNames and Calibre EPUB 3 packages mix both spellings in one `<metadata>` block.
+ */
+fun Node.selectChildTagsByLocalName(localName: String) = childElements.filter {
+    it.tagName.substringAfter(':') == localName
+}
+
 fun Node.getAttributeValue(attribute: String): String? =
     attributes?.getNamedItem(attribute)?.textContent
 

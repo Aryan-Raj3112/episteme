@@ -219,6 +219,161 @@ class EpubReaderContentTest {
         assertEquals(1440, readerChunkPlaceholderHeightPx(index = 5, chunkElementCounts = emptyList()))
     }
 
+    @Test
+    fun `loadChapterContent descends into lone section wrapper for chunking`() = runTest {
+        val root = temp.newFolder("wrapped")
+        val inner = (1..45).joinToString("") { "<p>Paragraph $it</p>" }
+        writeChapter(
+            root,
+            "chapter.xhtml",
+            "<html><head></head><body><section id=\"the-path-to-rome\">$inner</section></body></html>"
+        )
+        val book = epubBook(root, listOf(chapter("chapter.xhtml")))
+
+        val result = loadChapterContent(
+            context = contextWithStrings(),
+            epubBook = book,
+            chapterIndex = 0,
+            chunkTargetOverride = null,
+            isInitialCfiLoad = false,
+            cfiToLoad = null,
+            locatorConverter = mockk()
+        )
+
+        assertTrue(result.isSuccess)
+        assertEquals(3, result.chunks.size)
+        assertTrue(result.chunks[0].contains("Paragraph 1"))
+        assertTrue(result.chunks[2].contains("Paragraph 45"))
+        assertEquals(listOf(0, 20, 40), result.chunkElementStartIndices)
+    }
+
+    @Test
+    fun `loadChapterContent keeps small lone wrapper intact`() = runTest {
+        val root = temp.newFolder("smallwrap")
+        val inner = (1..3).joinToString("") { "<p>Q $it</p>" }
+        writeChapter(
+            root,
+            "chapter.xhtml",
+            "<html><head></head><body><div class=\"wrapper\">$inner</div></body></html>"
+        )
+        val book = epubBook(root, listOf(chapter("chapter.xhtml")))
+
+        val result = loadChapterContent(
+            context = contextWithStrings(),
+            epubBook = book,
+            chapterIndex = 0,
+            chunkTargetOverride = null,
+            isInitialCfiLoad = false,
+            cfiToLoad = null,
+            locatorConverter = mockk()
+        )
+
+        assertTrue(result.isSuccess)
+        assertEquals(1, result.chunks.size)
+        assertTrue(result.chunks[0].contains("<div"))
+    }
+
+    @Test
+    fun `loadChapterContent preserves asides figures and image src through chunking`() = runTest {
+        val root = temp.newFolder("standard-ebooks")
+        val images = java.io.File(root, "images").apply { mkdirs() }
+        java.io.File(images, "illustration-1.jpg").writeBytes(byteArrayOf(1, 2, 3))
+        val text = java.io.File(root, "text").apply { mkdirs() }
+        val body = """
+            <section id="the-path-to-rome">
+            <div class="aside">The Difficulty of Beginning</div>
+            <p>First paragraph.</p>
+            <figure id="illustration-1"><img alt="Sketch" src="../images/illustration-1.jpg"/></figure>
+            <p>Second paragraph.</p>
+            </section>
+        """.trimIndent()
+        java.io.File(text, "chapter.xhtml").writeText("<html><head></head><body>$body</body></html>")
+        val book = epubBook(root, listOf(chapter("text/chapter.xhtml")))
+
+        val result = loadChapterContent(
+            context = contextWithStrings(),
+            epubBook = book,
+            chapterIndex = 0,
+            chunkTargetOverride = null,
+            isInitialCfiLoad = false,
+            cfiToLoad = null,
+            locatorConverter = mockk()
+        )
+
+        assertTrue(result.isSuccess)
+        val joined = result.chunks.joinToString("\n")
+        assertTrue(joined.contains("class=\"aside\""))
+        assertTrue(joined.contains("The Difficulty of Beginning"))
+        assertTrue(joined.contains("<figure"))
+        assertTrue(joined.contains("../images/illustration-1.jpg"))
+    }
+
+    @Test
+    fun `readerImageFileForHintsDiag resolves chapter relative paths inside extraction root`() {
+        val root = temp.newFolder("resolve").canonicalFile
+        val images = java.io.File(root, "images").apply { mkdirs() }
+        java.io.File(images, "a.png").writeBytes(byteArrayOf(1))
+        val chapterDir = java.io.File(root, "text").apply { mkdirs() }
+
+        val found = readerImageFileForHintsDiag("../images/a.png", chapterDir, root)
+        assertTrue(found?.isFile == true)
+        assertEquals(null, readerImageFileForHintsDiag("https://example.com/a.png", chapterDir, root))
+    }
+
+    @Test
+    fun `pruneUnresolvableSrcset drops missing file candidates only`() {
+        val root = temp.newFolder("srcset")
+        val images = java.io.File(root, "images").apply { mkdirs() }
+        java.io.File(images, "a.png").writeBytes(byteArrayOf(1, 2, 3))
+        val chapterDir = java.io.File(root, "text").apply { mkdirs() }
+
+        val pruned = pruneUnresolvableSrcset(
+            "../images/a-2x.png 2x, ../images/a.png 1x",
+            chapterDir,
+            root
+        )
+
+        assertEquals("../images/a.png 1x", pruned)
+    }
+
+    @Test
+    fun `pruneUnresolvableSrcset keeps fully resolvable sets untouched`() {
+        val root = temp.newFolder("srcset-ok")
+        val images = java.io.File(root, "images").apply { mkdirs() }
+        java.io.File(images, "a-2x.png").writeBytes(byteArrayOf(1))
+        java.io.File(images, "a.png").writeBytes(byteArrayOf(1))
+        val chapterDir = java.io.File(root, "text").apply { mkdirs() }
+
+        assertEquals(
+            null,
+            pruneUnresolvableSrcset(
+                "../images/a-2x.png 2x, ../images/a.png 1x",
+                chapterDir,
+                root
+            )
+        )
+    }
+
+    @Test
+    fun `readerChunkPlaceholderHeightPx reserves illustration space`() {
+        assertEquals(
+            720 + 560,
+            readerChunkPlaceholderHeightPx(
+                index = 1,
+                chunkElementCounts = listOf(20, 10),
+                chunkImageCounts = listOf(0, 2)
+            )
+        )
+        assertEquals(
+            72 + 280,
+            readerChunkPlaceholderHeightPx(
+                index = 0,
+                chunkElementCounts = listOf(1),
+                chunkImageCounts = listOf(1)
+            )
+        )
+    }
+
     private fun writeChapter(root: java.io.File, relativePath: String, html: String) {
         val file = java.io.File(root, relativePath)
         file.parentFile?.mkdirs()

@@ -5,6 +5,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -18,6 +19,67 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SharedPdfRichTextTest {
+
+    private fun cursorLayouts(): List<SharedPdfRichPageLayout> {
+        return listOf(
+            SharedPdfRichPageLayout(
+                pageIndex = 0,
+                visibleText = AnnotatedString("a"),
+                globalStartIndex = 0,
+                globalEndIndex = 1,
+                pageHeightPx = 1000f,
+            ),
+            SharedPdfRichPageLayout(
+                pageIndex = 1,
+                visibleText = AnnotatedString(""),
+                globalStartIndex = 1,
+                globalEndIndex = 1,
+                pageHeightPx = 1000f,
+            ),
+        )
+    }
+
+    @Test
+    fun `boundary cursor on shared char prefers later non-empty page`() {
+        // p0=[0,1], p1=[1,5]: cursor at 1 starts page 1's content.
+        val layouts = listOf(
+            SharedPdfRichPageLayout(0, AnnotatedString("a"), 0, 1, 1000f),
+            SharedPdfRichPageLayout(1, AnnotatedString("bcde"), 1, 5, 1000f),
+        )
+        assertEquals(1, selectRichPageLayoutForCursor(layouts, 1)?.pageIndex)
+        assertEquals(0, selectRichPageLayoutForCursor(layouts, 0)?.pageIndex)
+        assertEquals(1, selectRichPageLayoutForCursor(layouts, 3)?.pageIndex)
+    }
+
+    @Test
+    fun `end of text cursor stays on content page not trailing blank`() {
+        // p0=[0,1], p1=[1,1] empty: cursor at 1 belongs to page 0.
+        assertEquals(0, selectRichPageLayoutForCursor(cursorLayouts(), 1)?.pageIndex)
+        assertEquals(0, selectRichPageLayoutForCursor(cursorLayouts(), 0)?.pageIndex)
+        assertEquals(null, selectRichPageLayoutForCursor(cursorLayouts(), 2)?.pageIndex)
+    }
+
+    @Test
+    fun `ime echo deleting fresh continuation marker is restored`() = runTest {
+        // Enter continues the bullet; a software-keyboard echo that deletes
+        // exactly the fresh marker must restore it, while a genuine second
+        // backspace (guard consumed) still exits the list.
+        val controller = SharedPdfRichTextController(
+            scope = this,
+            documentToAnnotatedString = { document, _ -> AnnotatedString(document.text) },
+            annotatedStringToDocument = { text, _ -> SharedPdfRichDocument(text.text) },
+        )
+        controller.onValueChanged(TextFieldValue(AnnotatedString("hi"), TextRange(2)))
+        controller.toggleRichListType(SharedPdfRichListType.BULLET)
+        assertEquals("• hi", controller.globalTextFieldValue.text)
+        controller.onValueChanged(TextFieldValue(AnnotatedString("• hi\n"), TextRange(5)))
+        assertEquals("• hi\n• ", controller.globalTextFieldValue.text)
+        controller.onValueChanged(TextFieldValue(AnnotatedString("• hi\n"), TextRange(5)))
+        assertEquals("• hi\n• ", controller.globalTextFieldValue.text)
+        assertEquals(TextRange(7), controller.globalTextFieldValue.selection)
+        controller.onValueChanged(TextFieldValue(AnnotatedString("• hi\n"), TextRange(5)))
+        assertEquals("• hi\n", controller.globalTextFieldValue.text)
+    }
 
     @Test
     fun `mapper clips global rich spans into requested local range`() {

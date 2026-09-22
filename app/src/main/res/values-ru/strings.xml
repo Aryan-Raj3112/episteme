@@ -65,7 +65,7 @@
     <string name="drawer_sign_in">Войти через Google</string>
     <string name="drawer_by_signing_in">Соглашаясь,</string>
     <string name="drawer_pro_unlocked">Episteme Pro</string>
-    <string name="drawer_upgrade_pro">Обновиться на Episteme Pro</string>
+    <string name="drawer_upgrade_pro">Перейти на Episteme Pro</string>
     <string name="drawer_sync_library">Синхронизировать библиотеку</string>
     <string name="drawer_backup_local_folders">Облачная синхронизация для локальных папок</string>
     <string name="drawer_backup_desc">Загрузить книги из синхронизированных папок в Google Drive.</string>
@@ -123,7 +123,7 @@
     <string name="filter_source_folder">Исходная папка</string>
     <string name="filter_read_status">Статус чтения</string>
     <string name="clear_all">Очистить всё</string>
-    <string name="action_stream">Stream</string>
+    <string name="action_stream">Читать по потоку</string>
     <string name="action_unavailable">Недоступно</string>
     <string name="action_download">Скачать</string>
     <string name="filter_in_app_storage">Встроенное хранилище</string>
@@ -184,7 +184,7 @@
     <string name="feature_smart_dict_desc">Искать фразы и даже абзацы, а не только отдельные слова</string>
     <string name="feature_priority">Приоритетная поддержка</string>
     <string name="feature_priority_desc">Получайте помощь вне очереди</string>
-    <string name="pro_unlocked">Pro функции разблокированы!</string>
+    <string name="pro_unlocked">Функции Pro разблокированы!</string>
     <string name="sign_in_required">Требуется вход</string>
     <string name="verifying_purchase">Проверка покупки…</string>
     <string name="existing_purchase_found">Найдена существующая покупка</string>
@@ -1513,4 +1513,779 @@
     <string name="desktop_reader_tabs_on">Вкладки Reader включены</string>
     <string name="desktop_sign_in_account_header_desc">Синхронизация учетной записи, Pro и кредитов</string>
     <string name="desktop_ai_keys">AI ключи</string>
+    <string name="action_disable">Отключить</string>
+
+    <string name="nav_unified_library">Библиотека (бета)</string>
+
+    <string name="unified_library_beta">БЕТА</string>
+
+    <string name="unified_library_continue_reading">Продолжить чтение</string>
+
+    <string name="unified_library_your_books">Ваши книги</string>
+
+    <string name="unified_library_all">Все</string>
+
+    <string name="unified_library_reading">Читаю</string>
+
+    <string name="unified_library_finished">Прочитано</string>
+
+    <string name="unified_library_unread">Не прочитано</string>
+
+    <string name="unified_library_no_books">В этом разделе нет книг</string>
+
+    <string name="unified_library_browse_all">Показать все книги</string>
+
+    <string name="unified_library_drawer_title">Ваша библиотека</string>
+
+    <string name="unified_library_home">Главная</string>
+
+    <string name="unified_library_import">Импорт файлов</string>
+
+    <string name="unified_library_library_tools">Инструменты библиотеки</string>
+
+    <string name="unified_library_appearance">Оформление</string>
+
+    <string name="unified_library_manage_shelves">Управление полками</string>
+
+    <string name="unified_library_no_shelves">Пока нет полок</string>
+
+    <string name="unified_library_no_folders">Пока нет синхронизированных папок</string>
+
+    <string name="unified_library_search_books">Поиск по книгам</string>
+
+    <string name="unified_library_grid_view">Сетка</string>
+
+    <string name="unified_library_list_view">Список</string>
+
+    <string name="unified_library_sort_filter">Сортировка и фильтры</string>
+
+    <string name="unified_library_account">Аккаунт</string>
+
+    <string name="unified_library_signed_out">Вы не вошли в аккаунт</string>
+
+    <string name="unified_library_manage_account">Аккаунт и синхронизация</string>
+
+    <string name="unified_library_open_settings">Открыть настройки</string>
+
+    <string name="unified_library_add_folder">Добавить папку</string>
+
+    <string name="unified_library_back_to_shelves">Все полки</string>
+
+    <string name="unified_library_recent_searches">Недавние запросы</string>
+
+    <string name="unified_library_clear_recent_searches">Очистить недавние запросы</string>
+
+    <string name="unified_library_reading_now">В процессе: %1$d</string>
+
+    <string name="unified_library_recently_finished">Недавно прочитано</string>
+
+    <string name="unified_library_filters_selected">Фильтры: %1$d</string>
+
+    <string name="audiobooks_your_timers">Ваши таймеры</string>
+
+    <string name="audiobooks_quick_timers">Быстрые таймеры</string>
+
+    <string name="audiobooks_custom_timer">Свой таймер</string>
+
+    <string name="audiobooks_add_custom_timer">Добавить свой таймер</string>
+
+    <string name="audiobooks_custom_timer_limit">До 3 своих таймеров</string>
+
+    <string name="audiobooks_remove_custom_timer">Удалить свой таймер</string>
+
+    <string name="audiobooks_timer_hours">Часы</string>
+
+    <string name="audiobooks_timer_minutes">Минуты</string>
+
+    <string name="audiobooks_hours_minutes">%1$d ч %2$d мин</string>
+
+    <string name="audiobooks_hours">%1$d ч</string>
+
+    <string name="audiobooks_title">Аудиокниги</string>
+
+    <string name="audiobooks_listen_anywhere">Ваша аудиотека</string>
+
+    <string name="audiobooks_listen_anywhere_desc">Записанные аудиокниги и синтез речи — в одном месте.</string>
+
+    <string name="audiobooks_your_audiobooks">Ваши аудиокниги</string>
+
+    <string name="audiobooks_sample_preview">Предварительный вид импортированного аудио</string>
+
+    <string name="audiobooks_imported_files_desc">Импортированные аудиофайлы</string>
+
+    <string name="audiobooks_continue_listening">Продолжить прослушивание</string>
+
+    <string name="audiobooks_in_progress">В процессе</string>
+
+    <string name="audiobooks_not_started">Не начато</string>
+
+    <string name="audiobooks_completed">Завершено</string>
+
+    <string name="audiobooks_listen_to_ebooks">Слушайте свои книги</string>
+
+    <string name="audiobooks_tts_desc">Слушайте книгу с помощью синтеза речи, не открывая читалку.</string>
+
+    <string name="audiobooks_listen_with_tts">Слушать через TTS</string>
+
+    <string name="audiobooks_unknown_author">Автор неизвестен</string>
+
+    <string name="audiobooks_empty">В этом разделе нет аудиокниг</string>
+
+    <string name="audiobooks_no_ebooks">Добавьте книгу для прослушивания через TTS</string>
+
+    <string name="audiobooks_no_ebooks_desc">Поддерживаемые книги появятся здесь автоматически.</string>
+
+    <string name="audiobooks_add">Добавить аудиокнигу</string>
+
+    <string name="audiobooks_add_preview_desc">Выберите файл аудиокниги. Книги из нескольких файлов и папки будут добавлены позже.</string>
+
+    <string name="audiobooks_coming_later">Группировка нескольких файлов появится в следующем обновлении.</string>
+
+    <string name="audiobooks_imported">Импортировано: %1$s</string>
+
+    <string name="audiobooks_import_failed">Не удалось импортировать эту аудиокнигу.</string>
+
+    <string name="audiobook_notification_channel_name">Воспроизведение аудиокниг</string>
+
+    <string name="audiobooks_add_file">Выберите один аудиофайл</string>
+
+    <string name="audiobooks_add_file_desc">Для M4B, MP3 или M4A, хранящихся одним файлом.</string>
+
+    <string name="audiobooks_add_multiple">Выберите несколько файлов глав</string>
+
+    <string name="audiobooks_add_multiple_desc">Выбранные дорожки будут объединены в одну аудиокнигу.</string>
+
+    <string name="audiobooks_add_folder">Выберите папку с аудиокнигой</string>
+
+    <string name="audiobooks_add_folder_desc">Аудиокнига из нескольких файлов останется единой и по порядку.</string>
+
+    <string name="audiobooks_now_playing">Сейчас играет</string>
+
+    <string name="audiobooks_tts_mode">Прослушивание через TTS</string>
+
+    <string name="audiobooks_bookmark">Добавить закладку</string>
+
+    <string name="audiobooks_rewind">Назад на 30 секунд</string>
+
+    <string name="audiobooks_forward">Вперед на 30 секунд</string>
+
+    <string name="audiobooks_sleep">Сон</string>
+
+    <string name="audiobooks_chapters">Главы</string>
+
+    <string name="audiobooks_tts_generated_note">Аудио будет создаваться постепенно с использованием текущего голоса и настроек TTS.</string>
+
+    <string name="audiobooks_collapse_player">Свернуть плеер</string>
+
+    <string name="audiobooks_stop_playback">Остановить воспроизведение</string>
+
+    <string name="audiobooks_rewind_30_seconds">Назад на 30 секунд</string>
+
+    <string name="audiobooks_forward_30_seconds">Вперед на 30 секунд</string>
+
+    <string name="audiobooks_listening_with_tts">Прослушивание через TTS</string>
+
+    <string name="audiobooks_previous_chapter">Предыдущая глава</string>
+
+    <string name="audiobooks_next_chapter">Следующая глава</string>
+
+    <string name="audiobooks_previous_passage">К предыдущему отрывку</string>
+
+    <string name="audiobooks_next_passage">К следующему отрывку</string>
+
+    <string name="audiobooks_playback_speed">Скорость воспроизведения</string>
+
+    <string name="audiobooks_speed_selected">Выбрано</string>
+
+    <string name="audiobooks_sleep_timer">Таймер сна</string>
+
+    <string name="audiobooks_minutes">%1$d мин</string>
+
+    <string name="audiobooks_one_hour">1 час</string>
+
+    <string name="audiobooks_one_minute">1 минута</string>
+
+    <string name="audiobooks_hide_chapters">Скрыть главы</string>
+
+    <string name="audiobooks_transcript">Текст</string>
+
+    <string name="audiobooks_hide_transcript">Скрыть текст</string>
+
+    <string name="listen_title">Слушать</string>
+
+    <string name="listen_add">Добавить в «Слушать»</string>
+
+    <string name="listen_source_tts">TTS</string>
+
+    <string name="listen_search">Поиск аудиокниг и книг TTS</string>
+
+    <string name="listen_search_library_books">Поиск по библиотеке</string>
+
+    <string name="listen_sort_recently_listened">Недавно прослушанные</string>
+
+    <string name="listen_sort_recently_added">Недавно добавленные</string>
+
+    <string name="listen_sort_title">Название</string>
+
+    <string name="listen_sort_author">Автор</string>
+
+    <string name="listen_sort_progress">Прогресс</string>
+
+    <string name="listen_see_all">Показать все</string>
+
+    <string name="listen_choose_tts_book">Выберите книгу для TTS</string>
+
+    <string name="listen_choose_tts_book_desc">Выберите поддерживаемую книгу из библиотеки и начните слушать</string>
+
+    <string name="listen_no_tts_books">Поддерживаемые книги не найдены</string>
+
+    <string name="listen_empty">Пока нечего слушать</string>
+
+    <string name="listen_empty_desc">Импортируйте аудиокнигу или выберите книгу из библиотеки, чтобы слушать ее с помощью синтеза речи.</string>
+
+    <string name="listen_no_matches">По запросу «%1$s» ничего не найдено</string>
+
+    <string name="listen_badge_audiobook">АУДИОКНИГА</string>
+
+    <string name="listen_badge_tts">TTS</string>
+
+    <string name="listen_timer">Таймер</string>
+
+    <string name="listen_chapter_number">Глава %1$d</string>
+
+    <string name="drawer_folder_sync">Синхронизация папок</string>
+
+    <string name="drawer_folder_sync_desc">Выберите, какие папки создавать резервные копии в Google Drive.</string>
+
+    <string name="folder_sync_settings_title">Синхронизация папок</string>
+
+    <string name="folder_sync_library_sync_title">Синхронизация библиотеки</string>
+
+    <string name="folder_sync_library_sync_on">Облачная синхронизация включена</string>
+
+    <string name="folder_sync_library_sync_off">Облачная синхронизация выключена</string>
+
+    <string name="folder_sync_cloud_backup_on">Резервное копирование включено</string>
+
+    <string name="folder_sync_cloud_sync_off">Облачная синхронизация выключена</string>
+
+    <string name="folder_sync_device_only">Только на устройстве</string>
+
+    <string name="folder_sync_cloud_downloaded">Скачано с Google Drive</string>
+
+    <string name="folder_sync_cloud_available">Доступно на Google Drive</string>
+
+    <string name="folder_sync_cloud_choose_action">Выберите вариант скачивания</string>
+
+    <string name="external_file_behavior_ask_desc">После закрытия файла, открытого из другого приложения, спрашивать, оставить ли его в библиотеке или удалить.</string>
+
+    <string name="external_file_behavior_keep_desc">Файлы, открытые из других приложений, копируются в библиотеку и остаются после закрытия.</string>
+
+    <string name="external_file_behavior_delete_desc">Файлы, открытые из других приложений, копируются для чтения, а после закрытия удаляются.</string>
+
+    <string name="external_file_behavior_temporary">Открыть временно</string>
+
+    <string name="external_file_behavior_temporary_desc">Открывается прямо из исходного приложения во временном окне чтения. Кнопка «Назад» вернет в исходное приложение, не добавляя файл в библиотеку.</string>
+
+    <string name="banner_downloaded_to_folder">%1$s скачано в %2$s</string>
+
+    <string name="banner_saving_original_file">Сохранение исходного файла...</string>
+
+    <string name="banner_original_file_saved">Исходный файл сохранен.</string>
+
+    <string name="banner_exporting_annotations">Экспорт аннотаций...</string>
+
+    <string name="banner_annotations_exported">Аннотации экспортированы.</string>
+
+    <string name="banner_no_annotations_to_export">Нет аннотаций для экспорта.</string>
+
+    <string name="error_exporting_annotations">Ошибка экспорта аннотаций: %1$s</string>
+
+    <string name="error_saving_file">Ошибка сохранения файла: %1$s</string>
+
+    <string name="share_file_chooser_title">Поделиться файлом</string>
+
+    <string name="pdf_page_compact_label">%1$s/%2$d</string>
+
+    <string name="visual_options_toolbars">Панели инструментов</string>
+
+    <string name="visual_options_top_toolbar">Показывать верхнюю панель</string>
+
+    <string name="visual_options_top_toolbar_desc">Скройте, чтобы читать только с нижними инструментами</string>
+
+    <string name="visual_options_bottom_toolbar">Показывать нижнюю панель</string>
+
+    <string name="visual_options_bottom_toolbar_desc">Скройте, чтобы читать только с верхними инструментами</string>
+
+    <string name="search_chapters_placeholder">Поиск глав</string>
+
+    <string name="no_chapters_matching">Главы по запросу «%1$s» не найдены.</string>
+
+    <string name="visual_options_hide_images">Скрыть изображения</string>
+
+    <string name="visual_options_hide_images_desc">Включите, чтобы читать со скрытыми изображениями книги.</string>
+
+    <string name="visual_options_epub_page_spread">Разворот страниц</string>
+
+    <string name="visual_options_epub_page_spread_desc">Показывать одну страницу или две рядом. Действует только в постраничном режиме.</string>
+
+    <string name="visual_options_epub_spread_single">Одна страница</string>
+
+    <string name="visual_options_epub_spread_two">Две страницы</string>
+
+    <string name="label_spread_gap">Зазор разворота</string>
+
+    <string name="banner_tag_deleted">Тег «%1$s» удален.</string>
+
+    <string name="menu_delete_tag">Удалить тег</string>
+
+    <string name="dialog_delete_tag_desc">Удалить тег «%1$s»? Он будет удален из всех книг.</string>
+
+    <string name="chapter_of_chapters">Глава %1$d из %2$d</string>
+
+    <string name="chapter_number">Глава %1$d</string>
+
+    <string name="settings_hub_cloud_sync_pro_required">Для облачной синхронизации требуется аккаунт Pro.</string>
+
+    <string name="settings_hub_cloud_sync_ready">Синхронизация данных библиотеки между устройствами аккаунта.</string>
+
+    <string name="settings_hub_cloud_sync_link_google">Подключите Google, чтобы включить облачную синхронизацию.</string>
+
+    <string name="settings_hub_cloud_sync_drive_auth">Разрешите доступ к Google Drive, чтобы включить синхронизацию.</string>
+
+    <string name="settings_hub_tts_ios">Выбор голоса iOS, скорости и высоты речи</string>
+
+    <string name="settings_hub_tts_android">Выбор облачных или локальных голосов и параметров речи</string>
+
+    <string name="settings_hub_pdf_filenames">В списках и вкладках PDF показываются имена файлов вместо встроенных названий.</string>
+
+    <string name="settings_hub_pdf_titles">В списках и вкладках PDF используются встроенные названия, когда они есть.</string>
+
+    <string name="settings_hub_tabs_on">Открытие PDF сохраняет активные вкладки.</string>
+
+    <string name="settings_hub_tabs_off">PDF заменяет активную сессию чтения.</string>
+
+    <string name="settings_hub_ai_hidden">ИИ-инструменты чтения скрыты.</string>
+
+    <string name="settings_hub_ai_visible">ИИ-инструменты чтения показываются, где доступны.</string>
+
+    <string name="settings_hub_literal_0">Настройки чтения</string>
+
+    <string name="settings_hub_literal_1">Глобальные настройки текста, EPUB, PDF, панелей и речи</string>
+
+    <string name="settings_hub_literal_2">Приложение и библиотека</string>
+
+    <string name="settings_hub_literal_3">Настройки приложения, импорт, вкладки и поведение локальной библиотеки</string>
+
+    <string name="settings_hub_literal_4">Синхронизация и аккаунты</string>
+
+    <string name="settings_hub_literal_5">Вход, облачная синхронизация и резервные копии папок</string>
+
+    <string name="settings_hub_literal_6">ИИ и TTS</string>
+
+    <string name="settings_hub_literal_7">ИИ чтения, ключи, модели, голоса и параметры речи</string>
+
+    <string name="settings_hub_literal_8">Хранилище и дополнительно</string>
+
+    <string name="settings_hub_literal_9">Кэши и средства диагностики</string>
+
+    <string name="settings_hub_literal_10">Справка</string>
+
+    <string name="settings_hub_literal_11">Отзывы, поддержка и информация о приложении</string>
+
+    <string name="settings_hub_literal_12">Дополнительно</string>
+
+    <string name="settings_hub_literal_13">Дополнительные параметры, обслуживание и диагностика</string>
+
+    <string name="settings_hub_literal_14">Настройки</string>
+
+    <string name="settings_hub_literal_15">Глобальные настройки, параметры приложения и дополнительные опции</string>
+
+    <string name="settings_hub_literal_16">EPUB и текст</string>
+
+    <string name="settings_hub_literal_17">Настройки перекомпоновки, макета, тем EPUB и инструментов чтения</string>
+
+    <string name="settings_hub_literal_18">PDF и комиксы</string>
+
+    <string name="settings_hub_literal_19">Настройки чтения с фиксированной версткой, тем PDF и инструментов PDF</string>
+
+    <string name="settings_hub_literal_20">Настройки приложения</string>
+
+    <string name="settings_hub_literal_21">Тема приложения и общее поведение</string>
+
+    <string name="settings_hub_literal_22">Библиотека и файлы</string>
+
+    <string name="settings_hub_literal_23">Недавние файлы и локальные шрифты</string>
+
+    <string name="settings_hub_literal_24">Синхронизация и аккаунты</string>
+
+    <string name="settings_hub_literal_25">Вход, облачная синхронизация, синхронизация папок и устройства</string>
+
+    <string name="settings_hub_literal_26">Пункты меню «Ещё», обслуживание, диагностика и информация о приложении</string>
+
+    <string name="settings_hub_literal_27">Справка и о приложении</string>
+
+    <string name="settings_hub_literal_28">Отзывы, поддержка, информация о проекте и лицензии</string>
+
+    <string name="settings_hub_literal_29">Настройки формата</string>
+
+    <string name="settings_hub_literal_30">Шрифт, размер, интервалы, поля, выравнивание и режим чтения</string>
+
+    <string name="settings_hub_literal_31">Тема и текстура EPUB</string>
+
+    <string name="settings_hub_literal_32">Тема чтения EPUB, текстура бумаги и ее интенсивность</string>
+
+    <string name="settings_hub_literal_33">Визуальные настройки</string>
+
+    <string name="settings_hub_literal_34">Индикаторы страниц, системный интерфейс, изображения и перелистывание глав</string>
+
+    <string name="settings_hub_literal_35">Темы PDF</string>
+
+    <string name="settings_hub_literal_36">Темы PDF и комиксов там, где поддерживается фиксированная верстка</string>
+
+    <string name="settings_hub_literal_37">Инструменты PDF-чтения</string>
+
+    <string name="settings_hub_literal_38">Автопрокрутка, OCR, аннотации и инструменты только для PDF остаются в PDF-читалке</string>
+
+    <string name="settings_hub_literal_39">Панели инструментов чтения</string>
+
+    <string name="settings_hub_literal_40">Видимые инструменты, действия нижней панели и дополнительные инструменты чтения</string>
+
+    <string name="settings_hub_literal_41">Глобальные замены TTS</string>
+
+    <string name="settings_hub_literal_42">Слова и фразы, заменяемые только при озвучивании</string>
+
+    <string name="settings_hub_literal_43">Формат, тема EPUB, визуальные настройки и инструменты чтения</string>
+
+    <string name="settings_hub_literal_44">Отдельные темы PDF и настройки чтения с фиксированной версткой</string>
+
+    <string name="settings_hub_literal_45">Пункты меню «Ещё», обслуживание, диагностика и информация о приложении</string>
+
+    <string name="settings_hub_literal_46">Настройки формата</string>
+
+    <string name="settings_hub_literal_47">Шрифт, размер, межстрочный интервал, поля, выравнивание и режим чтения</string>
+
+    <string name="settings_hub_literal_48">Тема и текстура</string>
+
+    <string name="settings_hub_literal_49">Тема чтения, текстура и ощущение страницы для новых книг</string>
+
+    <string name="settings_hub_literal_50">Визуальные настройки</string>
+
+    <string name="settings_hub_literal_51">Системный интерфейс, информация о странице, изображения и перелистывание глав</string>
+
+    <string name="settings_hub_literal_52">Темы PDF</string>
+
+    <string name="settings_hub_literal_53">Темы PDF и комиксов отдельно от тем EPUB</string>
+
+    <string name="settings_hub_literal_54">Инструменты PDF-чтения</string>
+
+    <string name="settings_hub_literal_55">Автопрокрутка, OCR, аннотации и инструменты только для PDF</string>
+
+    <string name="settings_hub_literal_56">Настройки текста и EPUB</string>
+
+    <string name="settings_hub_literal_57">Формат, тема EPUB, текстура, визуальное поведение и верстка текста</string>
+
+    <string name="settings_hub_literal_58">Настройки PDF и комиксов</string>
+
+    <string name="settings_hub_literal_59">Тема PDF, визуальные настройки, инструменты, автопрокрутка, OCR и аннотации, где доступны</string>
+
+    <string name="settings_hub_literal_60">Панели и инструменты чтения</string>
+
+    <string name="settings_hub_literal_61">Выбор видимых инструментов, нижней панели и дополнительных инструментов</string>
+
+    <string name="settings_hub_literal_62">Настройки отдельных книг</string>
+
+    <string name="settings_hub_literal_63">Локальные настройки доступны на экране чтения и имеют приоритет для этой книги.</string>
+
+    <string name="settings_hub_literal_64">Тема приложения</string>
+
+    <string name="settings_hub_literal_65">Режим темы, контрастность, затемнение текста и свои цвета приложения</string>
+
+    <string name="settings_hub_literal_66">Свои шрифты</string>
+
+    <string name="settings_hub_literal_67">Импорт, управление и повторное использование локальных шрифтов</string>
+
+    <string name="settings_hub_literal_68">Лимит недавних файлов</string>
+
+    <string name="settings_hub_literal_69">Сколько недавних книг показывается на главном экране</string>
+
+    <string name="settings_hub_literal_70">Выйти</string>
+
+    <string name="settings_hub_literal_71">Отключить это устройство от аккаунта</string>
+
+    <string name="settings_hub_literal_72">Войти</string>
+
+    <string name="settings_hub_literal_73">Подключить синхронизацию и функции аккаунта</string>
+
+    <string name="settings_hub_literal_74">Облачная синхронизация библиотеки</string>
+
+    <string name="settings_hub_literal_75">Резервные копии и синхронизация папок</string>
+
+    <string name="settings_hub_literal_76">Выберите локальные папки для резервного копирования в Google Drive</string>
+
+    <string name="settings_hub_literal_77">Управление устройствами</string>
+
+    <string name="settings_hub_literal_78">Просмотр зарегистрированных устройств аккаунта</string>
+
+    <string name="settings_hub_literal_79">Ключи и модели ИИ</string>
+
+    <string name="settings_hub_literal_80">Настройка ИИ чтения и доступа к облачным моделям TTS</string>
+
+    <string name="settings_hub_literal_81">Голоса TTS</string>
+
+    <string name="settings_hub_literal_82">Глобальные замены TTS</string>
+
+    <string name="settings_hub_literal_83">Очистить кэш книг</string>
+
+    <string name="settings_hub_literal_84">Удаление созданных файлов кэша книг с повторным созданием по мере надобности</string>
+
+    <string name="settings_hub_literal_85">Очистить кэш перекомпоновки</string>
+
+    <string name="settings_hub_literal_86">Удаление созданных текстовых версий PDF</string>
+
+    <string name="settings_hub_literal_87">Проверка распознавания панелей</string>
+
+    <string name="settings_hub_literal_88">Запуск локальной диагностики распознавания панелей</string>
+
+    <string name="settings_hub_literal_89">Проверка распознавания облачков</string>
+
+    <string name="settings_hub_literal_90">Запуск локальной диагностики распознавания облачков</string>
+
+    <string name="settings_hub_literal_91">Экспорт журналов</string>
+
+    <string name="settings_hub_literal_92">Экспорт недавних журналов диагностики</string>
+
+    <string name="settings_hub_literal_93">Очистить облачные и локальные данные</string>
+
+    <string name="settings_hub_literal_94">Удаление облачных записей и соответствующих локальных данных библиотеки</string>
+
+    <string name="settings_hub_literal_95">Поделиться недавними журналами диагностики, собранными приложением</string>
+
+    <string name="settings_hub_literal_96">Защита от захвата экрана</string>
+
+    <string name="settings_hub_literal_97">Запрет скриншотов и записи экрана на чувствительных экранах чтения</string>
+
+    <string name="settings_hub_literal_98">Поведение внешних файлов</string>
+
+    <string name="settings_hub_literal_99">Копировать ли файлы, открытые из других приложений, в библиотеку</string>
+
+    <string name="settings_hub_literal_100">Строгий фильтр файлов</string>
+
+    <string name="settings_hub_literal_101">Только известные форматы в диалогах импорта</string>
+
+    <string name="settings_hub_literal_102">Использовать имена файлов PDF</string>
+
+    <string name="settings_hub_literal_103">Вкладки чтения</string>
+
+    <string name="settings_hub_literal_104">Видимость ИИ чтения</string>
+
+    <string name="settings_hub_literal_105">Справка и отзывы</string>
+
+    <string name="settings_hub_literal_106">Отправить отзыв или сообщить о проблеме</string>
+
+    <string name="settings_hub_literal_107">Поддержать проект</string>
+
+    <string name="settings_hub_literal_108">Варианты поддержки проекта</string>
+
+    <string name="settings_hub_literal_109">О приложении</string>
+
+    <string name="settings_hub_literal_110">Версия, исходный код, лицензии и информация о проекте</string>
+
+    <string name="content_desc_numbered_list">Нумерованный список</string>
+
+    <string name="content_desc_bulleted_list">Маркированный список</string>
+
+    <string name="content_desc_text_alignment">Выравнивание текста</string>
+
+    <string name="content_desc_align_left">По левому краю</string>
+
+    <string name="content_desc_align_center">По центру</string>
+
+    <string name="content_desc_align_right">По правому краю</string>
+
+    <string name="error_copy_to_clipboard">Не удалось скопировать в буфер обмена</string>
+
+    <string name="error_print_password_protected">PDF-файлы с паролем нельзя распечатать</string>
+
+    <string name="pdf_split_reader_open">Открыть в раздельном окне</string>
+
+    <string name="pdf_split_reader_open_desc">Открыть другой PDF рядом с этим документом</string>
+
+    <string name="pdf_split_reader_title">Раздельное окно</string>
+
+    <string name="pdf_split_reader_swap">Поменять документы местами</string>
+
+    <string name="pdf_split_reader_close">Закрыть раздельное окно</string>
+
+    <string name="pdf_split_reader_close_pane">Закрыть панель документа</string>
+
+    <string name="pdf_split_reader_remove_focused">Убрать активный документ</string>
+
+    <string name="pdf_split_reader_add_document">Добавить PDF в раздельное окно</string>
+
+    <string name="pdf_split_reader_choose_document">Выберите PDF, чтобы открыть его рядом с этим документом</string>
+
+    <string name="pdf_split_reader_replace_document">Заменить выбранную панель</string>
+
+    <string name="pdf_split_reader_no_other_documents">Других PDF нет</string>
+
+    <string name="pdf_split_reader_compact_view">Компактный вид</string>
+
+    <string name="pdf_split_reader_no_document">PDF не открыт</string>
+
+    <string name="pdf_split_reader_single_pane_fallback">Показана одна панель для удобства чтения</string>
+
+    <string name="pdf_split_reader_primary_pane">Главная панель</string>
+
+    <string name="pdf_split_reader_secondary_pane">Вторая панель</string>
+
+    <string name="pdf_split_reader_divider_desc">Разделитель раздельного окна</string>
+
+    <string name="pdf_split_reader_divider_decrease">Уменьшить позицию разделителя</string>
+
+    <string name="pdf_split_reader_divider_increase">Увеличить позицию разделителя</string>
+
+    <string name="pdf_split_reader_missing_document">Один из PDF стал недоступен, поэтому открытый документ остался открытым.</string>
+
+    <string name="pdf_split_reader_all_documents_missing">PDF больше недоступны, поэтому раздельный режим был закрыт.</string>
+
+    <string name="action_export_annotations">Экспортировать аннотации</string>
+
+    <string name="dialog_export_annotations_title">Экспорт аннотаций</string>
+
+    <string name="export_annotations_markdown">Markdown</string>
+
+    <string name="export_annotations_text">Обычный текст</string>
+
+    <string name="export_annotations_json">JSON</string>
+
+    <string name="export_annotations_csv">CSV</string>
+
+    <string name="export_annotations_markdown_description">Документ с заголовками и цитатами</string>
+
+    <string name="export_annotations_text_description">Простой список выделений и заметок</string>
+
+    <string name="export_annotations_json_description">Структурированные данные для приложений и резервных копий</string>
+
+    <string name="export_annotations_csv_description">Таблица аннотаций для электронных таблиц</string>
+
+    <string name="section_typography">ТИПОГРАФИКА</string>
+
+    <string name="label_font_weight">Насыщенность шрифта</string>
+
+    <string name="label_letter_spacing">Межбуквенный интервал</string>
+
+    <string name="language_estonian">Eesti (эстонский)</string>
+
+    <string name="pdf_reverse_colors">Обратные цвета PDF</string>
+
+    <string name="pdf_reverse_colors_desc">Как инвертировать цвета PDF в теме с обратными цветами</string>
+
+    <string name="pdf_reverse_rgb">Инверсия цветов</string>
+
+    <string name="pdf_reverse_lightness">Инверсия яркости</string>
+
+    <string name="pdf_reverse_luma_srgb">Инверсия люмы (sRGB linear)</string>
+
+    <string name="pdf_reverse_luma_symmetric">Инверсия люмы (симметричная)</string>
+
+    <string name="sort_date_added_newest">Сначала новые</string>
+
+    <string name="sort_date_added_oldest">Сначала старые</string>
+
+    <string name="tts_preview_text_label">Текст предпрослушивания</string>
+
+    <string name="tts_favorites">Избранное</string>
+
+    <string name="tts_no_favorite_voices">Пока нет избранных голосов. Нажмите на звезду у любого голоса, чтобы добавить его сюда.</string>
+
+    <string name="tts_add_favorite">В избранное</string>
+
+    <string name="tts_remove_favorite">Убрать из избранного</string>
+
+    <string name="opds_error_certificate">Сертификат сервера не вызывает доверия. Используйте публично подписанный сертификат или установите CA сервера на этом устройстве.</string>
+
+    <string name="label_cover">Обложка</string>
+
+    <string name="label_current_cover_kept">Текущая обложка будет сохранена</string>
+
+    <string name="label_current_cover">Текущая обложка</string>
+
+    <string name="label_current_cover_generated">Предпросмотр сгенерированной обложки</string>
+
+    <string name="action_change_cover">Изменить обложку</string>
+
+    <string name="action_clear_selection">Снять выбор</string>
+
+    <string name="tool_split_view">Раздельное окно</string>
+
+    <string name="desktop_dev_tools">Инструменты разработчика</string>
+
+    <string name="desktop_dev_tools_desc">Действия для отладки поведения читалки.</string>
+
+    <string name="document_picker_unavailable">Средство выбора документов недоступно на этом устройстве.</string>
+
+    <string name="account_apple_linked">Аккаунт Apple подключен</string>
+
+    <string name="account_authorize_google_drive">Разрешите доступ к Google Drive, чтобы включить полную синхронизацию библиотеки.</string>
+
+    <string name="account_continue_apple">Продолжить с Apple</string>
+
+    <string name="account_google_drive_sync_available">Синхронизация Google Drive доступна.</string>
+
+    <string name="account_google_linked">Аккаунт Google подключен</string>
+
+    <string name="account_google_required_for_sync">Для синхронизации нужен Google. Аккаунты только с Apple могут использовать Pro и кредиты, но не синхронизацию.</string>
+
+    <string name="account_link_apple">Подключить вход через Apple</string>
+
+    <string name="account_link_google">Подключить вход через Google</string>
+
+    <string name="account_linking_desc">Привязка добавляет еще один способ входа в этот аккаунт Episteme. Она не создает и не покупает отдельный аккаунт.</string>
+
+    <string name="account_title">Аккаунт Episteme</string>
+
+    <string name="settings_clear_cloud_local_authorization_required">Войдите и разрешите доступ к Google Drive, прежде чем очищать облачные и локальные данные.</string>
+
+    <string name="settings_clear_cloud_local_cleanup_missing">Облачные данные очищены, но локальная очистка была недоступна.</string>
+
+    <string name="settings_clear_cloud_local_confirmation_required">Перед очисткой облачных и локальных данных требуется подтверждение.</string>
+
+    <string name="settings_clear_cloud_local_desc">Будут навсегда удалены синхронизированные книги, полки, шрифты, sidecar-файлы PDF и соответствующие локальные файлы библиотеки. Аккаунт и покупки сохранятся. Действие необратимо.</string>
+
+    <string name="settings_clear_cloud_local_failed">Не удалось очистить облачные и локальные данные: %1$s</string>
+
+    <string name="settings_clear_cloud_local_in_progress">Облачная синхронизация занята. Повторите очистку через некоторое время.</string>
+
+    <string name="settings_clear_cloud_local_success">Облачные и локальные данные очищены (удалено облачных файлов: %1$d).</string>
+
+    <string name="settings_clear_cloud_local_title">Очистить облачные и локальные данные?</string>
+
+    <string name="settings_clear_cloud_local_unavailable">Очистка облачных и локальных данных недоступна в этой сборке.</string>
+
+    <string name="settings_device_management_desc">Просмотр устройств, вошедших в этот аккаунт. Отзыв устройства исключает его из синхронизации.</string>
+
+    <string name="settings_device_management_empty">Для этого аккаунта нет активных устройств.</string>
+
+    <string name="settings_device_management_last_seen">Был в сети %1$s</string>
+
+    <string name="settings_device_management_refresh">Обновить устройства</string>
+
+    <string name="settings_device_management_revoke">Отозвать</string>
+
+    <string name="settings_device_management_revoke_desc">%1$s больше не сможет участвовать в синхронизации аккаунта.</string>
+
+    <string name="settings_device_management_revoke_title">Отозвать устройство?</string>
+
+    <string name="settings_device_management_title">Управление устройствами</string>
+
+    <string name="settings_device_status_cannot_revoke_active">Это устройство нельзя отозвать, пока оно активно.</string>
+
+    <string name="settings_device_status_no_active">Для этого аккаунта нет активных устройств.</string>
+
+    <string name="settings_device_status_revoke_failed">Не удалось отозвать выбранное устройство.</string>
+
+    <string name="settings_device_status_revoked">Устройство отозвано.</string>
+
+    <string name="settings_device_status_unavailable">Управление устройствами недоступно.</string>
 </resources>

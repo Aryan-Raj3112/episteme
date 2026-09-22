@@ -136,4 +136,14 @@
         <item quantity="one">फ़ोल्डर्स %1$d</item>
         <item quantity="other">फ़ोल्डर्स %1$d</item>
     </plurals>
+    <!-- Search results count label. %1$d = number of results. Example: "12 नतीजे". Hindi: one = नतीजा, other = नतीजे. -->
+    <plurals name="unified_library_search_results">
+        <item quantity="one">%1$d नतीजा</item>
+        <item quantity="other">%1$d नतीजे</item>
+    </plurals>
+    <!-- Listening-queue item count. %1$d = number of items. आइटम does not inflect. -->
+    <plurals name="listen_item_count">
+        <item quantity="one">%1$d आइटम</item>
+        <item quantity="other">%1$d आइटम</item>
+    </plurals>
 </resources>

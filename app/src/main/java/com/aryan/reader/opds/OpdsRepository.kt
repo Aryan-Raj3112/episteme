@@ -3,6 +3,7 @@ package com.aryan.reader.opds
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import com.aryan.reader.R
 import com.aryan.reader.shared.opds.SharedOpdsCatalogs
 import com.aryan.reader.shared.opds.SharedOpdsDownloadLocation
 import com.aryan.reader.shared.opds.SharedOpdsDownloadLocationCodec
@@ -13,9 +14,12 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import timber.log.Timber
 import java.security.MessageDigest
+import java.security.cert.CertificateException
 import java.util.UUID
+import javax.net.ssl.SSLException
 
 class OpdsRepository(context: Context) : SharedOpdsRepository {
+    private val appContext: Context = context.applicationContext
     private val prefs: SharedPreferences = context.getSharedPreferences("reader_opds_prefs", Context.MODE_PRIVATE)
     private val parser = OpdsParser()
 
@@ -33,6 +37,21 @@ class OpdsRepository(context: Context) : SharedOpdsRepository {
                     chain.proceed(requestWithUserAgent)
                 }
                 .build()
+        }
+
+        /**
+         * Whether [error] (or any nested cause) is a TLS trust failure, e.g. a
+         * self-signed certificate or a private CA the system does not trust.
+         * Surfaced separately so users get an actionable message instead of a
+         * raw handshake exception.
+         */
+        fun isCertificateError(error: Throwable): Boolean {
+            var cause: Throwable? = error
+            while (cause != null) {
+                if (cause is SSLException || cause is CertificateException) return true
+                cause = cause.cause
+            }
+            return false
         }
 
         /**
@@ -131,7 +150,10 @@ class OpdsRepository(context: Context) : SharedOpdsRepository {
         private var cnonceCount = 0
 
         override fun authenticate(route: okhttp3.Route?, response: okhttp3.Response): Request? {
-            if (user.isNullOrBlank() || pass.isNullOrBlank()) return null
+            // Only the username is required: token-style setups use an empty
+            // password, which is valid per RFC 7617 ("user:") and already
+            // supported by preemptiveBasicAuthHeader for stream pages.
+            if (user.isNullOrBlank()) return null
 
             if (response.request.header("Authorization") != null) {
                 return null
@@ -140,7 +162,7 @@ class OpdsRepository(context: Context) : SharedOpdsRepository {
             val wwwAuth = response.header("WWW-Authenticate") ?: return null
 
             if (wwwAuth.startsWith("Basic", ignoreCase = true)) {
-                val credential = okhttp3.Credentials.basic(user, pass)
+                val credential = okhttp3.Credentials.basic(user, pass.orEmpty())
                 return response.request.newBuilder().header("Authorization", credential).build()
             }
 
@@ -157,7 +179,7 @@ class OpdsRepository(context: Context) : SharedOpdsRepository {
                 val url = response.request.url
                 val uri = url.encodedPath + (if (url.encodedQuery != null) "?${url.encodedQuery}" else "")
 
-                val ha1 = md5("$user:$realm:$pass")
+                val ha1 = md5("$user:$realm:${pass.orEmpty()}")
                 val ha2 = md5("${response.request.method}:$uri")
 
                 val responseHash = if (qop != null) {
@@ -239,7 +261,12 @@ class OpdsRepository(context: Context) : SharedOpdsRepository {
             Result.success(feed)
         } catch (e: Exception) {
             Timber.tag("OpdsDebug").e(e, "Exception during fetch/parse at URL: $url")
-            Result.failure(e)
+            val failure = if (isCertificateError(e)) {
+                Exception(appContext.getString(R.string.opds_error_certificate), e)
+            } else {
+                e
+            }
+            Result.failure(failure)
         }
     }
 }

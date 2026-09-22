@@ -63,6 +63,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -372,11 +373,23 @@ internal fun SharedNativeSelectionMenu(
                 )
             )
         }
+        // WebView parity (ReaderHtmlDocumentTemplate action order Copy, Define,
+        // Speak, Dictionary, Translate, Search, Note, Clear): Dictionary is its
+        // own entry. Like the WebView template it reuses the Define book glyph.
+        if (SharedNativeReaderSelectionAction.DICTIONARY in enabledSelectionActions) {
+            add(
+                SharedNativeSelectionMenuAction(
+                    "Dictionary",
+                    SharedNativeSelectionVectorIcons.Define,
+                    { onSelectionAction(SharedNativeReaderSelectionAction.DICTIONARY) }
+                )
+            )
+        }
         if (SharedNativeReaderSelectionAction.TRANSLATE in enabledSelectionActions) {
             add(
                 SharedNativeSelectionMenuAction(
                     "Translate",
-                    SharedNativeSelectionVectorIcons.Define,
+                    SharedNativeSelectionVectorIcons.Translate,
                     { onSelectionAction(SharedNativeReaderSelectionAction.TRANSLATE) }
                 )
             )
@@ -394,7 +407,7 @@ internal fun SharedNativeSelectionMenu(
             add(
                 SharedNativeSelectionMenuAction(
                     "Note",
-                    SharedNativeSelectionVectorIcons.Copy,
+                    SharedNativeSelectionVectorIcons.Note,
                     { onSelectionAction(SharedNativeReaderSelectionAction.NOTE) }
                 )
             )
@@ -417,10 +430,14 @@ internal fun SharedNativeSelectionMenu(
                 .padding(bottom = 6.dp)
         ) {
             if (highlightPalette.isNotEmpty()) {
+                // WebView parity (#reader-selection-menu styles + colors divs):
+                // two centered rows instead of one combined scrolling row, so
+                // swatches never squeeze off the menu edge on narrow screens.
                 Row(
                     modifier = Modifier
                         .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                        .padding(horizontal = 10.dp)
+                        .padding(top = 8.dp),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -433,7 +450,14 @@ internal fun SharedNativeSelectionMenu(
                             onClick = { selectedStyle = style }
                         )
                     }
-                    Spacer(modifier = Modifier.width(6.dp))
+                }
+                Row(
+                    modifier = Modifier
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     highlightPalette.forEach { color ->
                         Box(
                             modifier = Modifier
@@ -574,6 +598,12 @@ internal fun SharedNativeSelectionIconButton(
         Text(
             text = action.label,
             color = foreground,
+            // WebView parity (.reader-selection-action is nowrap with no
+            // clipping): long labels like "Dictionary" render fully instead of
+            // cutting to "Dictionar" inside the fixed 70.dp cell.
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Visible,
             style = MaterialTheme.typography.labelSmall.copy(
                 fontSize = 12.sp,
                 lineHeight = 14.sp,

@@ -28,6 +28,8 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.edit
 import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.BuildConfig
+import com.aryan.reader.R
+import com.aryan.reader.shared.ui.sanitizeSharedMobileTtsSampleText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -94,6 +96,40 @@ internal fun saveTtsSpeaker(context: Context, speakerId: String) {
 internal fun loadTtsSpeaker(context: Context): String {
     val prefs = context.getSharedPreferences(TTS_SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     return normalizeTtsSpeakerId(prefs.getString(TTS_SPEAKER_KEY, DEFAULT_SPEAKER_ID))
+}
+
+/**
+ * Custom local-TTS voice preview text, shared by the legacy settings sheet
+ * and the shared reader sheet. Stored raw (may be blank = use default) in
+ * `reader_prefs` so both UIs stay in sync.
+ */
+internal const val TTS_PREVIEW_SAMPLE_TEXT_KEY = "reader.tts.previewSampleText"
+
+internal fun loadTtsPreviewSampleText(context: Context): String {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return sanitizeSharedMobileTtsSampleText(prefs.getString(TTS_PREVIEW_SAMPLE_TEXT_KEY, null))
+}
+
+internal fun saveTtsPreviewSampleText(context: Context, text: String) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putString(TTS_PREVIEW_SAMPLE_TEXT_KEY, sanitizeSharedMobileTtsSampleText(text)) }
+}
+
+/** Speakable preview text: custom value when set, else the localized Android default. */
+internal fun effectiveTtsPreviewSampleText(context: Context): String =
+    loadTtsPreviewSampleText(context).ifBlank { context.getString(R.string.tts_voice_sample_generic) }
+
+/** Starred voice identifiers, shared by the legacy sheet and the shared reader sheet. */
+internal const val TTS_FAVORITE_VOICES_KEY = "reader.tts.favoriteVoices"
+
+internal fun loadTtsFavoriteVoices(context: Context): Set<String> {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getStringSet(TTS_FAVORITE_VOICES_KEY, emptySet()).orEmpty().toSet()
+}
+
+internal fun saveTtsFavoriteVoices(context: Context, favorites: Set<String>) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putStringSet(TTS_FAVORITE_VOICES_KEY, favorites) }
 }
 
 data class TtsChapterCacheInfo(

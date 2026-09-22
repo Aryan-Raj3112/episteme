@@ -13,7 +13,7 @@ import com.aryan.reader.shared.DockLocation
 
 enum class PdfTextDockColorMenuMode { PALETTE, SPECTRUM }
 
-enum class PdfTextDockPopup { NONE, FONT_SIZE, FONT_FAMILY, COLOR, BACKGROUND }
+enum class PdfTextDockPopup { NONE, FONT_SIZE, FONT_FAMILY, COLOR, BACKGROUND, ALIGNMENT }
 
 val AndroidPdfTextDockFontSizes: List<TextUnit> = listOf(12.sp, 14.sp, 16.sp, 18.sp, 20.sp, 24.sp, 30.sp)
 

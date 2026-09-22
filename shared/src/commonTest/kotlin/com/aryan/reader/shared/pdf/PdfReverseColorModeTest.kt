@@ -67,4 +67,23 @@ class PdfReverseColorModeTest {
             invertPdfArgbIfUnprotected(source, 0, 0, PdfReverseColorMode.LIGHTNESS, listOf(image)),
         )
     }
+
+    @Test
+    fun `baked thumbnail preserve is only valid for reverse rgb with image rects`() {
+        assertTrue(
+            pdfThumbnailNeedsBakedPreserve("reverse", PdfReverseColorMode.RGB, preserveImageColors = true, hasImageRects = true)
+        )
+        // Other themes render through the GPU filter (or none): baking an RGB
+        // negative there inverts the tile instead of tinting it.
+        assertEquals(false, pdfThumbnailNeedsBakedPreserve("no_theme", PdfReverseColorMode.RGB, true, true))
+        assertEquals(false, pdfThumbnailNeedsBakedPreserve("system", PdfReverseColorMode.RGB, true, true))
+        assertEquals(false, pdfThumbnailNeedsBakedPreserve("light", PdfReverseColorMode.RGB, true, true))
+        assertEquals(false, pdfThumbnailNeedsBakedPreserve("sepia", PdfReverseColorMode.RGB, true, true))
+        // Nonlinear reverse modes are always baked by the platform renderer.
+        assertEquals(false, pdfThumbnailNeedsBakedPreserve("reverse", PdfReverseColorMode.LIGHTNESS, true, true))
+        assertEquals(false, pdfThumbnailNeedsBakedPreserve("reverse", PdfReverseColorMode.LUMA_SRGB_LINEAR, true, true))
+        // Nothing to preserve without the option or without image rects.
+        assertEquals(false, pdfThumbnailNeedsBakedPreserve("reverse", PdfReverseColorMode.RGB, false, true))
+        assertEquals(false, pdfThumbnailNeedsBakedPreserve("reverse", PdfReverseColorMode.RGB, true, false))
+    }
 }

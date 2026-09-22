@@ -330,7 +330,9 @@ class ReaderEngine(
 
         val targetChapterIndex = if (pathPart.isBlank()) {
             state.reader.book.chapters.indexOfFirst { it.fragmentId == fragment }
-                .takeIf { it >= 0 } ?: sourceIndex
+                .takeIf { it >= 0 }
+                ?: fragment?.let { findChapterContainingElement(state.reader.book.chapters, sourceIndex, it) }
+                ?: sourceIndex
         } else {
             val targetPath = resolveEpubPath(sourceChapter.baseHref, pathPart.percentDecodedOrSelf())
             state.reader.book.chapters.indexOfFirst { chapter ->
@@ -338,10 +340,14 @@ class ReaderEngine(
                 (chapter.fragmentId == fragment && chapterPath == targetPath) ||
                     chapter.id == pathPart ||
                     (fragment == null && chapterPath.substringAfterLast('/') == targetPath.substringAfterLast('/'))
-            }.takeIf { it >= 0 } ?: state.reader.book.chapters.indexOfFirst { chapter ->
-                val chapterPath = normalizeEpubPath(chapter.baseHref.orEmpty())
-                chapterPath == targetPath || chapterPath.substringAfterLast('/') == targetPath.substringAfterLast('/')
-            }
+            }.takeIf { it >= 0 }
+                // Absorbed TOC sections (tiny front-matter/half-titles folded into a neighbor):
+                // the fragment lives inside a merged chapter without matching its fragmentId.
+                ?: fragment?.let { findChapterContainingElement(state.reader.book.chapters, null, it, targetPath) }
+                ?: state.reader.book.chapters.indexOfFirst { chapter ->
+                    val chapterPath = normalizeEpubPath(chapter.baseHref.orEmpty())
+                    chapterPath == targetPath || chapterPath.substringAfterLast('/') == targetPath.substringAfterLast('/')
+                }
         }
 
         if (targetChapterIndex !in state.reader.book.chapters.indices) {
@@ -1186,6 +1192,33 @@ internal fun Iterable<SemanticBlock>.findElementOffset(elementId: String): Int? 
         block.findElementOffset(elementId)?.let { return it }
     }
     return null
+}
+
+/**
+ * Fragment containment search for TOC-split folding: finds the chapter whose semantic
+ * blocks actually contain [elementId], preferring [preferredPath] matches (same spine
+ * file), then [preferredIndex] (link source). Used when no chapter carries the fragment
+ * as its own [SharedEpubChapter.fragmentId].
+ */
+internal fun findChapterContainingElement(
+    chapters: List<SharedEpubChapter>,
+    preferredIndex: Int?,
+    elementId: String,
+    preferredPath: String? = null
+): Int? {
+    if (elementId.isBlank()) return null
+    val containing = chapters.indices.filter { index ->
+        chapters[index].semanticBlocks.findElementOffset(elementId) != null
+    }
+    if (containing.isEmpty()) return null
+    if (preferredPath != null) {
+        containing.firstOrNull { index ->
+            normalizeEpubPath(chapters[index].baseHref.orEmpty()) == preferredPath ||
+                chapters[index].baseHref.orEmpty().substringAfterLast('/') == preferredPath.substringAfterLast('/')
+        }?.let { return it }
+    }
+    if (preferredIndex != null && preferredIndex in containing) return preferredIndex
+    return containing.first()
 }
 
 internal fun SemanticBlock.findElementOffset(elementId: String): Int? {

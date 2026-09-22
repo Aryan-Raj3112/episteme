@@ -54,6 +54,10 @@ class IosSettingsParityTest {
             IosSettingsActionDisposition.IMPLEMENTED_ON_IOS,
             SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA.iosDisposition(),
         )
+        assertEquals(
+            IosSettingsActionDisposition.IMPLEMENTED_ON_IOS,
+            SharedSettingsAction.DELETE_ACCOUNT.iosDisposition(),
+        )
     }
 
     @Test

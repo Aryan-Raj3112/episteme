@@ -126,6 +126,42 @@ class DesktopFolderMetadataExtractorTest {
     }
 
     @Test
+    fun `direct imported epub reads calibre series written as prefixed opf metas`() = withCoverCacheDir { tempDir ->
+        val epub = File(tempDir, "calibre-prefixed-series.epub")
+        writeEpub(
+            target = epub,
+            opf = """
+                <package xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf" version="3.0">
+                  <metadata>
+                    <dc:title>Exhalation: Stories</dc:title>
+                    <dc:creator>Ted Chiang</dc:creator>
+                    <meta content="2019-04-18T00:00:00Z" name="created"/>
+                    <meta content="Knopf" name="imprint"/>
+                    <opf:meta refines="#title" property="title-type">main</opf:meta>
+                    <opf:meta property="belongs-to-collection" id="id-2">1, aryan</opf:meta>
+                    <opf:meta refines="#id-2" property="collection-type">series</opf:meta>
+                    <opf:meta refines="#id-2" property="group-position">1</opf:meta>
+                  </metadata>
+                  <manifest/>
+                </package>
+            """.trimIndent()
+        )
+        val book = bookFor(epub, FileType.EPUB)
+
+        val result = DesktopFolderMetadataExtractor.enrichImportedBooks(
+            books = listOf(book),
+            importedBookIds = setOf(book.id)
+        )
+
+        val enriched = result.books.single()
+        assertEquals("Exhalation: Stories", enriched.title)
+        assertEquals("Ted Chiang", enriched.author)
+        assertEquals("1, aryan", enriched.seriesName)
+        assertEquals(1.0, enriched.seriesIndex)
+        assertTrue(enriched.folderTextMetadataParsed)
+    }
+
+    @Test
     fun `opened epub preserves existing file cover path`() = withCoverCacheDir { tempDir ->
         val epub = File(tempDir, "existing-cover.epub")
         writeEpubWithoutCoverMetadata(epub)

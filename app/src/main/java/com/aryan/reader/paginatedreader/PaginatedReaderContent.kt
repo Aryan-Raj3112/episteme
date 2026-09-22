@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -47,6 +48,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,6 +59,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
@@ -152,6 +155,9 @@ internal fun PaginatedReaderContent(
     pagerState: PagerState,
     isPageTurnAnimationEnabled: Boolean,
     isRightToLeftPagination: Boolean = false,
+    isTwoPageSpread: Boolean = false,
+    totalBookPageCount: Int = uiState.totalPageCount,
+    spreadGutterDp: Float = EpubPageSpread.SpreadGutterDp.toFloat(),
     effectiveBg: Color,
     effectiveText: Color,
     searchQuery: String,
@@ -261,19 +267,1846 @@ internal fun PaginatedReaderContent(
     var pendingCrossPageSelection by remember { mutableStateOf<PendingCrossPageSelection?>(null) }
     var crossPageTriggerInfo by remember { mutableStateOf<Pair<Int, String>?>(null) }
 
+        // Fresh reads for the long-running turn tracker below: it only
+    // restarts when pagerState identity changes, so params read directly
+    // inside would go stale (e.g. totalBook stuck at 0, see EpubSpreadBlink
+    // spread_turn lines) and corrupt the cross-page selection anchor.
+    val latestTotalBookPages = rememberUpdatedState(totalBookPageCount)
+    val latestTwoPageSpread = rememberUpdatedState(isTwoPageSpread)
     LaunchedEffect(pagerState) {
-        var previousPage = pagerState.currentPage
-        snapshotFlow { pagerState.currentPage }.collect { newPage ->
-            if (newPage == previousPage + 1) {
-                if (crossPageTriggerInfo != null && crossPageTriggerInfo!!.first == previousPage) {
-                    pendingCrossPageSelection = PendingCrossPageSelection(fromPageIndex = previousPage)
-                    Timber.d("CrossPageSelection: Strict bottom trigger activated, queued for page $newPage")
+        var previousSpread = pagerState.currentPage
+        snapshotFlow { pagerState.currentPage }.collect { newSpread ->
+            val turnTotalBook = latestTotalBookPages.value
+            val turnTwoPage = latestTwoPageSpread.value
+            Timber.tag(EpubSpreadBlinkTag).d(
+                "spread_turn fromSpread=$previousSpread toSpread=$newSpread " +
+                    "fromBooks=${EpubPageSpread.visibleBookPages(previousSpread, turnTotalBook, turnTwoPage)} " +
+                    "toBooks=${EpubPageSpread.visibleBookPages(newSpread, turnTotalBook, turnTwoPage)} " +
+                    "totalBook=$turnTotalBook twoPage=$turnTwoPage"
+            )
+            if (newSpread == previousSpread + 1) {
+                // Book-space anchor: the selection continues from the last book
+                // page of the outgoing spread (identical to the outgoing page
+                // itself when split view is off).
+                val fromBookPage = EpubPageSpread.visibleBookPages(
+                    previousSpread,
+                    turnTotalBook,
+                    turnTwoPage
+                ).lastOrNull() ?: previousSpread
+                if (crossPageTriggerInfo != null && crossPageTriggerInfo!!.first == fromBookPage) {
+                    pendingCrossPageSelection = PendingCrossPageSelection(fromPageIndex = fromBookPage)
+                    Timber.d("CrossPageSelection: Strict bottom trigger activated, queued for spread $newSpread")
                 }
-            } else if (newPage != previousPage) {
+            } else if (newSpread != previousSpread) {
                 pendingCrossPageSelection = null
             }
             crossPageTriggerInfo = null
-            previousPage = newPage
+            previousSpread = newSpread
+        }
+    }
+
+    @Composable
+    fun SpreadBookPage(
+        bookPageIndex: Int,
+        spreadPageModifier: Modifier,
+        containerModifier: Modifier
+    ) {
+        // Keyed by book page (not generation): pager slots are recycled
+        // across page turns, so the key must change with the page to avoid
+        // flashing the previous page's content. Generation is deliberately
+        // excluded — background pagination bumps it per chapter, and resetting
+        // here would blank every visible page to the loading placeholder each
+        // time. The fetch below refreshes stale content without blanking.
+        var pageContent by remember(bookPageIndex) { mutableStateOf<Page?>(null) }
+        var currentChapterPath by remember { mutableStateOf<String?>(null) }
+        var pageLayoutCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+        val pageChapterIndex = onGetChapterIndex(bookPageIndex)
+        // Page char range derived from the fetched blocks. Unknown until content
+        // arrives; the scope filter then falls back to chapter-only behavior.
+        val pageTextBlocks = remember(pageContent) {
+            pageContent?.content?.extractTextBlocks().orEmpty()
+        }
+        val pageCharRange = remember(pageTextBlocks) {
+            val starts = pageTextBlocks.map { it.startCharOffsetInSource }
+            val ends = pageTextBlocks.map {
+                it.endCharOffsetInSource.takeIf { end -> end > it.startCharOffsetInSource }
+                    ?: (it.startCharOffsetInSource + it.content.text.length)
+            }
+            if (starts.isEmpty() || ends.isEmpty()) null
+            else starts.min()..ends.max()
+        }
+        val pageUserHighlights = remember(pageChapterIndex, userHighlights, pageCharRange, pageTextBlocks) {
+            highlightsForPaginatedPage(
+                pageChapterIndex = pageChapterIndex,
+                userHighlights = userHighlights,
+                pageStartOffset = pageCharRange?.first,
+                pageEndOffset = pageCharRange?.last,
+                pageBlocks = pageTextBlocks.ifEmpty { null }
+            )
+        }
+        val themedPageContent = remember(pageContent, isDarkTheme, effectiveBg, effectiveText) {
+            pageContent?.applyReaderThemeForDisplay(
+                isDarkTheme = isDarkTheme,
+                themeBackgroundColor = effectiveBg,
+                themeTextColor = effectiveText
+            )
+        }
+        // Blink diagnosis: fires only on placeholder<->content transitions
+        // (and first composition), never on plain recompositions.
+        LaunchedEffect(bookPageIndex, themedPageContent != null) {
+            Timber.tag(EpubSpreadBlinkTag).d(
+                "page_shown book=$bookPageIndex hasContent=${themedPageContent != null} gen=${uiState.generation}"
+            )
+        }
+
+        if (pageUserHighlights.size != userHighlights.size) {
+            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                "page_scope page=$bookPageIndex pageChapter=$pageChapterIndex " +
+                    "inputHighlightCount=${userHighlights.size} " +
+                    "pageHighlightCount=${pageUserHighlights.size} " +
+                    "inputHighlightChapters=${userHighlights.map { it.chapterIndex }.distinct()}"
+            )
+        }
+
+        LaunchedEffect(bookPageIndex, uiState.generation) {
+            if (DEBUG_PAGE_TURN_DIAG) {
+                Timber.tag("PageTurnDiag").d("Page $bookPageIndex: Starting content fetch")
+            }
+            val fetchStartTime = if (DEBUG_PAGE_TURN_DIAG) System.currentTimeMillis() else 0L
+
+            val fetchBlinkStart = System.currentTimeMillis()
+            val freshPage = onGetPage(bookPageIndex)
+            Timber.tag(EpubSpreadBlinkTag).d(
+                "page_fetch book=$bookPageIndex gen=${uiState.generation} " +
+                    "null=${freshPage == null} blocks=${freshPage?.content?.size ?: -1} " +
+                    "ms=${System.currentTimeMillis() - fetchBlinkStart}"
+            )
+            pageContent = freshPage
+
+            if (DEBUG_PAGE_TURN_DIAG) {
+                val fetchDuration = System.currentTimeMillis() - fetchStartTime
+                Timber.tag("PageTurnDiag").d("Page $bookPageIndex: Content fetched in ${fetchDuration}ms")
+            }
+
+            onGetChapterPath(bookPageIndex)?.let { currentChapterPath = it }
+        }
+
+        LaunchedEffect(bookPageIndex, pageChapterIndex, currentChapterPath, themedPageContent) {
+            if (!READER_LINK_DIAGNOSTICS_ENABLED) return@LaunchedEffect
+            val page = themedPageContent ?: return@LaunchedEffect
+            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                "page_render page=$bookPageIndex chapter=$pageChapterIndex " +
+                    "chapterPath=${currentChapterPath.orEmpty().readerLinkDiagPreview()} " +
+                    page.readerPageLinkDiagSummary()
+            )
+        }
+
+        val textBlocksOnPage =
+            themedPageContent?.content?.extractTextBlocks()
+                ?.filter { it.cfi != null } ?: emptyList()
+        val lastTextBlock = textBlocksOnPage.lastOrNull()
+        val lastBlockAbs = lastTextBlock?.let {
+            when (it) {
+                is ParagraphBlock -> it.startCharOffsetInSource
+                is HeaderBlock -> it.startCharOffsetInSource
+                is QuoteBlock -> it.startCharOffsetInSource
+                is ListItemBlock -> it.startCharOffsetInSource
+            }
+        }
+
+        LaunchedEffect(activeSelection, lastTextBlock, isDraggingHandle) {
+            if (isDraggingHandle && activeSelection != null && lastTextBlock != null &&
+                activeSelection!!.endPageIndex == bookPageIndex &&
+                activeSelection!!.endBlockIndex == lastTextBlock.blockIndex &&
+                activeSelection!!.endBlockCharOffset == lastBlockAbs) {
+                if (activeSelection!!.endOffset >= lastTextBlock.content.text.length - 3) {
+                    if (crossPageTriggerInfo?.first != bookPageIndex) {
+                        Timber.tag("TextSelectionDiag")
+                            .d("Cross-page trigger ACTIVATED. Selection at bottom-right of page $bookPageIndex.")
+                        crossPageTriggerInfo = bookPageIndex to lastTextBlock.cfi!!
+                    }
+                    return@LaunchedEffect
+                }
+            }
+            if (!isDraggingHandle && activeSelection == null && crossPageTriggerInfo?.first == bookPageIndex) {
+                Timber.tag("TextSelectionDiag")
+                    .d("Cross-page trigger CLEARED on page $bookPageIndex (Custom).")
+                crossPageTriggerInfo = null
+            }
+        }
+
+        // Smart Cross-page selection logic
+        LaunchedEffect(pendingCrossPageSelection, pageContent) {
+            val pending = pendingCrossPageSelection ?: return@LaunchedEffect
+            if (bookPageIndex != pending.fromPageIndex + 1) return@LaunchedEffect
+            val content = pageContent ?: return@LaunchedEffect
+
+            val firstTextBlock =
+                content.content.extractTextBlocks()
+                    .firstOrNull { it.cfi != null } ?: run {
+                    pendingCrossPageSelection = null
+                    return@LaunchedEffect
+                }
+
+            var layoutInfo: Triple<TextLayoutResult, LayoutCoordinates, TextContentBlock>? =
+                null
+            for (i in 0 until 20) {
+                layoutInfo = blockLayoutMap["${firstTextBlock.cfi}_$bookPageIndex"]
+                if (layoutInfo != null && layoutInfo.second.isAttached) break
+                delay(50)
+            }
+
+            if (layoutInfo == null || !layoutInfo.second.isAttached) {
+                pendingCrossPageSelection = null
+                return@LaunchedEffect
+            }
+
+            val text = firstTextBlock.content.text
+            if (text.isEmpty()) {
+                pendingCrossPageSelection = null
+                return@LaunchedEffect
+            }
+
+            // Smart boundary logic (>10 chars & ends at a word)
+            var endIndex = minOf(text.length, 10)
+            if (text.length > 10) {
+                for (i in 10 until text.length) {
+                    if (text[i].isWhitespace() || !text[i].isLetterOrDigit()) {
+                        endIndex = i
+                        break
+                    }
+                }
+            }
+
+            try {
+                val path = layoutInfo.first.getPathForRange(0, endIndex)
+                val localRect = path.getBounds()
+                val windowTopLeft =
+                    layoutInfo.second.localToWindow(localRect.topLeft)
+                val windowBottomRight =
+                    layoutInfo.second.localToWindow(localRect.bottomRight)
+
+                val previousSel = activeSelection
+
+                val firstTextBlockAbs = when (firstTextBlock) {
+                    is ParagraphBlock -> firstTextBlock.startCharOffsetInSource
+                    is HeaderBlock -> firstTextBlock.startCharOffsetInSource
+                    is QuoteBlock -> firstTextBlock.startCharOffsetInSource
+                    is ListItemBlock -> firstTextBlock.startCharOffsetInSource
+                }
+
+                val newTextPerBlock = (previousSel?.textPerBlock ?: emptyMap()).toMutableMap()
+                newTextPerBlock[
+                    buildSelectionBlockKey(
+                        pageIndex = bookPageIndex,
+                        blockIndex = firstTextBlock.blockIndex,
+                        blockCharOffset = firstTextBlockAbs
+                    )
+                ] = text.substring(0, endIndex)
+
+                val newText = newTextPerBlock.entries
+                    .sortedWith { first, second ->
+                        compareSelectionBlockKeys(first.key, second.key)
+                    }
+                    .joinToString(" ") { it.value }
+
+                activeSelection = PaginatedSelection(
+                    startBlockIndex = previousSel?.startBlockIndex ?: firstTextBlock.blockIndex,
+                    endBlockIndex = firstTextBlock.blockIndex,
+                    startBaseCfi = previousSel?.startBaseCfi ?: firstTextBlock.cfi!!,
+                    endBaseCfi = firstTextBlock.cfi!!,
+                    startOffset = previousSel?.startOffset ?: 0,
+                    endOffset = endIndex,
+                    text = newText,
+                    rect = Rect(windowTopLeft, windowBottomRight),
+                    startPageIndex = previousSel?.startPageIndex ?: pending.fromPageIndex,
+                    endPageIndex = bookPageIndex,
+                    startBlockCharOffset = previousSel?.startBlockCharOffset ?: firstTextBlockAbs,
+                    endBlockCharOffset = firstTextBlockAbs,
+                    textPerBlock = newTextPerBlock
+                )
+            } catch (e: Exception) {
+                Timber.e(e, "CrossPageSelection: Failed to create selection")
+            }
+
+            pendingCrossPageSelection = null
+        }
+
+        val onGeneralTapCallback: (Offset) -> Unit = { offset ->
+            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                "page_general_tap source=content page=$bookPageIndex x=${offset.x.roundToInt()} y=${offset.y.roundToInt()}"
+            )
+            activeSelection = null
+            onTap(offset)
+        }
+        val onLinkClickCallback: (String) -> Unit = { href ->
+            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                "link_click_callback page=$bookPageIndex currentPagerPage=${pagerState.currentPage} " +
+                    "chapterPath=${currentChapterPath.orEmpty().readerLinkDiagPreview()} " +
+                    "href=${href.readerLinkDiagPreview()}"
+            )
+            if (href.isReaderExternalHref()) {
+                Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                    "external_link_dialog href=${href.readerLinkDiagPreview()}"
+                )
+                showExternalLinkDialog = href.readerExternalHrefForDisplay()
+            } else {
+                val path = currentChapterPath
+                if (path == null) {
+                    Timber.tag(TAG_PAGINATED_LINK_DIAG).w(
+                        "internal_link_dropped reason=missing_current_chapter_path href=${href.readerLinkDiagPreview()}"
+                    )
+                } else {
+                    onLinkClick(path, href) { targetPageIndex ->
+                        onInternalLinkNavigated(targetPageIndex, null)
+                        coroutineScope.launch {
+                            Timber.tag(READER_UI_STABLE_PAGE_NAV_TAG).d(
+                                "link_scroll targetPage=$targetPageIndex currentPage=${pagerState.currentPage}"
+                            )
+                            pagerState.scrollToPage(
+                                EpubPageSpread.bookPageToSpread(
+                                    targetPageIndex,
+                                    totalBookPageCount,
+                                    isTwoPageSpread
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        val latestPageLayoutCoordinates = rememberUpdatedState(pageLayoutCoordinates)
+        val latestOnLinkClickCallback = rememberUpdatedState(onLinkClickCallback)
+        val pageHorizontalPaddingPx = with(density) { horizontalPadding.roundToPx() }
+        val pageVerticalPaddingPx = with(density) { verticalPadding.roundToPx() }
+        val pageContentBoundsProvider = {
+            pageLayoutCoordinates
+                ?.takeIf { it.isAttached }
+                ?.androidEpubPageContentBounds(
+                    horizontalPaddingPx = pageHorizontalPaddingPx,
+                    verticalPaddingPx = pageVerticalPaddingPx
+                )
+        }
+        val cutoffLogSignatures = remember(bookPageIndex, uiState.generation) {
+            mutableStateMapOf<String, Boolean>()
+        }
+        val renderedBlockBounds = remember(bookPageIndex, uiState.generation) {
+            mutableStateMapOf<Int, AndroidEpubRenderedBlockBounds>()
+        }
+        val cutoffDiagnosticsEnabled = !uiState.isLoading
+        // Only built while diagnostics are enabled: this ran on every
+        // recomposition of every page slot otherwise, and was the sampled
+        // allocation in a GC-pressure ANR.
+        val cutoffDiagnosticsContext = if (cutoffDiagnosticsEnabled) {
+            "generation=${uiState.generation} loading=${uiState.isLoading} pageCount=${uiState.totalPageCount} " +
+                "density=${density.density} fontScale=${density.fontScale} " +
+                "locale=${context.resources.configuration.locales[0]} " +
+                "layoutDirection=${context.resources.configuration.layoutDirection}"
+        } else ""
+
+        Box(
+            modifier = containerModifier
+                .background(effectiveBg)
+                .then(pageTextureModifier)
+                .then(spreadPageModifier)
+                .onGloballyPositioned { coordinates ->
+                    pageLayoutCoordinates = coordinates
+                    if (cutoffDiagnosticsEnabled) {
+                        logAndroidEpubPageBoundsIfNeeded(
+                            pageIndex = bookPageIndex,
+                            pageContentBounds = coordinates.androidEpubPageContentBounds(
+                                horizontalPaddingPx = pageHorizontalPaddingPx,
+                                verticalPaddingPx = pageVerticalPaddingPx
+                            ),
+                            diagnosticsContext = cutoffDiagnosticsContext,
+                            signatureAlreadyLogged = { signature ->
+                                cutoffLogSignatures[signature] == true
+                            },
+                            markSignatureLogged = { signature ->
+                                cutoffLogSignatures[signature] = true
+                            }
+                        )
+                    }
+                }
+                .pointerInput(bookPageIndex, pageViewConfiguration.touchSlop) {
+                    awaitEachGesture {
+                        awaitReaderLinkTap(
+                            source = "PageLinkInterceptor:page=$bookPageIndex",
+                            urlAtPosition = { offset ->
+                                val hit = latestPageLayoutCoordinates.value
+                                    ?.takeIf { it.isAttached }
+                                    ?.let { coordinates ->
+                                        blockLayoutMap.readerLinkAtPagePosition(
+                                            pageCoordinates = coordinates,
+                                            pageIndex = bookPageIndex,
+                                            position = offset
+                                        )
+                                    }
+                                if (hit != null) {
+                                    Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                                        "page_link_interceptor_hit page=$bookPageIndex block=${hit.blockIndex} " +
+                                            "cfi=${hit.cfi.orEmpty().readerLinkDiagPreview()} " +
+                                            "href=${hit.href.readerLinkDiagPreview()}"
+                                    )
+                                }
+                                hit?.href
+                            },
+                            touchSlop = pageViewConfiguration.touchSlop,
+                            onLinkClick = { latestOnLinkClickCallback.value(it) }
+                        )
+                    }
+                }
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) {
+                    detectTapGestures(
+                        onTap = { offset ->
+                            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                                "page_general_tap source=background page=$bookPageIndex " +
+                                    "x=${offset.x.roundToInt()} y=${offset.y.roundToInt()}"
+                            )
+                            activeSelection = null
+                            onTap(offset)
+                        })
+                })
+                Box(modifier = Modifier.fillMaxSize().padding(
+                    horizontal = horizontalPadding,
+                    vertical = verticalPadding
+                // Paginated pages own their breaks: never let an oversize block
+                // (forced whole-table placement, unclamped indents) paint into
+                // neighboring pages or under system bars.
+                ).clipToBounds(), contentAlignment = Alignment.TopStart) {
+                    if (themedPageContent != null) {
+                        val displayPage = themedPageContent
+
+                            val searchHighlightColor =
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                            val ttsHighlightColor =
+                                MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
+
+                        // Vertical-rl pages render with the native tategaki engine
+                        // (VerticalPageContent): same layout code pagination measures
+                        // with, columns stacking right-to-left. Everything else
+                        // keeps the horizontal Compose rendering below.
+                        val isVerticalPage = displayPage.content.isVerticalReaderPage()
+                        if (isVerticalPage) {
+                            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                                VerticalPageContent(
+                                    blocks = displayPage.content,
+                                    textStyle = textStyle,
+                                    pageHeightPx = constraints.maxHeight.coerceAtLeast(1),
+                                    contentWidthPx = constraints.maxWidth.coerceAtLeast(1).toFloat(),
+                                    imageSizeMultiplier = imageSizeMultiplier,
+                                    hideImages = hideImages,
+                                    searchQuery = searchQuery,
+                                    searchHighlightColor = searchHighlightColor,
+                                    ttsHighlightInfo = ttsHighlightInfo,
+                                    ttsHighlightColor = ttsHighlightColor,
+                                    pageUserHighlights = pageUserHighlights,
+                                    fallbackTextColor = effectiveText,
+                                    onLinkClick = onLinkClickCallback,
+                                    onGeneralTap = onGeneralTapCallback,
+                                    onHighlightClick = { highlight ->
+                                        onNoteRequested(highlight.cfi)
+                                        activeSelection = null
+                                    }
+                                )
+                            }
+                        } else {
+                        // Measure page blocks at their natural height; pagination, not Column, owns page breaks.
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .wrapContentHeight(unbounded = true)
+                        ) {
+                            displayPage.content.forEach { block ->
+                                val marginModifier = Modifier.padding(
+                                    top = block.style.margin.top.coerceAtLeast(0.dp),
+                                    bottom = block.style.margin.bottom.coerceAtLeast(
+                                        0.dp
+                                    )
+                                )
+
+                                val alignModifier =
+                                    if (block.style.horizontalAlign == "center") {
+                                        Modifier.align(Alignment.CenterHorizontally)
+                                    } else {
+                                        Modifier.padding(
+                                            start = block.style.margin.left.coerceAtLeast(
+                                                0.dp
+                                            ),
+                                            end = block.style.margin.right.coerceAtLeast(
+                                                0.dp
+                                            )
+                                        )
+                                    }
+
+                                val widthModifier =
+                                    if (block.style.width != Dp.Unspecified) {
+                                        Modifier.width(block.style.width)
+                                    } else {
+                                        Modifier.fillMaxWidth()
+                                    }.then(
+                                        Modifier.widthIn(
+                                            min = block.style.minWidth.takeIf { it.isSpecified && it > 0.dp } ?: Dp.Unspecified,
+                                            max = block.style.maxWidth.takeIf { it.isSpecified && it > 0.dp } ?: Dp.Unspecified
+                                        )
+                                    )
+
+                                val styleModifier =
+                                    alignModifier.then(if (block.style.horizontalAlign == "center") widthModifier else Modifier)
+                                        .drawCssBorders(
+                                            blockStyle = block.style,
+                                            density = density
+                                        )
+                                        .then(if (block.style.visibility == "hidden") Modifier.graphicsLayer(alpha = 0f) else Modifier)
+
+                                val diagnosticModifier =
+                                    Modifier.onGloballyPositioned { coordinates ->
+                                        val actualHeight =
+                                            coordinates.size.height
+                                        if (cutoffDiagnosticsEnabled) {
+                                            val pageContentBounds = pageContentBoundsProvider()
+                                            if (pageContentBounds != null) {
+                                                renderedBlockBounds[block.blockIndex] = AndroidEpubRenderedBlockBounds(
+                                                    blockIndex = block.blockIndex,
+                                                    kind = block.androidEpubKindName(),
+                                                    leftPx = coordinates.positionInWindow().x.roundToInt(),
+                                                    topPx = coordinates.positionInWindow().y.roundToInt() - pageContentBounds.topPx,
+                                                    widthPx = coordinates.size.width,
+                                                    heightPx = coordinates.size.height,
+                                                    expectedHeightPx = block.expectedHeight,
+                                                    sourceRange = block.androidEpubSourceRangeLabel(),
+                                                    textChars = block.androidEpubTextCharCount(),
+                                                    marginTopPx = with(density) { block.style.margin.top.coerceAtLeast(0.dp).roundToPx() },
+                                                    marginBottomPx = with(density) { block.style.margin.bottom.coerceAtLeast(0.dp).roundToPx() },
+                                                    paddingTopPx = with(density) { block.style.padding.top.coerceAtLeast(0.dp).roundToPx() },
+                                                    paddingBottomPx = with(density) { block.style.padding.bottom.coerceAtLeast(0.dp).roundToPx() }
+                                                )
+                                            }
+                                            val didLogOverflow = logAndroidEpubBlockOverflowIfNeeded(
+                                                pageIndex = bookPageIndex,
+                                                block = block,
+                                                coordinates = coordinates,
+                                                pageContentBounds = pageContentBounds,
+                                                diagnosticsContext = cutoffDiagnosticsContext,
+                                                signatureAlreadyLogged = { signature ->
+                                                    cutoffLogSignatures[signature] == true
+                                                },
+                                                markSignatureLogged = { signature ->
+                                                    cutoffLogSignatures[signature] = true
+                                                }
+                                            )
+                                            if (didLogOverflow) {
+                                                logAndroidEpubPageBlockBoundsIfNeeded(
+                                                    pageIndex = bookPageIndex,
+                                                    triggerBlock = block,
+                                                    renderedBounds = renderedBlockBounds.values,
+                                                    pageContentBounds = pageContentBounds,
+                                                    diagnosticsContext = cutoffDiagnosticsContext,
+                                                    signatureAlreadyLogged = { signature ->
+                                                        cutoffLogSignatures[signature] == true
+                                                    },
+                                                    markSignatureLogged = { signature ->
+                                                        cutoffLogSignatures[signature] = true
+                                                    }
+                                                )
+                                            }
+                                            logAndroidEpubRenderedTablePageIfNeeded(
+                                                pageIndex = bookPageIndex,
+                                                renderedBounds = renderedBlockBounds.values,
+                                                pageContentBounds = pageContentBounds,
+                                                diagnosticsContext = cutoffDiagnosticsContext,
+                                                signatureAlreadyLogged = { signature ->
+                                                    cutoffLogSignatures[signature] == true
+                                                },
+                                                markSignatureLogged = { signature ->
+                                                    cutoffLogSignatures[signature] = true
+                                                }
+                                            )
+                                            logAndroidEpubRenderedPageGapIfNeeded(
+                                                pageIndex = bookPageIndex,
+                                                renderedBounds = renderedBlockBounds.values,
+                                                pageContentBounds = pageContentBounds,
+                                                diagnosticsContext = cutoffDiagnosticsContext,
+                                                signatureAlreadyLogged = { signature ->
+                                                    cutoffLogSignatures[signature] == true
+                                                },
+                                                markSignatureLogged = { signature ->
+                                                    cutoffLogSignatures[signature] = true
+                                                }
+                                            )
+                                        }
+                                        if (block.expectedHeight > 0) {
+                                            val snippet = when (block) {
+                                                is ParagraphBlock -> block.content.text.take(
+                                                    50
+                                                )
+
+                                                is HeaderBlock -> block.content.text.take(
+                                                    50
+                                                )
+
+                                                is QuoteBlock -> block.content.text.take(
+                                                    50
+                                                )
+
+                                                is ListItemBlock -> block.content.text.take(
+                                                    50
+                                                )
+
+                                                is TextContentBlock -> block.content.text.take(
+                                                    50
+                                                )
+
+                                                else -> "Non-text content"
+                                            }
+
+                                            checkLayoutMismatch(
+                                                blockIndex = block.blockIndex,
+                                                blockType = block::class.simpleName
+                                                    ?: "Block",
+                                                expectedHeight = block.expectedHeight,
+                                                actualHeight = actualHeight,
+                                                textSnippet = snippet,
+                                                diagnostics = buildString {
+                                                    append("page=")
+                                                    append(bookPageIndex)
+                                                    append(", width=")
+                                                    append(coordinates.size.width)
+                                                    append("px, styleWidth=")
+                                                    append(block.style.width)
+                                                    append(", maxWidth=")
+                                                    append(block.style.maxWidth)
+                                                    append(", margin=")
+                                                    append(block.style.margin)
+                                                    append(", padding=")
+                                                    append(block.style.padding)
+                                                    append(", borders=(")
+                                                    append(block.style.borderLeft?.width ?: 0.dp)
+                                                    append(", ")
+                                                    append(block.style.borderTop?.width ?: 0.dp)
+                                                    append(", ")
+                                                    append(block.style.borderRight?.width ?: 0.dp)
+                                                    append(", ")
+                                                    append(block.style.borderBottom?.width ?: 0.dp)
+                                                    append(")")
+                                                    when (block) {
+                                                        is ParagraphBlock -> {
+                                                            append(", start=")
+                                                            append(block.startCharOffsetInSource)
+                                                            append(", end=")
+                                                            append(block.endCharOffsetInSource)
+                                                            append(", chars=")
+                                                            append(block.content.length)
+                                                            append(", textAlign=")
+                                                            append(block.textAlign)
+                                                        }
+
+                                                        is HeaderBlock -> {
+                                                            append(", start=")
+                                                            append(block.startCharOffsetInSource)
+                                                            append(", end=")
+                                                            append(block.endCharOffsetInSource)
+                                                            append(", chars=")
+                                                            append(block.content.length)
+                                                            append(", textAlign=")
+                                                            append(block.textAlign)
+                                                        }
+
+                                                        is QuoteBlock -> {
+                                                            append(", start=")
+                                                            append(block.startCharOffsetInSource)
+                                                            append(", end=")
+                                                            append(block.endCharOffsetInSource)
+                                                            append(", chars=")
+                                                            append(block.content.length)
+                                                            append(", textAlign=")
+                                                            append(block.textAlign)
+                                                        }
+
+                                                        is ListItemBlock -> {
+                                                            append(", start=")
+                                                            append(block.startCharOffsetInSource)
+                                                            append(", end=")
+                                                            append(block.endCharOffsetInSource)
+                                                            append(", chars=")
+                                                            append(block.content.length)
+                                                        }
+
+                                                        is TextContentBlock -> {
+                                                            append(", chars=")
+                                                            append(block.content.length)
+                                                        }
+
+                                                        else -> Unit
+                                                    }
+                                                },
+                                                tolerance = 2
+                                            )
+                                        }
+                                    }.then(marginModifier).then(styleModifier)
+
+                                Box(
+                                    modifier = diagnosticModifier
+                                        .androidEpubNaturalHeight()
+                                        .readerRelativeOffset(block.style)
+                                ) {
+                                    val paddingModifier = Modifier.padding(
+                                        start = block.style.padding.left.coerceAtLeast(
+                                            0.dp
+                                        ) + (block.style.borderLeft?.width ?: 0.dp),
+                                        top = block.style.padding.top.coerceAtLeast(
+                                            0.dp
+                                        ) + (block.style.borderTop?.width ?: 0.dp),
+                                        end = block.style.padding.right.coerceAtLeast(
+                                            0.dp
+                                        ) + (block.style.borderRight?.width
+                                            ?: 0.dp),
+                                        bottom = block.style.padding.bottom.coerceAtLeast(
+                                            0.dp
+                                        ) + (block.style.borderBottom?.width
+                                            ?: 0.dp)
+                                    ).then(
+                                        if (block.style.horizontalAlign != "center") widthModifier else Modifier.fillMaxWidth()
+                                    )
+
+                                    block.style.backgroundImage
+                                        ?.trim()
+                                        ?.takeIf { it.isNotBlank() && !it.contains("gradient(", ignoreCase = true) }
+                                        ?.let { backgroundImagePath ->
+                                            val backgroundFile = remember(backgroundImagePath) { File(backgroundImagePath) }
+                                            AsyncImage(
+                                                model = if (backgroundFile.exists()) backgroundFile else backgroundImagePath,
+                                                contentDescription = null,
+                                                modifier = Modifier.matchParentSize(),
+                                                contentScale = imageContentScale(block.style)
+                                            )
+                                        }
+
+                                    @Suppress("DEPRECATION") when (block) {
+                                        is ChantScoreBlock -> NativeChantScore(block, textStyle, paddingModifier)
+                                        is ParagraphBlock -> {
+                                            val paragraphStyle = textStyle.copy(
+                                                textAlign = block.textAlign
+                                                    ?: textStyle.textAlign
+                                            )
+                                            val searchHighlighted =
+                                                highlightQueryInText(
+                                                    block.content,
+                                                    searchQuery,
+                                                    searchHighlightColor
+                                                )
+                                            val finalContent =
+                                                if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
+                                                    buildAnnotatedString {
+                                                        append(searchHighlighted)
+
+                                                        // Define absolute ranges
+                                                        val blockStartAbs =
+                                                            block.startCharOffsetInSource
+                                                        val blockEndAbs =
+                                                            block.startCharOffsetInSource + searchHighlighted.length
+                                                        val highlightStartAbs =
+                                                            ttsHighlightInfo.offset
+                                                        val highlightEndAbs =
+                                                            ttsHighlightInfo.offset + ttsHighlightInfo.text.length
+
+                                                        // Calculate intersection
+                                                        val intersectionStartAbs =
+                                                            maxOf(
+                                                                blockStartAbs,
+                                                                highlightStartAbs
+                                                            )
+                                                        val intersectionEndAbs =
+                                                            minOf(
+                                                                blockEndAbs,
+                                                                highlightEndAbs
+                                                            )
+
+                                                        // Check for overlap and apply
+                                                        // style
+                                                        if (intersectionStartAbs < intersectionEndAbs) {
+                                                            val highlightStartRelative =
+                                                                intersectionStartAbs - blockStartAbs
+                                                            val highlightEndRelative =
+                                                                intersectionEndAbs - blockStartAbs
+                                                            addStyle(
+                                                                style = SpanStyle(
+                                                                    background = ttsHighlightColor
+                                                                ),
+                                                                start = highlightStartRelative,
+                                                                end = highlightEndRelative
+                                                            )
+                                                        }
+                                                    }
+                                                } else {
+                                                    searchHighlighted
+                                                }
+
+                                            @Suppress(
+                                                "UnusedVariable",
+                                                "Unused"
+                                            ) val diagnosticModifier =
+                                                if (block.textAlign == TextAlign.Justify) {
+                                                    Modifier.onGloballyPositioned { coordinates ->
+                                                        val width =
+                                                            coordinates.size.width
+                                                        Timber.d(
+                                                            """
+                                                [UI Render]
+                                                Block Index: ${block.blockIndex}
+                                                Text Start: ${
+                                                                block.content.text.take(
+                                                                    20
+                                                                )
+                                                            }...
+                                                Actual Render Width Px: $width
+                                                ------------------------------------------------
+                                            """.trimIndent()
+                                                        )
+                                                    }
+                                                } else {
+                                                    Modifier
+                                                }
+
+                                            TextWithEmphasis(
+                                                text = finalContent,
+                                                style = paragraphStyle,
+                                                modifier = paddingModifier,
+                                                pageIndex = bookPageIndex,
+                                                textMeasurer = textMeasurer,
+                                                onLinkClick = onLinkClickCallback,
+                                                onGeneralTap = onGeneralTapCallback,
+                                                block = block,
+                                                userHighlights = pageUserHighlights,
+                                                activeSelection = activeSelection,
+                                                onSelectionChange = { sel ->
+                                                    activeSelection = sel
+                                                },
+                                                onHighlightClick = { highlight, _ ->
+                                                    onNoteRequested(highlight.cfi)
+                                                    activeSelection = null
+                                                },
+                                                isDarkTheme = isDarkTheme,
+                                                themeBackgroundColor = effectiveBg,
+                                                themeTextColor = effectiveText,
+                                                pageContentBoundsProvider = pageContentBoundsProvider,
+                                                cutoffDiagnosticsEnabled = cutoffDiagnosticsEnabled,
+                                                cutoffDiagnosticsContext = cutoffDiagnosticsContext,
+                                                onRegisterLayout = { layout, coords ->
+                                                    if (block.cfi != null) blockLayoutMap["${block.cfi}_$bookPageIndex"] =
+                                                        Triple(
+                                                            layout,
+                                                            coords,
+                                                            block
+                                                        )
+                                                })
+                                        }
+
+                                        is HeaderBlock -> {
+                                            val style = createHeaderTextStyle(
+                                                baseStyle = textStyle,
+                                                level = block.level,
+                                                textAlign = block.textAlign
+                                            )
+                                            val searchHighlighted =
+                                                highlightQueryInText(
+                                                    block.content,
+                                                    searchQuery,
+                                                    searchHighlightColor
+                                                )
+                                            val finalContent =
+                                                if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
+                                                    buildAnnotatedString {
+                                                        append(searchHighlighted)
+
+                                                        val blockStartAbs =
+                                                            block.startCharOffsetInSource
+                                                        val blockEndAbs =
+                                                            block.startCharOffsetInSource + searchHighlighted.length
+                                                        val highlightStartAbs =
+                                                            ttsHighlightInfo.offset
+                                                        val highlightEndAbs =
+                                                            ttsHighlightInfo.offset + ttsHighlightInfo.text.length
+
+                                                        val intersectionStartAbs =
+                                                            maxOf(
+                                                                blockStartAbs,
+                                                                highlightStartAbs
+                                                            )
+                                                        val intersectionEndAbs =
+                                                            minOf(
+                                                                blockEndAbs,
+                                                                highlightEndAbs
+                                                            )
+
+                                                        if (intersectionStartAbs < intersectionEndAbs) {
+                                                            val highlightStartRelative =
+                                                                intersectionStartAbs - blockStartAbs
+                                                            val highlightEndRelative =
+                                                                intersectionEndAbs - blockStartAbs
+                                                            addStyle(
+                                                                style = SpanStyle(
+                                                                    background = ttsHighlightColor
+                                                                ),
+                                                                start = highlightStartRelative,
+                                                                end = highlightEndRelative
+                                                            )
+                                                        }
+                                                    }
+                                                } else {
+                                                    searchHighlighted
+                                                }
+                                            TextWithEmphasis(
+                                                text = finalContent,
+                                                style = style,
+                                                modifier = paddingModifier,
+                                                pageIndex = bookPageIndex,
+                                                textMeasurer = textMeasurer,
+                                                onLinkClick = onLinkClickCallback,
+                                                onGeneralTap = onGeneralTapCallback,
+                                                block = block,
+                                                userHighlights = pageUserHighlights,
+                                                activeSelection = activeSelection,
+                                                onSelectionChange = { sel ->
+                                                    activeSelection = sel
+                                                },
+                                                onHighlightClick = { highlight, _ ->
+                                                    onNoteRequested(
+                                                        highlight.cfi
+                                                    )
+                                                    activeSelection = null
+                                                },
+                                                isDarkTheme = isDarkTheme,
+                                                themeBackgroundColor = effectiveBg,
+                                                themeTextColor = effectiveText,
+                                                pageContentBoundsProvider = pageContentBoundsProvider,
+                                                cutoffDiagnosticsEnabled = cutoffDiagnosticsEnabled,
+                                                cutoffDiagnosticsContext = cutoffDiagnosticsContext,
+                                                onRegisterLayout = { layout, coords ->
+                                                    if (block.cfi != null) blockLayoutMap["${block.cfi}_$bookPageIndex"] =
+                                                        Triple(
+                                                            layout,
+                                                            coords,
+                                                            block
+                                                        )
+                                                })
+                                        }
+
+                                        is QuoteBlock -> {
+                                            val quoteStyle = textStyle.copy(
+                                                textAlign = block.textAlign
+                                                    ?: textStyle.textAlign
+                                            )
+                                            val quoteModifier =
+                                                paddingModifier.padding(start = 16.dp)
+                                            val searchHighlighted =
+                                                highlightQueryInText(
+                                                    block.content,
+                                                    searchQuery,
+                                                    searchHighlightColor
+                                                )
+                                            val finalContent =
+                                                if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
+                                                    buildAnnotatedString {
+                                                        append(searchHighlighted)
+
+                                                        val blockStartAbs =
+                                                            block.startCharOffsetInSource
+                                                        val blockEndAbs =
+                                                            block.startCharOffsetInSource + searchHighlighted.length
+                                                        val highlightStartAbs =
+                                                            ttsHighlightInfo.offset
+                                                        val highlightEndAbs =
+                                                            ttsHighlightInfo.offset + ttsHighlightInfo.text.length
+
+                                                        val intersectionStartAbs =
+                                                            maxOf(
+                                                                blockStartAbs,
+                                                                highlightStartAbs
+                                                            )
+                                                        val intersectionEndAbs =
+                                                            minOf(
+                                                                blockEndAbs,
+                                                                highlightEndAbs
+                                                            )
+
+                                                        if (intersectionStartAbs < intersectionEndAbs) {
+                                                            val highlightStartRelative =
+                                                                intersectionStartAbs - blockStartAbs
+                                                            val highlightEndRelative =
+                                                                intersectionEndAbs - blockStartAbs
+                                                            addStyle(
+                                                                style = SpanStyle(
+                                                                    background = ttsHighlightColor
+                                                                ),
+                                                                start = highlightStartRelative,
+                                                                end = highlightEndRelative
+                                                            )
+                                                        }
+                                                    }
+                                                } else {
+                                                    searchHighlighted
+                                                }
+                                            TextWithEmphasis(
+                                                text = finalContent,
+                                                style = quoteStyle,
+                                                modifier = quoteModifier,
+                                                pageIndex = bookPageIndex,
+                                                textMeasurer = textMeasurer,
+                                                onLinkClick = onLinkClickCallback,
+                                                onGeneralTap = onGeneralTapCallback,
+                                                block = block,
+                                                userHighlights = pageUserHighlights,
+                                                activeSelection = activeSelection,
+                                                onSelectionChange = { sel ->
+                                                    activeSelection = sel
+                                                },
+                                                onHighlightClick = { highlight, _ ->
+                                                    onNoteRequested(highlight.cfi)
+                                                    activeSelection = null
+                                                },
+                                                isDarkTheme = isDarkTheme,
+                                                themeBackgroundColor = effectiveBg,
+                                                themeTextColor = effectiveText,
+                                                pageContentBoundsProvider = pageContentBoundsProvider,
+                                                cutoffDiagnosticsEnabled = cutoffDiagnosticsEnabled,
+                                                cutoffDiagnosticsContext = cutoffDiagnosticsContext,
+                                                onRegisterLayout = { layout, coords ->
+                                                    if (block.cfi != null) blockLayoutMap["${block.cfi}_$bookPageIndex"] =
+                                                        Triple(
+                                                            layout,
+                                                            coords,
+                                                            block
+                                                        )
+                                                })
+                                        }
+
+                                        is ListItemBlock -> {
+                                            Row(
+                                                modifier = paddingModifier,
+                                                verticalAlignment = Alignment.Top
+                                            ) {
+                                                val markerAreaModifier =
+                                                    Modifier.width(32.dp)
+                                                        .padding(end = 8.dp)
+                                                val itemMarkerImage = block.itemMarkerImage
+                                                val itemMarker = block.itemMarker
+
+                                                if (itemMarkerImage != null) {
+                                                    val imageRequest =
+                                                        Builder(LocalContext.current).data(
+                                                            File(
+                                                                itemMarkerImage
+                                                            )
+                                                        ).crossfade(true).build()
+                                                    val imageSize = with(density) {
+                                                        (textStyle.fontSize.value * 0.8f).sp.toDp()
+                                                    }
+
+                                                    AsyncImage(
+                                                        model = imageRequest,
+                                                        contentDescription = stringResource(R.string.content_desc_list_item_marker),
+                                                        modifier = markerAreaModifier.height(
+                                                            imageSize
+                                                        ),
+                                                        alignment = Alignment.CenterEnd,
+                                                        contentScale = ContentScale.FillHeight
+                                                    )
+                                                } else if (itemMarker != null) {
+                                                    Text(
+                                                        text = itemMarker,
+                                                        style = textStyle.copy(
+                                                            textAlign = TextAlign.End
+                                                        ),
+                                                        modifier = markerAreaModifier
+                                                    )
+                                                }
+                                                val searchHighlighted =
+                                                    highlightQueryInText(
+                                                        block.content,
+                                                        searchQuery,
+                                                        searchHighlightColor
+                                                    )
+                                                val finalContent =
+                                                    if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
+                                                        buildAnnotatedString {
+                                                            append(searchHighlighted)
+
+                                                            val blockStartAbs =
+                                                                block.startCharOffsetInSource
+                                                            val blockEndAbs =
+                                                                block.startCharOffsetInSource + searchHighlighted.length
+                                                            val highlightStartAbs =
+                                                                ttsHighlightInfo.offset
+                                                            val highlightEndAbs =
+                                                                ttsHighlightInfo.offset + ttsHighlightInfo.text.length
+
+                                                            val intersectionStartAbs =
+                                                                maxOf(
+                                                                    blockStartAbs,
+                                                                    highlightStartAbs
+                                                                )
+                                                            val intersectionEndAbs =
+                                                                minOf(
+                                                                    blockEndAbs,
+                                                                    highlightEndAbs
+                                                                )
+
+                                                            if (intersectionStartAbs < intersectionEndAbs) {
+                                                                val highlightStartRelative =
+                                                                    intersectionStartAbs - blockStartAbs
+                                                                val highlightEndRelative =
+                                                                    intersectionEndAbs - blockStartAbs
+                                                                addStyle(
+                                                                    style = SpanStyle(
+                                                                        background = ttsHighlightColor
+                                                                    ),
+                                                                    start = highlightStartRelative,
+                                                                    end = highlightEndRelative
+                                                                )
+                                                            }
+                                                        }
+                                                    } else {
+                                                        searchHighlighted
+                                                    }
+                                                TextWithEmphasis(
+                                                    text = finalContent,
+                                                    style = textStyle,
+                                                    modifier = Modifier.weight(1f),
+                                                    pageIndex = bookPageIndex,
+                                                    textMeasurer = textMeasurer,
+                                                    onLinkClick = onLinkClickCallback,
+                                                    onGeneralTap = onGeneralTapCallback,
+                                                    block = block,
+                                                    userHighlights = pageUserHighlights,
+                                                    activeSelection = activeSelection,
+                                                    onSelectionChange = { sel ->
+                                                        activeSelection = sel
+                                                    },
+                                                    onHighlightClick = { highlight, _ ->
+                                                        onNoteRequested(highlight.cfi)
+                                                        activeSelection = null
+                                                    },
+                                                    isDarkTheme = isDarkTheme,
+                                                    themeBackgroundColor = effectiveBg,
+                                                    themeTextColor = effectiveText,
+                                                    pageContentBoundsProvider = pageContentBoundsProvider,
+                                                    cutoffDiagnosticsEnabled = cutoffDiagnosticsEnabled,
+                                                    cutoffDiagnosticsContext = cutoffDiagnosticsContext,
+                                                    onRegisterLayout = { layout, coords ->
+                                                        if (block.cfi != null) blockLayoutMap["${block.cfi}_$bookPageIndex"] =
+                                                            Triple(
+                                                                layout,
+                                                                coords,
+                                                                block
+                                                            )
+                                                    })
+                                            }
+                                        }
+
+                                        is WrappingContentBlock -> {
+                                            WrappingContentLayout(
+                                                block = block,
+                                                textStyle = textStyle,
+                                                imageSizeMultiplier = imageSizeMultiplier,
+                                                hideImages = hideImages,
+                                                modifier = paddingModifier,
+                                                searchQuery = searchQuery,
+                                                ttsHighlightInfo = ttsHighlightInfo,
+                                                searchHighlightColor = searchHighlightColor,
+                                                ttsHighlightColor = ttsHighlightColor,
+                                                isDarkTheme = isDarkTheme,
+                                                themeBackgroundColor = effectiveBg,
+                                                themeTextColor = effectiveText,
+                                                onLinkClick = onLinkClickCallback,
+                                                onGeneralTap = onGeneralTapCallback
+                                            )
+                                        }
+
+                                        is FlexContainerBlock -> {
+
+                                            if (block.style.flexDirection == "row") {
+                                                val horizontalArrangement =
+                                                    when (block.style.justifyContent) {
+                                                        "center" -> Arrangement.Center
+                                                        "flex-end" -> Arrangement.End
+                                                        "space-between" -> Arrangement.SpaceBetween
+                                                        "space-around" -> Arrangement.SpaceAround
+                                                        else -> Arrangement.Start
+                                                    }
+                                                val verticalAlignment =
+                                                    when (block.style.alignItems) {
+                                                        "center" -> Alignment.CenterVertically
+                                                        "flex-end" -> Alignment.Bottom
+                                                        else -> Alignment.Top
+                                                    }
+                                                val chantChildren: @Composable () -> Unit = {
+                                                    block.children.forEach { childBlock ->
+                                                        RenderFlexChildBlock(
+                                                            childBlock = childBlock,
+                                                            textStyle = textStyle,
+                                                            imageSizeMultiplier = imageSizeMultiplier,
+                                                            hideImages = hideImages,
+                                                            searchQuery = searchQuery,
+                                                            searchHighlightColor = searchHighlightColor,
+                                                            ttsHighlightInfo = ttsHighlightInfo,
+                                                            ttsHighlightColor = ttsHighlightColor,
+                                                            textMeasurer = textMeasurer,
+                                                            onLinkClickCallback = onLinkClickCallback,
+                                                            onGeneralTapCallback = onGeneralTapCallback,
+                                                            userHighlights = pageUserHighlights,
+                                                            activeSelection = activeSelection,
+                                                            onSelectionChange = { sel ->
+                                                                activeSelection =
+                                                                    sel
+                                                            },
+                                                            onHighlightClick = { highlight, _ ->
+                                                                onNoteRequested(
+                                                                    highlight.cfi
+                                                                )
+                                                                activeSelection =
+                                                                    null
+                                                            },
+                                                            isDarkTheme = isDarkTheme,
+                                                            themeBackgroundColor = effectiveBg,
+                                                            themeTextColor = effectiveText,
+                                                            blockLayoutMap = blockLayoutMap,
+                                                            density = density,
+                                                            imageLoader = imageLoader,
+                                                            pageIndex = bookPageIndex
+                                                        )
+                                                    }
+                                                }
+                                                if (block.style.display == "reader-chant-flow") {
+                                                    FlowRow(
+                                                        modifier = paddingModifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalArrangement = Arrangement.Bottom,
+                                                        content = { chantChildren() }
+                                                    )
+                                                } else {
+                                                    Row(
+                                                        modifier = paddingModifier.fillMaxWidth(),
+                                                        horizontalArrangement = horizontalArrangement,
+                                                        verticalAlignment = verticalAlignment,
+                                                        content = { chantChildren() }
+                                                    )
+                                                }
+                                            } else {
+                                                val verticalArrangement =
+                                                    when (block.style.justifyContent) {
+                                                        "center" -> Arrangement.Center
+                                                        "flex-end" -> Arrangement.Bottom
+                                                        "space-between" -> Arrangement.SpaceBetween
+                                                        "space-around" -> Arrangement.SpaceAround
+                                                        else -> Arrangement.Top
+                                                    }
+                                                val horizontalAlignment =
+                                                    when (block.style.alignItems) {
+                                                        "center" -> Alignment.CenterHorizontally
+                                                        "flex-end" -> Alignment.End
+                                                        else -> Alignment.Start
+                                                    }
+                                                Column(
+                                                    modifier = paddingModifier.fillMaxWidth(),
+                                                    verticalArrangement = verticalArrangement,
+                                                    horizontalAlignment = horizontalAlignment
+                                                ) {
+                                                    block.children.forEach { childBlock ->
+                                                        RenderFlexChildBlock(
+                                                            childBlock = childBlock,
+                                                            textStyle = textStyle,
+                                                            imageSizeMultiplier = imageSizeMultiplier,
+                                                            hideImages = hideImages,
+                                                            searchQuery = searchQuery,
+                                                            searchHighlightColor = searchHighlightColor,
+                                                            ttsHighlightInfo = ttsHighlightInfo,
+                                                            ttsHighlightColor = ttsHighlightColor,
+                                                            textMeasurer = textMeasurer,
+                                                            onLinkClickCallback = onLinkClickCallback,
+                                                            onGeneralTapCallback = onGeneralTapCallback,
+                                                            userHighlights = pageUserHighlights,
+                                                            activeSelection = activeSelection,
+                                                            onSelectionChange = { sel ->
+                                                                activeSelection =
+                                                                    sel
+                                                            },
+                                                            onHighlightClick = { highlight, _ ->
+                                                                onNoteRequested(
+                                                                    highlight.cfi
+                                                                )
+                                                                activeSelection =
+                                                                    null
+                                                            },
+                                                            isDarkTheme = isDarkTheme,
+                                                            themeBackgroundColor = effectiveBg,
+                                                            themeTextColor = effectiveText,
+                                                            blockLayoutMap = blockLayoutMap,
+                                                            density = density,
+                                                            imageLoader = imageLoader,
+                                                            pageIndex = bookPageIndex
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        is MathBlock -> {
+                                            val svgContent = block.svgContent?.takeIf { it.isNotBlank() }
+                                            Timber.d(
+                                                "PaginatedReader: Rendering MathBlock. Alt: '${block.altText}', Has SVG: ${svgContent != null}"
+                                            )
+                                            if (svgContent != null) {
+                                                val nonBlankSvgContent = svgContent
+                                                BoxWithConstraints(
+                                                    modifier = paddingModifier
+                                                ) {
+                                                    val localDensity =
+                                                        LocalDensity.current
+                                                    val fontSizePx =
+                                                        with(localDensity) {
+                                                            textStyle.fontSize.toPx()
+                                                        }
+                                                    val containerWidthPx =
+                                                        with(localDensity) {
+                                                            maxWidth.roundToPx()
+                                                        }
+                                                    val widthPx = parseSvgDimension(
+                                                        block.svgWidth,
+                                                        fontSizePx,
+                                                        containerWidthPx,
+                                                        localDensity
+                                                    )
+                                                    val heightPx =
+                                                        parseSvgDimension(
+                                                            block.svgHeight,
+                                                            fontSizePx,
+                                                            containerWidthPx,
+                                                            localDensity
+                                                        )
+
+                                                    var imageModifier: Modifier =
+                                                        Modifier
+                                                    if (widthPx != null) {
+                                                        val finalWidthDp =
+                                                            with(localDensity) { widthPx.toDp() }
+                                                        Timber.d("Applying calculated width to MathBlock image: $finalWidthDp")
+                                                        imageModifier =
+                                                            imageModifier.width(
+                                                                finalWidthDp
+                                                            )
+                                                    } else {
+                                                        Timber.w("Could not calculate a specific width for MathBlock. It will fill available space.")
+                                                        imageModifier =
+                                                            imageModifier.fillMaxWidth()
+                                                    }
+
+                                                    if (heightPx != null) {
+                                                        val finalHeightDp =
+                                                            with(localDensity) { heightPx.toDp() }
+                                                        Timber.d("Applying calculated height to MathBlock image: $finalHeightDp")
+                                                        imageModifier =
+                                                            imageModifier.height(
+                                                                finalHeightDp
+                                                            )
+                                                    } else {
+                                                        val viewBoxParts =
+                                                            block.svgViewBox?.split(
+                                                                ' ',
+                                                                ','
+                                                            )
+                                                                ?.mapNotNull { it.toFloatOrNull() }
+                                                        if (viewBoxParts != null && viewBoxParts.size == 4 && viewBoxParts[2] > 0) {
+                                                            val aspectRatio =
+                                                                viewBoxParts[3] / viewBoxParts[2]
+                                                            val effectiveWidth =
+                                                                widthPx
+                                                                    ?: containerWidthPx.toFloat()
+                                                            val finalHeightDp =
+                                                                with(localDensity) { (effectiveWidth * aspectRatio).toDp() }
+                                                            imageModifier =
+                                                                imageModifier.height(
+                                                                    finalHeightDp
+                                                                )
+                                                        } else {
+                                                            val fallbackHeightDp =
+                                                                with(localDensity) { (textStyle.fontSize.value * 3).sp.toDp() }
+                                                            imageModifier =
+                                                                imageModifier.height(
+                                                                    fallbackHeightDp
+                                                                )
+                                                        }
+                                                    }
+
+                                                    val imageRequest =
+                                                        Builder(LocalContext.current).data(
+                                                            SvgData(
+                                                                nonBlankSvgContent
+                                                            )
+                                                        ).listener(
+                                                            onError = { _, result ->
+                                                                Timber.e(
+                                                                    result.throwable,
+                                                                    "Coil failed to load SVG for MathBlock."
+                                                                )
+                                                            }).build()
+
+                                                    val colorFilter =
+                                                        if (block.isFromMathJax) ColorFilter.tint(
+                                                            textStyle.color
+                                                        )
+                                                        else null
+
+                                                    AsyncImage(
+                                                        model = imageRequest,
+                                                        contentDescription = block.altText
+                                                            ?: "Equation",
+                                                        modifier = imageModifier,
+                                                        contentScale = ContentScale.Fit,
+                                                        colorFilter = colorFilter,
+                                                        imageLoader = imageLoader
+                                                    )
+                                                }
+                                            } else {
+                                                Timber.w(
+                                                    "PaginatedReader: MathBlock has no SVG content, rendering alt text."
+                                                )
+                                                Text(
+                                                    text = block.altText
+                                                        ?: "[Equation not available]",
+                                                    style = textStyle,
+                                                    modifier = paddingModifier
+                                                )
+                                            }
+                                        }
+
+                                        is ImageBlock -> if (!hideImages) {
+                                            val style = block.style
+                                            val colorFilter =
+                                                if (block.style.filter == "invert(100%)") {
+                                                    val matrix = floatArrayOf(
+                                                        -1f,
+                                                        0f,
+                                                        0f,
+                                                        0f,
+                                                        255f,
+                                                        0f,
+                                                        -1f,
+                                                        0f,
+                                                        0f,
+                                                        255f,
+                                                        0f,
+                                                        0f,
+                                                        -1f,
+                                                        0f,
+                                                        255f,
+                                                        0f,
+                                                        0f,
+                                                        0f,
+                                                        1f,
+                                                        0f
+                                                    )
+                                                    ColorFilter.colorMatrix(
+                                                        ColorMatrix(matrix)
+                                                    )
+                                                } else {
+                                                    null
+                                                }
+                                            val context = LocalContext.current
+                                            val imageRequest =
+                                                Builder(context).data(File(block.path))
+                                                    .listener(onSuccess = { _, _ ->
+                                                        Timber.d(
+                                                            "Coil successfully loaded image: ${block.path}"
+                                                        )
+                                                    }, onError = { _, result ->
+                                                        Timber.e(
+                                                            result.throwable,
+                                                            "Coil FAILED to load image: ${block.path}"
+                                                        )
+                                                    }).crossfade(true).build()
+
+                                            BoxWithConstraints(
+                                                modifier = paddingModifier,
+                                                contentAlignment = imageBlockContentAlignment(style)
+                                            ) {
+                                                val scaledSize = computeImageRenderSizeDp(
+                                                    block = block,
+                                                    density = density,
+                                                    maxWidthDp = maxWidth,
+                                                    imageSizeMultiplier = imageSizeMultiplier,
+                                                    maxHeightDp = boundedImageMaxHeightDp(
+                                                        boxMaxHeight = maxHeight,
+                                                        density = density,
+                                                        expectedHeightPx = block.expectedHeight
+                                                    )
+                                                )
+                                                val finalImageModifier = Modifier
+                                                    .then(
+                                                        if (scaledSize != null) {
+                                                            Modifier.width(scaledSize.first).height(scaledSize.second)
+                                                        } else if (style.width.isSpecified && style.width > 0.dp) {
+                                                            Modifier.width(style.width)
+                                                        } else {
+                                                            Modifier.fillMaxWidth()
+                                                        }
+                                                    )
+                                                    .then(
+                                                        if (scaledSize == null && style.maxWidth.isSpecified && style.maxWidth > 0.dp) {
+                                                            Modifier.widthIn(max = style.maxWidth)
+                                                        } else {
+                                                            Modifier
+                                                        }
+                                                    )
+                                                    .then(
+                                                        if (scaledSize == null) {
+                                                            if (block.expectedHeight > 0) {
+                                                                Modifier.height(with(density) { (block.expectedHeight * imageSizeMultiplier).toDp() })
+                                                            } else {
+                                                                Modifier.height(250.dp)
+                                                            }
+                                                        } else {
+                                                            Modifier
+                                                        }
+                                                    )
+
+                                                AsyncImage(
+                                                    model = imageRequest,
+                                                    contentDescription = block.altText
+                                                        ?: "Image from EPUB",
+                                                    modifier = finalImageModifier,
+                                                    contentScale = imageContentScale(style),
+                                                    colorFilter = colorFilter
+                                                )
+                                            }
+                                        }
+
+                                        is SpacerBlock -> {
+                                            Box(
+                                                modifier = Modifier.fillMaxWidth()
+                                                    .height(block.height)
+                                                    .drawCssBorders(
+                                                        block.style,
+                                                        density
+                                                    )
+                                            )
+                                        }
+
+                                        is TableBlock -> {
+                                            Column(modifier = paddingModifier) {
+                                                val stackRows = block.shouldStackRowsForNarrowPagination()
+                                                val rowsForLayout = if (stackRows) {
+                                                    block.rowsForNarrowPaginationLayout()
+                                                } else {
+                                                    block.rows
+                                                }
+                                                rowsForLayout.forEachIndexed { rowIndex, tableRow ->
+                                                    val rowModifier = if (stackRows) {
+                                                        Modifier.fillMaxWidth()
+                                                    } else {
+                                                        Modifier.fillMaxWidth()
+                                                            .height(
+                                                                IntrinsicSize.Min
+                                                            )
+                                                    }
+                                                    val rowTextChars = tableRow.sumOf { rowCell ->
+                                                        rowCell.content.sumOf { it.androidEpubTextCharCount() }
+                                                    }
+                                                    val rowDiagnosticModifier =
+                                                        if (cutoffDiagnosticsEnabled) {
+                                                            Modifier.onGloballyPositioned { coordinates ->
+                                                                logAndroidEpubRenderedTablePartIfNeeded(
+                                                                    pageIndex = bookPageIndex,
+                                                                    tableBlockIndex = block.blockIndex,
+                                                                    partKind = "row",
+                                                                    rowIndex = rowIndex,
+                                                                    cellIndex = null,
+                                                                    coordinates = coordinates,
+                                                                    pageContentBounds = pageContentBoundsProvider(),
+                                                                    stackRows = stackRows,
+                                                                    tableExpectedHeightPx = block.expectedHeight,
+                                                                    rowCount = rowsForLayout.size,
+                                                                    textChars = rowTextChars,
+                                                                    paddingTopPx = 0,
+                                                                    paddingBottomPx = 0,
+                                                                    isLikelySpeakerCell = false,
+                                                                    diagnosticsContext = cutoffDiagnosticsContext,
+                                                                    signatureAlreadyLogged = { signature ->
+                                                                        cutoffLogSignatures[signature] == true
+                                                                    },
+                                                                    markSignatureLogged = { signature ->
+                                                                        cutoffLogSignatures[signature] = true
+                                                                    }
+                                                                )
+                                                            }
+                                                        } else {
+                                                            Modifier
+                                                        }
+                                                    Row(
+                                                        rowModifier.then(rowDiagnosticModifier)
+                                                    ) {
+                                                        val hasFixedWidths =
+                                                            !stackRows && tableRow.any {
+                                                                it.style.blockStyle.width != Dp.Unspecified
+                                                            }
+
+                                                        tableRow.forEachIndexed { cellIndex, cell ->
+                                                            val cellStyle =
+                                                                cell.style.blockStyle
+
+                                                            val cellContainerModifier =
+                                                                if (stackRows) {
+                                                                    Modifier.fillMaxWidth()
+                                                                } else if (hasFixedWidths) {
+                                                                    if (cellStyle.width != Dp.Unspecified) Modifier.width(
+                                                                        cellStyle.width
+                                                                    )
+                                                                    else Modifier.weight(
+                                                                        cell.colspan.coerceAtLeast(1).toFloat(),
+                                                                        fill = true
+                                                                    )
+                                                                } else {
+                                                                    Modifier.weight(
+                                                                        cell.colspan.coerceAtLeast(1).toFloat(),
+                                                                        fill = true
+                                                                    )
+                                                                }
+
+                                                            val alignment =
+                                                                if (stackRows) {
+                                                                    Alignment.Start
+                                                                } else {
+                                                                    when (cell.style.paragraphStyle.textAlign) {
+                                                                        TextAlign.Center -> Alignment.CenterHorizontally
+                                                                        TextAlign.End -> Alignment.End
+                                                                        else -> Alignment.Start
+                                                                    }
+                                                                }
+
+                                                            val stackedCellTopPadding = cellStyle.padding.top.coerceAtLeast(0.dp)
+                                                            val cellTextChars = cell.content.sumOf { it.androidEpubTextCharCount() }
+                                                            val cellPaddingTopPx = with(density) { cellStyle.padding.top.coerceAtLeast(0.dp).roundToPx() }
+                                                            val cellPaddingBottomPx = with(density) { cellStyle.padding.bottom.coerceAtLeast(0.dp).roundToPx() }
+                                                            val cellDiagnosticModifier =
+                                                                if (cutoffDiagnosticsEnabled) {
+                                                                    Modifier.onGloballyPositioned { coordinates ->
+                                                                        logAndroidEpubRenderedTablePartIfNeeded(
+                                                                            pageIndex = bookPageIndex,
+                                                                            tableBlockIndex = block.blockIndex,
+                                                                            partKind = "cell",
+                                                                            rowIndex = rowIndex,
+                                                                            cellIndex = cellIndex,
+                                                                            coordinates = coordinates,
+                                                                            pageContentBounds = pageContentBoundsProvider(),
+                                                                            stackRows = stackRows,
+                                                                            tableExpectedHeightPx = block.expectedHeight,
+                                                                            rowCount = rowsForLayout.size,
+                                                                            textChars = cellTextChars,
+                                                                            paddingTopPx = cellPaddingTopPx,
+                                                                            paddingBottomPx = cellPaddingBottomPx,
+                                                                            isLikelySpeakerCell = cell.isLikelyDramaSpeakerCell(),
+                                                                            diagnosticsContext = cutoffDiagnosticsContext,
+                                                                            signatureAlreadyLogged = { signature ->
+                                                                                cutoffLogSignatures[signature] == true
+                                                                            },
+                                                                            markSignatureLogged = { signature ->
+                                                                                cutoffLogSignatures[signature] = true
+                                                                            }
+                                                                        )
+                                                                    }
+                                                                } else {
+                                                                    Modifier
+                                                                }
+                                                            val cellModifier =
+                                                                cellContainerModifier
+                                                                    .then(
+                                                                        if (cellStyle.backgroundColor.isSpecified) {
+                                                                            Modifier.background(
+                                                                                cellStyle.backgroundColor
+                                                                            )
+                                                                        } else {
+                                                                            Modifier
+                                                                        }
+                                                                    )
+                                                                    .drawCssBorders(
+                                                                        cellStyle,
+                                                                        density
+                                                                    ).padding(
+                                                                        start = if (stackRows) 0.dp else cellStyle.padding.left.coerceAtLeast(
+                                                                            0.dp
+                                                                        ),
+                                                                        top = if (stackRows) stackedCellTopPadding else cellStyle.padding.top.coerceAtLeast(
+                                                                            0.dp
+                                                                        ),
+                                                                        end = if (stackRows) 0.dp else cellStyle.padding.right.coerceAtLeast(
+                                                                            0.dp
+                                                                        ),
+                                                                        bottom = if (stackRows) 0.dp else cellStyle.padding.bottom.coerceAtLeast(
+                                                                            0.dp
+                                                                        )
+                                                                    )
+                                                                    .then(cellDiagnosticModifier)
+
+                                                            Column(
+                                                                modifier = cellModifier.wrapContentHeight(Alignment.Top),
+                                                                horizontalAlignment = alignment
+                                                            ) {
+                                                                val cellTextStyle =
+                                                                    if (cell.isHeader) {
+                                                                        textStyle.copy(
+                                                                            fontWeight = FontWeight.Bold
+                                                                        )
+                                                                    } else {
+                                                                        textStyle
+                                                                    }
+                                                                val renderedCellTextStyle = if (stackRows) {
+                                                                    cellTextStyle.copy(textAlign = TextAlign.Left)
+                                                                } else {
+                                                                    cellTextStyle
+                                                                }
+                                                                val cellContentForRender = if (stackRows) {
+                                                                    cell.contentForStackedPaginationMeasurement()
+                                                                } else {
+                                                                    cell.content
+                                                                }
+
+                                                                cellContentForRender.forEach { blockInCell ->
+                                                                    when (blockInCell) {
+                                                                        is ParagraphBlock -> {
+                                                                            LinkAwareText(
+                                                                                text = if (stackRows) blockInCell.content.withParagraphTextAlignStart() else blockInCell.content,
+                                                                                style = renderedCellTextStyle,
+                                                                                modifier = Modifier.fillMaxWidth(),
+                                                                                isDarkTheme = isDarkTheme,
+                                                                                themeBackgroundColor = effectiveBg,
+                                                                                themeTextColor = effectiveText,
+                                                                                onLinkClick = onLinkClickCallback,
+                                                                                onGeneralTap = onGeneralTapCallback,
+                                                                                wrapDiagnosticsContext = "page=${bookPageIndex + 1} source=table_cell tableBlock=${block.blockIndex} row=$rowIndex cell=$cellIndex cellBlock=${blockInCell.blockIndex}"
+                                                                            )
+                                                                        }
+
+                                                                        is HeaderBlock -> {
+                                                                            LinkAwareText(
+                                                                                text = if (stackRows) blockInCell.content.withParagraphTextAlignStart() else blockInCell.content,
+                                                                                style = renderedCellTextStyle.copy(
+                                                                                    fontWeight = FontWeight.Bold
+                                                                                ),
+                                                                                modifier = Modifier.fillMaxWidth(),
+                                                                                isDarkTheme = isDarkTheme,
+                                                                                themeBackgroundColor = effectiveBg,
+                                                                                themeTextColor = effectiveText,
+                                                                                onLinkClick = onLinkClickCallback,
+                                                                                onGeneralTap = onGeneralTapCallback,
+                                                                                wrapDiagnosticsContext = "page=${bookPageIndex + 1} source=table_cell tableBlock=${block.blockIndex} row=$rowIndex cell=$cellIndex cellBlock=${blockInCell.blockIndex}"
+                                                                            )
+                                                                        }
+
+                                                                        is ListItemBlock -> {
+                                                                            Row(
+                                                                                verticalAlignment = Alignment.Top
+                                                                            ) {
+                                                                                val itemMarker = blockInCell.itemMarker
+                                                                                if (itemMarker != null) {
+                                                                                    Text(
+                                                                                        text = itemMarker,
+                                                                                        style = renderedCellTextStyle,
+                                                                                        modifier = Modifier.padding(
+                                                                                            end = 4.dp
+                                                                                        )
+                                                                                    )
+                                                                                }
+                                                                                LinkAwareText(
+                                                                                    text = if (stackRows) blockInCell.content.withParagraphTextAlignStart() else blockInCell.content,
+                                                                                    style = renderedCellTextStyle,
+                                                                                    modifier = Modifier.weight(
+                                                                                        1f
+                                                                                    ),
+                                                                                    isDarkTheme = isDarkTheme,
+                                                                                    themeBackgroundColor = effectiveBg,
+                                                                                    themeTextColor = effectiveText,
+                                                                                    onLinkClick = onLinkClickCallback,
+                                                                                    onGeneralTap = onGeneralTapCallback,
+                                                                                    wrapDiagnosticsContext = "page=${bookPageIndex + 1} source=table_cell tableBlock=${block.blockIndex} row=$rowIndex cell=$cellIndex cellBlock=${blockInCell.blockIndex}"
+                                                                                )
+                                                                            }
+                                                                        }
+
+                                                                        is SpacerBlock -> {
+                                                                            Spacer(
+                                                                                modifier = Modifier.fillMaxWidth()
+                                                                                    .height(
+                                                                                        blockInCell.height
+                                                                                    )
+                                                                                    .drawCssBorders(
+                                                                                        blockInCell.style,
+                                                                                        density
+                                                                                    )
+                                                                            )
+                                                                        }
+
+                                                                        is ImageBlock -> if (!hideImages) {
+                                                                            AsyncImage(
+                                                                                model = Builder(
+                                                                                    LocalContext.current
+                                                                                ).data(
+                                                                                    File(
+                                                                                        blockInCell.path
+                                                                                    )
+                                                                                )
+                                                                                    .build(),
+                                                                                contentDescription = blockInCell.altText,
+                                                                                contentScale = imageContentScale(blockInCell.style),
+                                                                                modifier = tableCellImageModifier(
+                                                                                    block = blockInCell,
+                                                                                    density = density,
+                                                                                    imageSizeMultiplier = imageSizeMultiplier
+                                                                                )
+                                                                            )
+                                                                        }
+
+                                                                        is TextContentBlock -> {
+                                                                            LinkAwareText(
+                                                                                text = if (stackRows) blockInCell.content.withParagraphTextAlignStart() else blockInCell.content,
+                                                                                style = renderedCellTextStyle,
+                                                                                modifier = Modifier.fillMaxWidth(),
+                                                                                isDarkTheme = isDarkTheme,
+                                                                                themeBackgroundColor = effectiveBg,
+                                                                                themeTextColor = effectiveText,
+                                                                                onLinkClick = onLinkClickCallback,
+                                                                                onGeneralTap = onGeneralTapCallback,
+                                                                                wrapDiagnosticsContext = "page=${bookPageIndex + 1} source=table_cell tableBlock=${block.blockIndex} row=$rowIndex cell=$cellIndex cellBlock=${blockInCell.blockIndex}"
+                                                                            )
+                                                                        }
+
+                                                                        else -> {}
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        }
+                    } else {
+                        var chapterInfo by remember {
+                            mutableStateOf<Pair<String, Int?>?>(null)
+                        }
+                        LaunchedEffect(bookPageIndex) {
+                            chapterInfo = onGetChapterInfo(bookPageIndex)
+                        }
+
+                        ChapterLoadingPlaceholder(title = chapterInfo?.first)
+                    }
+                }
+            }
         }
     }
 
@@ -319,15 +2152,15 @@ internal fun PaginatedReaderContent(
                         },
                         beyondViewportPageCount = 1,
                         reverseLayout = isRightToLeftPagination
-                    ) { pageIndex ->
-                        val pageOffset =
-                            (pageIndex - pagerState.currentPage) - pagerState.currentPageOffsetFraction
-                        val zIndex = -pageOffset
+                    ) { spreadIndex ->
+                        val spreadOffset =
+                            (spreadIndex - pagerState.currentPage) - pagerState.currentPageOffsetFraction
+                        val spreadZIndex = -spreadOffset
 
-                        val pageModifier = if (isPageTurnAnimationEnabled) {
-                            Modifier.zIndex(zIndex).realisticBookPage(
+                        val spreadPageModifier = if (isPageTurnAnimationEnabled) {
+                            Modifier.zIndex(spreadZIndex).realisticBookPage(
                                 pagerState,
-                                pageIndex,
+                                spreadIndex,
                                 effectiveBg,
                                 isDarkTheme,
                                 pageTurnTouchY,
@@ -336,1717 +2169,39 @@ internal fun PaginatedReaderContent(
                             )
                         } else Modifier
 
-                        var pageContent by remember { mutableStateOf<Page?>(null) }
-                        var currentChapterPath by remember { mutableStateOf<String?>(null) }
-                        var pageLayoutCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
-                        val pageChapterIndex = onGetChapterIndex(pageIndex)
-                        val pageUserHighlights = highlightsForPaginatedPage(
-                            pageChapterIndex = pageChapterIndex,
-                            userHighlights = userHighlights
+                        val spreadBookPages = EpubPageSpread.visibleBookPagesForDisplay(
+                            spreadIndex = spreadIndex,
+                            totalBookPages = totalBookPageCount,
+                            isTwoPageSpread = isTwoPageSpread,
+                            isRightToLeft = isRightToLeftPagination
                         )
-                        val themedPageContent = remember(pageContent, isDarkTheme, effectiveBg, effectiveText) {
-                            pageContent?.applyReaderThemeForDisplay(
-                                isDarkTheme = isDarkTheme,
-                                themeBackgroundColor = effectiveBg,
-                                themeTextColor = effectiveText
+                        LaunchedEffect(spreadIndex, totalBookPageCount, isTwoPageSpread) {
+                            Timber.tag(EpubSpreadBlinkTag).d(
+                                "spread_slot spread=$spreadIndex books=$spreadBookPages totalBook=$totalBookPageCount twoPage=$isTwoPageSpread"
                             )
                         }
-
-                        if (pageUserHighlights.size != userHighlights.size) {
-                            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                                "page_scope page=$pageIndex pageChapter=$pageChapterIndex " +
-                                    "inputHighlightCount=${userHighlights.size} " +
-                                    "pageHighlightCount=${pageUserHighlights.size} " +
-                                    "inputHighlightChapters=${userHighlights.map { it.chapterIndex }.distinct()}"
+                        if (!isTwoPageSpread) {
+                            SpreadBookPage(
+                                bookPageIndex = spreadIndex,
+                                spreadPageModifier = spreadPageModifier,
+                                containerModifier = Modifier.fillMaxSize()
                             )
-                        }
-
-                        LaunchedEffect(pageIndex, uiState.generation) {
-                            if (DEBUG_PAGE_TURN_DIAG) {
-                                Timber.tag("PageTurnDiag").d("Page $pageIndex: Starting content fetch")
-                            }
-                            val fetchStartTime = if (DEBUG_PAGE_TURN_DIAG) System.currentTimeMillis() else 0L
-
-                            pageContent = onGetPage(pageIndex)
-
-                            if (DEBUG_PAGE_TURN_DIAG) {
-                                val fetchDuration = System.currentTimeMillis() - fetchStartTime
-                                Timber.tag("PageTurnDiag").d("Page $pageIndex: Content fetched in ${fetchDuration}ms")
-                            }
-
-                            onGetChapterPath(pageIndex)?.let { currentChapterPath = it }
-                        }
-
-                        LaunchedEffect(pageIndex, pageChapterIndex, currentChapterPath, themedPageContent) {
-                            if (!READER_LINK_DIAGNOSTICS_ENABLED) return@LaunchedEffect
-                            val page = themedPageContent ?: return@LaunchedEffect
-                            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
-                                "page_render page=$pageIndex chapter=$pageChapterIndex " +
-                                    "chapterPath=${currentChapterPath.orEmpty().readerLinkDiagPreview()} " +
-                                    page.readerPageLinkDiagSummary()
-                            )
-                        }
-
-                        val textBlocksOnPage =
-                            themedPageContent?.content?.extractTextBlocks()
-                                ?.filter { it.cfi != null } ?: emptyList()
-                        val lastTextBlock = textBlocksOnPage.lastOrNull()
-                        val lastBlockAbs = lastTextBlock?.let {
-                            when (it) {
-                                is ParagraphBlock -> it.startCharOffsetInSource
-                                is HeaderBlock -> it.startCharOffsetInSource
-                                is QuoteBlock -> it.startCharOffsetInSource
-                                is ListItemBlock -> it.startCharOffsetInSource
-                            }
-                        }
-
-                        LaunchedEffect(activeSelection, lastTextBlock, isDraggingHandle) {
-                            if (isDraggingHandle && activeSelection != null && lastTextBlock != null &&
-                                activeSelection!!.endPageIndex == pageIndex &&
-                                activeSelection!!.endBlockIndex == lastTextBlock.blockIndex &&
-                                activeSelection!!.endBlockCharOffset == lastBlockAbs) {
-                                if (activeSelection!!.endOffset >= lastTextBlock.content.text.length - 3) {
-                                    if (crossPageTriggerInfo?.first != pageIndex) {
-                                        Timber.tag("TextSelectionDiag")
-                                            .d("Cross-page trigger ACTIVATED. Selection at bottom-right of page $pageIndex.")
-                                        crossPageTriggerInfo = pageIndex to lastTextBlock.cfi!!
-                                    }
-                                    return@LaunchedEffect
-                                }
-                            }
-                            if (!isDraggingHandle && activeSelection == null && crossPageTriggerInfo?.first == pageIndex) {
-                                Timber.tag("TextSelectionDiag")
-                                    .d("Cross-page trigger CLEARED on page $pageIndex (Custom).")
-                                crossPageTriggerInfo = null
-                            }
-                        }
-
-                        // Smart Cross-page selection logic
-                        LaunchedEffect(pendingCrossPageSelection, pageContent) {
-                            val pending = pendingCrossPageSelection ?: return@LaunchedEffect
-                            if (pageIndex != pending.fromPageIndex + 1) return@LaunchedEffect
-                            val content = pageContent ?: return@LaunchedEffect
-
-                            val firstTextBlock =
-                                content.content.extractTextBlocks()
-                                    .firstOrNull { it.cfi != null } ?: run {
-                                    pendingCrossPageSelection = null
-                                    return@LaunchedEffect
-                                }
-
-                            var layoutInfo: Triple<TextLayoutResult, LayoutCoordinates, TextContentBlock>? =
-                                null
-                            for (i in 0 until 20) {
-                                layoutInfo = blockLayoutMap["${firstTextBlock.cfi}_$pageIndex"]
-                                if (layoutInfo != null && layoutInfo.second.isAttached) break
-                                delay(50)
-                            }
-
-                            if (layoutInfo == null || !layoutInfo.second.isAttached) {
-                                pendingCrossPageSelection = null
-                                return@LaunchedEffect
-                            }
-
-                            val text = firstTextBlock.content.text
-                            if (text.isEmpty()) {
-                                pendingCrossPageSelection = null
-                                return@LaunchedEffect
-                            }
-
-                            // Smart boundary logic (>10 chars & ends at a word)
-                            var endIndex = minOf(text.length, 10)
-                            if (text.length > 10) {
-                                for (i in 10 until text.length) {
-                                    if (text[i].isWhitespace() || !text[i].isLetterOrDigit()) {
-                                        endIndex = i
-                                        break
-                                    }
-                                }
-                            }
-
-                            try {
-                                val path = layoutInfo.first.getPathForRange(0, endIndex)
-                                val localRect = path.getBounds()
-                                val windowTopLeft =
-                                    layoutInfo.second.localToWindow(localRect.topLeft)
-                                val windowBottomRight =
-                                    layoutInfo.second.localToWindow(localRect.bottomRight)
-
-                                val previousSel = activeSelection
-
-                                val firstTextBlockAbs = when (firstTextBlock) {
-                                    is ParagraphBlock -> firstTextBlock.startCharOffsetInSource
-                                    is HeaderBlock -> firstTextBlock.startCharOffsetInSource
-                                    is QuoteBlock -> firstTextBlock.startCharOffsetInSource
-                                    is ListItemBlock -> firstTextBlock.startCharOffsetInSource
-                                }
-
-                                val newTextPerBlock = (previousSel?.textPerBlock ?: emptyMap()).toMutableMap()
-                                newTextPerBlock[
-                                    buildSelectionBlockKey(
-                                        pageIndex = pageIndex,
-                                        blockIndex = firstTextBlock.blockIndex,
-                                        blockCharOffset = firstTextBlockAbs
-                                    )
-                                ] = text.substring(0, endIndex)
-
-                                val newText = newTextPerBlock.entries
-                                    .sortedWith { first, second ->
-                                        compareSelectionBlockKeys(first.key, second.key)
-                                    }
-                                    .joinToString(" ") { it.value }
-
-                                activeSelection = PaginatedSelection(
-                                    startBlockIndex = previousSel?.startBlockIndex ?: firstTextBlock.blockIndex,
-                                    endBlockIndex = firstTextBlock.blockIndex,
-                                    startBaseCfi = previousSel?.startBaseCfi ?: firstTextBlock.cfi!!,
-                                    endBaseCfi = firstTextBlock.cfi!!,
-                                    startOffset = previousSel?.startOffset ?: 0,
-                                    endOffset = endIndex,
-                                    text = newText,
-                                    rect = Rect(windowTopLeft, windowBottomRight),
-                                    startPageIndex = previousSel?.startPageIndex ?: pending.fromPageIndex,
-                                    endPageIndex = pageIndex,
-                                    startBlockCharOffset = previousSel?.startBlockCharOffset ?: firstTextBlockAbs,
-                                    endBlockCharOffset = firstTextBlockAbs,
-                                    textPerBlock = newTextPerBlock
-                                )
-                            } catch (e: Exception) {
-                                Timber.e(e, "CrossPageSelection: Failed to create selection")
-                            }
-
-                            pendingCrossPageSelection = null
-                        }
-
-                        val onGeneralTapCallback: (Offset) -> Unit = { offset ->
-                            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
-                                "page_general_tap source=content page=$pageIndex x=${offset.x.roundToInt()} y=${offset.y.roundToInt()}"
-                            )
-                            activeSelection = null
-                            onTap(offset)
-                        }
-                        val onLinkClickCallback: (String) -> Unit = { href ->
-                            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
-                                "link_click_callback page=$pageIndex currentPagerPage=${pagerState.currentPage} " +
-                                    "chapterPath=${currentChapterPath.orEmpty().readerLinkDiagPreview()} " +
-                                    "href=${href.readerLinkDiagPreview()}"
-                            )
-                            if (href.isReaderExternalHref()) {
-                                Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
-                                    "external_link_dialog href=${href.readerLinkDiagPreview()}"
-                                )
-                                showExternalLinkDialog = href.readerExternalHrefForDisplay()
-                            } else {
-                                val path = currentChapterPath
-                                if (path == null) {
-                                    Timber.tag(TAG_PAGINATED_LINK_DIAG).w(
-                                        "internal_link_dropped reason=missing_current_chapter_path href=${href.readerLinkDiagPreview()}"
-                                    )
-                                } else {
-                                    onLinkClick(path, href) { targetPageIndex ->
-                                        onInternalLinkNavigated(targetPageIndex, null)
-                                        coroutineScope.launch {
-                                            Timber.tag(READER_UI_STABLE_PAGE_NAV_TAG).d(
-                                                "link_scroll targetPage=$targetPageIndex currentPage=${pagerState.currentPage}"
-                                            )
-                                            pagerState.scrollToPage(targetPageIndex)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        val latestPageLayoutCoordinates = rememberUpdatedState(pageLayoutCoordinates)
-                        val latestOnLinkClickCallback = rememberUpdatedState(onLinkClickCallback)
-                        val pageHorizontalPaddingPx = with(density) { horizontalPadding.roundToPx() }
-                        val pageVerticalPaddingPx = with(density) { verticalPadding.roundToPx() }
-                        val pageContentBoundsProvider = {
-                            pageLayoutCoordinates
-                                ?.takeIf { it.isAttached }
-                                ?.androidEpubPageContentBounds(
-                                    horizontalPaddingPx = pageHorizontalPaddingPx,
-                                    verticalPaddingPx = pageVerticalPaddingPx
-                                )
-                        }
-                        val cutoffLogSignatures = remember(pageIndex, uiState.generation) {
-                            mutableStateMapOf<String, Boolean>()
-                        }
-                        val renderedBlockBounds = remember(pageIndex, uiState.generation) {
-                            mutableStateMapOf<Int, AndroidEpubRenderedBlockBounds>()
-                        }
-                        val cutoffDiagnosticsEnabled = !uiState.isLoading
-                        // Only built while diagnostics are enabled: this ran on every
-                        // recomposition of every page slot otherwise, and was the sampled
-                        // allocation in a GC-pressure ANR.
-                        val cutoffDiagnosticsContext = if (cutoffDiagnosticsEnabled) {
-                            "generation=${uiState.generation} loading=${uiState.isLoading} pageCount=${uiState.totalPageCount} " +
-                                "density=${density.density} fontScale=${density.fontScale} " +
-                                "locale=${context.resources.configuration.locales[0]} " +
-                                "layoutDirection=${context.resources.configuration.layoutDirection}"
-                        } else ""
-
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(effectiveBg)
-                                .then(pageTextureModifier)
-                                .then(pageModifier)
-                                .onGloballyPositioned { coordinates ->
-                                    pageLayoutCoordinates = coordinates
-                                    if (cutoffDiagnosticsEnabled) {
-                                        logAndroidEpubPageBoundsIfNeeded(
-                                            pageIndex = pageIndex,
-                                            pageContentBounds = coordinates.androidEpubPageContentBounds(
-                                                horizontalPaddingPx = pageHorizontalPaddingPx,
-                                                verticalPaddingPx = pageVerticalPaddingPx
-                                            ),
-                                            diagnosticsContext = cutoffDiagnosticsContext,
-                                            signatureAlreadyLogged = { signature ->
-                                                cutoffLogSignatures[signature] == true
-                                            },
-                                            markSignatureLogged = { signature ->
-                                                cutoffLogSignatures[signature] = true
-                                            }
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxSize().then(spreadPageModifier),
+                                horizontalArrangement = Arrangement.spacedBy(
+                                    spreadGutterDp.dp,
+                                    Alignment.CenterHorizontally
+                                ),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                spreadBookPages.forEach { bookPage ->
+                                    key(bookPage) {
+                                        SpreadBookPage(
+                                            bookPageIndex = bookPage,
+                                            spreadPageModifier = Modifier,
+                                            containerModifier = Modifier.weight(1f).fillMaxHeight()
                                         )
-                                    }
-                                }
-                                .pointerInput(pageIndex, pageViewConfiguration.touchSlop) {
-                                    awaitEachGesture {
-                                        awaitReaderLinkTap(
-                                            source = "PageLinkInterceptor:page=$pageIndex",
-                                            urlAtPosition = { offset ->
-                                                val hit = latestPageLayoutCoordinates.value
-                                                    ?.takeIf { it.isAttached }
-                                                    ?.let { coordinates ->
-                                                        blockLayoutMap.readerLinkAtPagePosition(
-                                                            pageCoordinates = coordinates,
-                                                            pageIndex = pageIndex,
-                                                            position = offset
-                                                        )
-                                                    }
-                                                if (hit != null) {
-                                                    Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
-                                                        "page_link_interceptor_hit page=$pageIndex block=${hit.blockIndex} " +
-                                                            "cfi=${hit.cfi.orEmpty().readerLinkDiagPreview()} " +
-                                                            "href=${hit.href.readerLinkDiagPreview()}"
-                                                    )
-                                                }
-                                                hit?.href
-                                            },
-                                            touchSlop = pageViewConfiguration.touchSlop,
-                                            onLinkClick = { latestOnLinkClickCallback.value(it) }
-                                        )
-                                    }
-                                }
-                        ) {
-                            Box(modifier = Modifier.fillMaxSize()) {
-                                Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) {
-                                    detectTapGestures(
-                                        onTap = { offset ->
-                                            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
-                                                "page_general_tap source=background page=$pageIndex " +
-                                                    "x=${offset.x.roundToInt()} y=${offset.y.roundToInt()}"
-                                            )
-                                            activeSelection = null
-                                            onTap(offset)
-                                        })
-                                })
-                                Box(modifier = Modifier.fillMaxSize().padding(
-                                    horizontal = horizontalPadding,
-                                    vertical = verticalPadding
-                                ), contentAlignment = Alignment.TopStart) {
-                                    if (themedPageContent != null) {
-                                        val displayPage = themedPageContent
-
-                                        // Measure page blocks at their natural height; pagination, not Column, owns page breaks.
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .wrapContentHeight(unbounded = true)
-                                        ) {
-                                            val searchHighlightColor =
-                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-                                            val ttsHighlightColor =
-                                                MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
-
-                                            displayPage.content.forEach { block ->
-                                                val marginModifier = Modifier.padding(
-                                                    top = block.style.margin.top.coerceAtLeast(0.dp),
-                                                    bottom = block.style.margin.bottom.coerceAtLeast(
-                                                        0.dp
-                                                    )
-                                                )
-
-                                                val alignModifier =
-                                                    if (block.style.horizontalAlign == "center") {
-                                                        Modifier.align(Alignment.CenterHorizontally)
-                                                    } else {
-                                                        Modifier.padding(
-                                                            start = block.style.margin.left.coerceAtLeast(
-                                                                0.dp
-                                                            ),
-                                                            end = block.style.margin.right.coerceAtLeast(
-                                                                0.dp
-                                                            )
-                                                        )
-                                                    }
-
-                                                val widthModifier =
-                                                    if (block.style.width != Dp.Unspecified) {
-                                                        Modifier.width(block.style.width)
-                                                    } else {
-                                                        Modifier.fillMaxWidth()
-                                                    }.then(
-                                                        Modifier.widthIn(
-                                                            min = block.style.minWidth.takeIf { it.isSpecified && it > 0.dp } ?: Dp.Unspecified,
-                                                            max = block.style.maxWidth.takeIf { it.isSpecified && it > 0.dp } ?: Dp.Unspecified
-                                                        )
-                                                    )
-
-                                                val styleModifier =
-                                                    alignModifier.then(if (block.style.horizontalAlign == "center") widthModifier else Modifier)
-                                                        .drawCssBorders(
-                                                            blockStyle = block.style,
-                                                            density = density
-                                                        )
-                                                        .then(if (block.style.visibility == "hidden") Modifier.graphicsLayer(alpha = 0f) else Modifier)
-
-                                                val diagnosticModifier =
-                                                    Modifier.onGloballyPositioned { coordinates ->
-                                                        val actualHeight =
-                                                            coordinates.size.height
-                                                        if (cutoffDiagnosticsEnabled) {
-                                                            val pageContentBounds = pageContentBoundsProvider()
-                                                            if (pageContentBounds != null) {
-                                                                renderedBlockBounds[block.blockIndex] = AndroidEpubRenderedBlockBounds(
-                                                                    blockIndex = block.blockIndex,
-                                                                    kind = block.androidEpubKindName(),
-                                                                    leftPx = coordinates.positionInWindow().x.roundToInt(),
-                                                                    topPx = coordinates.positionInWindow().y.roundToInt() - pageContentBounds.topPx,
-                                                                    widthPx = coordinates.size.width,
-                                                                    heightPx = coordinates.size.height,
-                                                                    expectedHeightPx = block.expectedHeight,
-                                                                    sourceRange = block.androidEpubSourceRangeLabel(),
-                                                                    textChars = block.androidEpubTextCharCount(),
-                                                                    marginTopPx = with(density) { block.style.margin.top.coerceAtLeast(0.dp).roundToPx() },
-                                                                    marginBottomPx = with(density) { block.style.margin.bottom.coerceAtLeast(0.dp).roundToPx() },
-                                                                    paddingTopPx = with(density) { block.style.padding.top.coerceAtLeast(0.dp).roundToPx() },
-                                                                    paddingBottomPx = with(density) { block.style.padding.bottom.coerceAtLeast(0.dp).roundToPx() }
-                                                                )
-                                                            }
-                                                            val didLogOverflow = logAndroidEpubBlockOverflowIfNeeded(
-                                                                pageIndex = pageIndex,
-                                                                block = block,
-                                                                coordinates = coordinates,
-                                                                pageContentBounds = pageContentBounds,
-                                                                diagnosticsContext = cutoffDiagnosticsContext,
-                                                                signatureAlreadyLogged = { signature ->
-                                                                    cutoffLogSignatures[signature] == true
-                                                                },
-                                                                markSignatureLogged = { signature ->
-                                                                    cutoffLogSignatures[signature] = true
-                                                                }
-                                                            )
-                                                            if (didLogOverflow) {
-                                                                logAndroidEpubPageBlockBoundsIfNeeded(
-                                                                    pageIndex = pageIndex,
-                                                                    triggerBlock = block,
-                                                                    renderedBounds = renderedBlockBounds.values,
-                                                                    pageContentBounds = pageContentBounds,
-                                                                    diagnosticsContext = cutoffDiagnosticsContext,
-                                                                    signatureAlreadyLogged = { signature ->
-                                                                        cutoffLogSignatures[signature] == true
-                                                                    },
-                                                                    markSignatureLogged = { signature ->
-                                                                        cutoffLogSignatures[signature] = true
-                                                                    }
-                                                                )
-                                                            }
-                                                            logAndroidEpubRenderedTablePageIfNeeded(
-                                                                pageIndex = pageIndex,
-                                                                renderedBounds = renderedBlockBounds.values,
-                                                                pageContentBounds = pageContentBounds,
-                                                                diagnosticsContext = cutoffDiagnosticsContext,
-                                                                signatureAlreadyLogged = { signature ->
-                                                                    cutoffLogSignatures[signature] == true
-                                                                },
-                                                                markSignatureLogged = { signature ->
-                                                                    cutoffLogSignatures[signature] = true
-                                                                }
-                                                            )
-                                                            logAndroidEpubRenderedPageGapIfNeeded(
-                                                                pageIndex = pageIndex,
-                                                                renderedBounds = renderedBlockBounds.values,
-                                                                pageContentBounds = pageContentBounds,
-                                                                diagnosticsContext = cutoffDiagnosticsContext,
-                                                                signatureAlreadyLogged = { signature ->
-                                                                    cutoffLogSignatures[signature] == true
-                                                                },
-                                                                markSignatureLogged = { signature ->
-                                                                    cutoffLogSignatures[signature] = true
-                                                                }
-                                                            )
-                                                        }
-                                                        if (block.expectedHeight > 0) {
-                                                            val snippet = when (block) {
-                                                                is ParagraphBlock -> block.content.text.take(
-                                                                    50
-                                                                )
-
-                                                                is HeaderBlock -> block.content.text.take(
-                                                                    50
-                                                                )
-
-                                                                is QuoteBlock -> block.content.text.take(
-                                                                    50
-                                                                )
-
-                                                                is ListItemBlock -> block.content.text.take(
-                                                                    50
-                                                                )
-
-                                                                is TextContentBlock -> block.content.text.take(
-                                                                    50
-                                                                )
-
-                                                                else -> "Non-text content"
-                                                            }
-
-                                                            checkLayoutMismatch(
-                                                                blockIndex = block.blockIndex,
-                                                                blockType = block::class.simpleName
-                                                                    ?: "Block",
-                                                                expectedHeight = block.expectedHeight,
-                                                                actualHeight = actualHeight,
-                                                                textSnippet = snippet,
-                                                                diagnostics = buildString {
-                                                                    append("page=")
-                                                                    append(pageIndex)
-                                                                    append(", width=")
-                                                                    append(coordinates.size.width)
-                                                                    append("px, styleWidth=")
-                                                                    append(block.style.width)
-                                                                    append(", maxWidth=")
-                                                                    append(block.style.maxWidth)
-                                                                    append(", margin=")
-                                                                    append(block.style.margin)
-                                                                    append(", padding=")
-                                                                    append(block.style.padding)
-                                                                    append(", borders=(")
-                                                                    append(block.style.borderLeft?.width ?: 0.dp)
-                                                                    append(", ")
-                                                                    append(block.style.borderTop?.width ?: 0.dp)
-                                                                    append(", ")
-                                                                    append(block.style.borderRight?.width ?: 0.dp)
-                                                                    append(", ")
-                                                                    append(block.style.borderBottom?.width ?: 0.dp)
-                                                                    append(")")
-                                                                    when (block) {
-                                                                        is ParagraphBlock -> {
-                                                                            append(", start=")
-                                                                            append(block.startCharOffsetInSource)
-                                                                            append(", end=")
-                                                                            append(block.endCharOffsetInSource)
-                                                                            append(", chars=")
-                                                                            append(block.content.length)
-                                                                            append(", textAlign=")
-                                                                            append(block.textAlign)
-                                                                        }
-
-                                                                        is HeaderBlock -> {
-                                                                            append(", start=")
-                                                                            append(block.startCharOffsetInSource)
-                                                                            append(", end=")
-                                                                            append(block.endCharOffsetInSource)
-                                                                            append(", chars=")
-                                                                            append(block.content.length)
-                                                                            append(", textAlign=")
-                                                                            append(block.textAlign)
-                                                                        }
-
-                                                                        is QuoteBlock -> {
-                                                                            append(", start=")
-                                                                            append(block.startCharOffsetInSource)
-                                                                            append(", end=")
-                                                                            append(block.endCharOffsetInSource)
-                                                                            append(", chars=")
-                                                                            append(block.content.length)
-                                                                            append(", textAlign=")
-                                                                            append(block.textAlign)
-                                                                        }
-
-                                                                        is ListItemBlock -> {
-                                                                            append(", start=")
-                                                                            append(block.startCharOffsetInSource)
-                                                                            append(", end=")
-                                                                            append(block.endCharOffsetInSource)
-                                                                            append(", chars=")
-                                                                            append(block.content.length)
-                                                                        }
-
-                                                                        is TextContentBlock -> {
-                                                                            append(", chars=")
-                                                                            append(block.content.length)
-                                                                        }
-
-                                                                        else -> Unit
-                                                                    }
-                                                                },
-                                                                tolerance = 2
-                                                            )
-                                                        }
-                                                    }.then(marginModifier).then(styleModifier)
-
-                                                Box(
-                                                    modifier = diagnosticModifier
-                                                        .androidEpubNaturalHeight()
-                                                        .readerRelativeOffset(block.style)
-                                                ) {
-                                                    val paddingModifier = Modifier.padding(
-                                                        start = block.style.padding.left.coerceAtLeast(
-                                                            0.dp
-                                                        ) + (block.style.borderLeft?.width ?: 0.dp),
-                                                        top = block.style.padding.top.coerceAtLeast(
-                                                            0.dp
-                                                        ) + (block.style.borderTop?.width ?: 0.dp),
-                                                        end = block.style.padding.right.coerceAtLeast(
-                                                            0.dp
-                                                        ) + (block.style.borderRight?.width
-                                                            ?: 0.dp),
-                                                        bottom = block.style.padding.bottom.coerceAtLeast(
-                                                            0.dp
-                                                        ) + (block.style.borderBottom?.width
-                                                            ?: 0.dp)
-                                                    ).then(
-                                                        if (block.style.horizontalAlign != "center") widthModifier else Modifier.fillMaxWidth()
-                                                    )
-
-                                                    block.style.backgroundImage
-                                                        ?.trim()
-                                                        ?.takeIf { it.isNotBlank() && !it.contains("gradient(", ignoreCase = true) }
-                                                        ?.let { backgroundImagePath ->
-                                                            val backgroundFile = remember(backgroundImagePath) { File(backgroundImagePath) }
-                                                            AsyncImage(
-                                                                model = if (backgroundFile.exists()) backgroundFile else backgroundImagePath,
-                                                                contentDescription = null,
-                                                                modifier = Modifier.matchParentSize(),
-                                                                contentScale = imageContentScale(block.style)
-                                                            )
-                                                        }
-
-                                                    @Suppress("DEPRECATION") when (block) {
-                                                        is ChantScoreBlock -> NativeChantScore(block, textStyle, paddingModifier)
-                                                        is ParagraphBlock -> {
-                                                            val paragraphStyle = textStyle.copy(
-                                                                textAlign = block.textAlign
-                                                                    ?: textStyle.textAlign
-                                                            )
-                                                            val searchHighlighted =
-                                                                highlightQueryInText(
-                                                                    block.content,
-                                                                    searchQuery,
-                                                                    searchHighlightColor
-                                                                )
-                                                            val finalContent =
-                                                                if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-                                                                    buildAnnotatedString {
-                                                                        append(searchHighlighted)
-
-                                                                        // Define absolute ranges
-                                                                        val blockStartAbs =
-                                                                            block.startCharOffsetInSource
-                                                                        val blockEndAbs =
-                                                                            block.startCharOffsetInSource + searchHighlighted.length
-                                                                        val highlightStartAbs =
-                                                                            ttsHighlightInfo.offset
-                                                                        val highlightEndAbs =
-                                                                            ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-
-                                                                        // Calculate intersection
-                                                                        val intersectionStartAbs =
-                                                                            maxOf(
-                                                                                blockStartAbs,
-                                                                                highlightStartAbs
-                                                                            )
-                                                                        val intersectionEndAbs =
-                                                                            minOf(
-                                                                                blockEndAbs,
-                                                                                highlightEndAbs
-                                                                            )
-
-                                                                        // Check for overlap and apply
-                                                                        // style
-                                                                        if (intersectionStartAbs < intersectionEndAbs) {
-                                                                            val highlightStartRelative =
-                                                                                intersectionStartAbs - blockStartAbs
-                                                                            val highlightEndRelative =
-                                                                                intersectionEndAbs - blockStartAbs
-                                                                            addStyle(
-                                                                                style = SpanStyle(
-                                                                                    background = ttsHighlightColor
-                                                                                ),
-                                                                                start = highlightStartRelative,
-                                                                                end = highlightEndRelative
-                                                                            )
-                                                                        }
-                                                                    }
-                                                                } else {
-                                                                    searchHighlighted
-                                                                }
-
-                                                            @Suppress(
-                                                                "UnusedVariable",
-                                                                "Unused"
-                                                            ) val diagnosticModifier =
-                                                                if (block.textAlign == TextAlign.Justify) {
-                                                                    Modifier.onGloballyPositioned { coordinates ->
-                                                                        val width =
-                                                                            coordinates.size.width
-                                                                        Timber.d(
-                                                                            """
-                                                                [UI Render]
-                                                                Block Index: ${block.blockIndex}
-                                                                Text Start: ${
-                                                                                block.content.text.take(
-                                                                                    20
-                                                                                )
-                                                                            }...
-                                                                Actual Render Width Px: $width
-                                                                ------------------------------------------------
-                                                            """.trimIndent()
-                                                                        )
-                                                                    }
-                                                                } else {
-                                                                    Modifier
-                                                                }
-
-                                                            TextWithEmphasis(
-                                                                text = finalContent,
-                                                                style = paragraphStyle,
-                                                                modifier = paddingModifier,
-                                                                pageIndex = pageIndex,
-                                                                textMeasurer = textMeasurer,
-                                                                onLinkClick = onLinkClickCallback,
-                                                                onGeneralTap = onGeneralTapCallback,
-                                                                block = block,
-                                                                userHighlights = pageUserHighlights,
-                                                                activeSelection = activeSelection,
-                                                                onSelectionChange = { sel ->
-                                                                    activeSelection = sel
-                                                                },
-                                                                onHighlightClick = { highlight, _ ->
-                                                                    onNoteRequested(highlight.cfi)
-                                                                    activeSelection = null
-                                                                },
-                                                                isDarkTheme = isDarkTheme,
-                                                                themeBackgroundColor = effectiveBg,
-                                                                themeTextColor = effectiveText,
-                                                                pageContentBoundsProvider = pageContentBoundsProvider,
-                                                                cutoffDiagnosticsEnabled = cutoffDiagnosticsEnabled,
-                                                                cutoffDiagnosticsContext = cutoffDiagnosticsContext,
-                                                                onRegisterLayout = { layout, coords ->
-                                                                    if (block.cfi != null) blockLayoutMap["${block.cfi}_$pageIndex"] =
-                                                                        Triple(
-                                                                            layout,
-                                                                            coords,
-                                                                            block
-                                                                        )
-                                                                })
-                                                        }
-
-                                                        is HeaderBlock -> {
-                                                            val style = createHeaderTextStyle(
-                                                                baseStyle = textStyle,
-                                                                level = block.level,
-                                                                textAlign = block.textAlign
-                                                            )
-                                                            val searchHighlighted =
-                                                                highlightQueryInText(
-                                                                    block.content,
-                                                                    searchQuery,
-                                                                    searchHighlightColor
-                                                                )
-                                                            val finalContent =
-                                                                if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-                                                                    buildAnnotatedString {
-                                                                        append(searchHighlighted)
-
-                                                                        val blockStartAbs =
-                                                                            block.startCharOffsetInSource
-                                                                        val blockEndAbs =
-                                                                            block.startCharOffsetInSource + searchHighlighted.length
-                                                                        val highlightStartAbs =
-                                                                            ttsHighlightInfo.offset
-                                                                        val highlightEndAbs =
-                                                                            ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-
-                                                                        val intersectionStartAbs =
-                                                                            maxOf(
-                                                                                blockStartAbs,
-                                                                                highlightStartAbs
-                                                                            )
-                                                                        val intersectionEndAbs =
-                                                                            minOf(
-                                                                                blockEndAbs,
-                                                                                highlightEndAbs
-                                                                            )
-
-                                                                        if (intersectionStartAbs < intersectionEndAbs) {
-                                                                            val highlightStartRelative =
-                                                                                intersectionStartAbs - blockStartAbs
-                                                                            val highlightEndRelative =
-                                                                                intersectionEndAbs - blockStartAbs
-                                                                            addStyle(
-                                                                                style = SpanStyle(
-                                                                                    background = ttsHighlightColor
-                                                                                ),
-                                                                                start = highlightStartRelative,
-                                                                                end = highlightEndRelative
-                                                                            )
-                                                                        }
-                                                                    }
-                                                                } else {
-                                                                    searchHighlighted
-                                                                }
-                                                            TextWithEmphasis(
-                                                                text = finalContent,
-                                                                style = style,
-                                                                modifier = paddingModifier,
-                                                                pageIndex = pageIndex,
-                                                                textMeasurer = textMeasurer,
-                                                                onLinkClick = onLinkClickCallback,
-                                                                onGeneralTap = onGeneralTapCallback,
-                                                                block = block,
-                                                                userHighlights = pageUserHighlights,
-                                                                activeSelection = activeSelection,
-                                                                onSelectionChange = { sel ->
-                                                                    activeSelection = sel
-                                                                },
-                                                                onHighlightClick = { highlight, _ ->
-                                                                    onNoteRequested(
-                                                                        highlight.cfi
-                                                                    )
-                                                                    activeSelection = null
-                                                                },
-                                                                isDarkTheme = isDarkTheme,
-                                                                themeBackgroundColor = effectiveBg,
-                                                                themeTextColor = effectiveText,
-                                                                pageContentBoundsProvider = pageContentBoundsProvider,
-                                                                cutoffDiagnosticsEnabled = cutoffDiagnosticsEnabled,
-                                                                cutoffDiagnosticsContext = cutoffDiagnosticsContext,
-                                                                onRegisterLayout = { layout, coords ->
-                                                                    if (block.cfi != null) blockLayoutMap["${block.cfi}_$pageIndex"] =
-                                                                        Triple(
-                                                                            layout,
-                                                                            coords,
-                                                                            block
-                                                                        )
-                                                                })
-                                                        }
-
-                                                        is QuoteBlock -> {
-                                                            val quoteStyle = textStyle.copy(
-                                                                textAlign = block.textAlign
-                                                                    ?: textStyle.textAlign
-                                                            )
-                                                            val quoteModifier =
-                                                                paddingModifier.padding(start = 16.dp)
-                                                            val searchHighlighted =
-                                                                highlightQueryInText(
-                                                                    block.content,
-                                                                    searchQuery,
-                                                                    searchHighlightColor
-                                                                )
-                                                            val finalContent =
-                                                                if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-                                                                    buildAnnotatedString {
-                                                                        append(searchHighlighted)
-
-                                                                        val blockStartAbs =
-                                                                            block.startCharOffsetInSource
-                                                                        val blockEndAbs =
-                                                                            block.startCharOffsetInSource + searchHighlighted.length
-                                                                        val highlightStartAbs =
-                                                                            ttsHighlightInfo.offset
-                                                                        val highlightEndAbs =
-                                                                            ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-
-                                                                        val intersectionStartAbs =
-                                                                            maxOf(
-                                                                                blockStartAbs,
-                                                                                highlightStartAbs
-                                                                            )
-                                                                        val intersectionEndAbs =
-                                                                            minOf(
-                                                                                blockEndAbs,
-                                                                                highlightEndAbs
-                                                                            )
-
-                                                                        if (intersectionStartAbs < intersectionEndAbs) {
-                                                                            val highlightStartRelative =
-                                                                                intersectionStartAbs - blockStartAbs
-                                                                            val highlightEndRelative =
-                                                                                intersectionEndAbs - blockStartAbs
-                                                                            addStyle(
-                                                                                style = SpanStyle(
-                                                                                    background = ttsHighlightColor
-                                                                                ),
-                                                                                start = highlightStartRelative,
-                                                                                end = highlightEndRelative
-                                                                            )
-                                                                        }
-                                                                    }
-                                                                } else {
-                                                                    searchHighlighted
-                                                                }
-                                                            TextWithEmphasis(
-                                                                text = finalContent,
-                                                                style = quoteStyle,
-                                                                modifier = quoteModifier,
-                                                                pageIndex = pageIndex,
-                                                                textMeasurer = textMeasurer,
-                                                                onLinkClick = onLinkClickCallback,
-                                                                onGeneralTap = onGeneralTapCallback,
-                                                                block = block,
-                                                                userHighlights = pageUserHighlights,
-                                                                activeSelection = activeSelection,
-                                                                onSelectionChange = { sel ->
-                                                                    activeSelection = sel
-                                                                },
-                                                                onHighlightClick = { highlight, _ ->
-                                                                    onNoteRequested(highlight.cfi)
-                                                                    activeSelection = null
-                                                                },
-                                                                isDarkTheme = isDarkTheme,
-                                                                themeBackgroundColor = effectiveBg,
-                                                                themeTextColor = effectiveText,
-                                                                pageContentBoundsProvider = pageContentBoundsProvider,
-                                                                cutoffDiagnosticsEnabled = cutoffDiagnosticsEnabled,
-                                                                cutoffDiagnosticsContext = cutoffDiagnosticsContext,
-                                                                onRegisterLayout = { layout, coords ->
-                                                                    if (block.cfi != null) blockLayoutMap["${block.cfi}_$pageIndex"] =
-                                                                        Triple(
-                                                                            layout,
-                                                                            coords,
-                                                                            block
-                                                                        )
-                                                                })
-                                                        }
-
-                                                        is ListItemBlock -> {
-                                                            Row(
-                                                                modifier = paddingModifier,
-                                                                verticalAlignment = Alignment.Top
-                                                            ) {
-                                                                val markerAreaModifier =
-                                                                    Modifier.width(32.dp)
-                                                                        .padding(end = 8.dp)
-                                                                val itemMarkerImage = block.itemMarkerImage
-                                                                val itemMarker = block.itemMarker
-
-                                                                if (itemMarkerImage != null) {
-                                                                    val imageRequest =
-                                                                        Builder(LocalContext.current).data(
-                                                                            File(
-                                                                                itemMarkerImage
-                                                                            )
-                                                                        ).crossfade(true).build()
-                                                                    val imageSize = with(density) {
-                                                                        (textStyle.fontSize.value * 0.8f).sp.toDp()
-                                                                    }
-
-                                                                    AsyncImage(
-                                                                        model = imageRequest,
-                                                                        contentDescription = stringResource(R.string.content_desc_list_item_marker),
-                                                                        modifier = markerAreaModifier.height(
-                                                                            imageSize
-                                                                        ),
-                                                                        alignment = Alignment.CenterEnd,
-                                                                        contentScale = ContentScale.FillHeight
-                                                                    )
-                                                                } else if (itemMarker != null) {
-                                                                    Text(
-                                                                        text = itemMarker,
-                                                                        style = textStyle.copy(
-                                                                            textAlign = TextAlign.End
-                                                                        ),
-                                                                        modifier = markerAreaModifier
-                                                                    )
-                                                                }
-                                                                val searchHighlighted =
-                                                                    highlightQueryInText(
-                                                                        block.content,
-                                                                        searchQuery,
-                                                                        searchHighlightColor
-                                                                    )
-                                                                val finalContent =
-                                                                    if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-                                                                        buildAnnotatedString {
-                                                                            append(searchHighlighted)
-
-                                                                            val blockStartAbs =
-                                                                                block.startCharOffsetInSource
-                                                                            val blockEndAbs =
-                                                                                block.startCharOffsetInSource + searchHighlighted.length
-                                                                            val highlightStartAbs =
-                                                                                ttsHighlightInfo.offset
-                                                                            val highlightEndAbs =
-                                                                                ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-
-                                                                            val intersectionStartAbs =
-                                                                                maxOf(
-                                                                                    blockStartAbs,
-                                                                                    highlightStartAbs
-                                                                                )
-                                                                            val intersectionEndAbs =
-                                                                                minOf(
-                                                                                    blockEndAbs,
-                                                                                    highlightEndAbs
-                                                                                )
-
-                                                                            if (intersectionStartAbs < intersectionEndAbs) {
-                                                                                val highlightStartRelative =
-                                                                                    intersectionStartAbs - blockStartAbs
-                                                                                val highlightEndRelative =
-                                                                                    intersectionEndAbs - blockStartAbs
-                                                                                addStyle(
-                                                                                    style = SpanStyle(
-                                                                                        background = ttsHighlightColor
-                                                                                    ),
-                                                                                    start = highlightStartRelative,
-                                                                                    end = highlightEndRelative
-                                                                                )
-                                                                            }
-                                                                        }
-                                                                    } else {
-                                                                        searchHighlighted
-                                                                    }
-                                                                TextWithEmphasis(
-                                                                    text = finalContent,
-                                                                    style = textStyle,
-                                                                    modifier = Modifier.weight(1f),
-                                                                    pageIndex = pageIndex,
-                                                                    textMeasurer = textMeasurer,
-                                                                    onLinkClick = onLinkClickCallback,
-                                                                    onGeneralTap = onGeneralTapCallback,
-                                                                    block = block,
-                                                                    userHighlights = pageUserHighlights,
-                                                                    activeSelection = activeSelection,
-                                                                    onSelectionChange = { sel ->
-                                                                        activeSelection = sel
-                                                                    },
-                                                                    onHighlightClick = { highlight, _ ->
-                                                                        onNoteRequested(highlight.cfi)
-                                                                        activeSelection = null
-                                                                    },
-                                                                    isDarkTheme = isDarkTheme,
-                                                                    themeBackgroundColor = effectiveBg,
-                                                                    themeTextColor = effectiveText,
-                                                                    pageContentBoundsProvider = pageContentBoundsProvider,
-                                                                    cutoffDiagnosticsEnabled = cutoffDiagnosticsEnabled,
-                                                                    cutoffDiagnosticsContext = cutoffDiagnosticsContext,
-                                                                    onRegisterLayout = { layout, coords ->
-                                                                        if (block.cfi != null) blockLayoutMap["${block.cfi}_$pageIndex"] =
-                                                                            Triple(
-                                                                                layout,
-                                                                                coords,
-                                                                                block
-                                                                            )
-                                                                    })
-                                                            }
-                                                        }
-
-                                                        is WrappingContentBlock -> {
-                                                            WrappingContentLayout(
-                                                                block = block,
-                                                                textStyle = textStyle,
-                                                                imageSizeMultiplier = imageSizeMultiplier,
-                                                                hideImages = hideImages,
-                                                                modifier = paddingModifier,
-                                                                searchQuery = searchQuery,
-                                                                ttsHighlightInfo = ttsHighlightInfo,
-                                                                searchHighlightColor = searchHighlightColor,
-                                                                ttsHighlightColor = ttsHighlightColor,
-                                                                isDarkTheme = isDarkTheme,
-                                                                themeBackgroundColor = effectiveBg,
-                                                                themeTextColor = effectiveText,
-                                                                onLinkClick = onLinkClickCallback,
-                                                                onGeneralTap = onGeneralTapCallback
-                                                            )
-                                                        }
-
-                                                        is FlexContainerBlock -> {
-
-                                                            if (block.style.flexDirection == "row") {
-                                                                val horizontalArrangement =
-                                                                    when (block.style.justifyContent) {
-                                                                        "center" -> Arrangement.Center
-                                                                        "flex-end" -> Arrangement.End
-                                                                        "space-between" -> Arrangement.SpaceBetween
-                                                                        "space-around" -> Arrangement.SpaceAround
-                                                                        else -> Arrangement.Start
-                                                                    }
-                                                                val verticalAlignment =
-                                                                    when (block.style.alignItems) {
-                                                                        "center" -> Alignment.CenterVertically
-                                                                        "flex-end" -> Alignment.Bottom
-                                                                        else -> Alignment.Top
-                                                                    }
-                                                                val chantChildren: @Composable () -> Unit = {
-                                                                    block.children.forEach { childBlock ->
-                                                                        RenderFlexChildBlock(
-                                                                            childBlock = childBlock,
-                                                                            textStyle = textStyle,
-                                                                            imageSizeMultiplier = imageSizeMultiplier,
-                                                                            hideImages = hideImages,
-                                                                            searchQuery = searchQuery,
-                                                                            searchHighlightColor = searchHighlightColor,
-                                                                            ttsHighlightInfo = ttsHighlightInfo,
-                                                                            ttsHighlightColor = ttsHighlightColor,
-                                                                            textMeasurer = textMeasurer,
-                                                                            onLinkClickCallback = onLinkClickCallback,
-                                                                            onGeneralTapCallback = onGeneralTapCallback,
-                                                                            userHighlights = pageUserHighlights,
-                                                                            activeSelection = activeSelection,
-                                                                            onSelectionChange = { sel ->
-                                                                                activeSelection =
-                                                                                    sel
-                                                                            },
-                                                                            onHighlightClick = { highlight, _ ->
-                                                                                onNoteRequested(
-                                                                                    highlight.cfi
-                                                                                )
-                                                                                activeSelection =
-                                                                                    null
-                                                                            },
-                                                                            isDarkTheme = isDarkTheme,
-                                                                            themeBackgroundColor = effectiveBg,
-                                                                            themeTextColor = effectiveText,
-                                                                            blockLayoutMap = blockLayoutMap,
-                                                                            density = density,
-                                                                            imageLoader = imageLoader,
-                                                                            pageIndex = pageIndex
-                                                                        )
-                                                                    }
-                                                                }
-                                                                if (block.style.display == "reader-chant-flow") {
-                                                                    FlowRow(
-                                                                        modifier = paddingModifier.fillMaxWidth(),
-                                                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                                                        verticalArrangement = Arrangement.Bottom,
-                                                                        content = { chantChildren() }
-                                                                    )
-                                                                } else {
-                                                                    Row(
-                                                                        modifier = paddingModifier.fillMaxWidth(),
-                                                                        horizontalArrangement = horizontalArrangement,
-                                                                        verticalAlignment = verticalAlignment,
-                                                                        content = { chantChildren() }
-                                                                    )
-                                                                }
-                                                            } else {
-                                                                val verticalArrangement =
-                                                                    when (block.style.justifyContent) {
-                                                                        "center" -> Arrangement.Center
-                                                                        "flex-end" -> Arrangement.Bottom
-                                                                        "space-between" -> Arrangement.SpaceBetween
-                                                                        "space-around" -> Arrangement.SpaceAround
-                                                                        else -> Arrangement.Top
-                                                                    }
-                                                                val horizontalAlignment =
-                                                                    when (block.style.alignItems) {
-                                                                        "center" -> Alignment.CenterHorizontally
-                                                                        "flex-end" -> Alignment.End
-                                                                        else -> Alignment.Start
-                                                                    }
-                                                                Column(
-                                                                    modifier = paddingModifier.fillMaxWidth(),
-                                                                    verticalArrangement = verticalArrangement,
-                                                                    horizontalAlignment = horizontalAlignment
-                                                                ) {
-                                                                    block.children.forEach { childBlock ->
-                                                                        RenderFlexChildBlock(
-                                                                            childBlock = childBlock,
-                                                                            textStyle = textStyle,
-                                                                            imageSizeMultiplier = imageSizeMultiplier,
-                                                                            hideImages = hideImages,
-                                                                            searchQuery = searchQuery,
-                                                                            searchHighlightColor = searchHighlightColor,
-                                                                            ttsHighlightInfo = ttsHighlightInfo,
-                                                                            ttsHighlightColor = ttsHighlightColor,
-                                                                            textMeasurer = textMeasurer,
-                                                                            onLinkClickCallback = onLinkClickCallback,
-                                                                            onGeneralTapCallback = onGeneralTapCallback,
-                                                                            userHighlights = pageUserHighlights,
-                                                                            activeSelection = activeSelection,
-                                                                            onSelectionChange = { sel ->
-                                                                                activeSelection =
-                                                                                    sel
-                                                                            },
-                                                                            onHighlightClick = { highlight, _ ->
-                                                                                onNoteRequested(
-                                                                                    highlight.cfi
-                                                                                )
-                                                                                activeSelection =
-                                                                                    null
-                                                                            },
-                                                                            isDarkTheme = isDarkTheme,
-                                                                            themeBackgroundColor = effectiveBg,
-                                                                            themeTextColor = effectiveText,
-                                                                            blockLayoutMap = blockLayoutMap,
-                                                                            density = density,
-                                                                            imageLoader = imageLoader,
-                                                                            pageIndex = pageIndex
-                                                                        )
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-
-                                                        is MathBlock -> {
-                                                            val svgContent = block.svgContent?.takeIf { it.isNotBlank() }
-                                                            Timber.d(
-                                                                "PaginatedReader: Rendering MathBlock. Alt: '${block.altText}', Has SVG: ${svgContent != null}"
-                                                            )
-                                                            if (svgContent != null) {
-                                                                val nonBlankSvgContent = svgContent
-                                                                BoxWithConstraints(
-                                                                    modifier = paddingModifier
-                                                                ) {
-                                                                    val localDensity =
-                                                                        LocalDensity.current
-                                                                    val fontSizePx =
-                                                                        with(localDensity) {
-                                                                            textStyle.fontSize.toPx()
-                                                                        }
-                                                                    val containerWidthPx =
-                                                                        with(localDensity) {
-                                                                            maxWidth.roundToPx()
-                                                                        }
-                                                                    val widthPx = parseSvgDimension(
-                                                                        block.svgWidth,
-                                                                        fontSizePx,
-                                                                        containerWidthPx,
-                                                                        localDensity
-                                                                    )
-                                                                    val heightPx =
-                                                                        parseSvgDimension(
-                                                                            block.svgHeight,
-                                                                            fontSizePx,
-                                                                            containerWidthPx,
-                                                                            localDensity
-                                                                        )
-
-                                                                    var imageModifier: Modifier =
-                                                                        Modifier
-                                                                    if (widthPx != null) {
-                                                                        val finalWidthDp =
-                                                                            with(localDensity) { widthPx.toDp() }
-                                                                        Timber.d("Applying calculated width to MathBlock image: $finalWidthDp")
-                                                                        imageModifier =
-                                                                            imageModifier.width(
-                                                                                finalWidthDp
-                                                                            )
-                                                                    } else {
-                                                                        Timber.w("Could not calculate a specific width for MathBlock. It will fill available space.")
-                                                                        imageModifier =
-                                                                            imageModifier.fillMaxWidth()
-                                                                    }
-
-                                                                    if (heightPx != null) {
-                                                                        val finalHeightDp =
-                                                                            with(localDensity) { heightPx.toDp() }
-                                                                        Timber.d("Applying calculated height to MathBlock image: $finalHeightDp")
-                                                                        imageModifier =
-                                                                            imageModifier.height(
-                                                                                finalHeightDp
-                                                                            )
-                                                                    } else {
-                                                                        val viewBoxParts =
-                                                                            block.svgViewBox?.split(
-                                                                                ' ',
-                                                                                ','
-                                                                            )
-                                                                                ?.mapNotNull { it.toFloatOrNull() }
-                                                                        if (viewBoxParts != null && viewBoxParts.size == 4 && viewBoxParts[2] > 0) {
-                                                                            val aspectRatio =
-                                                                                viewBoxParts[3] / viewBoxParts[2]
-                                                                            val effectiveWidth =
-                                                                                widthPx
-                                                                                    ?: containerWidthPx.toFloat()
-                                                                            val finalHeightDp =
-                                                                                with(localDensity) { (effectiveWidth * aspectRatio).toDp() }
-                                                                            imageModifier =
-                                                                                imageModifier.height(
-                                                                                    finalHeightDp
-                                                                                )
-                                                                        } else {
-                                                                            val fallbackHeightDp =
-                                                                                with(localDensity) { (textStyle.fontSize.value * 3).sp.toDp() }
-                                                                            imageModifier =
-                                                                                imageModifier.height(
-                                                                                    fallbackHeightDp
-                                                                                )
-                                                                        }
-                                                                    }
-
-                                                                    val imageRequest =
-                                                                        Builder(LocalContext.current).data(
-                                                                            SvgData(
-                                                                                nonBlankSvgContent
-                                                                            )
-                                                                        ).listener(
-                                                                            onError = { _, result ->
-                                                                                Timber.e(
-                                                                                    result.throwable,
-                                                                                    "Coil failed to load SVG for MathBlock."
-                                                                                )
-                                                                            }).build()
-
-                                                                    val colorFilter =
-                                                                        if (block.isFromMathJax) ColorFilter.tint(
-                                                                            textStyle.color
-                                                                        )
-                                                                        else null
-
-                                                                    AsyncImage(
-                                                                        model = imageRequest,
-                                                                        contentDescription = block.altText
-                                                                            ?: "Equation",
-                                                                        modifier = imageModifier,
-                                                                        contentScale = ContentScale.Fit,
-                                                                        colorFilter = colorFilter,
-                                                                        imageLoader = imageLoader
-                                                                    )
-                                                                }
-                                                            } else {
-                                                                Timber.w(
-                                                                    "PaginatedReader: MathBlock has no SVG content, rendering alt text."
-                                                                )
-                                                                Text(
-                                                                    text = block.altText
-                                                                        ?: "[Equation not available]",
-                                                                    style = textStyle,
-                                                                    modifier = paddingModifier
-                                                                )
-                                                            }
-                                                        }
-
-                                                        is ImageBlock -> if (!hideImages) {
-                                                            val style = block.style
-                                                            val colorFilter =
-                                                                if (block.style.filter == "invert(100%)") {
-                                                                    val matrix = floatArrayOf(
-                                                                        -1f,
-                                                                        0f,
-                                                                        0f,
-                                                                        0f,
-                                                                        255f,
-                                                                        0f,
-                                                                        -1f,
-                                                                        0f,
-                                                                        0f,
-                                                                        255f,
-                                                                        0f,
-                                                                        0f,
-                                                                        -1f,
-                                                                        0f,
-                                                                        255f,
-                                                                        0f,
-                                                                        0f,
-                                                                        0f,
-                                                                        1f,
-                                                                        0f
-                                                                    )
-                                                                    ColorFilter.colorMatrix(
-                                                                        ColorMatrix(matrix)
-                                                                    )
-                                                                } else {
-                                                                    null
-                                                                }
-                                                            val context = LocalContext.current
-                                                            val imageRequest =
-                                                                Builder(context).data(File(block.path))
-                                                                    .listener(onSuccess = { _, _ ->
-                                                                        Timber.d(
-                                                                            "Coil successfully loaded image: ${block.path}"
-                                                                        )
-                                                                    }, onError = { _, result ->
-                                                                        Timber.e(
-                                                                            result.throwable,
-                                                                            "Coil FAILED to load image: ${block.path}"
-                                                                        )
-                                                                    }).crossfade(true).build()
-
-                                                            BoxWithConstraints(
-                                                                modifier = paddingModifier,
-                                                                contentAlignment = imageBlockContentAlignment(style)
-                                                            ) {
-                                                                val scaledSize = computeImageRenderSizeDp(
-                                                                    block = block,
-                                                                    density = density,
-                                                                    maxWidthDp = maxWidth,
-                                                                    imageSizeMultiplier = imageSizeMultiplier
-                                                                )
-                                                                val finalImageModifier = Modifier
-                                                                    .then(
-                                                                        if (scaledSize != null) {
-                                                                            Modifier.width(scaledSize.first).height(scaledSize.second)
-                                                                        } else if (style.width.isSpecified && style.width > 0.dp) {
-                                                                            Modifier.width(style.width)
-                                                                        } else {
-                                                                            Modifier.fillMaxWidth()
-                                                                        }
-                                                                    )
-                                                                    .then(
-                                                                        if (scaledSize == null && style.maxWidth.isSpecified && style.maxWidth > 0.dp) {
-                                                                            Modifier.widthIn(max = style.maxWidth)
-                                                                        } else {
-                                                                            Modifier
-                                                                        }
-                                                                    )
-                                                                    .then(
-                                                                        if (scaledSize == null) {
-                                                                            if (block.expectedHeight > 0) {
-                                                                                Modifier.height(with(density) { (block.expectedHeight * imageSizeMultiplier).toDp() })
-                                                                            } else {
-                                                                                Modifier.height(250.dp)
-                                                                            }
-                                                                        } else {
-                                                                            Modifier
-                                                                        }
-                                                                    )
-
-                                                                AsyncImage(
-                                                                    model = imageRequest,
-                                                                    contentDescription = block.altText
-                                                                        ?: "Image from EPUB",
-                                                                    modifier = finalImageModifier,
-                                                                    contentScale = imageContentScale(style),
-                                                                    colorFilter = colorFilter
-                                                                )
-                                                            }
-                                                        }
-
-                                                        is SpacerBlock -> {
-                                                            Box(
-                                                                modifier = Modifier.fillMaxWidth()
-                                                                    .height(block.height)
-                                                                    .drawCssBorders(
-                                                                        block.style,
-                                                                        density
-                                                                    )
-                                                            )
-                                                        }
-
-                                                        is TableBlock -> {
-                                                            Column(modifier = paddingModifier) {
-                                                                val stackRows = block.shouldStackRowsForNarrowPagination()
-                                                                val rowsForLayout = if (stackRows) {
-                                                                    block.rowsForNarrowPaginationLayout()
-                                                                } else {
-                                                                    block.rows
-                                                                }
-                                                                rowsForLayout.forEachIndexed { rowIndex, tableRow ->
-                                                                    val rowModifier = if (stackRows) {
-                                                                        Modifier.fillMaxWidth()
-                                                                    } else {
-                                                                        Modifier.fillMaxWidth()
-                                                                            .height(
-                                                                                IntrinsicSize.Min
-                                                                            )
-                                                                    }
-                                                                    val rowTextChars = tableRow.sumOf { rowCell ->
-                                                                        rowCell.content.sumOf { it.androidEpubTextCharCount() }
-                                                                    }
-                                                                    val rowDiagnosticModifier =
-                                                                        if (cutoffDiagnosticsEnabled) {
-                                                                            Modifier.onGloballyPositioned { coordinates ->
-                                                                                logAndroidEpubRenderedTablePartIfNeeded(
-                                                                                    pageIndex = pageIndex,
-                                                                                    tableBlockIndex = block.blockIndex,
-                                                                                    partKind = "row",
-                                                                                    rowIndex = rowIndex,
-                                                                                    cellIndex = null,
-                                                                                    coordinates = coordinates,
-                                                                                    pageContentBounds = pageContentBoundsProvider(),
-                                                                                    stackRows = stackRows,
-                                                                                    tableExpectedHeightPx = block.expectedHeight,
-                                                                                    rowCount = rowsForLayout.size,
-                                                                                    textChars = rowTextChars,
-                                                                                    paddingTopPx = 0,
-                                                                                    paddingBottomPx = 0,
-                                                                                    isLikelySpeakerCell = false,
-                                                                                    diagnosticsContext = cutoffDiagnosticsContext,
-                                                                                    signatureAlreadyLogged = { signature ->
-                                                                                        cutoffLogSignatures[signature] == true
-                                                                                    },
-                                                                                    markSignatureLogged = { signature ->
-                                                                                        cutoffLogSignatures[signature] = true
-                                                                                    }
-                                                                                )
-                                                                            }
-                                                                        } else {
-                                                                            Modifier
-                                                                        }
-                                                                    Row(
-                                                                        rowModifier.then(rowDiagnosticModifier)
-                                                                    ) {
-                                                                        val hasFixedWidths =
-                                                                            !stackRows && tableRow.any {
-                                                                                it.style.blockStyle.width != Dp.Unspecified
-                                                                            }
-
-                                                                        tableRow.forEachIndexed { cellIndex, cell ->
-                                                                            val cellStyle =
-                                                                                cell.style.blockStyle
-
-                                                                            val cellContainerModifier =
-                                                                                if (stackRows) {
-                                                                                    Modifier.fillMaxWidth()
-                                                                                } else if (hasFixedWidths) {
-                                                                                    if (cellStyle.width != Dp.Unspecified) Modifier.width(
-                                                                                        cellStyle.width
-                                                                                    )
-                                                                                    else Modifier.weight(
-                                                                                        cell.colspan.coerceAtLeast(1).toFloat(),
-                                                                                        fill = true
-                                                                                    )
-                                                                                } else {
-                                                                                    Modifier.weight(
-                                                                                        cell.colspan.coerceAtLeast(1).toFloat(),
-                                                                                        fill = true
-                                                                                    )
-                                                                                }
-
-                                                                            val alignment =
-                                                                                if (stackRows) {
-                                                                                    Alignment.Start
-                                                                                } else {
-                                                                                    when (cell.style.paragraphStyle.textAlign) {
-                                                                                        TextAlign.Center -> Alignment.CenterHorizontally
-                                                                                        TextAlign.End -> Alignment.End
-                                                                                        else -> Alignment.Start
-                                                                                    }
-                                                                                }
-
-                                                                            val stackedCellTopPadding = cellStyle.padding.top.coerceAtLeast(0.dp)
-                                                                            val cellTextChars = cell.content.sumOf { it.androidEpubTextCharCount() }
-                                                                            val cellPaddingTopPx = with(density) { cellStyle.padding.top.coerceAtLeast(0.dp).roundToPx() }
-                                                                            val cellPaddingBottomPx = with(density) { cellStyle.padding.bottom.coerceAtLeast(0.dp).roundToPx() }
-                                                                            val cellDiagnosticModifier =
-                                                                                if (cutoffDiagnosticsEnabled) {
-                                                                                    Modifier.onGloballyPositioned { coordinates ->
-                                                                                        logAndroidEpubRenderedTablePartIfNeeded(
-                                                                                            pageIndex = pageIndex,
-                                                                                            tableBlockIndex = block.blockIndex,
-                                                                                            partKind = "cell",
-                                                                                            rowIndex = rowIndex,
-                                                                                            cellIndex = cellIndex,
-                                                                                            coordinates = coordinates,
-                                                                                            pageContentBounds = pageContentBoundsProvider(),
-                                                                                            stackRows = stackRows,
-                                                                                            tableExpectedHeightPx = block.expectedHeight,
-                                                                                            rowCount = rowsForLayout.size,
-                                                                                            textChars = cellTextChars,
-                                                                                            paddingTopPx = cellPaddingTopPx,
-                                                                                            paddingBottomPx = cellPaddingBottomPx,
-                                                                                            isLikelySpeakerCell = cell.isLikelyDramaSpeakerCell(),
-                                                                                            diagnosticsContext = cutoffDiagnosticsContext,
-                                                                                            signatureAlreadyLogged = { signature ->
-                                                                                                cutoffLogSignatures[signature] == true
-                                                                                            },
-                                                                                            markSignatureLogged = { signature ->
-                                                                                                cutoffLogSignatures[signature] = true
-                                                                                            }
-                                                                                        )
-                                                                                    }
-                                                                                } else {
-                                                                                    Modifier
-                                                                                }
-                                                                            val cellModifier =
-                                                                                cellContainerModifier
-                                                                                    .then(
-                                                                                        if (cellStyle.backgroundColor.isSpecified) {
-                                                                                            Modifier.background(
-                                                                                                cellStyle.backgroundColor
-                                                                                            )
-                                                                                        } else {
-                                                                                            Modifier
-                                                                                        }
-                                                                                    )
-                                                                                    .drawCssBorders(
-                                                                                        cellStyle,
-                                                                                        density
-                                                                                    ).padding(
-                                                                                        start = if (stackRows) 0.dp else cellStyle.padding.left.coerceAtLeast(
-                                                                                            0.dp
-                                                                                        ),
-                                                                                        top = if (stackRows) stackedCellTopPadding else cellStyle.padding.top.coerceAtLeast(
-                                                                                            0.dp
-                                                                                        ),
-                                                                                        end = if (stackRows) 0.dp else cellStyle.padding.right.coerceAtLeast(
-                                                                                            0.dp
-                                                                                        ),
-                                                                                        bottom = if (stackRows) 0.dp else cellStyle.padding.bottom.coerceAtLeast(
-                                                                                            0.dp
-                                                                                        )
-                                                                                    )
-                                                                                    .then(cellDiagnosticModifier)
-
-                                                                            Column(
-                                                                                modifier = cellModifier.wrapContentHeight(Alignment.Top),
-                                                                                horizontalAlignment = alignment
-                                                                            ) {
-                                                                                val cellTextStyle =
-                                                                                    if (cell.isHeader) {
-                                                                                        textStyle.copy(
-                                                                                            fontWeight = FontWeight.Bold
-                                                                                        )
-                                                                                    } else {
-                                                                                        textStyle
-                                                                                    }
-                                                                                val renderedCellTextStyle = if (stackRows) {
-                                                                                    cellTextStyle.copy(textAlign = TextAlign.Left)
-                                                                                } else {
-                                                                                    cellTextStyle
-                                                                                }
-                                                                                val cellContentForRender = if (stackRows) {
-                                                                                    cell.contentForStackedPaginationMeasurement()
-                                                                                } else {
-                                                                                    cell.content
-                                                                                }
-
-                                                                                cellContentForRender.forEach { blockInCell ->
-                                                                                    when (blockInCell) {
-                                                                                        is ParagraphBlock -> {
-                                                                                            LinkAwareText(
-                                                                                                text = if (stackRows) blockInCell.content.withParagraphTextAlignStart() else blockInCell.content,
-                                                                                                style = renderedCellTextStyle,
-                                                                                                modifier = Modifier.fillMaxWidth(),
-                                                                                                isDarkTheme = isDarkTheme,
-                                                                                                themeBackgroundColor = effectiveBg,
-                                                                                                themeTextColor = effectiveText,
-                                                                                                onLinkClick = onLinkClickCallback,
-                                                                                                onGeneralTap = onGeneralTapCallback,
-                                                                                                wrapDiagnosticsContext = "page=${pageIndex + 1} source=table_cell tableBlock=${block.blockIndex} row=$rowIndex cell=$cellIndex cellBlock=${blockInCell.blockIndex}"
-                                                                                            )
-                                                                                        }
-
-                                                                                        is HeaderBlock -> {
-                                                                                            LinkAwareText(
-                                                                                                text = if (stackRows) blockInCell.content.withParagraphTextAlignStart() else blockInCell.content,
-                                                                                                style = renderedCellTextStyle.copy(
-                                                                                                    fontWeight = FontWeight.Bold
-                                                                                                ),
-                                                                                                modifier = Modifier.fillMaxWidth(),
-                                                                                                isDarkTheme = isDarkTheme,
-                                                                                                themeBackgroundColor = effectiveBg,
-                                                                                                themeTextColor = effectiveText,
-                                                                                                onLinkClick = onLinkClickCallback,
-                                                                                                onGeneralTap = onGeneralTapCallback,
-                                                                                                wrapDiagnosticsContext = "page=${pageIndex + 1} source=table_cell tableBlock=${block.blockIndex} row=$rowIndex cell=$cellIndex cellBlock=${blockInCell.blockIndex}"
-                                                                                            )
-                                                                                        }
-
-                                                                                        is ListItemBlock -> {
-                                                                                            Row(
-                                                                                                verticalAlignment = Alignment.Top
-                                                                                            ) {
-                                                                                                val itemMarker = blockInCell.itemMarker
-                                                                                                if (itemMarker != null) {
-                                                                                                    Text(
-                                                                                                        text = itemMarker,
-                                                                                                        style = renderedCellTextStyle,
-                                                                                                        modifier = Modifier.padding(
-                                                                                                            end = 4.dp
-                                                                                                        )
-                                                                                                    )
-                                                                                                }
-                                                                                                LinkAwareText(
-                                                                                                    text = if (stackRows) blockInCell.content.withParagraphTextAlignStart() else blockInCell.content,
-                                                                                                    style = renderedCellTextStyle,
-                                                                                                    modifier = Modifier.weight(
-                                                                                                        1f
-                                                                                                    ),
-                                                                                                    isDarkTheme = isDarkTheme,
-                                                                                                    themeBackgroundColor = effectiveBg,
-                                                                                                    themeTextColor = effectiveText,
-                                                                                                    onLinkClick = onLinkClickCallback,
-                                                                                                    onGeneralTap = onGeneralTapCallback,
-                                                                                                    wrapDiagnosticsContext = "page=${pageIndex + 1} source=table_cell tableBlock=${block.blockIndex} row=$rowIndex cell=$cellIndex cellBlock=${blockInCell.blockIndex}"
-                                                                                                )
-                                                                                            }
-                                                                                        }
-
-                                                                                        is SpacerBlock -> {
-                                                                                            Spacer(
-                                                                                                modifier = Modifier.fillMaxWidth()
-                                                                                                    .height(
-                                                                                                        blockInCell.height
-                                                                                                    )
-                                                                                                    .drawCssBorders(
-                                                                                                        blockInCell.style,
-                                                                                                        density
-                                                                                                    )
-                                                                                            )
-                                                                                        }
-
-                                                                                        is ImageBlock -> if (!hideImages) {
-                                                                                            AsyncImage(
-                                                                                                model = Builder(
-                                                                                                    LocalContext.current
-                                                                                                ).data(
-                                                                                                    File(
-                                                                                                        blockInCell.path
-                                                                                                    )
-                                                                                                )
-                                                                                                    .build(),
-                                                                                                contentDescription = blockInCell.altText,
-                                                                                                contentScale = imageContentScale(blockInCell.style),
-                                                                                                modifier = tableCellImageModifier(
-                                                                                                    block = blockInCell,
-                                                                                                    density = density,
-                                                                                                    imageSizeMultiplier = imageSizeMultiplier
-                                                                                                )
-                                                                                            )
-                                                                                        }
-
-                                                                                        is TextContentBlock -> {
-                                                                                            LinkAwareText(
-                                                                                                text = if (stackRows) blockInCell.content.withParagraphTextAlignStart() else blockInCell.content,
-                                                                                                style = renderedCellTextStyle,
-                                                                                                modifier = Modifier.fillMaxWidth(),
-                                                                                                isDarkTheme = isDarkTheme,
-                                                                                                themeBackgroundColor = effectiveBg,
-                                                                                                themeTextColor = effectiveText,
-                                                                                                onLinkClick = onLinkClickCallback,
-                                                                                                onGeneralTap = onGeneralTapCallback,
-                                                                                                wrapDiagnosticsContext = "page=${pageIndex + 1} source=table_cell tableBlock=${block.blockIndex} row=$rowIndex cell=$cellIndex cellBlock=${blockInCell.blockIndex}"
-                                                                                            )
-                                                                                        }
-
-                                                                                        else -> {}
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        var chapterInfo by remember {
-                                            mutableStateOf<Pair<String, Int?>?>(null)
-                                        }
-                                        LaunchedEffect(pageIndex) {
-                                            chapterInfo = onGetChapterInfo(pageIndex)
-                                        }
-
-                                        ChapterLoadingPlaceholder(title = chapterInfo?.first)
                                     }
                                 }
                             }
@@ -2056,14 +2211,30 @@ internal fun PaginatedReaderContent(
 
                 if (activeSelection != null) {
                     val sel = activeSelection!!
-                    val currentPageSuffix = "_${pagerState.currentPage}"
+                    // Spread-aware selection overlays: in two-page split view the
+                    // pager speaks spreads while selection state speaks book
+                    // pages, so every overlay below considers all visible book
+                    // pages (identical to the single current page when off).
+                    val spreadVisibleBookPages = EpubPageSpread.visibleBookPages(
+                        pagerState.currentPage,
+                        totalBookPageCount,
+                        isTwoPageSpread
+                    )
+                    val spreadFallbackBookPage = spreadVisibleBookPages.firstOrNull() ?: 0
+                    val spreadPageSuffixes = spreadVisibleBookPages.map { "_$it" }
+                    fun spreadBlockPage(key: String): Int =
+                        parseSelectionBlockKey(key)?.pageIndex ?: spreadFallbackBookPage
 
-                    val currentPageBlocks =
-                        blockLayoutMap.filterKeys { it.endsWith(currentPageSuffix) }.values.filter { it.second.isAttached }
-                    val visibleSelectedBlocks =
-                        currentPageBlocks.filter { isBlockSelectedOnPage(it.third, pagerState.currentPage, sel) }
+                    val currentPageEntries = blockLayoutMap.entries.filter { (key, layout) ->
+                        layout.second.isAttached && spreadPageSuffixes.any { suffix -> key.endsWith(suffix) }
+                    }
+                    val currentPageBlocks = currentPageEntries.map { it.value }
+                    val visibleSelectedEntries = currentPageEntries.filter { (key, layout) ->
+                        isBlockSelectedOnPage(layout.third, spreadBlockPage(key), sel)
+                    }
+                    val visibleSelectedBlocks = visibleSelectedEntries.map { it.value }
 
-                    LaunchedEffect(sel, pagerState.currentPage) {
+                    LaunchedEffect(sel, pagerState.currentPage, isTwoPageSpread) {
                         listOf(true, false).forEach { isStart ->
                             val page = if (isStart) sel.startPageIndex else sel.endPageIndex
                             val cfi = if (isStart) sel.startBaseCfi else sel.endBaseCfi
@@ -2089,16 +2260,17 @@ internal fun PaginatedReaderContent(
                             var maxRight = Float.MIN_VALUE
                             var maxBottom = Float.MIN_VALUE
 
-                            visibleSelectedBlocks.forEach { triple ->
+                            visibleSelectedEntries.forEach { (entryKey, triple) ->
                                 val (textLayout, coords, block) = triple
+                                val entryPage = spreadBlockPage(entryKey)
 
                                 val currentBlockAbs = getTextBlockCharOffset(block)
                                 val isStartBlockPart =
-                                    pagerState.currentPage == sel.startPageIndex &&
+                                    entryPage == sel.startPageIndex &&
                                         block.blockIndex == sel.startBlockIndex &&
                                         currentBlockAbs == sel.startBlockCharOffset
                                 val isEndBlockPart =
-                                    pagerState.currentPage == sel.endPageIndex &&
+                                    entryPage == sel.endPageIndex &&
                                         block.blockIndex == sel.endBlockIndex &&
                                         currentBlockAbs == sel.endBlockCharOffset
 
@@ -2281,20 +2453,24 @@ internal fun PaginatedReaderContent(
                         { windowPos, currentDragHandle ->
                             var activeDragHandle = currentDragHandle
 
-                            val attachedBlocks =
-                                blockLayoutMap.filterKeys { it.endsWith(currentPageSuffix) }.values.filter { it.second.isAttached }
-                                    .sortedBy { it.second.positionInWindow().y }
+                            val attachedEntries =
+                                blockLayoutMap.entries.filter { (key, layout) ->
+                                    layout.second.isAttached && spreadPageSuffixes.any { suffix -> key.endsWith(suffix) }
+                                }.sortedBy { it.value.second.positionInWindow().y }
+                            val attachedBlocks = attachedEntries.map { it.value }
 
                             if (attachedBlocks.isNotEmpty()) {
-                                val targetTriple = attachedBlocks.minByOrNull {
-                                    val coords = it.second
+                                val targetEntry = attachedEntries.minByOrNull {
+                                    val coords = it.value.second
                                     val rect = Rect(coords.positionInWindow(), coords.size.toSize())
                                     val dx =
                                         maxOf(rect.left - windowPos.x, 0f, windowPos.x - rect.right)
                                     val dy =
                                         maxOf(rect.top - windowPos.y, 0f, windowPos.y - rect.bottom)
                                     dx * dx + dy * dy
-                                } ?: attachedBlocks.last()
+                                } ?: attachedEntries.last()
+                                val targetTriple = targetEntry.value
+                                val targetBlockPage = spreadBlockPage(targetEntry.key)
 
                                 val (textLayout, coords, block) = targetTriple
                                 val localPos = coords.windowToLocal(windowPos)
@@ -2310,8 +2486,8 @@ internal fun PaginatedReaderContent(
                                 var newEndOffset = if (isStartHandle) sel.endOffset else offset
                                 var newStartCfi = if (isStartHandle) block.cfi!! else sel.startBaseCfi
                                 var newEndCfi = if (isStartHandle) sel.endBaseCfi else block.cfi!!
-                                var newStartPageIdx = if (isStartHandle) pagerState.currentPage else sel.startPageIndex
-                                var newEndPageIdx = if (isStartHandle) sel.endPageIndex else pagerState.currentPage
+                                var newStartPageIdx = if (isStartHandle) targetBlockPage else sel.startPageIndex
+                                var newEndPageIdx = if (isStartHandle) sel.endPageIndex else targetBlockPage
 
                                 val currentBlockAbs = getTextBlockCharOffset(block)
                                 var newStartBlockAbs = if (isStartHandle) currentBlockAbs else sel.startBlockCharOffset
@@ -2349,11 +2525,11 @@ internal fun PaginatedReaderContent(
                                 ) {
                                     hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 
-                                    val relevantBlocks = attachedBlocks
-                                        .filter {
+                                    val relevantBlocks = attachedEntries
+                                        .filter { (key, layout) ->
                                             isBlockSelectedOnPage(
-                                                block = it.third,
-                                                pageIndex = pagerState.currentPage,
+                                                block = layout.third,
+                                                pageIndex = spreadBlockPage(key),
                                                 selection = PaginatedSelection(
                                                     startBlockIndex = newStartIdx,
                                                     endBlockIndex = newEndIdx,
@@ -2371,18 +2547,20 @@ internal fun PaginatedReaderContent(
                                                 )
                                             )
                                         }
-                                        .sortedWith(compareBy({ it.third.blockIndex }, { getTextBlockCharOffset(it.third) }))
+                                        .sortedWith(compareBy({ it.value.third.blockIndex }, { getTextBlockCharOffset(it.value.third) }))
 
                                     val newTextPerBlock = sel.textPerBlock.toMutableMap()
                                     newTextPerBlock.keys.removeAll { keyStr ->
-                                        parseSelectionBlockKey(keyStr)?.pageIndex == pagerState.currentPage
+                                        val keyPage = parseSelectionBlockKey(keyStr)?.pageIndex
+                                        keyPage != null && keyPage in spreadVisibleBookPages
                                     }
 
-                                    for (b in relevantBlocks) {
+                                    for ((relevantKey, b) in relevantBlocks) {
+                                        val relevantPage = spreadBlockPage(relevantKey)
                                         val txt = b.third.content.text
                                         val bAbs = getTextBlockCharOffset(b.third)
-                                        val isStartBlockPart = b.third.blockIndex == newStartIdx && bAbs == newStartBlockAbs
-                                        val isEndBlockPart = b.third.blockIndex == newEndIdx && bAbs == newEndBlockAbs
+                                        val isStartBlockPart = b.third.blockIndex == newStartIdx && bAbs == newStartBlockAbs && relevantPage == newStartPageIdx
+                                        val isEndBlockPart = b.third.blockIndex == newEndIdx && bAbs == newEndBlockAbs && relevantPage == newEndPageIdx
 
                                         val s = if (isStartBlockPart) newStartOffset else 0
                                         val e = if (isEndBlockPart) newEndOffset else txt.length
@@ -2393,7 +2571,7 @@ internal fun PaginatedReaderContent(
                                         if (safeS < safeE) {
                                             newTextPerBlock[
                                                 buildSelectionBlockKey(
-                                                    pageIndex = pagerState.currentPage,
+                                                    pageIndex = relevantPage,
                                                     blockIndex = b.third.blockIndex,
                                                     blockCharOffset = bAbs
                                                 )
@@ -2401,7 +2579,7 @@ internal fun PaginatedReaderContent(
                                         } else {
                                             newTextPerBlock.remove(
                                                 buildSelectionBlockKey(
-                                                    pageIndex = pagerState.currentPage,
+                                                    pageIndex = relevantPage,
                                                     blockIndex = b.third.blockIndex,
                                                     blockCharOffset = bAbs
                                                 )
@@ -2452,7 +2630,7 @@ internal fun PaginatedReaderContent(
                                         var minTop = Float.MAX_VALUE
                                         var maxRight = Float.MIN_VALUE
                                         var maxBottom = Float.MIN_VALUE
-                                        relevantBlocks.forEach { b ->
+                                        relevantBlocks.forEach { (_, b) ->
                                             if (b.second.isAttached) {
                                                 val r = Rect(
                                                     b.second.positionInWindow(),
@@ -2508,7 +2686,7 @@ internal fun PaginatedReaderContent(
                                     @Suppress("UNUSED_VARIABLE") val tick = blockLayoutMap.tick
 
                                     val handlePageIndex = if (isStart) sel.startPageIndex else sel.endPageIndex
-                                    val pos = if (handlePageIndex == pagerState.currentPage) {
+                                    val pos = if (handlePageIndex in spreadVisibleBookPages) {
                                         val selCfi = if (isStart) sel.startBaseCfi else sel.endBaseCfi
                                         val selOffset = if (isStart) sel.startOffset else sel.endOffset
                                         val targetBlockAbs = if (isStart) sel.startBlockCharOffset else sel.endBlockCharOffset
@@ -2823,7 +3001,12 @@ internal fun RenderFlexChildBlock(
                     block = childBlock,
                     density = density,
                     maxWidthDp = maxWidth,
-                    imageSizeMultiplier = imageSizeMultiplier
+                    imageSizeMultiplier = imageSizeMultiplier,
+                    maxHeightDp = boundedImageMaxHeightDp(
+                        boxMaxHeight = maxHeight,
+                        density = density,
+                        expectedHeightPx = childBlock.expectedHeight
+                    )
                 )
                 val imageModifier = Modifier
                     .then(

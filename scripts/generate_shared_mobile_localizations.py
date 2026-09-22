@@ -16,10 +16,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ANDROID_RES = ROOT / "app/src/main/res"
-OUTPUT = ROOT / "shared/src/mobileMain/composeResources/files/localization"
+# The catalogs are consumed by iOS via loadIosStringResolver
+# (shared/src/iosMain/.../IosStringResources.kt reads files/localization/<tag>.json
+# from the iosMain composeResources). They are git-tracked generated artifacts:
+# regenerate after changing Android string resources, never hand-edit.
+OUTPUT = ROOT / "shared/src/iosMain/composeResources/files/localization"
 SOURCE_ROOTS = (
     ROOT / "shared/src/commonMain",
     ROOT / "shared/src/mobileMain",
+    ROOT / "shared/src/iosMain",
+    ROOT / "desktopApp/src",
 )
 
 STRING_PATTERN = re.compile(r'readerString\(\s*"([^"]+)"')

@@ -74,4 +74,13 @@ class SharedPdfAnnotationDockPolicyTest {
         assertEquals(944f, sharedPdfAnnotationDockTopYPx(DockLocation.BOTTOM, 400f, 1000f, 56f))
         assertEquals(400f, sharedPdfAnnotationDockTopYPx(DockLocation.FLOATING, 400f, 1000f, 56f))
     }
+
+    @Test
+    fun `popup max height matches android modal sizing`() {
+        // Android ToolSettingsPopup call: fraction 0.8, margin 64, min 240.
+        assertEquals(640, sharedPdfPopupMaxHeightDp(800))
+        assertEquals(534, sharedPdfPopupMaxHeightDp(667))
+        // Small screens fall back to usable height instead of the minimum.
+        assertEquals(136, sharedPdfPopupMaxHeightDp(200))
+    }
 }

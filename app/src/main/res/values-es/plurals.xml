@@ -136,4 +136,15 @@
         <item quantity="one">Carpetas %1$d</item>
         <item quantity="other">Carpetas %1$d</item>
     </plurals>
+    <!-- Search results count label. %1$d = number of results. Example: "12 resultados".
+         Spanish (CLDR): one = resultado, other = resultados. -->
+    <plurals name="unified_library_search_results">
+        <item quantity="one">%1$d resultado</item>
+        <item quantity="other">%1$d resultados</item>
+    </plurals>
+    <!-- Listening-queue item count. %1$d = number of items. Spanish (CLDR): elemento/elementos. -->
+    <plurals name="listen_item_count">
+        <item quantity="one">%1$d elemento</item>
+        <item quantity="other">%1$d elementos</item>
+    </plurals>
 </resources>

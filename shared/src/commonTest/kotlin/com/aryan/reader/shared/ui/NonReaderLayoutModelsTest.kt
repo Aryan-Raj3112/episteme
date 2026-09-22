@@ -269,6 +269,49 @@ class NonReaderLayoutModelsTest {
         )
     }
 
+    @Test
+    fun `shelf breadcrumb resolves root to home only`() {
+        assertEquals(
+            listOf(SharedShelfBreadcrumbEntry(id = null, name = "")),
+            shelfBreadcrumbPath(listOf(shelf("root", ShelfType.FOLDER)), null),
+        )
+        assertEquals(
+            listOf(SharedShelfBreadcrumbEntry(id = null, name = "")),
+            shelfBreadcrumbPath(listOf(shelf("root", ShelfType.FOLDER)), "missing"),
+        )
+    }
+
+    @Test
+    fun `shelf breadcrumb walks parent links from root to current`() {
+        val root = shelf("root", ShelfType.FOLDER)
+        val mid = shelf("mid", ShelfType.FOLDER, parentShelfId = root.id)
+        val leaf = shelf("leaf", ShelfType.FOLDER, parentShelfId = mid.id)
+        val shelves = listOf(leaf, mid, root)
+
+        assertEquals(
+            listOf(
+                SharedShelfBreadcrumbEntry(id = null, name = ""),
+                SharedShelfBreadcrumbEntry(id = "root", name = "root"),
+                SharedShelfBreadcrumbEntry(id = "mid", name = "mid"),
+                SharedShelfBreadcrumbEntry(id = "leaf", name = "leaf"),
+            ),
+            shelfBreadcrumbPath(shelves, "leaf"),
+        )
+    }
+
+    @Test
+    fun `shelf breadcrumb stops at deepest resolvable ancestor on dangling parents`() {
+        val orphan = shelf("orphan", ShelfType.FOLDER, parentShelfId = "missing-parent")
+
+        assertEquals(
+            listOf(
+                SharedShelfBreadcrumbEntry(id = null, name = ""),
+                SharedShelfBreadcrumbEntry(id = "orphan", name = "orphan"),
+            ),
+            shelfBreadcrumbPath(listOf(orphan), "orphan"),
+        )
+    }
+
     private fun shelf(id: String, type: ShelfType, parentShelfId: String? = null) = Shelf(
         id = id,
         name = id,

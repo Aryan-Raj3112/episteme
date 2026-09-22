@@ -53,6 +53,24 @@ internal fun readerHtmlSelectionScript(): String = """
                     return;
                   }
                 }
+                // Registry-painted highlights have no DOM element to tap: resolve
+                // the tap point to a painted range instead (same bridge event).
+                try {
+                  if (typeof userHighlightRegistryUsable === 'function' && userHighlightRegistryUsable() &&
+                    typeof userHighlightIdFromPoint === 'function' && !menu.contains(target)) {
+                    var registryHitId = userHighlightIdFromPoint(event.clientX, event.clientY);
+                    if (registryHitId) {
+                      try {
+                        if (window.readerHighlightShiftLog) readerHighlightShiftLog('registry_hit', 'id=' + registryHitId);
+                      } catch (ignored) {}
+                      if (sendReaderHighlightClick(registryHitId)) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        return;
+                      }
+                    }
+                  }
+                } catch (error) {}
                 var anchor = target.closest('a[href]');
                 if (!anchor || menu.contains(anchor)) return;
                 var href = anchor.getAttribute('href') || '';
@@ -258,7 +276,14 @@ internal fun readerHtmlSelectionScript(): String = """
                 menu.style.top = nextTop + 'px';
                 menu.style.visibility = 'visible';
               }
+              function readerUsesNativeSelectionHandles() {
+                return window.readerIosNativeSelectionHandles === true;
+              }
               function showSelectionHandle(handle, rect, x) {
+                // iOS WKWebView draws its own native handles; the app's custom
+                // teardrops stay hidden there so handles never double up.
+                // Android/desktop WebViews keep the custom handles.
+                if (readerUsesNativeSelectionHandles()) return;
                 if (!handle || !rect) return;
                 handle.hidden = false;
                 handle.style.display = 'block';
@@ -520,6 +545,7 @@ internal fun readerHtmlSelectionScript(): String = """
                 pendingSelectionHandleEvent = null;
               }
               function beginSelectionHandleDrag(handleName, event) {
+                if (readerUsesNativeSelectionHandles()) return;
                 if (!savedRange && !restoreRange()) return;
                 cancelSelectionHandleFrame();
                 activeSelectionHandle = handleName;

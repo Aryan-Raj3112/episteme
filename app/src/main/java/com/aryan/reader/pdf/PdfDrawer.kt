@@ -90,7 +90,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-import androidx.core.graphics.createBitmap
 import com.aryan.reader.cardTitle
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.pdf.data.VirtualPage
@@ -99,6 +98,7 @@ import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.pdf.LegacyPdfPageBookmark
 import com.aryan.reader.shared.pdf.LegacyPdfPageBookmarkCodec
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
+import com.aryan.reader.shared.pdf.pdfThumbnailNeedsBakedPreserve
 import com.aryan.reader.shared.pdf.PdfDrawerCapabilities
 import com.aryan.reader.shared.pdf.PdfDrawerSection
 import com.aryan.reader.shared.pdf.pdfDrawerSections
@@ -108,6 +108,31 @@ import org.json.JSONObject
 internal typealias PdfBookmark = LegacyPdfPageBookmark
 
 internal data class TocEntry(val title: String, val pageIndex: Int, val nestLevel: Int)
+
+/** Shared logcat tag for Pages-tab thumbnail diagnostics (filter: `adb logcat -s PdfPagesTab`). */
+internal const val PdfPagesTabLogTag = "PdfPagesTab"
+
+private const val PdfPagesThumbnailWidthPx = 200
+
+/**
+ * Maps a display (drawer row) index to the underlying PDF page index.
+ *
+ * Display pages include manually inserted blank pages, so the display index
+ * only equals the PDF index while no blank pages exist. Blank display pages
+ * have no PDF content and return null. An empty layout means the caller did
+ * not provide one, so indices pass through unchanged (legacy behavior).
+ */
+internal fun pdfPageIndexForDisplayPage(
+    virtualPages: List<VirtualPage>,
+    displayPageIndex: Int,
+): Int? {
+    if (displayPageIndex < 0) return null
+    if (virtualPages.isEmpty()) return displayPageIndex
+    return when (val page = virtualPages.getOrNull(displayPageIndex)) {
+        is VirtualPage.PdfPage -> page.pdfIndex
+        else -> null
+    }
+}
 
 /**
  * Pages-tab tiles render page paper, not app chrome: the background and filter
@@ -519,6 +544,8 @@ internal fun PdfNavigationDrawerContent(
     userHighlights: List<PdfUserHighlight>,
     currentPage: Int,
     totalPages: Int,
+    virtualPages: List<VirtualPage> = emptyList(),
+    isDrawerOpen: Boolean = true,
     isTabsEnabled: Boolean = false,
     openTabs: List<RecentFileItem> = emptyList(),
     activeTabBookId: String? = null,
@@ -930,6 +957,26 @@ internal fun PdfNavigationDrawerContent(
                             androidx.compose.ui.graphics.BlendMode.Multiply
                         }
                     }
+                    LaunchedEffect(totalPages, documentKey) {
+                        Timber.tag(PdfPagesTabLogTag).d(
+                            "pages-tab opened totalPages=$totalPages currentPage=${currentPage + 1} " +
+                                "theme=${activeTheme.id} preserveImages=$excludeImages doc=$documentKey"
+                        )
+                    }
+                    // Thumbnail native work is paused while the list is moving
+                    // and whenever the drawer is closed (its content stays
+                    // composed while hidden). A fast fling would otherwise
+                    // queue hundreds of renders on the single global Pdfium
+                    // lock and starve the main page render (blank page) plus
+                    // back/close. Settling relaunches only visible tiles.
+                    val thumbnailsActive = isDrawerOpen && !listState.isScrollInProgress
+                    LaunchedEffect(thumbnailsActive) {
+                        if (!thumbnailsActive) {
+                            Timber.tag(PdfPagesTabLogTag).d(
+                                "thumb loads paused drawerOpen=$isDrawerOpen scrolling=${listState.isScrollInProgress}"
+                            )
+                        }
+                    }
 
                     Column(modifier = Modifier.fillMaxSize()) {
                         Row(
@@ -966,6 +1013,10 @@ internal fun PdfNavigationDrawerContent(
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
                                         row.forEach { pageIdx ->
+                                            // Drawer rows are display-page indices. With inserted
+                                            // blank pages these no longer equal PDF indices, and
+                                            // blank display pages have no thumbnail to load.
+                                            val pdfPageIndex = pdfPageIndexForDisplayPage(virtualPages, pageIdx)
                                             Box(
                                                 modifier = Modifier
                                                     .weight(1f)
@@ -981,61 +1032,160 @@ internal fun PdfNavigationDrawerContent(
                                                     )
                                                     .clip(RoundedCornerShape(4.dp))
                                                     .clickable {
+                                                        Timber.tag(PdfPagesTabLogTag).d(
+                                                            "pages-tab selected displayPage=${pageIdx + 1} " +
+                                                                "pdfPage=${pdfPageIndex?.plus(1) ?: "blank"}"
+                                                        )
                                                         onCloseDrawer()
                                                         (onDisplayPageSelected ?: onPageSelected)(pageIdx)
                                                     },
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                val thumbPageId = remember(documentKey, pageIdx) {
-                                                    pdfRenderPageId(documentKey, pageIdx, VirtualPage.PdfPage(pageIdx))
+                                                // Hooks below stay unconditional: virtualPages loads
+                                                // async, so a tile may flip between blank and PDF
+                                                // across recompositions.
+                                                val thumbPageId = remember(documentKey, pdfPageIndex) {
+                                                    if (pdfPageIndex == null) {
+                                                        "$documentKey:blank:$pageIdx"
+                                                    } else {
+                                                        pdfRenderPageId(documentKey, pdfPageIndex, VirtualPage.PdfPage(pdfPageIndex))
+                                                    }
                                                 }
                                                 var thumb by remember(thumbPageId) { mutableStateOf(PdfThumbnailCache.get(thumbPageId)) }
                                                 var imageRects by remember(thumbPageId) { mutableStateOf<List<android.graphics.Rect>>(emptyList()) }
+                                                // Baking "preserve image colors" into the bitmap is only
+                                                // valid for reverse+RGB (see pdfThumbnailNeedsBakedPreserve).
+                                                // Other themes use the GPU filter (or none), so extracting
+                                                // native image rects for them only adds native work on
+                                                // every scroll during fast scrollbar drags.
+                                                val thumbnailPreserveEnabled = excludeImages && activeTheme.id == "reverse"
 
-                                                LaunchedEffect(thumbPageId, pdfDocument, excludeImages) {
-                                                    if (pdfDocument != null) {
-                                                        withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                                            try {
-                                                                pdfDocument.openPage(pageIdx)?.use { p ->
-                                                                    val w = p.getPageWidthPoint()
-                                                                    val h = p.getPageHeightPoint()
-                                                                    val ratio = if (h > 0) w.toFloat() / h.toFloat() else 1f
-                                                                    val thumbW = 200
-                                                                    val thumbH = (thumbW / ratio).toInt().coerceAtLeast(1)
-                                                                    val cached = PdfThumbnailCache.get(thumbPageId)
-                                                                    if (cached != null) {
-                                                                        thumb = cached
-                                                                    } else {
-                                                                        val bmp = createBitmap(thumbW, thumbH)
-                                                                        bmp.eraseColor(android.graphics.Color.WHITE)
-                                                                        p.renderPageBitmap(bmp, 0, 0, thumbW, thumbH, false)
-                                                                        PdfThumbnailCache.put(thumbPageId, bmp)
-                                                                        thumb = bmp
-                                                                    }
-                                                                    if (excludeImages && p is PdfPageWrapper) {
-                                                                        imageRects = p.extractNativePageOverlays(
-                                                                            bitmapWidthPx = thumbW,
-                                                                            bitmapHeightPx = thumbH,
-                                                                            pageRotation = p.getPageRotation(),
-                                                                            pageIndex = pageIdx,
-                                                                            linkAnnotationSubtype = 2,
-                                                                        ).imageScreenRects
-                                                                    } else if (!excludeImages) {
-                                                                        imageRects = emptyList()
-                                                                    }
-                                                                }
-                                                            } catch (_: Exception) { }
+                                                LaunchedEffect(thumbPageId, pdfDocument, thumbnailPreserveEnabled, pdfPageIndex, thumbnailsActive) {
+                                                    if (pdfPageIndex == null) {
+                                                        Timber.tag(PdfPagesTabLogTag).d(
+                                                            "thumb blank-page displayPage=${pageIdx + 1} (no PDF content)"
+                                                        )
+                                                        return@LaunchedEffect
+                                                    }
+                                                    if (pdfDocument == null) {
+                                                        Timber.tag(PdfPagesTabLogTag).w(
+                                                            "thumb no-document displayPage=${pageIdx + 1} pdfPage=${pdfPageIndex + 1}"
+                                                        )
+                                                        return@LaunchedEffect
+                                                    }
+                                                    if (!thumbnailsActive) {
+                                                        return@LaunchedEffect
+                                                    }
+                                                    // Image-rect extraction needs its own open page and is
+                                                    // only required when the bitmap bake actually happens
+                                                    // (reverse+RGB, see pdfThumbnailNeedsBakedPreserve).
+                                                    suspend fun thumbnailOverlaysFor(
+                                                        widthPx: Int,
+                                                        heightPx: Int,
+                                                    ): List<android.graphics.Rect> {
+                                                        if (!thumbnailPreserveEnabled) return emptyList()
+                                                        return try {
+                                                            pdfDocument.openPage(pdfPageIndex)?.use { p ->
+                                                                (p as? PdfPageWrapper)?.extractNativePageOverlays(
+                                                                    bitmapWidthPx = widthPx,
+                                                                    bitmapHeightPx = heightPx,
+                                                                    pageRotation = p.getPageRotation(),
+                                                                    pageIndex = pdfPageIndex,
+                                                                    linkAnnotationSubtype = 2,
+                                                                )?.imageScreenRects ?: emptyList()
+                                                            } ?: emptyList()
+                                                        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                                                            throw e
+                                                        } catch (_: Exception) {
+                                                            emptyList()
                                                         }
+                                                    }
+                                                    // All Pdfium calls below serialize on one global
+                                                    // mutex, so the start->ok duration also measures
+                                                    // queue wait during fast scrollbar drags.
+                                                    val loadStartedAt = android.os.SystemClock.uptimeMillis()
+                                                    Timber.tag(PdfPagesTabLogTag).d(
+                                                        "thumb load-start displayPage=${pageIdx + 1} pdfPage=${pdfPageIndex + 1} " +
+                                                            "preserve=$thumbnailPreserveEnabled"
+                                                    )
+                                                    try {
+                                                        // Render on IO, then publish on Main: writing
+                                                        // snapshot state from the IO thread races with
+                                                        // composition and can drop or duplicate tiles
+                                                        // while the list is being recycled.
+                                                        // Triple(bitmap, imageRects, servedFromCache).
+                                                        val loaded = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                            val cached = PdfThumbnailCache.get(thumbPageId)
+                                                            if (cached != null) {
+                                                                Timber.tag(PdfPagesTabLogTag).d(
+                                                                    "thumb cache-hit displayPage=${pageIdx + 1} pdfPage=${pdfPageIndex + 1}"
+                                                                )
+                                                                Triple(
+                                                                    cached,
+                                                                    thumbnailOverlaysFor(cached.width, cached.height),
+                                                                    true,
+                                                                )
+                                                            } else {
+                                                                Timber.tag(PdfPagesTabLogTag).d(
+                                                                    "thumb render-start displayPage=${pageIdx + 1} pdfPage=${pdfPageIndex + 1} " +
+                                                                        "width=$PdfPagesThumbnailWidthPx"
+                                                                )
+                                                                val bmp = pdfDocument.renderPageThumbnail(
+                                                                    pdfPageIndex,
+                                                                    PdfPagesThumbnailWidthPx,
+                                                                ) ?: return@withContext null
+                                                                PdfThumbnailCache.put(thumbPageId, bmp)
+                                                                val rects = thumbnailOverlaysFor(bmp.width, bmp.height)
+                                                                Timber.tag(PdfPagesTabLogTag).d(
+                                                                    "thumb render-ok displayPage=${pageIdx + 1} pdfPage=${pdfPageIndex + 1} " +
+                                                                        "size=${bmp.width}x${bmp.height} overlays=${rects.size}"
+                                                                )
+                                                                Triple(bmp, rects, false)
+                                                            }
+                                                        }
+                                                        val tookMs = android.os.SystemClock.uptimeMillis() - loadStartedAt
+                                                        if (loaded != null) {
+                                                            thumb = loaded.first
+                                                            imageRects = loaded.second
+                                                            Timber.tag(PdfPagesTabLogTag).d(
+                                                                "thumb load-ok displayPage=${pageIdx + 1} pdfPage=${pdfPageIndex + 1} " +
+                                                                    "tookMs=$tookMs cached=${loaded.third} rects=${loaded.second.size}"
+                                                            )
+                                                        } else {
+                                                            if (!thumbnailPreserveEnabled) {
+                                                                imageRects = emptyList()
+                                                            }
+                                                            Timber.tag(PdfPagesTabLogTag).w(
+                                                                "thumb openPage-null displayPage=${pageIdx + 1} pdfPage=${pdfPageIndex + 1} " +
+                                                                    "totalPages=$totalPages tookMs=$tookMs"
+                                                            )
+                                                        }
+                                                    } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                                                        // Fast scrollbar drags dispose tiles as quickly as
+                                                        // they compose: propagate cancellation so stale
+                                                        // renders don't pile up behind visible pages.
+                                                        throw e
+                                                    } catch (e: Exception) {
+                                                        val tookMs = android.os.SystemClock.uptimeMillis() - loadStartedAt
+                                                        Timber.tag(PdfPagesTabLogTag).e(
+                                                            e,
+                                                            "thumb load-failed displayPage=${pageIdx + 1} pdfPage=${pdfPageIndex + 1} " +
+                                                                "tookMs=$tookMs"
+                                                        )
                                                     }
                                                 }
 
                                                 val rgbColorFilter = pagesTileColorFilter
-                                                val forceThumbnailBitmapTransform =
-                                                    effectiveReverseMode == PdfReverseColorMode.RGB && excludeImages && imageRects.isNotEmpty()
+                                                val forceThumbnailBitmapTransform = pdfThumbnailNeedsBakedPreserve(
+                                                    themeId = activeTheme.id,
+                                                    effectiveReverseColorMode = effectiveReverseMode,
+                                                    preserveImageColors = excludeImages,
+                                                    hasImageRects = imageRects.isNotEmpty(),
+                                                )
                                                 val renderedThumb = rememberPdfReverseBitmap(
                                                     bitmap = thumb,
                                                     mode = effectiveReverseMode,
-                                                    protectedRects = if (excludeImages) imageRects else emptyList(),
+                                                    protectedRects = if (thumbnailPreserveEnabled) imageRects else emptyList(),
                                                     targetWidth = thumb?.width ?: 0,
                                                     targetHeight = thumb?.height ?: 0,
                                                     forceBitmapTransform = forceThumbnailBitmapTransform,

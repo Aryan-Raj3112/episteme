@@ -118,8 +118,17 @@ private fun String.capitalizeWords(): String =
 private data class SemanticTextChunk(
     val text: String,
     val spans: List<SemanticSpan>,
-    val startCharOffsetInSource: Int
+    val startCharOffsetInSource: Int,
+    val rubies: List<SemanticRuby> = emptyList()
 )
+
+/**
+ * Furigana (`<ruby>`) base runs can be long, but a single base group is at most
+ * a few dozen characters. Flushing the text buffer when a `<ruby>` starts this
+ * close to the chunk cap keeps every ruby run atomic inside one chunk, so
+ * readings never straddle a chunk boundary.
+ */
+private const val RUBY_CHUNK_FLUSH_GUARD_CHARS = 512
 
 /**
  * The public entry point for converting HTML to a list of [SemanticBlock]s.
@@ -416,6 +425,17 @@ private class SemanticHtmlParser(
             fontVariantNumeric = elementOwnStyle.fontVariantNumeric ?: inheritedStyle.fontVariantNumeric,
             textEmphasis = elementOwnStyle.textEmphasis ?: inheritedStyle.textEmphasis,
             whiteSpace = elementOwnStyle.whiteSpace ?: inheritedStyle.whiteSpace,
+            // CSS-inherited properties browsers propagate from ancestors
+            // (body/html writing modes, word breaking, word spacing). Without
+            // these, vertical chapters lose their mode on plain paragraphs
+            // and paginate/render as horizontal fallbacks.
+            writingMode = elementOwnStyle.writingMode ?: inheritedStyle.writingMode,
+            wordBreak = elementOwnStyle.wordBreak ?: inheritedStyle.wordBreak,
+            wordSpacing = if (elementOwnStyle.wordSpacing.isSpecified) {
+                elementOwnStyle.wordSpacing
+            } else {
+                inheritedStyle.wordSpacing
+            },
             customProperties = inheritedStyle.customProperties + elementOwnStyle.customProperties
         ).resolveFontSizeAgainst(inheritedStyle).withResolvedFontFamily()
 
@@ -536,6 +556,23 @@ private class SemanticHtmlParser(
         return copy(spanStyle = spanStyle.copy(fontFamily = resolvedFontFamily))
     }
 
+    /**
+     * EPUB-specified `<rt>` font size as a fraction of the ruby base size.
+     * Browsers honor author `rt` sizing; when the author specifies nothing
+     * (or nothing resolvable) this returns null so renderers fall back to the
+     * browser default scale instead of guessing.
+     */
+    private fun readingScaleForRt(rtOwnStyle: CssStyle, rubyStyle: CssStyle): Float? {
+        if (!rtOwnStyle.fontSize.isSpecified) return null
+        val resolved = rubyStyle.merge(rtOwnStyle).resolveFontSizeAgainst(rubyStyle)
+        val rtSize = resolved.fontSize.takeIf { it.isSpecified && it.type != TextUnitType.Em }
+            ?: return null
+        val baseSize = rubyStyle.fontSize.takeIf { it.isSpecified && it.type != TextUnitType.Em }
+            ?: textStyle.fontSize
+        if (!baseSize.isSpecified || baseSize.value <= 0f) return null
+        return (rtSize.value / baseSize.value).takeIf { it.isFinite() && it > 0f }
+    }
+
     private fun CssStyle.resolveFontSizeAgainst(parent: CssStyle): CssStyle {
         if (!fontSize.isSpecified) return copy(fontSize = parent.fontSize)
         if (fontSize.type != TextUnitType.Em) return this
@@ -613,7 +650,9 @@ private class SemanticHtmlParser(
                     val children = parseContainer(element, childStyle, inheritedLinkHref)
                     listOf(SemanticFlexContainer(children, elementStyle, elementId, cfi, blockIndex = nextBlockIndex++))
                 } else {
-                    parseContainer(element, elementStyle, inheritedLinkHref)
+                    val children = parseContainer(element, elementStyle, inheritedLinkHref)
+                    foldMissingFigureContainer(element, elementStyle, elementId, cfi, children)
+                        ?: children
                 }
             }
             "svg" -> parseSvgElementToSemantic(element, elementStyle)?.let { listOf(it) } ?: emptyList()
@@ -667,10 +706,10 @@ private class SemanticHtmlParser(
                         parseContainer(element, headerStyle, inheritedLinkHref)
                     }
                 } else {
-                    val (text, spans) = buildSemanticTextAndSpans(element, elementStyle, inheritedLinkHref)
+                    val (text, spans, rubies) = buildSemanticTextAndSpans(element, elementStyle, inheritedLinkHref)
                     if (text.isNotBlank()) {
                         val level = tagName.substring(1).toIntOrNull() ?: 1
-                        listOf(SemanticHeader(level, text, spans, elementStyle, elementId, cfi, blockIndex = nextBlockIndex++))
+                        listOf(SemanticHeader(level, text, spans, elementStyle, elementId, cfi, blockIndex = nextBlockIndex++, rubies = rubies))
                     } else emptyList()
                 }
             }
@@ -681,9 +720,9 @@ private class SemanticHtmlParser(
                 if (element.isBlock || hasBlockDescendant) {
                     parseContainer(element, elementStyle, inheritedLinkHref)
                 } else {
-                    val (text, spans) = buildSemanticTextAndSpans(element, elementStyle, inheritedLinkHref)
+                    val (text, spans, rubies) = buildSemanticTextAndSpans(element, elementStyle, inheritedLinkHref)
                     if (text.isNotBlank()) {
-                        listOf(SemanticParagraph(text, spans, elementStyle, elementId, cfi, blockIndex = nextBlockIndex++))
+                        listOf(SemanticParagraph(text, spans, elementStyle, elementId, cfi, blockIndex = nextBlockIndex++, rubies = rubies))
                     } else emptyList()
                 }
             }
@@ -831,7 +870,8 @@ private class SemanticHtmlParser(
                     elementId = elementId.takeIf { chunkIndex == 0 },
                     cfi = cfi,
                     startCharOffsetInSource = chunk.startCharOffsetInSource,
-                    blockIndex = nextBlockIndex++
+                    blockIndex = nextBlockIndex++,
+                    rubies = chunk.rubies
                 )
             }
         }
@@ -866,7 +906,8 @@ private class SemanticHtmlParser(
                         elementId = containerElementId.takeIf { chunkIndex == 0 },
                         cfi = containerCfi,
                         startCharOffsetInSource = chunk.startCharOffsetInSource,
-                        blockIndex = nextBlockIndex++
+                        blockIndex = nextBlockIndex++,
+                        rubies = chunk.rubies
                     )
                 )
             }
@@ -897,15 +938,15 @@ private class SemanticHtmlParser(
         rootStyle: CssStyle,
         inheritedLinkHref: String? = null,
         excludedNodes: Set<Node> = emptySet()
-    ): Pair<String, List<SemanticSpan>> {
-        val (text, spans) = buildSemanticTextAndSpansFromNodes(
+    ): Triple<String, List<SemanticSpan>, List<SemanticRuby>> {
+        val (text, spans, rubies) = buildSemanticTextAndSpansFromNodes(
             rootElement.childNodes(),
             rootStyle,
             rootElement,
             inheritedLinkHref,
             excludedNodes
         )
-        return text to applyFirstLetterPseudoStyle(rootElement, rootStyle, text, spans)
+        return Triple(text, applyFirstLetterPseudoStyle(rootElement, rootStyle, text, spans), rubies)
     }
 
     /**
@@ -958,7 +999,7 @@ private class SemanticHtmlParser(
         rootElement: Element? = null,
         inheritedLinkHref: String? = null,
         excludedNodes: Set<Node> = emptySet()
-    ): Pair<String, List<SemanticSpan>> {
+    ): Triple<String, List<SemanticSpan>, List<SemanticRuby>> {
         val chunks = buildSemanticTextAndSpanChunksFromNodes(
             nodes,
             rootStyle,
@@ -966,8 +1007,8 @@ private class SemanticHtmlParser(
             inheritedLinkHref,
             excludedNodes
         )
-        val firstChunk = chunks.firstOrNull() ?: return "" to emptyList()
-        return firstChunk.text to firstChunk.spans
+        val firstChunk = chunks.firstOrNull() ?: return Triple("", emptyList(), emptyList())
+        return Triple(firstChunk.text, firstChunk.spans, firstChunk.rubies)
     }
 
     private fun buildSemanticTextAndSpanChunksFromNodes(
@@ -979,6 +1020,7 @@ private class SemanticHtmlParser(
     ): List<SemanticTextChunk> {
         val textBuilder = StringBuilder()
         val spans = mutableListOf<SemanticSpan>()
+        val rubyRuns = mutableListOf<SemanticRuby>()
         val chunks = mutableListOf<SemanticTextChunk>()
         val activeSpans = mutableListOf<ActiveSemanticSpan>()
         var currentChunkStartOffset = 0
@@ -1009,14 +1051,15 @@ private class SemanticHtmlParser(
 
         fun trimTrailingWhitespace(
             text: String,
-            sourceSpans: List<SemanticSpan>
-        ): Pair<String, List<SemanticSpan>> {
+            sourceSpans: List<SemanticSpan>,
+            sourceRubies: List<SemanticRuby>
+        ): Triple<String, List<SemanticSpan>, List<SemanticRuby>> {
             var newLength = text.length
             while (newLength > 0 && text[newLength - 1].isWhitespace()) {
                 newLength--
             }
 
-            if (newLength == text.length) return text to sourceSpans.toList()
+            if (newLength == text.length) return Triple(text, sourceSpans.toList(), sourceRubies.toList())
 
             val adjustedSpans = sourceSpans.mapNotNull { span ->
                 if (span.start >= newLength) {
@@ -1027,7 +1070,16 @@ private class SemanticHtmlParser(
                     span
                 }
             }
-            return text.substring(0, newLength) to adjustedSpans
+            val adjustedRubies = sourceRubies.mapNotNull { ruby ->
+                if (ruby.baseStart >= newLength) {
+                    null
+                } else if (ruby.baseEnd > newLength) {
+                    ruby.copy(baseEnd = newLength)
+                } else {
+                    ruby
+                }
+            }
+            return Triple(text.substring(0, newLength), adjustedSpans, adjustedRubies)
         }
 
         fun flushChunk(trimTrailing: Boolean) {
@@ -1057,17 +1109,18 @@ private class SemanticHtmlParser(
 
             val rawText = textBuilder.toString()
             val rawLength = rawText.length
-            val (trimmedText, trimmedSpans) = if (trimTrailing) {
-                trimTrailingWhitespace(rawText, spans)
+            val (trimmedText, trimmedSpans, trimmedRubies) = if (trimTrailing) {
+                trimTrailingWhitespace(rawText, spans, rubyRuns)
             } else {
-                rawText to spans.toList()
+                Triple(rawText, spans.toList(), rubyRuns.toList())
             }
             if (trimmedText.isNotBlank()) {
                 chunks.add(
                     SemanticTextChunk(
                         text = trimmedText,
                         spans = trimmedSpans,
-                        startCharOffsetInSource = currentChunkStartOffset
+                        startCharOffsetInSource = currentChunkStartOffset,
+                        rubies = trimmedRubies
                     )
                 )
             }
@@ -1075,6 +1128,7 @@ private class SemanticHtmlParser(
             currentChunkStartOffset += rawLength
             textBuilder.clear()
             spans.clear()
+            rubyRuns.clear()
             activeSpans.forEach { it.startInChunk = 0 }
         }
 
@@ -1155,6 +1209,56 @@ private class SemanticHtmlParser(
             )
         }
 
+        /**
+         * Shared inline-element body: merges [element]'s style, pushes an
+         * [ActiveSemanticSpan], recurses into children via [recurse] and pops
+         * the span. Returns the appended text range, or null when empty.
+         */
+        fun processElementBody(
+            element: Element,
+            inheritedStyle: CssStyle,
+            tag: String,
+            newStyle: CssStyle,
+            href: String?,
+            elementId: String?,
+            recurse: (Node, CssStyle) -> Unit
+        ): IntRange? {
+            val activeSpan = ActiveSemanticSpan(
+                startInChunk = textBuilder.length,
+                style = newStyle,
+                linkHref = href,
+                tag = tag,
+                elementId = elementId
+            )
+            activeSpans.add(activeSpan)
+            appendGeneratedContent(element, newStyle, "before")
+            element.childNodes().forEach { recurse(it, newStyle) }
+            appendGeneratedContent(element, newStyle, "after")
+            activeSpans.removeAt(activeSpans.lastIndex)
+            val endIndex = textBuilder.length
+
+            // Capture span if it has content OR if it has an ID (anchor)
+            addSpan(
+                start = activeSpan.startInChunk,
+                end = endIndex,
+                style = newStyle,
+                linkHref = href,
+                tag = tag,
+                elementId = elementId
+            )
+            return if (endIndex > activeSpan.startInChunk) {
+                activeSpan.startInChunk until endIndex
+            } else {
+                null
+            }
+        }
+
+        // Local functions cannot forward-reference each other, so the ruby
+        // branch below is reached through this reference (assigned after both
+        // declarations); the ruby parser itself recurses via ::processNode,
+        // which is a legal backward reference from its position.
+        lateinit var processRubyFn: (Element, CssStyle) -> Unit
+
         fun processNode(node: Node, inheritedStyle: CssStyle) {
             if (node in excludedNodes) return
             when (node) {
@@ -1162,49 +1266,134 @@ private class SemanticHtmlParser(
                     appendTransformedText(node.wholeText, inheritedStyle)
                 }
                 is Element -> {
-                    if (node.tagName().lowercase() == "br") {
+                    val tagName = node.tagName().lowercase()
+                    if (tagName == "br") {
                         appendText("\n"); return
                     }
-                    if (node.tagName().lowercase() in nonRenderableHtmlTags) return
+                    // `<rp>` fallback parens are only meaningful without ruby
+                    // support; this engine renders ruby itself, so skip them.
+                    if (tagName == "rp") return
+                    if (tagName in nonRenderableHtmlTags) return
                     if (node.isInlineMathSpan()) {
                         appendInlineMathSpan(node, inheritedStyle); return
+                    }
+                    if (tagName == "ruby") {
+                        processRubyFn(node, inheritedStyle)
+                        return
                     }
                     val currentElementStyle = getElementStyle(node, inheritedStyle.customProperties)
                     val newStyle = inheritedStyle.merge(currentElementStyle)
                         .resolveFontSizeAgainst(inheritedStyle)
                         .withResolvedFontFamily()
                     if (newStyle.display == "none") return
-                    val tag = node.tagName().lowercase()
                     val href = node.linkHrefOrNull()
                         ?: activeSpans.asReversed().firstOrNull { !it.linkHref.isNullOrBlank() }?.linkHref
                         ?: inheritedLinkHref
-                    val elementId = node.id().ifBlank { null }
-                    val activeSpan = ActiveSemanticSpan(
-                        startInChunk = textBuilder.length,
-                        style = newStyle,
-                        linkHref = href,
-                        tag = tag,
-                        elementId = elementId
-                    )
-                    activeSpans.add(activeSpan)
-                    appendGeneratedContent(node, newStyle, "before")
-                    node.childNodes().forEach { processNode(it, newStyle) }
-                    appendGeneratedContent(node, newStyle, "after")
-                    activeSpans.removeAt(activeSpans.lastIndex)
-                    val endIndex = textBuilder.length
-
-                    // Capture span if it has content OR if it has an ID (anchor)
-                    addSpan(
-                        start = activeSpan.startInChunk,
-                        end = endIndex,
-                        style = newStyle,
-                        linkHref = href,
-                        tag = tag,
-                        elementId = elementId
-                    )
+                    processElementBody(node, inheritedStyle, tagName, newStyle, href, node.id().ifBlank { null }, ::processNode)
                 }
             }
         }
+
+        /**
+         * `<ruby>` pairing: base segments (`<rb>` elements or bare text)
+         * followed by their `<rt>` reading. Only base text enters the flow;
+         * readings are recorded as [SemanticRuby] runs. `<rp>` fallback parens
+         * are skipped: this engine renders ruby itself.
+         */
+        fun processRubyElement(element: Element, inheritedStyle: CssStyle) {
+            if (textBuilder.length >= MAX_SEMANTIC_TEXT_BLOCK_CHARS - RUBY_CHUNK_FLUSH_GUARD_CHARS) {
+                flushChunk(trimTrailing = false)
+            }
+            val rubyStyle = inheritedStyle.merge(getElementStyle(element, inheritedStyle.customProperties))
+                .resolveFontSizeAgainst(inheritedStyle)
+                .withResolvedFontFamily()
+            if (rubyStyle.display == "none") return
+            val href = element.linkHrefOrNull()
+                ?: activeSpans.asReversed().firstOrNull { !it.linkHref.isNullOrBlank() }?.linkHref
+                ?: inheritedLinkHref
+            val elementId = element.id().ifBlank { null }
+            val rubySpan = ActiveSemanticSpan(
+                startInChunk = textBuilder.length,
+                style = rubyStyle,
+                linkHref = href,
+                tag = "ruby",
+                elementId = elementId
+            )
+            activeSpans.add(rubySpan)
+            appendGeneratedContent(element, rubyStyle, "before")
+            val pendingBases = mutableListOf<IntRange>()
+            fun commitReading(reading: String, readingScale: Float? = null) {
+                if (reading.isBlank() || pendingBases.isEmpty()) {
+                    pendingBases.clear()
+                    return
+                }
+                val start = pendingBases.first().first
+                val end = pendingBases.last().last + 1
+                if (start < end) {
+                    rubyRuns.add(
+                        SemanticRuby(
+                            baseStart = start,
+                            baseEnd = end,
+                            reading = reading,
+                            readingScale = readingScale
+                        )
+                    )
+                }
+                pendingBases.clear()
+            }
+            element.childNodes().forEach { child ->
+                if (child in excludedNodes) return@forEach
+                when {
+                    child is TextNode -> {
+                        val start = textBuilder.length
+                        appendTransformedText(child.wholeText, rubyStyle)
+                        if (textBuilder.length > start) {
+                            pendingBases.add(start until textBuilder.length)
+                        }
+                    }
+                    child is Element && child.tagName().lowercase() == "rt" -> {
+                        val rtOwnStyle = getElementStyle(child, rubyStyle.customProperties)
+                        if (rtOwnStyle.blockStyle.display == "none") {
+                            // Hidden readings contribute nothing; bases stay plain text.
+                            pendingBases.clear()
+                        } else {
+                            commitReading(child.text(), readingScaleForRt(rtOwnStyle, rubyStyle))
+                        }
+                    }
+                    child is Element && child.tagName().lowercase() == "rp" -> {
+                        // Fallback parens for non-ruby agents; skipped, not rendered.
+                    }
+                    child is Element -> {
+                        val baseStyle = rubyStyle.merge(getElementStyle(child, rubyStyle.customProperties))
+                            .resolveFontSizeAgainst(rubyStyle)
+                            .withResolvedFontFamily()
+                        if (baseStyle.display != "none") {
+                            val baseTag = child.tagName().lowercase()
+                            val baseHref = child.linkHrefOrNull() ?: href
+                            processElementBody(
+                                child, rubyStyle, baseTag, baseStyle, baseHref,
+                                child.id().ifBlank { null }, ::processNode
+                            )?.let { pendingBases.add(it) }
+                        }
+                    }
+                }
+            }
+            // Trailing bases without a reading stay plain base text.
+            pendingBases.clear()
+            appendGeneratedContent(element, rubyStyle, "after")
+            activeSpans.removeAt(activeSpans.lastIndex)
+            addSpan(
+                start = rubySpan.startInChunk,
+                end = textBuilder.length,
+                style = rubyStyle,
+                linkHref = href,
+                tag = "ruby",
+                elementId = elementId
+            )
+        }
+
+        processRubyFn = ::processRubyElement
+
         rootElement?.let { appendGeneratedContent(it, rootStyle, "before") }
         nodes.forEach { processNode(it, rootStyle) }
         rootElement?.let { appendGeneratedContent(it, rootStyle, "after") }
@@ -1328,6 +1517,44 @@ private class SemanticHtmlParser(
         return resourceResolver.resolvePath(chapterAbsPath, extractionBasePath, src)
     }
 
+    /**
+     * Folds an image-less figure (ebookmaker `<span id="img_...">` marker, no `<img>`) into a
+     * single missing-figure placeholder. The placeholder borrows the first text block's
+     * source offset so page clipping and text-range locators keep working, and replaces the
+     * container's caption/page-ref paragraphs so the caption does not render twice.
+     * Returns null when this is not a missing-figure container.
+     */
+    private fun foldMissingFigureContainer(
+        element: Element,
+        elementStyle: CssStyle,
+        elementId: String?,
+        cfi: String?,
+        children: List<SemanticBlock>
+    ): List<SemanticBlock>? {
+        val tag = element.tagName().lowercase()
+        if (tag != "figure" && !element.hasClass("figcenter")) return null
+        if (element.select("img").isNotEmpty()) return null
+        val marker = element.select("span[id]").firstOrNull { it.id().isEbookmakerImageMarkerId() }
+            ?: return null
+        if (children.any { it is SemanticTable || it is SemanticImage || it is SemanticList || it is SemanticFlexContainer }) {
+            return null
+        }
+        val caption = element.select("span.caption").firstOrNull()?.text()?.takeIf { it.isNotBlank() }
+            ?: marker.text().takeIf { it.isNotBlank() }
+        val anchor = children.filterIsInstance<SemanticTextBlock>().firstOrNull()
+        return listOf(
+            SemanticParagraph(
+                text = readerMissingFigureText(caption),
+                spans = emptyList(),
+                style = elementStyle.withReaderMissingFigure(),
+                elementId = elementId ?: marker.id().ifBlank { null },
+                cfi = cfi,
+                startCharOffsetInSource = anchor?.startCharOffsetInSource ?: 0,
+                blockIndex = nextBlockIndex++
+            )
+        )
+    }
+
     private fun parseListElementToSemantic(
         listElement: Element,
         listStyle: CssStyle,
@@ -1347,7 +1574,7 @@ private class SemanticHtmlParser(
                 val nestedLists = child.children().filter { nested ->
                     nested.tagName().equals("ol", true) || nested.tagName().equals("ul", true)
                 }
-                val (text, spans) = buildSemanticTextAndSpans(
+                val (text, spans, rubies) = buildSemanticTextAndSpans(
                     rootElement = child,
                     rootStyle = itemStyle,
                     inheritedLinkHref = inheritedLinkHref,
@@ -1367,7 +1594,8 @@ private class SemanticHtmlParser(
                     cfi = child.getCfiPath(),
                     itemMarkerImage = itemStyle.blockStyle.listStyleImage?.let { resolveImagePath(it) },
                     blockIndex = nextBlockIndex++,
-                    markerText = marker
+                    markerText = marker,
+                    rubies = rubies
                 )
                 val nestedItems = nestedLists.flatMap { nested ->
                     if (nested.tagName().equals("ol", true) || nested.tagName().equals("ul", true)) {

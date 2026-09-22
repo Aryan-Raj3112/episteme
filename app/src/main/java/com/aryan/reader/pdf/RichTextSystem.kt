@@ -28,6 +28,7 @@ import androidx.compose.ui.platform.SoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Density
 import com.aryan.reader.pdf.data.VirtualPage
@@ -38,7 +39,12 @@ import com.aryan.reader.shared.pdf.SharedPdfRichSpan
 import com.aryan.reader.shared.pdf.SharedPdfRichTextPaginationEngine
 import com.aryan.reader.shared.pdf.SharedPdfRichTextMapper
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
+import com.aryan.reader.shared.pdf.SharedPdfRichTextLog
 import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
+import com.aryan.reader.shared.pdf.RichParagraphUiState
+import com.aryan.reader.shared.pdf.SharedPdfRichListType
+import com.aryan.reader.shared.pdf.SharedPdfRichTextAlign
+import com.aryan.reader.shared.pdf.richParagraphUiState as sharedRichParagraphUiState
 import com.aryan.reader.shared.pdf.hasRenderableSharedPdfRichText
 import com.aryan.reader.shared.pdf.remapSharedPdfRichTextForLayoutChange
 import com.aryan.reader.shared.pdf.sharedPdfRichTextBlankInsertBreakCount
@@ -260,6 +266,9 @@ class RichTextController(
     )
 
     init {
+        // Route shared rich-text controller traces to logcat under the
+        // single PdfRichCursor tag (cursor/list/alignment diagnosis).
+        SharedPdfRichTextLog.forwarder = { message -> pdfRichCursorTrace("ctrl $message") }
         scope.launch {
             repository.document.collect { document ->
                 document?.let(sharedDelegate::loadDocumentIfEmpty)
@@ -268,6 +277,28 @@ class RichTextController(
     }
 
     private val delegate get() = sharedDelegate
+
+    private fun mappedGlobalSelectionForLog(): TextRange {
+        val active = sharedDelegate.activePageIndex
+        val global = sharedDelegate.globalTextFieldValue
+        val layout = if (active != -1) {
+            sharedDelegate.pageLayouts.find { it.pageIndex == active }
+        } else {
+            null
+        } ?: return global.selection
+        val local = sharedDelegate.localTextFieldValue.selection
+        val start = (local.min - 1 + layout.globalStartIndex).coerceIn(0, global.text.length)
+        val end = (local.max - 1 + layout.globalStartIndex).coerceIn(start, global.text.length)
+        return TextRange(start, end)
+    }
+
+    private fun RichParagraphUiState.alignName(): String {
+        return when (alignment) {
+            SharedPdfRichTextAlign.LEFT -> "LEFT"
+            SharedPdfRichTextAlign.CENTER -> "CENTER"
+            SharedPdfRichTextAlign.RIGHT -> "RIGHT"
+        }
+    }
 
     val globalTextFieldValue: TextFieldValue get() = delegate.globalTextFieldValue
     val localTextFieldValue: TextFieldValue get() = delegate.localTextFieldValue
@@ -306,10 +337,58 @@ class RichTextController(
         fontName: String? = currentFontName,
     ) = delegate.updateCurrentStyle(style, fontPath, fontName)
 
+    fun richParagraphUiState(): RichParagraphUiState = delegate.richParagraphUiState()
+
+    fun toggleRichListType(type: SharedPdfRichListType) {
+        // Mirror of the controller's local->global mapping so the log shows
+        // the paragraph the op actually targets (the raw global selection is
+        // stale while a page is active). Global state is logged because the
+        // local refresh is async.
+        val mapped = mappedGlobalSelectionForLog()
+        val globalBefore = sharedRichParagraphUiState(delegate.globalTextFieldValue.annotatedString, mapped)
+        val localBefore = delegate.richParagraphUiState()
+        pdfRichCursorTrace(
+            "list toggle=$type activePage=${delegate.activePageIndex} mapped=$mapped " +
+                "globalBulleted=${globalBefore.isBulleted} globalNumbered=${globalBefore.isNumbered} " +
+                "localBulleted=${localBefore.isBulleted} localNumbered=${localBefore.isNumbered}"
+        )
+        delegate.toggleRichListType(type)
+        val freshGlobal = delegate.globalTextFieldValue
+        val globalAfter = sharedRichParagraphUiState(freshGlobal.annotatedString, freshGlobal.selection)
+        pdfRichCursorTrace(
+            "list applied=$type activePage=${delegate.activePageIndex} globalSel=${freshGlobal.selection} " +
+                "globalBulleted=${globalAfter.isBulleted} globalNumbered=${globalAfter.isNumbered}"
+        )
+    }
+
+    fun setRichParagraphAlignment(align: SharedPdfRichTextAlign) {
+        val mapped = mappedGlobalSelectionForLog()
+        val globalBefore = sharedRichParagraphUiState(delegate.globalTextFieldValue.annotatedString, mapped)
+        pdfRichCursorTrace(
+            "align set=$align activePage=${delegate.activePageIndex} mapped=$mapped " +
+                "globalAlign=${globalBefore.alignName()} pageLayouts=${delegate.pageLayouts.size}"
+        )
+        delegate.setRichParagraphAlignment(align)
+        val freshGlobal = delegate.globalTextFieldValue
+        val globalAfter = sharedRichParagraphUiState(freshGlobal.annotatedString, freshGlobal.selection)
+        pdfRichCursorTrace(
+            "align applied=$align activePage=${delegate.activePageIndex} globalSel=${freshGlobal.selection} " +
+                "globalAlign=${globalAfter.alignName()}"
+        )
+    }
+
     fun requestEditingFocus() = delegate.requestEditingFocus()
 
-    fun handleTapOnPage(pageIndex: Int, localTapOffset: Offset) =
+    fun handleTapOnPage(pageIndex: Int, localTapOffset: Offset) {
+        pdfRichCursorTrace(
+            "tap page=$pageIndex offset=(${localTapOffset.x},${localTapOffset.y}) activeBefore=${delegate.activePageIndex}"
+        )
         delegate.handleTapOnPage(pageIndex, localTapOffset)
+        pdfRichCursorTrace(
+            "tap placed page=$pageIndex activeAfter=${delegate.activePageIndex} " +
+                "cursorPage=${delegate.cursorPageIndex} cursorRect=${delegate.cursorRectInPage?.pdfRichCursorSummary()}"
+        )
+    }
 
     fun insertPageBreakAt(insertPageIndex: Int, count: Int = 1) =
         delegate.insertPageBreakAt(insertPageIndex, count)

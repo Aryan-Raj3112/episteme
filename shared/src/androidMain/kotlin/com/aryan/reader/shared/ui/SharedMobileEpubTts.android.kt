@@ -69,6 +69,14 @@ private class AndroidSharedMobileEpubLocalTts(
         private set
     override var speechPitch by mutableStateOf(preferences.getFloat(PitchKey, 1f).coerceIn(0.5f, 2f))
         private set
+    private var previewSampleTextState by mutableStateOf(
+        effectiveSharedMobileTtsSampleText(preferences.getString(SampleTextKey, null))
+    )
+    override val previewSampleText: String get() = previewSampleTextState
+    private var favoriteVoiceState by mutableStateOf(
+        preferences.getStringSet(FavoritesKey, emptySet()).orEmpty().toSet()
+    )
+    override val favoriteVoiceIdentifiers: Set<String> get() = favoriteVoiceState
     override var availableVoices by mutableStateOf(emptyList<SharedMobileEpubVoice>())
         private set
     override var selectedVoiceIdentifier by mutableStateOf(preferences.getString(VoiceKey, null))
@@ -166,6 +174,18 @@ private class AndroidSharedMobileEpubLocalTts(
         if (isSessionActive) restartCurrent()
     }
 
+    override fun setPreviewSampleText(text: String) {
+        val sanitized = sanitizeSharedMobileTtsSampleText(text)
+        preferences.edit().putString(SampleTextKey, sanitized).apply()
+        previewSampleTextState = effectiveSharedMobileTtsSampleText(sanitized)
+    }
+
+    override fun toggleFavoriteVoice(identifier: String) {
+        if (identifier.isBlank()) return
+        favoriteVoiceState = toggleSharedMobileTtsVoiceFavorite(favoriteVoiceState, identifier)
+        preferences.edit().putStringSet(FavoritesKey, favoriteVoiceState).apply()
+    }
+
     override fun setVoice(identifier: String?) {
         selectedVoiceIdentifier = identifier?.takeIf { candidate ->
             availableVoices.any { it.identifier == candidate }
@@ -185,7 +205,7 @@ private class AndroidSharedMobileEpubLocalTts(
         identifier?.let { id -> engine?.voices?.firstOrNull { it.name == id } }?.let { engine?.voice = it }
         engine?.setSpeechRate(speechRate)
         engine?.setPitch(speechPitch)
-        engine?.speak(PreviewText, TextToSpeech.QUEUE_FLUSH, Bundle.EMPTY, PreviewUtteranceId)
+        engine?.speak(previewSampleText, TextToSpeech.QUEUE_FLUSH, Bundle.EMPTY, PreviewUtteranceId)
     }
 
     override fun stop() {
@@ -243,8 +263,19 @@ private class AndroidSharedMobileEpubLocalTts(
 
     private fun refreshVoices() {
         availableVoices = engine?.voices.orEmpty()
-            .map { SharedMobileEpubVoice(it.name, it.name, it.locale?.displayName.orEmpty()) }
-            .sortedWith(compareBy(SharedMobileEpubVoice::language, SharedMobileEpubVoice::name))
+            .map { voice ->
+                val locale = voice.locale
+                SharedMobileEpubVoice(
+                    identifier = voice.name,
+                    name = voice.name,
+                    language = locale?.displayName?.takeIf { it.isNotBlank() }
+                        ?: locale?.toLanguageTag()?.takeIf { it.isNotBlank() }
+                        ?: voice.name,
+                    languageTag = runCatching { locale?.toLanguageTag().orEmpty() }.getOrDefault(""),
+                    quality = sharedMobileEpubVoiceQualityForAndroidQuality(voice.quality),
+                )
+            }
+            .sortedForTtsDisplay()
         if (selectedVoiceIdentifier !in availableVoices.map { it.identifier }.toSet()) {
             selectedVoiceIdentifier = null
         }
@@ -309,7 +340,8 @@ private class AndroidSharedMobileEpubLocalTts(
         const val RateKey = "reader.tts.speechRate"
         const val PitchKey = "reader.tts.pitch"
         const val VoiceKey = "reader.tts.voiceIdentifier"
+        const val SampleTextKey = "reader.tts.previewSampleText"
+        const val FavoritesKey = "reader.tts.favoriteVoices"
         const val PreviewUtteranceId = "shared:preview"
-        const val PreviewText = "This is a sample of the selected reading voice."
     }
 }

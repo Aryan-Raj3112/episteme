@@ -32,6 +32,33 @@ data class PdfReverseColorRect(
     val bottom: Int,
 )
 
+/**
+ * Whether a Pages-tab thumbnail must bake "preserve image colors" into the
+ * bitmap with a CPU negative instead of using a cheap GPU [ColorFilter].
+ *
+ * The baked RGB negative is only meaningful for the reverse theme in RGB
+ * mode: that is the single case where the displayed filter *is* the negative
+ * and image rects must stay untransformed inside the baked copy. Every other
+ * theme renders original (no_theme/system) or duotone-tinted pages through
+ * the GPU filter, so baking an RGB negative there would invert the tile
+ * (black pages on a white theme) and waste a per-thumbnail CPU transform
+ * plus a native image-rect extraction on every scroll.
+ *
+ * Nonlinear reverse modes never need this flag: they are always baked by the
+ * platform renderer, with or without protected rects.
+ */
+fun pdfThumbnailNeedsBakedPreserve(
+    themeId: String,
+    effectiveReverseColorMode: PdfReverseColorMode,
+    preserveImageColors: Boolean,
+    hasImageRects: Boolean,
+): Boolean {
+    return themeId == "reverse" &&
+        effectiveReverseColorMode == PdfReverseColorMode.RGB &&
+        preserveImageColors &&
+        hasImageRects
+}
+
 fun invertPdfArgbIfUnprotected(
     argb: Int,
     x: Int,

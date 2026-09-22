@@ -36,7 +36,12 @@ fun SharedPdfTextDockPopupHost(
     popupAlignment: Alignment = Alignment.BottomCenter,
     popupOffsetY: Dp? = null,
 ) {
-    if (state.popup == PdfTextDockPopup.NONE || state.popup == PdfTextDockPopup.FONT_SIZE) return
+    if (state.popup == PdfTextDockPopup.NONE ||
+        state.popup == PdfTextDockPopup.FONT_SIZE ||
+        state.popup == PdfTextDockPopup.ALIGNMENT
+    ) {
+        return
+    }
     // Keep popups non-focusable on mobile: a focusable popup window steals
     // focus from the hidden rich-text / text-box field, dismissing the IME and
     // dropping the dock on phones and tablets. Inner controls (palette taps,
