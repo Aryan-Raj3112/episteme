@@ -360,6 +360,33 @@ class SharedEpubPackageLoaderTest {
     }
 
     @Test
+    fun `metadata adapter reads calibre epub3 series written as prefixed opf metas`() {
+        val archive = MapEpubArchive(
+            mapOf(
+                "META-INF/container.xml" to "<container><rootfiles><rootfile full-path=\"book.opf\"/></rootfiles></container>".encodeToByteArray(),
+                "book.opf" to """
+                    <package version="3.0"><metadata>
+                      <dc:title>Exhalation: Stories</dc:title>
+                      <dc:creator>Ted Chiang</dc:creator>
+                      <meta content="2019-04-18T00:00:00Z" name="created"/>
+                      <meta content="Knopf" name="imprint"/>
+                      <opf:meta refines="#title" property="title-type">main</opf:meta>
+                      <opf:meta property="belongs-to-collection" id="id-2">1, aryan</opf:meta>
+                      <opf:meta refines="#id-2" property="collection-type">series</opf:meta>
+                      <opf:meta refines="#id-2" property="group-position">1</opf:meta>
+                    </metadata><manifest/><spine/></package>
+                """.trimIndent().encodeToByteArray()
+            )
+        )
+
+        val book = SharedEpubPackageLoader.load(archive, "calibre-prefixed-series", "exhalation.epub")
+
+        assertEquals("Exhalation: Stories", book.title)
+        assertEquals("1, aryan", book.seriesName)
+        assertEquals(1.0, book.seriesIndex)
+    }
+
+    @Test
     fun `manifest attributes retain Android whitespace and case semantics`() {
         val archive = MapEpubArchive(
             mapOf(

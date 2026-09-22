@@ -574,6 +574,64 @@ class MobileEpubPackageModelsTest {
     }
 
     @Test
+    fun opfMetaParserReadsCalibreMixedPrefixedAndUnprefixedMetas() {
+        val series = resolveMobileEpubSeries(
+            parseMobileOpfMetaElements(
+                """
+                <package version="3.0"><metadata>
+                  <meta content="2019-04-18T00:00:00Z" name="created"/>
+                  <meta content="Knopf" name="imprint"/>
+                  <opf:meta refines="#title" property="title-type">main</opf:meta>
+                  <opf:meta property="belongs-to-collection" id="id-2">1, aryan</opf:meta>
+                  <opf:meta refines="#id-2" property="collection-type">series</opf:meta>
+                  <opf:meta refines="#id-2" property="group-position">1</opf:meta>
+                </metadata></package>
+                """.trimIndent()
+            )
+        )
+
+        assertEquals("1, aryan", series?.name)
+        assertEquals(1.0, series?.index)
+    }
+
+    @Test
+    fun opfMetaParserExtractsAttributesAndTextFromBothMetaForms() {
+        val metas = parseMobileOpfMetaElements(
+            """
+            <metadata>
+              <meta name="calibre:series" content="Legacy Series"/>
+              <opf:meta refines="#c1" property="collection-type">series</opf:meta>
+              <meta property="dcterms:modified">2026-07-12T00:00:00Z</meta>
+            </metadata>
+            """.trimIndent()
+        )
+
+        assertEquals(3, metas.size)
+        assertEquals("calibre:series", metas[0].name)
+        assertEquals("Legacy Series", metas[0].content)
+        assertNull(metas[0].text)
+        assertEquals("collection-type", metas[1].property)
+        assertEquals("#c1", metas[1].refines)
+        assertEquals("series", metas[1].text)
+        assertEquals("2026-07-12T00:00:00Z", metas[2].text)
+    }
+
+    @Test
+    fun seriesCollectionIdsOnlyIncludeSeriesTypedCollections() {
+        val ids = mobileOpfSeriesCollectionIds(
+            listOf(
+                MobileEpubMetaElement(id = "set1", property = "belongs-to-collection", text = "Boxed Sets"),
+                MobileEpubMetaElement(property = "collection-type", text = "set", refines = "#set1"),
+                MobileEpubMetaElement(id = "c1", property = "belongs-to-collection", text = "Series"),
+                MobileEpubMetaElement(property = "collection-type", text = "series", refines = "#c1"),
+                MobileEpubMetaElement(property = "group-position", text = "1", refines = "#c1")
+            )
+        )
+
+        assertEquals(setOf("c1"), ids)
+    }
+
+    @Test
     fun spineAndNcxSelectionPreserveAndroidOrderingAndPrecedence() {
         assertEquals(
             listOf("linear", "nonlinear", "missing"),

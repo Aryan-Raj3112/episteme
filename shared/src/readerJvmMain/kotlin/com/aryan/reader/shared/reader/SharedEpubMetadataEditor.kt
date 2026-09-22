@@ -167,6 +167,11 @@ private fun rewriteOpf(opf: String, update: SharedEpubMetadataUpdate, coverHref:
     metadata.upsertDcText("description", update.description)
     metadata.upsertMetaContent("calibre:series", update.seriesName)
     metadata.upsertMetaContent("calibre:series_index", update.seriesIndex?.formatSeriesIndex())
+    metadata.upsertEpub3SeriesCollection(
+        seriesName = update.seriesName,
+        seriesIndex = update.seriesIndex,
+        packageVersion = packageElement?.attr("version")?.takeIf(String::isNotBlank)
+    )
     if (coverHref != null) {
         val manifest = document.getAllElements().firstOrNull { it.localNameEquals("manifest") }
             ?: error("EPUB package manifest section is missing.")
@@ -178,13 +183,84 @@ private fun rewriteOpf(opf: String, update: SharedEpubMetadataUpdate, coverHref:
 }
 
 private fun Element.toSnapshot(): SharedEpubMetadataSnapshot {
+    val series = resolveMobileEpubSeries(
+        children().filter { it.localNameEquals("meta") }.map { it.toMobileMetaElement() }
+    )
     return SharedEpubMetadataSnapshot(
         title = firstChildText("title"),
         author = firstChildText("creator"),
         description = firstChildText("description"),
-        seriesName = firstMetaContent("calibre:series"),
-        seriesIndex = firstMetaContent("calibre:series_index")?.toDoubleOrNull()
+        seriesName = series?.name,
+        seriesIndex = series?.index
     )
+}
+
+private fun Element.toMobileMetaElement(): MobileEpubMetaElement {
+    return MobileEpubMetaElement(
+        id = attr("id").takeIf { it.isNotBlank() },
+        name = attr("name").takeIf { it.isNotBlank() },
+        property = attr("property").takeIf { it.isNotBlank() },
+        content = attr("content").takeIf { it.isNotBlank() },
+        text = text().trim().takeIf { it.isNotBlank() },
+        refines = attr("refines").takeIf { it.isNotBlank() }
+    )
+}
+
+/**
+ * Keeps the EPUB 3 `belongs-to-collection` series group in lockstep with the legacy
+ * `calibre:series` metas. The reader prefers the EPUB 3 form, so a stale group would
+ * shadow edits; the group is only written when `package` declares version 3, where
+ * `property`/`refines` metas are valid.
+ */
+private fun Element.upsertEpub3SeriesCollection(
+    seriesName: String?,
+    seriesIndex: Double?,
+    packageVersion: String?
+) {
+    val normalized = seriesName?.trim()?.takeIf { it.isNotEmpty() }
+    val metaChildren = children().filter { it.localNameEquals("meta") }.toList()
+    val metaElements = metaChildren.map { it.toMobileMetaElement() }
+    val seriesIds = mobileOpfSeriesCollectionIds(metaElements)
+    val preferredId = seriesIds.firstOrNull()
+    metaChildren.zip(metaElements).forEach { (child, element) ->
+        val id = element.id
+        val refinesTarget = element.refines?.removePrefix("#")
+        val isSeriesCollection = id != null && id in seriesIds &&
+            element.property.equals("belongs-to-collection", ignoreCase = true)
+        val isSeriesRefinement = refinesTarget != null && refinesTarget in seriesIds
+        if (isSeriesCollection || isSeriesRefinement) {
+            child.remove()
+        }
+    }
+    if (normalized == null || packageVersion?.startsWith("3") != true) return
+
+    val takenIds = (ownerDocument() ?: this).getAllElements()
+        .mapNotNull { element -> element.attr("id").takeIf(String::isNotBlank) }
+        .toSet()
+    val id = mobileOpfUniqueMetaId(takenIds, preferredId)
+    appendChild(
+        Element(Tag.valueOf("meta"), "").also { element ->
+            element.attr("property", "belongs-to-collection")
+            element.attr("id", id)
+            element.text(normalized)
+        }
+    )
+    appendChild(
+        Element(Tag.valueOf("meta"), "").also { element ->
+            element.attr("refines", "#$id")
+            element.attr("property", "collection-type")
+            element.text("series")
+        }
+    )
+    if (seriesIndex != null) {
+        appendChild(
+            Element(Tag.valueOf("meta"), "").also { element ->
+                element.attr("refines", "#$id")
+                element.attr("property", "group-position")
+                element.text(seriesIndex.formatSeriesIndex())
+            }
+        )
+    }
 }
 
 private fun parseOpfMetadata(opf: String): Element? {
@@ -277,14 +353,6 @@ private fun Element.firstChildText(localName: String): String? {
     return children()
         .firstOrNull { it.localNameEquals(localName) }
         ?.text()
-        ?.trim()
-        ?.takeIf { it.isNotBlank() }
-}
-
-private fun Element.firstMetaContent(name: String): String? {
-    return children()
-        .firstOrNull { it.localNameEquals("meta") && it.attr("name").equals(name, ignoreCase = true) }
-        ?.attr("content")
         ?.trim()
         ?.takeIf { it.isNotBlank() }
 }

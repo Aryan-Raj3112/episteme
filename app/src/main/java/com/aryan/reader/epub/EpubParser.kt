@@ -485,8 +485,7 @@ class EpubParser(private val context: Context) {
         originalFilePathOrKey: String,
         parseContent: Boolean = true
     ): EpubBook = withContext(Dispatchers.IO) {
-        val metadataNodes = document.metadata.selectChildTag("meta")
-            .ifEmpty { document.metadata.selectChildTag("opf:meta") }
+        val metadataNodes = document.metadata.selectChildTagsByLocalName("meta")
         val metadata = resolveMobileEpubMetadata(
             sourceFileName = originalFilePathOrKey,
             title = document.metadata.selectFirstChildTag("dc:title")?.textContent,
@@ -792,8 +791,7 @@ class EpubParser(private val context: Context) {
 
 
     private fun getMetadataCoverId(metadata: Node): String? {
-        return metadata.selectChildTag("meta")
-            .ifEmpty { metadata.selectChildTag("opf:meta") }
+        return metadata.selectChildTagsByLocalName("meta")
             .find { it.getAttributeValue("name") == "cover" }?.getAttributeValue("content")
     }
 
@@ -801,8 +799,7 @@ class EpubParser(private val context: Context) {
         manifest: Node,
         opfParentDir: File
     ): Map<String, EpubManifestItem> {
-        return manifest.selectChildTag("item")
-            .ifEmpty { manifest.selectChildTag("opf:item") }
+        return manifest.selectChildTagsByLocalName("item")
             .mapNotNull { itemElement ->
                 val href = itemElement.getAttribute("href")?.decodedURL ?: return@mapNotNull null
                 val pathRelativeToEpubRoot = resolveMobileEpubReference("${opfParentDir.path}/_", href)
@@ -840,8 +837,7 @@ class EpubParser(private val context: Context) {
     ): List<EpubChapter> = withContext(Dispatchers.Default) {
         val parsingSemaphore = Semaphore(6)
 
-        val spineItems = spine.selectChildTag("itemref")
-            .ifEmpty { spine.selectChildTag("opf:itemref") }
+        val spineItems = spine.selectChildTagsByLocalName("itemref")
         val spineIds = mobileEpubSpineItemIds(spineItems.map { it.getAttributeValue("idref") }.toList())
 
         val deferredChapters = spineIds.mapIndexed { index, idRef ->

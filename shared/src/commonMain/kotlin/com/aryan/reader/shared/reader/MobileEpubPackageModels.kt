@@ -415,6 +415,68 @@ private const val MOBILE_EPUB_SERIES_TYPE_PROPERTY = "collection-type"
 private const val MOBILE_EPUB_SERIES_TYPE_VALUE = "series"
 private const val MOBILE_EPUB_GROUP_POSITION_PROPERTY = "group-position"
 
+private val MobileOpfMetaOpenTagRegex = Regex("""<(?:[\w.-]+:)?meta\s+[^>]*>""", RegexOption.IGNORE_CASE)
+private val MobileOpfMetaCloseTagRegex = Regex("""</(?:[\w.-]+:)?meta\s*>""", RegexOption.IGNORE_CASE)
+private val MobileXmlTagRegex = Regex("<[^>]*>")
+
+/** Raw `<meta>` element parsed from an OPF metadata block with its source range. */
+internal data class MobileOpfMetaElementRange(
+    val element: MobileEpubMetaElement,
+    val start: Int,
+    val end: Int
+)
+
+/**
+ * Parses every OPF `<meta>` element from a package document, matching both the
+ * unprefixed and prefixed (`opf:meta`) spellings Calibre mixes inside one
+ * `<metadata>` block, keeping document order.
+ */
+internal fun parseMobileOpfMetaElementRanges(opf: String): List<MobileOpfMetaElementRange> {
+    return MobileOpfMetaOpenTagRegex.findAll(opf).mapNotNull { match ->
+        val openTag = match.value
+        val text: String?
+        val end: Int
+        if (openTag.endsWith("/>")) {
+            text = null
+            end = match.range.last + 1
+        } else {
+            val close = MobileOpfMetaCloseTagRegex.find(opf, startIndex = match.range.last + 1)
+                ?: return@mapNotNull null
+            text = opf.substring(match.range.last + 1, close.range.first)
+                .replace(MobileXmlTagRegex, " ")
+                .decodeEpubEntities()
+                .trim()
+                .takeIf { it.isNotEmpty() }
+            end = close.range.last + 1
+        }
+        MobileOpfMetaElementRange(
+            element = MobileEpubMetaElement(
+                id = openTag.metaAttribute("id"),
+                name = openTag.metaAttribute("name"),
+                property = openTag.metaAttribute("property"),
+                content = openTag.metaAttribute("content"),
+                text = text,
+                refines = openTag.metaAttribute("refines")
+            ),
+            start = match.range.first,
+            end = end
+        )
+    }.toList()
+}
+
+/** Public OPF `<meta>` parser shared by the Android and desktop metadata extractors. */
+fun parseMobileOpfMetaElements(opf: String): List<MobileEpubMetaElement> =
+    parseMobileOpfMetaElementRanges(opf).map { it.element }
+
+private fun String.metaAttribute(name: String): String? =
+    Regex("""\b${Regex.escape(name)}\s*=\s*(['"])(.*?)\1""", RegexOption.IGNORE_CASE)
+        .find(this)
+        ?.groupValues
+        ?.get(2)
+        ?.decodeEpubEntities()
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+
 private fun MobileEpubMetaElement.value(): String? =
     content?.takeIf(String::isNotBlank) ?: text?.takeIf(String::isNotBlank)
 
@@ -424,6 +486,50 @@ private fun MobileEpubMetaElement.refinedTargetId(): String? =
 private fun String.normalizeMobileEpubText(): String? =
     replace(Regex("\\s+"), " ").trim().takeIf { it.isNotEmpty() }
 
+/** A `belongs-to-collection` group refined as `collection-type` = `series`. */
+private data class MobileOpfSeriesCollection(
+    val id: String,
+    val collection: MobileEpubMetaElement,
+    val refinements: List<MobileEpubMetaElement>
+)
+
+private fun mobileOpfSeriesCollections(metaElements: List<MobileEpubMetaElement>): List<MobileOpfSeriesCollection> {
+    val refinementsByTargetId = mutableMapOf<String, MutableList<MobileEpubMetaElement>>()
+    metaElements.forEach { element ->
+        val targetId = element.refinedTargetId() ?: return@forEach
+        if (element.property.isNullOrBlank()) return@forEach
+        refinementsByTargetId.getOrPut(targetId) { mutableListOf() }.add(element)
+    }
+    return metaElements.mapNotNull { element ->
+        if (!element.property.equals(MOBILE_EPUB_COLLECTION_PROPERTY, ignoreCase = true)) return@mapNotNull null
+        // Collection elements without an id are skipped because refines cannot attach to them.
+        val id = element.id?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+        val refinements = refinementsByTargetId[id].orEmpty()
+        val isSeriesCollection = refinements.any {
+            it.property.equals(MOBILE_EPUB_SERIES_TYPE_PROPERTY, ignoreCase = true) &&
+                it.value().equals(MOBILE_EPUB_SERIES_TYPE_VALUE, ignoreCase = true)
+        }
+        if (!isSeriesCollection) null
+        else MobileOpfSeriesCollection(id = id, collection = element, refinements = refinements)
+    }
+}
+
+/** Ids of EPUB 3 series collections so editors can replace them in lockstep with the reader. */
+internal fun mobileOpfSeriesCollectionIds(metaElements: List<MobileEpubMetaElement>): Set<String> =
+    mobileOpfSeriesCollections(metaElements).map { it.id }.toSet()
+
+/** Picks a free `<meta id>` for a rewritten series collection, preferring the id being replaced. */
+internal fun mobileOpfUniqueMetaId(takenIds: Set<String>, preferredId: String?): String {
+    preferredId?.takeIf { it.isNotBlank() && it !in takenIds }?.let { return it }
+    var counter = 1
+    var candidate = "calibre-series"
+    while (candidate in takenIds) {
+        counter++
+        candidate = "calibre-series-$counter"
+    }
+    return candidate
+}
+
 /**
  * Mirrors Calibre's OPF3 reader precedence (`read_series`): prefer an EPUB 3
  * `belongs-to-collection` element refined as a series, where `group-position`
@@ -431,25 +537,9 @@ private fun String.normalizeMobileEpubText(): String? =
  * `calibre:series_index` name/content metas, keeping Android's last-entry-wins rule.
  */
 fun resolveMobileEpubSeries(metaElements: List<MobileEpubMetaElement>): MobileEpubSeriesMetadata? {
-    val refinementsByTargetId = mutableMapOf<String, MutableList<MobileEpubMetaElement>>()
-    metaElements.forEach { element ->
-        val targetId = element.refinedTargetId() ?: return@forEach
-        if (element.property.isNullOrBlank()) return@forEach
-        refinementsByTargetId.getOrPut(targetId) { mutableListOf() }.add(element)
-    }
-
-    metaElements.forEach { element ->
-        if (!element.property.equals(MOBILE_EPUB_COLLECTION_PROPERTY, ignoreCase = true)) return@forEach
-        // Collection elements without an id are skipped because refines cannot attach to them.
-        val id = element.id?.takeIf(String::isNotBlank) ?: return@forEach
-        val seriesName = element.value()?.normalizeMobileEpubText() ?: return@forEach
-        val refinements = refinementsByTargetId[id].orEmpty()
-        val isSeriesCollection = refinements.any {
-            it.property.equals(MOBILE_EPUB_SERIES_TYPE_PROPERTY, ignoreCase = true) &&
-                it.value().equals(MOBILE_EPUB_SERIES_TYPE_VALUE, ignoreCase = true)
-        }
-        if (!isSeriesCollection) return@forEach
-        val groupPosition = refinements.firstOrNull {
+    mobileOpfSeriesCollections(metaElements).forEach { group ->
+        val seriesName = group.collection.value()?.normalizeMobileEpubText() ?: return@forEach
+        val groupPosition = group.refinements.firstOrNull {
             it.property.equals(MOBILE_EPUB_GROUP_POSITION_PROPERTY, ignoreCase = true)
         }?.value()?.toDoubleOrNull()
         return MobileEpubSeriesMetadata(name = seriesName, index = groupPosition)

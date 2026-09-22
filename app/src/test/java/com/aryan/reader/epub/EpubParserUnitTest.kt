@@ -565,6 +565,49 @@ class EpubParserUnitTest {
         assertEquals(3.0, book.seriesIndex)
     }
 
+    @Test
+    fun `createEpubBook parses calibre series written as prefixed opf metas beside plain metas`() = runTest {
+        val cacheDir = temp.newFolder("cache-calibre-prefixed")
+        val extractionDir = temp.newFolder("extract-calibre-prefixed")
+        val parser = EpubParser(contextWithCache(cacheDir))
+
+        val book = parser.createEpubBook(
+            inputStream = ByteArrayInputStream(calibrePrefixedSeriesEpubBytes()),
+            bookId = "book-id-calibre",
+            shouldUseToc = false,
+            originalBookNameHint = "exhalation.epub",
+            parseContent = true,
+            extractionDirOverride = extractionDir
+        )
+
+        assertEquals("Exhalation: Stories", book.title)
+        assertEquals("1, aryan", book.seriesName)
+        assertEquals(1.0, book.seriesIndex)
+    }
+
+    @Test
+    fun `selectChildTagsByLocalName matches prefixed and unprefixed children in document order`() {
+        val document = parseXMLFile(
+            """
+                <root>
+                    <meta name="created" content="one"/>
+                    <opf:meta property="belongs-to-collection" id="id-2">Series</opf:meta>
+                    <meta name="imprint" content="Knopf"/>
+                </root>
+            """.trimIndent().toByteArray()
+        )!!
+        val root = document.selectFirstTag("root")!!
+
+        assertEquals(
+            listOf("created", null, "imprint"),
+            root.selectChildTagsByLocalName("meta").map { it.getAttributeValue("name") }.toList()
+        )
+        assertEquals(
+            "Series",
+            root.selectChildTagsByLocalName("meta").toList()[1].textContent
+        )
+    }
+
     private fun contextWithCache(cacheDir: File): Context {
         val context = mockk<Context>()
         every { context.cacheDir } returns cacheDir
@@ -587,6 +630,40 @@ class EpubParserUnitTest {
                     <meta id="c1" property="belongs-to-collection">Sherlock Holmes</meta>
                     <meta refines="#c1" property="collection-type">series</meta>
                     <meta refines="#c1" property="group-position">3</meta>
+                </metadata>
+                <manifest>
+                    <item id="chap1" href="chapters/chapter1.xhtml" media-type="application/xhtml+xml"/>
+                </manifest>
+                <spine>
+                    <itemref idref="chap1"/>
+                </spine>
+            </package>
+        """.trimIndent(),
+        "OEBPS/chapters/chapter1.xhtml" to "<html><body><p>One</p></body></html>"
+    )
+
+    private fun calibrePrefixedSeriesEpubBytes(): ByteArray = zipBytes(
+        "META-INF/container.xml" to """
+            <container version="1.0">
+                <rootfiles><rootfile full-path="OEBPS/9781101947906.opf"/></rootfiles>
+            </container>
+        """.trimIndent(),
+        "OEBPS/9781101947906.opf" to """
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf" version="3.0">
+                <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                    <dc:title id="title">Exhalation: Stories</dc:title>
+                    <dc:creator id="id-1">Ted Chiang</dc:creator>
+                    <dc:language>en-US</dc:language>
+                    <meta content="2019-04-18T00:00:00Z" name="created"/>
+                    <meta content="Easypress PRH_prodS" name="generator"/>
+                    <meta content="Knopf" name="imprint"/>
+                    <meta property="dcterms:modified">2021-07-09T11:21:19Z</meta>
+                    <opf:meta refines="#title" property="title-type">main</opf:meta>
+                    <opf:meta refines="#id-1" property="role" scheme="marc:relators">aut</opf:meta>
+                    <opf:meta property="calibre:rating">8</opf:meta>
+                    <opf:meta property="belongs-to-collection" id="id-2">1, aryan</opf:meta>
+                    <opf:meta refines="#id-2" property="collection-type">series</opf:meta>
+                    <opf:meta refines="#id-2" property="group-position">1</opf:meta>
                 </metadata>
                 <manifest>
                     <item id="chap1" href="chapters/chapter1.xhtml" media-type="application/xhtml+xml"/>

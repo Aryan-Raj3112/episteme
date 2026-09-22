@@ -134,6 +134,45 @@ class EmbeddedEbookMetadataExtractorTest {
     }
 
     @Test
+    fun `epub extracts calibre series written as prefixed opf metas beside plain metas`() {
+        val epubBytes = zipBytes(
+            "META-INF/container.xml" to """
+                <container>
+                    <rootfiles>
+                        <rootfile full-path="OEBPS/9781101947906.opf"/>
+                    </rootfiles>
+                </container>
+            """.trimIndent().toByteArray(Charsets.UTF_8),
+            "OEBPS/9781101947906.opf" to """
+                <package xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf" version="3.0">
+                    <metadata>
+                        <dc:title>Exhalation: Stories</dc:title>
+                        <dc:creator>Ted Chiang</dc:creator>
+                        <meta content="2019-04-18T00:00:00Z" name="created"/>
+                        <meta content="Knopf" name="imprint"/>
+                        <opf:meta refines="#title" property="title-type">main</opf:meta>
+                        <opf:meta property="belongs-to-collection" id="id-2">1, aryan</opf:meta>
+                        <opf:meta refines="#id-2" property="collection-type">series</opf:meta>
+                        <opf:meta refines="#id-2" property="group-position">1</opf:meta>
+                    </metadata>
+                    <manifest/>
+                </package>
+            """.trimIndent().toByteArray(Charsets.UTF_8)
+        )
+
+        val metadata = EmbeddedEbookMetadataExtractor.extract(
+            type = FileType.EPUB,
+            displayName = "exhalation.epub",
+            openStream = { ByteArrayInputStream(epubBytes) }
+        )
+
+        assertEquals("Exhalation: Stories", metadata.title)
+        assertEquals("Ted Chiang", metadata.author)
+        assertEquals("1, aryan", metadata.seriesName)
+        assertEquals(1.0, metadata.seriesIndex)
+    }
+
+    @Test
     fun `fb2 extracts coverpage binary without parsing book body`() {
         val coverBytes = onePixelPngBytes()
         val fb2 = """
