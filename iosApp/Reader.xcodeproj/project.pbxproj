@@ -11,6 +11,7 @@
 		A11CE1012FFE500000000001 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE1052FFE500000000001 /* FirebaseAuth */; };
 		A11CE1022FFE500000000001 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE1062FFE500000000001 /* GoogleSignIn */; };
 		A11CE1072FFE500000000001 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE1082FFE500000000001 /* FirebaseFirestore */; };
+		A11CE10A2FFE500000000001 /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE1092FFE500000000001 /* FirebaseCrashlytics */; };
 		A11CE1112FFE500000000001 /* ../third_party/pdfium/ios/PDFium.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A11CE1102FFE500000000001 /* ../third_party/pdfium/ios/PDFium.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -49,6 +50,7 @@
 				A11CE1012FFE500000000001 /* FirebaseAuth in Frameworks */,
 				A11CE1022FFE500000000001 /* GoogleSignIn in Frameworks */,
 				A11CE1072FFE500000000001 /* FirebaseFirestore in Frameworks */,
+				A11CE10A2FFE500000000001 /* FirebaseCrashlytics in Frameworks */,
 				A11CE1112FFE500000000001 /* ../third_party/pdfium/ios/PDFium.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -86,6 +88,7 @@
 				9284F59B2FFE342F0088D5CA /* Resources */,
 				A11CE0052FFE500000000005 /* Embed Frameworks */,
 				A11CE0042FFE500000000004 /* Validate Embedded Frameworks */,
+				A11CE10B2FFE500000000001 /* Upload Crashlytics dSYMs */,
 			);
 			buildRules = (
 			);
@@ -99,6 +102,7 @@
 				A11CE1052FFE500000000001 /* FirebaseAuth */,
 				A11CE1062FFE500000000001 /* GoogleSignIn */,
 				A11CE1082FFE500000000001 /* FirebaseFirestore */,
+				A11CE1092FFE500000000001 /* FirebaseCrashlytics */,
 			);
 			productName = Reader;
 			productReference = 9284F59D2FFE342F0088D5CA /* Reader.app */;
@@ -199,6 +203,29 @@
 			shellPath = /bin/sh;
 			shellScript = "set -eu\n# App Store Connect rejects loose .dylib files inside Frameworks (ITMS-90426).\n# Native libs must be statically linked or embedded as .framework bundles.\nFRAMEWORKS_DIR=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\nif [ ! -f \"$FRAMEWORKS_DIR/Pdfium.framework/Pdfium\" ]; then\n  echo \"error: Pdfium.framework was not embedded in $FRAMEWORKS_DIR\" >&2\n  exit 1\nfi\nLOOSE_DYLIBS=\"$(find \"$FRAMEWORKS_DIR\" -maxdepth 1 -name '*.dylib' -print)\"\nif [ -n \"$LOOSE_DYLIBS\" ]; then\n  echo \"error: Loose .dylib files must not be embedded in Frameworks: $LOOSE_DYLIBS\" >&2\n  exit 1\nfi\n# App Store Connect requires CFBundleShortVersionString to be at most three\n# dot-separated integers (server error 90060); fail fast instead of at upload.\nPDFIUM_VERSION=\"$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' \"$FRAMEWORKS_DIR/Pdfium.framework/Info.plist\")\"\nif ! printf '%s' \"$PDFIUM_VERSION\" | grep -Eq '^[0-9]+(\\.[0-9]+){0,2}$'; then\n  echo \"error: Pdfium.framework CFBundleShortVersionString '$PDFIUM_VERSION' must be at most three dot-separated integers\" >&2\n  exit 1\nfi\n# The framework's MinimumOSVersion must match its binary LC_BUILD_VERSION\n# minos, otherwise App Store Connect rejects it with ITMS-90208.\nPDFIUM_MINOS_PLIST=\"$(/usr/libexec/PlistBuddy -c 'Print MinimumOSVersion' \"$FRAMEWORKS_DIR/Pdfium.framework/Info.plist\")\"\nPDFIUM_MINOS_BINARY=\"$(otool -l \"$FRAMEWORKS_DIR/Pdfium.framework/Pdfium\" | awk '/minos/ {print $2; exit}')\"\nif [ \"$PDFIUM_MINOS_PLIST\" != \"$PDFIUM_MINOS_BINARY\" ]; then\n  echo \"error: Pdfium.framework MinimumOSVersion '$PDFIUM_MINOS_PLIST' does not match binary minos '$PDFIUM_MINOS_BINARY'\" >&2\n  exit 1\nfi\n";
 		};
+		A11CE10B2FFE500000000001 /* Upload Crashlytics dSYMs */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}",
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${PRODUCT_NAME}",
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Info.plist",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/GoogleService-Info.plist",
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
+			);
+			name = "Upload Crashlytics dSYMs";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run\"\n";
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -246,7 +273,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -365,6 +392,7 @@
 				MARKETING_VERSION = 1.0.1;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
+					"-ObjC",
 					"-framework",
 					ReaderShared,
 					"-lz",
@@ -410,6 +438,7 @@
 				MARKETING_VERSION = 1.0.1;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
+					"-ObjC",
 					"-framework",
 					ReaderShared,
 					"-lz",
@@ -485,6 +514,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A11CE1032FFE500000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseFirestore;
+		};
+		A11CE1092FFE500000000001 /* FirebaseCrashlytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A11CE1032FFE500000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCrashlytics;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
