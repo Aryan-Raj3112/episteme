@@ -1632,7 +1632,6 @@
     <string name="desktop_dev_tools">Geliştirici araçları</string>
     <string name="desktop_dev_tools_desc">Masaüstü okuyucunun davranışındaki hataları gidermeye yönelik bakım işlemleri.</string>
     <string name="audiobooks_collapse_player">Oynatıcıyı daralt</string>
-
     <!-- Strings added by the tr verify-pass (docs/localization-revamp-plan.md §6).
          Register: polite plural imperatives; pronouns dropped (Turkish usage).
          Glossary: kitaplık, raf, bölüm, kapak, ayarlar, uygulama, okuyucu, kredi,
@@ -1674,7 +1673,7 @@
     <string name="listen_no_tts_books">Desteklenen kitap bulunamadı</string>
     <string name="listen_empty">Henüz dinlenecek bir şey yok</string>
     <string name="listen_empty_desc">Sentezlenmiş sesle dinlemek için bir sesli kitap içe aktarın veya kitaplıktan bir kitap seçin.</string>
-    <string name="listen_no_matches">Dinleme öğelerinden hiçbiri şunla eşleşmiyor: &quot;%1$s&quot;</string>
+    <string name="listen_no_matches">Dinleme öğelerinden hiçbiri şunla eşleşmiyor: "%1$s"</string>
     <string name="listen_badge_audiobook">SESLİ KİTAP</string>
     <string name="listen_badge_tts">TTS</string>
     <string name="listen_timer">Zamanlayıcı</string>

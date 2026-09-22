@@ -1520,7 +1520,6 @@
     <string name="unified_library_unread">Sin leer</string>
     <string name="unified_library_no_books">No hay libros en esta vista</string>
     <string name="unified_library_drawer_title">Tus libros</string>
-
     <!-- Strings added by the es language pass (docs/localization-revamp-plan.md §6).
          Register: tú (file census); glossary: ajustes, archivo, añadir, estante,
          biblioteca, escritorio; recap -> repaso (resumen = Summary tab);
@@ -1633,7 +1632,7 @@
     <string name="listen_no_tts_books">No se encontraron libros compatibles</string>
     <string name="listen_empty">Aún no hay nada para escuchar</string>
     <string name="listen_empty_desc">Importa un audiolibro o elige un libro de la biblioteca para escucharlo con texto a voz.</string>
-    <string name="listen_no_matches">Ningún elemento de escucha coincide con &quot;%1$s&quot;</string>
+    <string name="listen_no_matches">Ningún elemento de escucha coincide con "%1$s"</string>
     <string name="listen_badge_audiobook">AUDIOLIBRO</string>
     <string name="listen_badge_tts">TTS</string>
     <string name="listen_timer">Temporizador</string>
@@ -1666,7 +1665,7 @@
     <string name="visual_options_bottom_toolbar">Mostrar barra inferior</string>
     <string name="visual_options_bottom_toolbar_desc">Ocúltala para leer solo con las herramientas superiores</string>
     <string name="search_chapters_placeholder">Buscar capítulos</string>
-    <string name="no_chapters_matching">No se encontraron capítulos para &quot;%1$s&quot;.</string>
+    <string name="no_chapters_matching">No se encontraron capítulos para "%1$s".</string>
     <string name="visual_options_hide_images">Ocultar imágenes</string>
     <string name="visual_options_hide_images_desc">Actívalo para leer con todas las imágenes del libro ocultas.</string>
     <string name="visual_options_epub_page_spread">Doble página</string>
@@ -1674,9 +1673,9 @@
     <string name="visual_options_epub_spread_single">Una página</string>
     <string name="visual_options_epub_spread_two">Dos páginas</string>
     <string name="label_spread_gap">Separación de doble página</string>
-    <string name="banner_tag_deleted">Etiqueta &quot;%1$s&quot; eliminada.</string>
+    <string name="banner_tag_deleted">Etiqueta "%1$s" eliminada.</string>
     <string name="menu_delete_tag">Eliminar etiqueta</string>
-    <string name="dialog_delete_tag_desc">¿Eliminar la etiqueta &quot;%1$s&quot;? Se quitará de todos los libros.</string>
+    <string name="dialog_delete_tag_desc">¿Eliminar la etiqueta "%1$s"? Se quitará de todos los libros.</string>
     <string name="chapter_of_chapters">Capítulo %1$d de %2$d</string>
     <string name="chapter_number">Capítulo %1$d</string>
     <string name="external_file_behavior_ask_desc">Tras cerrar un archivo abierto externamente, pregunta si mantenerlo en la biblioteca o quitarlo.</string>

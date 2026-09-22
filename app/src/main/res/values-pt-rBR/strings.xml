@@ -1536,7 +1536,6 @@
     <string name="unified_library_back_to_shelves">Todas as estantes</string>
     <string name="unified_library_recent_searches">Pesquisas recentes</string>
     <string name="unified_library_clear_recent_searches">Limparar pesquisas recentes</string>
-
     <!-- Strings added by the pt-rBR language pass (docs/localization-revamp-plan.md §6).
          Register: você (buttons in the infinitive); glossary: arquivo, configurações,
          estante (unified over prateleira), biblioteca, recurso, desktop, audiolivro;
@@ -1633,7 +1632,7 @@
     <string name="listen_no_tts_books">Nenhum livro compatível encontrado</string>
     <string name="listen_empty">Nada para ouvir ainda</string>
     <string name="listen_empty_desc">Importe um audiolivro ou escolha um livro da biblioteca para ouvir com texto para fala.</string>
-    <string name="listen_no_matches">Nenhum item de escuta corresponde a &quot;%1$s&quot;</string>
+    <string name="listen_no_matches">Nenhum item de escuta corresponde a "%1$s"</string>
     <string name="listen_badge_audiobook">AUDIOLIVRO</string>
     <string name="listen_badge_tts">TTS</string>
     <string name="listen_timer">Temporizador</string>
@@ -1666,7 +1665,7 @@
     <string name="visual_options_bottom_toolbar">Mostrar barra inferior</string>
     <string name="visual_options_bottom_toolbar_desc">Oculte para ler apenas com as ferramentas superiores</string>
     <string name="search_chapters_placeholder">Pesquisar capítulos</string>
-    <string name="no_chapters_matching">Nenhum capítulo encontrado para &quot;%1$s&quot;.</string>
+    <string name="no_chapters_matching">Nenhum capítulo encontrado para "%1$s".</string>
     <string name="visual_options_hide_images">Ocultar imagens</string>
     <string name="visual_options_hide_images_desc">Ative para ler com todas as imagens do livro ocultas.</string>
     <string name="visual_options_epub_page_spread">Página dupla</string>
@@ -1674,9 +1673,9 @@
     <string name="visual_options_epub_spread_single">Uma página</string>
     <string name="visual_options_epub_spread_two">Duas páginas</string>
     <string name="label_spread_gap">Espaçamento entre páginas</string>
-    <string name="banner_tag_deleted">Tag &quot;%1$s&quot; excluída.</string>
+    <string name="banner_tag_deleted">Tag "%1$s" excluída.</string>
     <string name="menu_delete_tag">Excluir tag</string>
-    <string name="dialog_delete_tag_desc">Excluir a tag &quot;%1$s&quot;? Ela será removida de todos os livros.</string>
+    <string name="dialog_delete_tag_desc">Excluir a tag "%1$s"? Ela será removida de todos os livros.</string>
     <string name="chapter_of_chapters">Capítulo %1$d de %2$d</string>
     <string name="chapter_number">Capítulo %1$d</string>
     <string name="external_file_behavior_ask_desc">Após fechar um arquivo aberto externamente, pergunta se deve mantê-lo na biblioteca ou removê-lo.</string>

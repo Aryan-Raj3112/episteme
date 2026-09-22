@@ -1714,7 +1714,6 @@
     <string name="settings_hub_literal_79">AI 密钥和模型</string>
     <string name="settings_hub_literal_80">配置阅读器 AI 和云端 TTS 模型访问</string>
     <string name="settings_hub_literal_81">TTS 语音设置</string>
-
     <!-- Strings added by the zh-rCN language pass (docs/localization-revamp-plan.md §6).
          Register: 你; glossary: 书架 = shelves (unified over 书库/货架/架子), 批注 =
          annotations (matches tab_annotations), 有声书, 朗读, 云端, 缓存, 分屏阅读器;

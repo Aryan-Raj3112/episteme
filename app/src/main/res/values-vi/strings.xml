@@ -1556,7 +1556,6 @@
     <string name="desktop_dev_tools">Công cụ nhà phát triển</string>
     <string name="desktop_dev_tools_desc">Các tác vụ bảo trì để gỡ lỗi hành vi trình đọc trên máy tính.</string>
     <string name="action_disable">vô hiệu hóa</string>
-
     <!-- Strings added by the vi language pass (docs/localization-revamp-plan.md §6).
          Register: bạn; glossary per file census (tệp, kệ, đám mây, đồng bộ, cục bộ,
          phông chữ, tải xuống, nhập/xuất, khóa); natural SOV reorder; Đã- perfective;

@@ -1123,11 +1123,11 @@
     <string name="reader_brightness_custom">맞춤 밝기</string>
     <string name="reader_brightness_custom_desc">리더 화면이 열려 있는 동안 적용됩니다.</string>
     <string name="reader_brightness_percent">%1$d%%</string>
-    <string name="banner_shelf_created">&quot;%1$s&quot; 서가를 생성했습니다.</string>
+    <string name="banner_shelf_created">"%1$s" 서가를 생성했습니다.</string>
     <string name="banner_smart_shelf_created">스마트 선반 \'%1$s\'을(를) 생성했습니다.</string>
-    <string name="banner_shelf_renamed">선반 이름을 &quot;%1$s&quot;로 변경했습니다.</string>
-    <string name="banner_shelf_deleted">&quot;%1$s&quot; 서가를 삭제했습니다.</string>
-    <string name="banner_book_updated">&quot;%1$s&quot;을 업데이트했습니다.</string>
+    <string name="banner_shelf_renamed">선반 이름을 "%1$s"로 변경했습니다.</string>
+    <string name="banner_shelf_deleted">"%1$s" 서가를 삭제했습니다.</string>
+    <string name="banner_book_updated">"%1$s"을 업데이트했습니다.</string>
     <string name="banner_duplicate_files_already_in_library">해당 파일은 이미 라이브러리에 있습니다.</string>
     <string name="folder_subtitle_folder_book_counts">%1$s - %2$s</string>
     <string name="action_save_annotation">저장</string>
@@ -1180,7 +1180,7 @@
     <string name="desktop_custom_fonts_desc">독자를 위해 가져온 글꼴</string>
     <string name="desktop_delete_font">글꼴 삭제</string>
     <string name="desktop_delete_font_desc">%1$s을(를) 삭제하시겠습니까? 이를 사용하는 책은 기본 글꼴로 돌아갑니다.</string>
-    <string name="desktop_delete_shelf_desc">\&quot;%1$s\&quot;을(를) 삭제하시겠습니까? 책은 도서관에 보관됩니다.</string>
+    <string name="desktop_delete_shelf_desc">\"%1$s\"을(를) 삭제하시겠습니까? 책은 도서관에 보관됩니다.</string>
     <string name="desktop_delete_summary">요약 삭제</string>
     <string name="desktop_disabled">장애인</string>
     <string name="desktop_drop_files_to_import">가져올 파일을 삭제하세요.</string>
@@ -1214,7 +1214,7 @@
     <string name="desktop_more_menu">더</string>
     <string name="desktop_no_cached_summaries_book">아직 이 책에 대해 캐시된 요약이 없습니다.</string>
     <string name="desktop_no_custom_fonts_desc">TTF, OTF, WOFF2 파일을 가져와서 책에 사용하세요.</string>
-    <string name="desktop_no_fonts_matching">\&quot;%1$s\&quot;와 일치하는 글꼴을 찾을 수 없습니다.</string>
+    <string name="desktop_no_fonts_matching">\"%1$s\"와 일치하는 글꼴을 찾을 수 없습니다.</string>
     <string name="desktop_no_google_account_connected">아니요 Google 계정이 연결되었습니다.</string>
     <string name="desktop_no_summary_cached_section">이 섹션에 대해 캐시된 요약이 없습니다.</string>
     <string name="desktop_offline_oss_reader">오프라인 데스크톱 리더</string>
@@ -1460,7 +1460,7 @@
     <string name="desktop_no_tags_yet">아직 태그가 없습니다.</string>
     <string name="desktop_no_supported_files_imported">지원되는 파일을 가져오지 않았습니다.</string>
     <string name="desktop_opds_catalog">카탈로그</string>
-    <string name="desktop_opds_delete_catalog_desc">&quot;%1$s&quot;을 삭제하시겠습니까? 나중에 자격 증명이 변경되면 이 카탈로그의 스트리밍된 책이 열리지 않을 수 있습니다.</string>
+    <string name="desktop_opds_delete_catalog_desc">"%1$s"을 삭제하시겠습니까? 나중에 자격 증명이 변경되면 이 카탈로그의 스트리밍된 책이 열리지 않을 수 있습니다.</string>
     <string name="desktop_opds_no_catalogs">카탈로그 없음</string>
     <string name="desktop_opds_no_catalogs_desc">OPDS 추가 원격 도서를 검색할 수 있는 카탈로그입니다.</string>
     <string name="desktop_opds_subtitle">카탈로그, 스트림, 다운로드 찾아보기</string>
@@ -1513,7 +1513,6 @@
     <string name="tts_replacements_replace_only_spoken">말한 내용만 바꾸기</string>
     <string name="tts_replacements_replace_only_spoken_desc">리더 텍스트, 하이라이트, 위치는 변경되지 않습니다.</string>
     <string name="tts_replacements_summary_format">%1$s -&gt; %2$s</string>
-
     <!-- Strings added by the ko language pass (docs/localization-revamp-plan.md §6).
          Register: 합니다 declaratives + -세요 requests (Microsoft ko: -세요 over -십시오);
          buttons as noun forms; glossary: 책장 = shelves, 북마크 = bookmark, 캐시 = cache,

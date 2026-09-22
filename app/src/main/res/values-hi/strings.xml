@@ -1123,11 +1123,11 @@
     <string name="reader_brightness_custom">कस्टम चमक</string>
     <string name="reader_brightness_custom_desc">रीडर स्क्रीन खुली होने पर लागू होता है।</string>
     <string name="reader_brightness_percent">%1$d%%</string>
-    <string name="banner_shelf_created">शेल्फ़ बनाया गया &quot;%1$s&quot;।</string>
-    <string name="banner_smart_shelf_created">स्मार्ट शेल्फ &quot;%1$s&quot; बनाया गया।</string>
-    <string name="banner_shelf_renamed">शेल्फ़ का नाम बदलकर &quot;%1$s&quot; कर दिया गया।</string>
-    <string name="banner_shelf_deleted">हटाई गई शेल्फ़ &quot;%1$s&quot;।</string>
-    <string name="banner_book_updated">अपडेट किया गया &quot;%1$s&quot;।</string>
+    <string name="banner_shelf_created">शेल्फ़ बनाया गया "%1$s"।</string>
+    <string name="banner_smart_shelf_created">स्मार्ट शेल्फ "%1$s" बनाया गया।</string>
+    <string name="banner_shelf_renamed">शेल्फ़ का नाम बदलकर "%1$s" कर दिया गया।</string>
+    <string name="banner_shelf_deleted">हटाई गई शेल्फ़ "%1$s"।</string>
+    <string name="banner_book_updated">अपडेट किया गया "%1$s"।</string>
     <string name="banner_duplicate_files_already_in_library">वे फ़ाइलें पहले से ही लाइब्रेरी में हैं.</string>
     <string name="folder_subtitle_folder_book_counts">%1$s - %2$s</string>
     <string name="action_save_annotation">सहेजें</string>
@@ -1180,7 +1180,7 @@
     <string name="desktop_custom_fonts_desc">पाठक के लिए आयातित फ़ॉन्ट</string>
     <string name="desktop_delete_font">फ़ॉन्ट हटाएँ</string>
     <string name="desktop_delete_font_desc">हटाएं %1$s? इसका उपयोग करने वाली पुस्तकें डिफ़ॉल्ट फ़ॉन्ट पर वापस आ जाएंगी।</string>
-    <string name="desktop_delete_shelf_desc">\&quot;%1$s\&quot; हटाएं? किताबें आपकी लाइब्रेरी में रहती हैं.</string>
+    <string name="desktop_delete_shelf_desc">\"%1$s\" हटाएं? किताबें आपकी लाइब्रेरी में रहती हैं.</string>
     <string name="desktop_delete_summary">सारांश हटाएँ</string>
     <string name="desktop_disabled">विकलांग</string>
     <string name="desktop_drop_files_to_import">आयात करने के लिए फ़ाइलें छोड़ें</string>
@@ -1214,7 +1214,7 @@
     <string name="desktop_more_menu">अधिक</string>
     <string name="desktop_no_cached_summaries_book">इस पुस्तक के लिए अभी तक कोई संचित सारांश नहीं है।</string>
     <string name="desktop_no_custom_fonts_desc">पुस्तकों में उपयोग करने के लिए TTF, OTF, या WOFF2 फ़ाइलें आयात करें।</string>
-    <string name="desktop_no_fonts_matching">\&quot;%1$s\&quot; से मेल खाता कोई फ़ॉन्ट नहीं मिला</string>
+    <string name="desktop_no_fonts_matching">\"%1$s\" से मेल खाता कोई फ़ॉन्ट नहीं मिला</string>
     <string name="desktop_no_google_account_connected">नहीं Google खाता जुड़ा हुआ है.</string>
     <string name="desktop_no_summary_cached_section">इस अनुभाग के लिए कोई सारांश कैश नहीं किया गया.</string>
     <string name="desktop_offline_oss_reader">ऑफ़लाइन डेस्कटॉप रीडर</string>
@@ -1460,7 +1460,7 @@
     <string name="desktop_no_tags_yet">अभी तक कोई टैग नहीं</string>
     <string name="desktop_no_supported_files_imported">कोई समर्थित फ़ाइल आयात नहीं की गई.</string>
     <string name="desktop_opds_catalog">कैटलॉग</string>
-    <string name="desktop_opds_delete_catalog_desc">&quot;%1$s&quot; हटाएं? यदि क्रेडेंशियल बाद में बदलते हैं तो इस कैटलॉग से स्ट्रीम की गई पुस्तकें खुलना बंद हो सकती हैं।</string>
+    <string name="desktop_opds_delete_catalog_desc">"%1$s" हटाएं? यदि क्रेडेंशियल बाद में बदलते हैं तो इस कैटलॉग से स्ट्रीम की गई पुस्तकें खुलना बंद हो सकती हैं।</string>
     <string name="desktop_opds_no_catalogs">कोई कैटलॉग नहीं</string>
     <string name="desktop_opds_no_catalogs_desc">एक OPDS जोड़ें दूरस्थ पुस्तकें ब्राउज़ करने के लिए कैटलॉग।</string>
     <string name="desktop_opds_subtitle">कैटलॉग, स्ट्रीम और डाउनलोड ब्राउज़ करें</string>
@@ -1513,7 +1513,6 @@
     <string name="tts_replacements_replace_only_spoken">जो बोला गया है उसे ही बदलें</string>
     <string name="tts_replacements_replace_only_spoken_desc">पाठक पाठ, हाइलाइट्स और स्थान अपरिवर्तित रहते हैं।</string>
     <string name="tts_replacements_summary_format">%1$s -&gt; %2$s</string>
-
     <!-- Strings added by the hi language pass (docs/localization-revamp-plan.md §6).
          Register: आप + polite -ें imperatives (Mozilla hi-IN); ASCII digits;
          transliterated tech terms (क्लाउड/कैश/टैब); आयात/निर्यात/अध्याय kept where
@@ -1632,7 +1631,7 @@
     <string name="visual_options_bottom_toolbar">निचला टूलबार दिखाएँ</string>
     <string name="visual_options_bottom_toolbar_desc">छिपाएँ और सिर्फ़ ऊपर के टूल से पढ़ें</string>
     <string name="search_chapters_placeholder">अध्याय खोजें</string>
-    <string name="no_chapters_matching">&quot;%1$s&quot; के लिए कोई अध्याय नहीं मिला।</string>
+    <string name="no_chapters_matching">"%1$s" के लिए कोई अध्याय नहीं मिला।</string>
     <string name="visual_options_hide_images">तस्वीरें छिपाएँ</string>
     <string name="visual_options_hide_images_desc">चालू करें और किताब की सभी तस्वीरें छिपाकर पढ़ें।</string>
     <string name="visual_options_epub_page_spread">पेज स्प्रेड</string>
@@ -1640,9 +1639,9 @@
     <string name="visual_options_epub_spread_single">एक</string>
     <string name="visual_options_epub_spread_two">दो पेज</string>
     <string name="label_spread_gap">पेजों के बीच गैप</string>
-    <string name="banner_tag_deleted">&quot;%1$s&quot; टैग हटा दिया गया।</string>
+    <string name="banner_tag_deleted">"%1$s" टैग हटा दिया गया।</string>
     <string name="menu_delete_tag">टैग हटाएँ</string>
-    <string name="dialog_delete_tag_desc">टैग &quot;%1$s&quot; हटाएँ? यह सभी किताबों से हट जाएगा।</string>
+    <string name="dialog_delete_tag_desc">टैग "%1$s" हटाएँ? यह सभी किताबों से हट जाएगा।</string>
     <string name="chapter_of_chapters">अध्याय %1$d / %2$d</string>
     <string name="chapter_number">अध्याय %1$d</string>
     <string name="settings_hub_cloud_sync_pro_required">क्लाउड सिंक के लिए Pro खाता ज़रूरी है।</string>
@@ -1841,7 +1840,7 @@
     <string name="listen_no_tts_books">कोई सपोर्टेड किताब नहीं मिली</string>
     <string name="listen_empty">अभी सुनने को कुछ नहीं</string>
     <string name="listen_empty_desc">ऑडियोबुक आयात करें या टेक्स्ट-टू-स्पीच से सुनने के लिए लाइब्रेरी की किताब चुनें।</string>
-    <string name="listen_no_matches">&quot;%1$s&quot; से मेल खाता कोई आइटम नहीं</string>
+    <string name="listen_no_matches">"%1$s" से मेल खाता कोई आइटम नहीं</string>
     <string name="listen_badge_audiobook">ऑडियोबुक</string>
     <string name="listen_badge_tts">TTS</string>
     <string name="listen_timer">टाइमर</string>

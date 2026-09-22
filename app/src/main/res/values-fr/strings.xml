@@ -912,7 +912,7 @@
     <string name="credits_count">%1$d Crédits</string>
     <string name="credits_estimated_cost_breakdown">Répartition des coûts estimés</string>
     <string name="credits_cloud_tts_title">TTS cloud</string>
-    <string name="credits_cloud_tts_desc">Coût : ~3–4 crédits par minute d’audio généré.\nPour activer : écran de lecture > Plus > Réglages de la voix TTS.</string>
+    <string name="credits_cloud_tts_desc">Coût : ~3–4 crédits par minute d’audio généré.\nPour activer : écran de lecture &gt; Plus &gt; Réglages de la voix TTS.</string>
     <string name="credits_ai_summaries_title">AI Résumés et récapitulation</string>
     <string name="credits_ai_summaries_desc">Coût : ~1–4 crédits par requête selon la longueur du chapitre.\nLes utilisateurs Pro obtiennent 10 résumés gratuits par jour.</string>
     <string name="legal_by_purchasing">En achetant,</string>
