@@ -1529,7 +1529,6 @@
     <string name="unified_library_import">Dateien importieren</string>
     <string name="unified_library_library_tools">Bibliothek-Tools</string>
     <string name="unified_library_appearance">Aussehen</string>
-
     <!-- Strings added by the de verify-pass (docs/localization-revamp-plan.md §6).
          Register: formal Sie. Glossary: Bibliothek, Regal, Lesezeichen, Kapitel,
          App, Einstellungen, Cloud (loanword; never Wolke for computing),
@@ -1637,7 +1636,7 @@
     <string name="listen_no_tts_books">Keine unterstützten Bücher gefunden</string>
     <string name="listen_empty">Noch nichts zum Hören</string>
     <string name="listen_empty_desc">Importieren Sie ein Hörbuch oder wählen Sie ein Buch aus der Bibliothek, um es mit synthetischer Stimme zu hören.</string>
-    <string name="listen_no_matches">Kein Höreintrag passt zu &quot;%1$s&quot;</string>
+    <string name="listen_no_matches">Kein Höreintrag passt zu "%1$s"</string>
     <string name="listen_badge_audiobook">HÖRBUCH</string>
     <string name="listen_badge_tts">TTS</string>
     <string name="listen_timer">Einschlaftimer</string>
@@ -1670,7 +1669,7 @@
     <string name="visual_options_bottom_toolbar">Untere Symbolleiste anzeigen</string>
     <string name="visual_options_bottom_toolbar_desc">Ausblenden, um nur mit den oberen Tools zu lesen</string>
     <string name="search_chapters_placeholder">Kapitel durchsuchen</string>
-    <string name="no_chapters_matching">Keine Kapitel gefunden für &quot;%1$s&quot;.</string>
+    <string name="no_chapters_matching">Keine Kapitel gefunden für "%1$s".</string>
     <string name="visual_options_hide_images">Bilder ausblenden</string>
     <string name="visual_options_hide_images_desc">Aktivieren, um mit allen Bildern des Buchs ausgeblendet zu lesen.</string>
     <string name="visual_options_epub_page_spread">Doppelseite</string>
@@ -1678,9 +1677,9 @@
     <string name="visual_options_epub_spread_single">Einzelseite</string>
     <string name="visual_options_epub_spread_two">Doppelseite</string>
     <string name="label_spread_gap">Abstand der Doppelseite</string>
-    <string name="banner_tag_deleted">Tag &quot;%1$s&quot; gelöscht.</string>
+    <string name="banner_tag_deleted">Tag "%1$s" gelöscht.</string>
     <string name="menu_delete_tag">Tag löschen</string>
-    <string name="dialog_delete_tag_desc">Tag &quot;%1$s&quot; löschen? Er wird aus jedem Buch entfernt.</string>
+    <string name="dialog_delete_tag_desc">Tag "%1$s" löschen? Er wird aus jedem Buch entfernt.</string>
     <string name="chapter_of_chapters">Kapitel %1$d von %2$d</string>
     <string name="chapter_number">Kapitel %1$d</string>
     <string name="content_desc_numbered_list">Nummerierte Liste</string>
