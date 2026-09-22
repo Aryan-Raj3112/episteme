@@ -857,7 +857,7 @@
     <string name="credits_estimated_cost_breakdown">Perkiraan Rincian Biaya</string>
     <string name="credits_cloud_tts_title">TTS cloud</string>
     <string name="credits_cloud_tts_desc">Biaya: sekitar 3–4 kredit per menit audio yang dihasilkan.
-Untuk mengaktifkan: Layar Reader > Lainnya > Setelan suara TTS.</string>
+Untuk mengaktifkan: Layar Reader &gt; Lainnya &gt; Setelan suara TTS.</string>
     <string name="credits_ai_summaries_title">Ringkasan &amp; Rekap AI</string>
     <string name="credits_ai_summaries_desc">Biaya: sekitar 1–4 kredit per permintaan, tergantung panjang bab.
 Pengguna Pro mendapat 10 ringkasan gratis per hari.</string>
@@ -1515,7 +1515,6 @@ Pengguna Pro mendapat 10 ringkasan gratis per hari.</string>
     <string name="desktop_reader_tabs_on">Tab pembaca aktif</string>
     <string name="desktop_sign_in_account_header_desc">Sinkronkan akun, Pro, dan kredit</string>
     <string name="desktop_ai_keys">AI kunci</string>
-
     <!-- Strings added by the id language pass (docs/localization-revamp-plan.md §6).
          Register: Anda; no 'silakan'; everyday lexicon; 'cloud'/'cache' kept per
          Microsoft id-ID glossary conventions. -->
@@ -1633,7 +1632,7 @@ Pengguna Pro mendapat 10 ringkasan gratis per hari.</string>
     <string name="visual_options_bottom_toolbar">Tampilkan bilah alat bawah</string>
     <string name="visual_options_bottom_toolbar_desc">Sembunyikan untuk membaca hanya dengan alat atas</string>
     <string name="search_chapters_placeholder">Cari bab</string>
-    <string name="no_chapters_matching">Tidak ditemukan bab untuk &quot;%1$s&quot;.</string>
+    <string name="no_chapters_matching">Tidak ditemukan bab untuk "%1$s".</string>
     <string name="visual_options_hide_images">Sembunyikan gambar</string>
     <string name="visual_options_hide_images_desc">Aktifkan untuk membaca dengan semua gambar di buku disembunyikan.</string>
     <string name="visual_options_epub_page_spread">Halaman berdampingan</string>
@@ -1641,9 +1640,9 @@ Pengguna Pro mendapat 10 ringkasan gratis per hari.</string>
     <string name="visual_options_epub_spread_single">Tunggal</string>
     <string name="visual_options_epub_spread_two">Dua halaman</string>
     <string name="label_spread_gap">Jarak antarhalaman</string>
-    <string name="banner_tag_deleted">Tag &quot;%1$s&quot; dihapus.</string>
+    <string name="banner_tag_deleted">Tag "%1$s" dihapus.</string>
     <string name="menu_delete_tag">Hapus tag</string>
-    <string name="dialog_delete_tag_desc">Hapus tag &quot;%1$s&quot;? Tag ini akan dihapus dari semua buku.</string>
+    <string name="dialog_delete_tag_desc">Hapus tag "%1$s"? Tag ini akan dihapus dari semua buku.</string>
     <string name="chapter_of_chapters">Bab %1$d dari %2$d</string>
     <string name="chapter_number">Bab %1$d</string>
     <string name="settings_hub_cloud_sync_pro_required">Sinkronisasi cloud memerlukan akun Pro.</string>
@@ -1870,7 +1869,6 @@ Pengguna Pro mendapat 10 ringkasan gratis per hari.</string>
     <string name="settings_device_status_revoke_failed">Perangkat yang dipilih gagal dicabut aksesnya.</string>
     <string name="settings_device_status_revoked">Akses perangkat berhasil dicabut.</string>
     <string name="settings_device_status_unavailable">Pengelolaan perangkat tidak tersedia.</string>
-
     <!-- Unified library (Beta) UI, added in the id language pass. -->
     <string name="nav_unified_library">Pustaka Beta</string>
     <string name="unified_library_beta">BETA</string>
