@@ -91,7 +91,7 @@
     <string name="tab_shelves">Riiulid</string>
     <string name="tab_folders">Kaustad</string>
     <string name="tab_catalogs">Kataloogid</string>
-    <string name="no_results_found">Päringule \&quot;%1$s\&quot; ei leitud tulemusi</string>
+    <string name="no_results_found">Päringule \"%1$s\" ei leitud tulemusi</string>
     <string name="library_empty_desc">Alustamiseks vali seadmest PDF-, EPUB-, MOBI- või AZW3-fail.</string>
     <string name="fab_add_file">Lisa fail</string>
     <string name="fab_new_shelf">Uus riiul</string>
@@ -108,7 +108,7 @@
     <string name="all_books_in_shelf">Kõik raamatud on juba sellel riiulil</string>
     <string name="dialog_rename_shelf">Nimeta riiul ümber</string>
     <string name="dialog_delete_shelf">Kas kustutada riiul?</string>
-    <string name="dialog_delete_shelf_desc">Kas kustutada riiul &quot;%1$s&quot;? Kõik raamatud teisaldatakse riiulita raamatute alla.</string>
+    <string name="dialog_delete_shelf_desc">Kas kustutada riiul "%1$s"? Kõik raamatud teisaldatakse riiulita raamatute alla.</string>
     <string name="dialog_remove_from_shelf">Kas eemaldada riiulist?</string>
     <string name="dialog_delete_shelves">Kustuta %1$s?</string>
     <string name="dialog_delete_shelves_desc">Kas kustutada %1$d valitud %2$s? Kõik sees olevad raamatud teisaldatakse riiulita raamatute alla.</string>
@@ -215,13 +215,13 @@
     <string name="action_browse_google_fonts">Sirvi Google Fondid</string>
     <string name="google_fonts_search_placeholder">Otsige üle 1900 fondi…</string>
     <string name="google_fonts_popular_choices">Populaarsed valikud</string>
-    <string name="google_fonts_no_matches">Otsingule &quot;%1$s&quot; ei leitud ühtegi fonti</string>
+    <string name="google_fonts_no_matches">Otsingule "%1$s" ei leitud ühtegi fonti</string>
     <string name="content_desc_already_downloaded">Juba alla laaditud</string>
     <string name="no_custom_fonts">Kohandatud fonte pole</string>
     <string name="import_fonts_desc">Impordi TTF- või OTF-faile, et neid oma raamatutes kasutada.</string>
     <string name="font_preview_error">Eelvaade pole saadaval (kehtetu fondifail)</string>
     <string name="dialog_delete_font">Kas kustutada font?</string>
-    <string name="dialog_delete_font_desc">Kas kustutada &quot;%1$s&quot;? Kui sünkroonimine on sisse lülitatud, eemaldatakse see kõigist seadmetest.</string>
+    <string name="dialog_delete_font_desc">Kas kustutada "%1$s"? Kui sünkroonimine on sisse lülitatud, eemaldatakse see kõigist seadmetest.</string>
     <string name="dialog_delete_fonts">Kas kustutada fondid?</string>
     <string name="dialog_delete_fonts_desc">Kas kustutada %1$d valitud fonti? Kui sünkroonimine on sisse lülitatud, eemaldatakse need kõigist seadmetest.</string>
     <string name="get_in_touch">Võtke ühendust</string>
@@ -649,11 +649,11 @@
     <string name="about_terms_desc">Kasutustingimused.</string>
     <string name="about_licenses_desc">Kasutatud avatud lähtekoodiga teegid.</string>
     <string name="banner_importing_multiple">Importimine %1$d raamatud… Need ilmuvad peagi sinu kogusse.</string>
-    <string name="banner_shelf_created">Loodi riiul &quot;%1$s&quot;.</string>
-    <string name="banner_smart_shelf_created">Loodi nutikas riiul &quot;%1$s&quot;.</string>
-    <string name="banner_shelf_renamed">Riiul nimetati ümber &quot;%1$s&quot;.</string>
-    <string name="banner_shelf_deleted">Kustutatud riiul &quot;%1$s&quot;.</string>
-    <string name="banner_book_updated">Uuendatud &quot;%1$s&quot;.</string>
+    <string name="banner_shelf_created">Loodi riiul "%1$s".</string>
+    <string name="banner_smart_shelf_created">Loodi nutikas riiul "%1$s".</string>
+    <string name="banner_shelf_renamed">Riiul nimetati ümber "%1$s".</string>
+    <string name="banner_shelf_deleted">Kustutatud riiul "%1$s".</string>
+    <string name="banner_book_updated">Uuendatud "%1$s".</string>
     <string name="banner_duplicate_files_already_in_library">Need failid on juba raamatukogus.</string>
     <string name="folder_subtitle_folder_book_counts">%1$s - %2$s</string>
     <string name="dialog_external_link_title">Väline link</string>
@@ -969,7 +969,7 @@
     <string name="msg_no_tags_assigned">Silte pole määratud.</string>
     <string name="title_apply_tags">Rakenda sildid</string>
     <string name="placeholder_search_create_tag">Otsige või looge silt…</string>
-    <string name="action_create_tag">Loo \&quot;%1$s\&quot;</string>
+    <string name="action_create_tag">Loo \"%1$s\"</string>
     <string name="setting_pull_distance_change_chapter">Peatüki muutmiseks tõmmake kaugust</string>
     <string name="label_short">Lühike</string>
     <string name="label_long">Pikk</string>
@@ -1189,7 +1189,7 @@
     <string name="desktop_custom_fonts_desc">Imporditud fondid lugeja jaoks</string>
     <string name="desktop_delete_font">Kustuta font</string>
     <string name="desktop_delete_font_desc">Kustuta %1$s? Seda kasutavad raamatud naasevad vaikefondile.</string>
-    <string name="desktop_delete_shelf_desc">Kas kustutada \&quot;%1$s\&quot;? Raamatud jäävad sinu raamatukogusse.</string>
+    <string name="desktop_delete_shelf_desc">Kas kustutada \"%1$s\"? Raamatud jäävad sinu raamatukogusse.</string>
     <string name="desktop_delete_summary">Kustuta kokkuvõte</string>
     <string name="desktop_disabled">Keelatud</string>
     <string name="desktop_drop_files_to_import">Pukseeri failid importimiseks</string>
@@ -1223,7 +1223,7 @@
     <string name="desktop_more_menu">Rohkem</string>
     <string name="desktop_no_cached_summaries_book">Selle raamatu kohta pole veel vahemällu salvestatud kokkuvõtteid.</string>
     <string name="desktop_no_custom_fonts_desc">Impordi TTF-, OTF- või WOFF2-faile, et neid raamatutes kasutada.</string>
-    <string name="desktop_no_fonts_matching">Ei leitud fonte, mis vastavad \&quot;%1$s\&quot;</string>
+    <string name="desktop_no_fonts_matching">Ei leitud fonte, mis vastavad \"%1$s\"</string>
     <string name="desktop_no_google_account_connected">Nr Google konto on ühendatud.</string>
     <string name="desktop_no_summary_cached_section">Selle jaotise kohta pole vahemällu salvestatud kokkuvõtet.</string>
     <string name="desktop_offline_oss_reader">Võrguühenduseta lauaarvuti lugeja</string>
@@ -1469,7 +1469,7 @@
     <string name="desktop_no_tags_yet">Silte pole veel</string>
     <string name="desktop_no_supported_files_imported">Toetatud faile ei imporditud.</string>
     <string name="desktop_opds_catalog">Kataloog</string>
-    <string name="desktop_opds_delete_catalog_desc">Kas kustutada &quot;%1$s&quot;? Sellest kataloogist voogesitatud raamatute avamine võib peatada, kui volikirjad hiljem muutuvad.</string>
+    <string name="desktop_opds_delete_catalog_desc">Kas kustutada "%1$s"? Sellest kataloogist voogesitatud raamatute avamine võib peatada, kui volikirjad hiljem muutuvad.</string>
     <string name="desktop_opds_no_catalogs">Kataloogid puuduvad</string>
     <string name="desktop_opds_no_catalogs_desc">Lisage OPDS kataloog kaugraamatute sirvimiseks.</string>
     <string name="desktop_opds_subtitle">Sirvige katalooge, vooge ja allalaaditavaid faile</string>
@@ -1533,10 +1533,10 @@
     <string name="banner_no_annotations_to_export">Pole märkusi, mida eksportida.</string>
     <string name="error_exporting_annotations">Viga märkuste eksportimisel: %1$s</string>
     <string name="search_chapters_placeholder">Otsi peatükkidest</string>
-    <string name="no_chapters_matching">Peatükke &quot;%1$s&quot; jaoks ei leitud.</string>
-    <string name="banner_tag_deleted">Silt &quot;%1$s&quot; kustutati.</string>
+    <string name="no_chapters_matching">Peatükke "%1$s" jaoks ei leitud.</string>
+    <string name="banner_tag_deleted">Silt "%1$s" kustutati.</string>
     <string name="menu_delete_tag">Kustuta silt</string>
-    <string name="dialog_delete_tag_desc">Kustutada silt &quot;%1$s&quot;? See eemaldatakse igast raamatust.</string>
+    <string name="dialog_delete_tag_desc">Kustutada silt "%1$s"? See eemaldatakse igast raamatust.</string>
     <string name="action_export_annotations">Ekspordi märkused</string>
     <string name="dialog_export_annotations_title">Ekspordi märkused</string>
     <string name="export_annotations_markdown">Markdown</string>
@@ -1555,7 +1555,6 @@
     <string name="action_clear_selection">Tühjenda valik</string>
     <string name="desktop_dev_tools">Arendaja tööriistad</string>
     <string name="desktop_dev_tools_desc">Hooldustoimingud lugeja käitumise silumiseks töölauas.</string>
-
     <!-- Strings added by the et language pass (docs/localization-revamp-plan.md §6).
          Register: informal sina (sa-forms); glossary: raamatukogu, riiul,
          järjehoidja, peatükk, esikaas, seaded, pilv, pilve-TTS, audioraamat,
@@ -1679,7 +1678,7 @@
     <string name="listen_no_tts_books">Toetatud raamatuid ei leitud</string>
     <string name="listen_empty">Pole veel midagi kuulata</string>
     <string name="listen_empty_desc">Impordi audioraamat või vali raamat raamatukogust, et kuulata seda sünteesitud häälega.</string>
-    <string name="listen_no_matches">Ükski kuulatav üksik ei vasta &quot;%1$s&quot;</string>
+    <string name="listen_no_matches">Ükski kuulatav üksik ei vasta "%1$s"</string>
     <string name="listen_badge_audiobook">AUDIORAAMAT</string>
     <string name="listen_badge_tts">TTS</string>
     <string name="listen_timer">Unetaimer</string>
