@@ -772,11 +772,11 @@
     <string name="reader_brightness_custom">سطوع مخصص</string>
     <string name="reader_brightness_custom_desc">ينطبق عندما تكون شاشة القارئ مفتوحة.</string>
     <string name="reader_brightness_percent">%1$d%%</string>
-    <string name="banner_shelf_created">تم إنشاء الرف &quot;%1$s&quot;.</string>
-    <string name="banner_smart_shelf_created">تم إنشاء رف ذكي &quot;%1$s&quot;.</string>
-    <string name="banner_shelf_renamed">تمت إعادة تسمية الرف إلى &quot;%1$s&quot;.</string>
-    <string name="banner_shelf_deleted">الرف المحذوف &quot;%1$s&quot;.</string>
-    <string name="banner_book_updated">تم التحديث &quot;%1$s&quot;.</string>
+    <string name="banner_shelf_created">تم إنشاء الرف "%1$s".</string>
+    <string name="banner_smart_shelf_created">تم إنشاء رف ذكي "%1$s".</string>
+    <string name="banner_shelf_renamed">تمت إعادة تسمية الرف إلى "%1$s".</string>
+    <string name="banner_shelf_deleted">الرف المحذوف "%1$s".</string>
+    <string name="banner_book_updated">تم التحديث "%1$s".</string>
     <string name="banner_duplicate_files_already_in_library">هذه الملفات موجودة بالفعل في المكتبة.</string>
     <string name="folder_subtitle_folder_book_counts">%1$s - %2$s</string>
     <string name="action_save_annotation">حفظ</string>
@@ -963,7 +963,7 @@
     <string name="msg_no_tags_assigned">لم يتم تعيين أي علامات.</string>
     <string name="title_apply_tags">تطبيق العلامات</string>
     <string name="placeholder_search_create_tag">بحث أو إنشاء علامة...</string>
-    <string name="action_create_tag">إنشاء \&quot;%1$s\&quot;</string>
+    <string name="action_create_tag">إنشاء \"%1$s\"</string>
     <string name="setting_pull_distance_change_chapter">سحب المسافة لتغيير الفصل</string>
     <string name="label_short">قصير</string>
     <string name="label_long">طويل</string>
@@ -1180,7 +1180,7 @@
     <string name="desktop_custom_fonts_desc">الخطوط المستوردة للقارئ</string>
     <string name="desktop_delete_font">حذف الخط</string>
     <string name="desktop_delete_font_desc">حذف %1$s؟ ستعود الكتب التي تستخدمه إلى الخط الافتراضي.</string>
-    <string name="desktop_delete_shelf_desc">حذف \&quot;%1$s\&quot;؟ الكتب تبقى في مكتبتك.</string>
+    <string name="desktop_delete_shelf_desc">حذف \"%1$s\"؟ الكتب تبقى في مكتبتك.</string>
     <string name="desktop_delete_summary">حذف الملخص</string>
     <string name="desktop_disabled">عاجز</string>
     <string name="desktop_drop_files_to_import">قم بإسقاط الملفات لاستيرادها</string>
@@ -1214,7 +1214,7 @@
     <string name="desktop_more_menu">أكثر</string>
     <string name="desktop_no_cached_summaries_book">لا توجد ملخصات مخبأة لهذا الكتاب حتى الآن.</string>
     <string name="desktop_no_custom_fonts_desc">قم باستيراد ملفات TTF أو OTF أو WOFF2 لاستخدامها في الكتب.</string>
-    <string name="desktop_no_fonts_matching">لم يتم العثور على خطوط مطابقة \&quot;%1$s\&quot;</string>
+    <string name="desktop_no_fonts_matching">لم يتم العثور على خطوط مطابقة \"%1$s\"</string>
     <string name="desktop_no_google_account_connected">لا Google الحساب متصل.</string>
     <string name="desktop_no_summary_cached_section">لا يوجد ملخص مخبأ لهذا القسم.</string>
     <string name="desktop_offline_oss_reader">قارئ سطح المكتب غير متصل</string>
@@ -1460,7 +1460,7 @@
     <string name="desktop_no_tags_yet">لا توجد علامات حتى الآن</string>
     <string name="desktop_no_supported_files_imported">لم يتم استيراد أي ملفات مدعومة.</string>
     <string name="desktop_opds_catalog">كتالوج</string>
-    <string name="desktop_opds_delete_catalog_desc">هل تريد حذف &quot;%1$s&quot;؟ قد يتوقف فتح الكتب المتدفقة من هذا الكتالوج إذا تغيرت بيانات الاعتماد لاحقًا.</string>
+    <string name="desktop_opds_delete_catalog_desc">هل تريد حذف "%1$s"؟ قد يتوقف فتح الكتب المتدفقة من هذا الكتالوج إذا تغيرت بيانات الاعتماد لاحقًا.</string>
     <string name="desktop_opds_no_catalogs">لا توجد كتالوجات</string>
     <string name="desktop_opds_no_catalogs_desc">أضف OPDS كتالوج لتصفح الكتب عن بعد.</string>
     <string name="desktop_opds_subtitle">تصفح الكتالوجات، والتدفقات، والتنزيلات</string>
@@ -1513,7 +1513,6 @@
     <string name="tts_replacements_replace_only_spoken">استبدل فقط ما يتم التحدث به</string>
     <string name="tts_replacements_replace_only_spoken_desc">يظل نص القارئ والإبرازات والمواقع دون تغيير.</string>
     <string name="tts_replacements_summary_format">%1$s -&gt; %2$s</string>
-
     <!-- Strings added by the ar verify-pass (docs/localization-revamp-plan.md §6).
          Glossary: مكتبة, رف, إشارة مرجعية, فصل, غلاف, القارئ, سحابة/سحابي,
          TTS السحابي (cloud TTS), اعتمادات (credits), كتاب صوتي, مؤقت النوم,
@@ -1637,7 +1636,7 @@
     <string name="listen_no_tts_books">لم يتم العثور على كتب مدعومة</string>
     <string name="listen_empty">لا يوجد ما يُستمع إليه بعد</string>
     <string name="listen_empty_desc">استورد كتاباً صوتياً أو اختر كتاباً من المكتبة للاستماع إليه بصوت مُركَّب.</string>
-    <string name="listen_no_matches">لا يوجد عنصر استماع يطابق &quot;%1$s&quot;</string>
+    <string name="listen_no_matches">لا يوجد عنصر استماع يطابق "%1$s"</string>
     <string name="listen_badge_audiobook">كتاب صوتي</string>
     <string name="listen_badge_tts">TTS</string>
     <string name="listen_timer">مؤقت النوم</string>
@@ -1670,7 +1669,7 @@
     <string name="visual_options_bottom_toolbar">إظهار شريط الأدوات السفلي</string>
     <string name="visual_options_bottom_toolbar_desc">أخفِه للقراءة بأدوات علوية فقط</string>
     <string name="search_chapters_placeholder">البحث في الفصول</string>
-    <string name="no_chapters_matching">لم يتم العثور على فصول تطابق &quot;%1$s&quot;.</string>
+    <string name="no_chapters_matching">لم يتم العثور على فصول تطابق "%1$s".</string>
     <string name="visual_options_hide_images">إخفاء الصور</string>
     <string name="visual_options_hide_images_desc">فعِّل هذا الخيار للقراءة مع إخفاء جميع صور الكتاب.</string>
     <string name="visual_options_epub_page_spread">صفحتان متجاورتان</string>
@@ -1678,9 +1677,9 @@
     <string name="visual_options_epub_spread_single">صفحة واحدة</string>
     <string name="visual_options_epub_spread_two">صفحتان</string>
     <string name="label_spread_gap">مسافة فتح الصفحتين</string>
-    <string name="banner_tag_deleted">تم حذف الوسم &quot;%1$s&quot;.</string>
+    <string name="banner_tag_deleted">تم حذف الوسم "%1$s".</string>
     <string name="menu_delete_tag">حذف الوسم</string>
-    <string name="dialog_delete_tag_desc">حذف الوسم &quot;%1$s&quot;؟ ستتم إزالته من كل كتاب.</string>
+    <string name="dialog_delete_tag_desc">حذف الوسم "%1$s"؟ ستتم إزالته من كل كتاب.</string>
     <string name="chapter_of_chapters">الفصل %1$d من %2$d</string>
     <string name="chapter_number">الفصل %1$d</string>
     <string name="content_desc_numbered_list">قائمة مرقمة</string>
