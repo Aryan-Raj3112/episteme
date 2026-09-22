@@ -33,6 +33,18 @@ data class ReaderWordReplacementApplyResult(
 )
 
 object ReaderWordReplacementEngine {
+    /**
+     * One rule with its ICU pattern compiled (or its compile error). Compiling
+     * is expensive — `apply` callers that process many texts (TTS chunks, HTML
+     * segments, DOM text nodes) must [compileRules] once and reuse the result
+     * via [applyCompiled]/[applyAll] instead of compiling per text.
+     */
+    data class CompiledRule(
+        val rule: ReaderWordReplacementRule,
+        val regex: Regex?,
+        val compileError: ReaderWordReplacementError?,
+    )
+
     fun validate(rule: ReaderWordReplacementRule): ReaderWordReplacementValidation {
         if (rule.from.isBlank()) {
             return ReaderWordReplacementValidation(isValid = false, message = "Enter text to replace.")
@@ -56,26 +68,63 @@ object ReaderWordReplacementEngine {
         text: String,
         rules: List<ReaderWordReplacementRule>,
     ): ReaderWordReplacementApplyResult {
-        if (text.isEmpty() || rules.isEmpty()) {
-            return ReaderWordReplacementApplyResult(text = text)
+        return applyAll(listOf(text), rules).single()
+    }
+
+    /**
+     * Applies [rules] to every text, compiling each rule once. Output is
+     * identical to calling [apply] per text — only the ICU compilation is
+     * shared.
+     */
+    fun applyAll(
+        texts: List<String>,
+        rules: List<ReaderWordReplacementRule>,
+    ): List<ReaderWordReplacementApplyResult> {
+        if (texts.isEmpty()) return emptyList()
+        if (rules.isEmpty()) return texts.map { ReaderWordReplacementApplyResult(text = it) }
+        val compiled = compileRules(rules)
+        return texts.map { text ->
+            if (text.isEmpty()) ReaderWordReplacementApplyResult(text = text)
+            else applyCompiled(text, compiled)
         }
+    }
+
+    /** Compiles [rules], skipping disabled/blank rules exactly as [apply] does. */
+    fun compileRules(rules: List<ReaderWordReplacementRule>): List<CompiledRule> {
+        return rules.mapNotNull { rule ->
+            if (!rule.enabled || rule.from.isBlank()) return@mapNotNull null
+            var regex: Regex? = null
+            var error: ReaderWordReplacementError? = null
+            runCatching { rule.toRegex() }
+                .onSuccess { regex = it }
+                .onFailure {
+                    error = ReaderWordReplacementError(
+                        ruleId = rule.id,
+                        message = it.message ?: "Invalid regex.",
+                    )
+                }
+            CompiledRule(rule = rule, regex = regex, compileError = error)
+        }
+    }
+
+    /** Applies pre-compiled [compiled] rules to one text. See [applyAll]. */
+    fun applyCompiled(
+        text: String,
+        compiled: List<CompiledRule>,
+    ): ReaderWordReplacementApplyResult {
+        if (text.isEmpty()) return ReaderWordReplacementApplyResult(text = text)
 
         var current = text
         val applied = mutableListOf<String>()
         val errors = mutableListOf<ReaderWordReplacementError>()
 
-        rules.forEach { rule ->
-            if (!rule.enabled || rule.from.isBlank()) return@forEach
-            val regex = runCatching { rule.toRegex() }
-                .onFailure {
-                    errors += ReaderWordReplacementError(
-                        ruleId = rule.id,
-                        message = it.message ?: "Invalid regex.",
-                    )
-                }
-                .getOrNull() ?: return@forEach
+        compiled.forEach { (rule, regex, compileError) ->
+            if (compileError != null) {
+                errors += compileError
+                return@forEach
+            }
             val replacement = if (rule.isRegex) rule.to else Regex.escapeReplacement(rule.to)
-            val next = runCatching { regex.replace(current, replacement) }
+            val next = runCatching { regex!!.replace(current, replacement) }
                 .onFailure {
                     errors += ReaderWordReplacementError(
                         ruleId = rule.id,
@@ -183,6 +232,7 @@ object ReaderBookReplacementEngine {
         val rules = preferences.activeRulesForFile(fileId)
         if (html.isEmpty() || rules.isEmpty()) return html
 
+        val compiled = ReaderWordReplacementEngine.compileRules(rules)
         val output = StringBuilder(html.length)
         val text = StringBuilder()
         var index = 0
@@ -192,7 +242,7 @@ object ReaderBookReplacementEngine {
             if (text.isEmpty()) return
             output.append(
                 if (blockedDepth > 0) text
-                else ReaderWordReplacementEngine.apply(text.toString(), rules).text
+                else ReaderWordReplacementEngine.applyCompiled(text.toString(), compiled).text
             )
             text.clear()
         }

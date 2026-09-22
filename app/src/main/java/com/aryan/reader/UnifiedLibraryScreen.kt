@@ -446,7 +446,7 @@ fun UnifiedLibraryScreen(
             importDescription = stringResource(R.string.unified_library_import),
             addAudiobookDescription = stringResource(R.string.listen_add),
             newShelfLabel = stringResource(R.string.fab_new_shelf),
-            onImport = { filePicker.launch(if (uiState.useStrictFileFilter) MainViewModel.SUPPORTED_MIME_TYPES else arrayOf("*/*")) },
+            onImport = { launchDocumentPicker { filePicker.launch(if (uiState.useStrictFileFilter) MainViewModel.SUPPORTED_MIME_TYPES else arrayOf("*/*")) } },
             onAddAudiobook = { showAudiobookAddSheet = true },
             onNewShelf = viewModel::showCreateShelfDialog,
             bottomBar = {

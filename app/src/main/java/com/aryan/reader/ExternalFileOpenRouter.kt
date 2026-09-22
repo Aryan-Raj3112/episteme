@@ -4,9 +4,11 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import com.aryan.reader.shared.MobileExternalOpenAction
 import com.aryan.reader.shared.ExternalDocumentOpenMode
 import com.aryan.reader.shared.mobileExternalOpenAction
+import timber.log.Timber
 
 const val EXTRA_TEMPORARY_EXTERNAL_OPEN = "com.aryan.reader.extra.TEMPORARY_EXTERNAL_OPEN"
 
@@ -104,7 +106,17 @@ class ExternalFileOpenRouterActivity : Activity() {
                 addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
             }
         }
-        startActivity(targetIntent)
+        try {
+            startActivity(targetIntent)
+        } catch (error: RuntimeException) {
+            // The try covers only startActivity: SecurityException when the
+            // sender shared a content URI without granting read access (some
+            // FileProvider shares omit the grant), or ActivityNotFoundException
+            // in a broken configuration. There is nothing to open, so tell the
+            // user instead of crashing the launch; the callers still finish().
+            Timber.w(error, "External open failed for ${sourceIntent.data}")
+            Toast.makeText(this, R.string.error_external_open_failed, Toast.LENGTH_LONG).show()
+        }
     }
 }
 

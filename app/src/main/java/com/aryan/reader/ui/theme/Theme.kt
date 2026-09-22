@@ -19,8 +19,10 @@
  */
 package com.aryan.reader.ui.theme
 
+import android.content.res.Resources
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.darkColorScheme
@@ -34,6 +36,7 @@ import com.materialkolor.PaletteStyle
 import androidx.compose.ui.platform.LocalContext
 import com.aryan.reader.shared.ui.withAppFontFamily
 import com.materialkolor.dynamicColorScheme
+import timber.log.Timber
 
 private val lightScheme = lightColorScheme(
     primary = primaryLight,
@@ -135,8 +138,17 @@ fun AppTheme(
                 style = PaletteStyle.Fidelity
             )
             dynamicColor && supportsDynamicColor -> {
-                if (darkTheme) dynamicDarkColorScheme(context)
-                else dynamicLightColorScheme(context)
+                if (darkTheme) {
+                    resolveDynamicScheme(
+                        dynamic = { dynamicDarkColorScheme(context) },
+                        static = darkScheme,
+                    )
+                } else {
+                    resolveDynamicScheme(
+                        dynamic = { dynamicLightColorScheme(context) },
+                        static = lightScheme,
+                    )
+                }
             }
             darkTheme -> darkScheme
             else -> lightScheme
@@ -180,4 +192,28 @@ fun AppTheme(
         typography = appFontFamily?.let { AppTypography.withAppFontFamily(it) } ?: AppTypography,
         content = content
     )
+}
+
+/**
+ * Resolves a framework dynamic color scheme, falling back to the static
+ * scheme when the device cannot provide it. The S+ SDK check can pass on
+ * broken firmware whose framework still lacks the dynamic-color resources
+ * (same class of issue as the `SafeWorkManager` JobScheduler guard), which
+ * otherwise crashes every launch in `MainActivity.onCreate`. Only `Exception`
+ * is caught — `Error`s (e.g. OOM) still propagate.
+ */
+internal fun resolveDynamicScheme(
+    dynamic: () -> ColorScheme,
+    static: ColorScheme,
+): ColorScheme {
+    return try {
+        dynamic()
+    } catch (error: Exception) {
+        if (error is Resources.NotFoundException) {
+            Timber.w(error, "Framework dynamic colors missing; using static scheme.")
+        } else {
+            Timber.w(error, "Dynamic color resolution failed; using static scheme.")
+        }
+        static
+    }
 }

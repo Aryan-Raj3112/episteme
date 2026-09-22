@@ -40,4 +40,15 @@ fun TtsChunk.withTtsReplacements(
 fun List<TtsChunk>.withTtsReplacements(
     preferences: ReaderTtsReplacementPreferences,
     bookId: String?,
-): List<TtsChunk> = map { it.withTtsReplacements(preferences, bookId) }
+): List<TtsChunk> {
+    if (isEmpty()) return this
+    val results = ReaderTtsReplacementEngine.applyAll(
+        texts = map { it.text },
+        preferences = preferences,
+        bookId = bookId,
+    )
+    return mapIndexed { index, chunk ->
+        val spoken = results[index].text
+        chunk.copy(spokenText = spoken.ifBlank { chunk.text })
+    }
+}

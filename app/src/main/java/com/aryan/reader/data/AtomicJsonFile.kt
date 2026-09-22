@@ -6,6 +6,15 @@ import timber.log.Timber
 
 /** Writes UTF-8 JSON with Android's backup/restore atomic-file protocol. */
 fun File.writeJsonAtomically(json: String) {
+    writeJsonAtomically(json, ::moveByRename)
+}
+
+/**
+ * Test-visible overload: [move] replaces the rename step so tests can force
+ * the copy fallback without filesystem tricks. Production always uses
+ * [moveByRename].
+ */
+internal fun File.writeJsonAtomically(json: String, move: (src: File, dst: File) -> Boolean) {
     parentFile?.mkdirs()
     val backupName = File(parentFile, "$name.bak")
     val newName = File(parentFile, "$name.new")
@@ -32,24 +41,69 @@ fun File.writeJsonAtomically(json: String) {
 
     try {
         newName.outputStream().use { output -> output.write(json.toByteArray(Charsets.UTF_8)) }
-        if (!newName.renameTo(this)) {
-            if (exists() && !delete() || !newName.renameTo(this)) {
-                throw IOException("Failed to persist ${absolutePath}")
+        if (!move(newName, this)) {
+            // File.renameTo is unreliable on some devices/firmwares: it
+            // returns false without a reason (no overwrite semantics, stale
+            // FDs, transient FS errors). A copy achieves the same durable
+            // result, only slower, so use it as a fallback instead of
+            // crashing the save and losing the in-memory annotations.
+            try {
+                Timber.w("rename of $newName failed; falling back to copy for $absolutePath.")
+                newName.copyTo(this, overwrite = true)
+                newName.delete()
+            } catch (copyError: Throwable) {
+                throw IOException("Failed to persist ${describeForPersist(newName, backupName)}", copyError)
             }
         }
         backupName.delete()
     } catch (error: Throwable) {
-        delete()
-        if (backupName.exists() && !backupName.renameTo(this)) {
+        // Never delete a still-valid destination to "clean up": if the .new
+        // write or the move/copy failed before replacing it, it still holds
+        // the last good payload. Only restore the backup when the
+        // destination is actually missing (it was rotated to .bak above).
+        if (!exists() && backupName.exists()) {
             // Best-effort restore: never let it mask the original failure.
             runCatching {
-                backupName.copyTo(this, overwrite = true)
-                backupName.delete()
+                if (!backupName.renameTo(this)) {
+                    backupName.copyTo(this, overwrite = true)
+                }
+                if (exists()) backupName.delete()
+            }.onFailure { restoreError ->
+                Timber.w(restoreError, "Failed to restore backup of $absolutePath.")
             }
         }
-        newName.delete()
-        throw error
+        // Clean the staging file only once the destination is safe; if the
+        // destination is still missing, the .new file may hold the only copy.
+        if (exists()) newName.delete()
+        if (error is IOException && error.message?.startsWith("Failed to persist") == true) throw error
+        // Destination safe (old payload intact) or a non-Exception Error
+        // (e.g. OOM, which must never be converted to IOException): rethrow.
+        if (exists() || error !is Exception) throw error
+        // Destination missing and no backup restored: surface FS diagnostics
+        // so the next Crashlytics report names the FS state, not just rename.
+        throw IOException("Failed to persist ${describeForPersist(newName, backupName)}", error)
     }
+}
+
+/**
+ * Legacy rename with delete-and-retry for firmwares where rename does not
+ * overwrite an existing destination. Returns false (no throw) when the FS
+ * refuses, so the caller can fall back to a copy.
+ */
+private fun moveByRename(src: File, dst: File): Boolean {
+    if (src.renameTo(dst)) return true
+    if (dst.exists() && !dst.delete()) return false
+    return src.renameTo(dst)
+}
+
+private fun File.describeForPersist(newName: File, backupName: File): String {
+    val parent = parentFile
+    return "$absolutePath " +
+        "(destExists=${exists()}, newExists=${newName.exists()}, " +
+        "newLen=${runCatching { newName.length() }.getOrDefault(-1)}, " +
+        "backupExists=${backupName.exists()}, parentExists=${parent?.exists() ?: false}, " +
+        "parentWritable=${parent?.canWrite() ?: false}, " +
+        "usableBytes=${runCatching { parent?.usableSpace ?: -1 }.getOrDefault(-1)})"
 }
 
 /**

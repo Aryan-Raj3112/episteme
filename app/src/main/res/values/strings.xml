@@ -1119,6 +1119,8 @@
     <!-- Dialog body when deleting a tag. %1$s = the tag name. Example: 'Delete tag "To read"? It will be removed from every book.' -->
     <string name="dialog_delete_tag_desc">Delete tag &quot;%1$s&quot;? It will be removed from every book.</string>
     <string name="error_no_browser">No browser found to open the link.</string>
+    <!-- Toast when an external app shares a file without granting read access, so there is nothing to open. -->
+    <string name="error_external_open_failed">Unable to open this file.</string>
 
     <!-- Annotations & Notes -->
     <string name="action_save_note">Save Note</string>

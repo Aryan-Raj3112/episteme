@@ -5,7 +5,6 @@ import androidx.core.content.edit
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.ReaderBookReplacementPreferencesJson
 import com.aryan.reader.shared.ReaderWordReplacementEngine
-import com.aryan.reader.shared.ReaderWordReplacementRule
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Node
 import org.jsoup.nodes.TextNode
@@ -36,12 +35,15 @@ internal fun applyBookReplacementsToHtmlDocument(
     val rules = preferences.activeRulesForFile(fileId)
     if (rules.isEmpty()) return false
 
+    // Compile once per document: per-node compilation stalls the caller on
+    // ICU regex setup for large chapters (same class as the TTS chunk path).
+    val compiled = ReaderWordReplacementEngine.compileRules(rules)
     var changed = false
 
     fun rewriteTextNodes(node: Node) {
         if (node is TextNode && !node.hasReplacementBlockedAncestor()) {
             val original = node.wholeText
-            val replaced = applyBookReplacementRules(original, rules)
+            val replaced = ReaderWordReplacementEngine.applyCompiled(original, compiled).text
             if (replaced != original) {
                 node.text(replaced)
                 changed = true
@@ -54,16 +56,6 @@ internal fun applyBookReplacementsToHtmlDocument(
 
     document.body()?.let(::rewriteTextNodes)
     return changed
-}
-
-private fun applyBookReplacementRules(
-    text: String,
-    rules: List<ReaderWordReplacementRule>,
-): String {
-    return ReaderWordReplacementEngine.apply(
-        text = text,
-        rules = rules,
-    ).text
 }
 
 private fun TextNode.hasReplacementBlockedAncestor(): Boolean {

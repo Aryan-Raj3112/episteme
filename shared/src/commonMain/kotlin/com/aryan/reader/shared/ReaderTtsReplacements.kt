@@ -102,22 +102,34 @@ object ReaderTtsReplacementEngine {
         preferences: ReaderTtsReplacementPreferences,
         bookId: String? = null,
     ): ReaderTtsReplacementApplyResult {
-        if (text.isEmpty() || !preferences.isEnabled) {
-            return ReaderTtsReplacementApplyResult(text = text)
+        return applyAll(listOf(text), preferences, bookId).single()
+    }
+
+    /**
+     * Applies the active rules to every text, compiling each rule once.
+     * Output is identical to calling [apply] per text — only the ICU
+     * compilation is shared. Chunk-per-chunk callers (reader render paths run
+     * this on main) must use this instead of mapping [apply].
+     */
+    fun applyAll(
+        texts: List<String>,
+        preferences: ReaderTtsReplacementPreferences,
+        bookId: String? = null,
+    ): List<ReaderTtsReplacementApplyResult> {
+        if (texts.isEmpty()) return emptyList()
+        if (!preferences.isEnabled) {
+            return texts.map { ReaderTtsReplacementApplyResult(text = it) }
         }
-
-        val result = ReaderWordReplacementEngine.apply(
-            text = text,
-            rules = preferences.activeRulesForBook(bookId).map { it.toWordReplacementRule() },
-        )
-
-        return ReaderTtsReplacementApplyResult(
-            text = result.text,
-            appliedRuleIds = result.appliedRuleIds,
-            errors = result.errors.map {
-                ReaderTtsReplacementError(ruleId = it.ruleId, message = it.message)
-            },
-        )
+        val wordRules = preferences.activeRulesForBook(bookId).map { it.toWordReplacementRule() }
+        return ReaderWordReplacementEngine.applyAll(texts, wordRules).map { result ->
+            ReaderTtsReplacementApplyResult(
+                text = result.text,
+                appliedRuleIds = result.appliedRuleIds,
+                errors = result.errors.map {
+                    ReaderTtsReplacementError(ruleId = it.ruleId, message = it.message)
+                },
+            )
+        }
     }
 }
 
@@ -148,7 +160,15 @@ fun ReaderTtsChunk.withTtsReplacements(
 fun List<ReaderTtsChunk>.withTtsReplacements(
     preferences: ReaderTtsReplacementPreferences,
     bookId: String? = null,
-): List<ReaderTtsChunk> = map { it.withTtsReplacements(preferences, bookId) }
+): List<ReaderTtsChunk> {
+    if (isEmpty()) return this
+    val results = ReaderTtsReplacementEngine.applyAll(
+        texts = map { it.text },
+        preferences = preferences,
+        bookId = bookId,
+    )
+    return mapIndexed { index, chunk -> chunk.copy(spokenText = results[index].text) }
+}
 
 object ReaderTtsReplacementSuggestions {
     val presets: List<ReaderTtsReplacementRule> = listOf(
