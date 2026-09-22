@@ -390,6 +390,15 @@
                 android:value="androidx.startup"
                 tools:node="remove" />
         </provider>
+        <!-- WorkManager's diagnostics receiver answers the
+             androidx.work.diagnostics.REQUEST_DIAGNOSTICS broadcast by calling
+             WorkManager.getInstance() directly, bypassing SafeWorkManager: on
+             the broken-JobScheduler firmware from #1 that crashes inside the
+             broadcast receiver. It is a dev-only logcat tool with no
+             production function, so it stays removed. -->
+        <receiver
+            android:name="androidx.work.impl.diagnostics.DiagnosticsReceiver"
+            tools:node="remove" />
     </application>
 
 </manifest>
