@@ -114,11 +114,11 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
@@ -1332,24 +1332,6 @@ fun SharedMobilePdfReaderHost(
         }
     }
 
-    fun activeToolConfig(tool: PdfInkTool) = SharedPdfAnnotationDefaults.configFor(tool).let { config ->
-        when (tool) {
-            PdfInkTool.HIGHLIGHTER -> config.copy(
-                colorArgb = readerState.highlighterPalette.getOrElse(0) {
-                    SharedPdfHighlighterPalette.defaultColors.first()
-                },
-            )
-            PdfInkTool.HIGHLIGHTER_ROUND -> config.copy(
-                colorArgb = readerState.highlighterPalette.getOrElse(1) {
-                    SharedPdfHighlighterPalette.defaultColors.getOrElse(1) {
-                        SharedPdfHighlighterPalette.defaultColors.first()
-                    }
-                },
-            )
-            else -> config
-        }
-    }
-
     fun updatePdfHighlighterPalette(palette: SharedPdfHighlighterPalette) {
         val sanitized = palette.sanitized()
         dispatch(SharedPdfReaderAction.HighlighterPaletteChanged(sanitized.colors))
@@ -1361,19 +1343,16 @@ fun SharedMobilePdfReaderHost(
         onPdfHighlighterSnapChange(enabled)
     }
 
+    // Android parity (AnnotationSettingsRepository.updateSelectedTool): switching
+    // tools only changes the selected tool (plus last-pen/highlighter recall in
+    // the reducer). Per-tool color/width persist in toolConfigs and are recalled
+    // by ToolSelected itself — never reset to defaults here, or the toolsettings
+    // selection would not stick across switches.
     fun setTool(tool: PdfInkTool) {
         if (tool != PdfInkTool.TEXT && readerState.selectedTool == PdfInkTool.TEXT && textDraft != null) {
             dismissTextDraft()
         }
         dispatch(SharedPdfReaderAction.ToolSelected(tool))
-        // SELECT keeps the current color/width (it edits the selection's own
-        // style via the edit bar); every other tool recalls its config.
-        if (tool != PdfInkTool.NONE && tool != PdfInkTool.SELECT) {
-            activeToolConfig(tool).let { config ->
-                dispatch(SharedPdfReaderAction.ColorSelected(config.colorArgb.takeIf { it != 0 } ?: readerState.selectedColorArgb))
-                dispatch(SharedPdfReaderAction.StrokeWidthChanged(config.strokeWidth))
-            }
-        }
     }
 
     // Android-parity annotation dock interactions (benchmark:
@@ -5015,12 +4994,26 @@ private fun SharedMobilePdfReaderDrawer(
     }
     ModalDrawerSheet(modifier = Modifier.width(348.dp)) {
         Column(Modifier.fillMaxSize()) {
-            TabRow(selectedTabIndex = pagerState.currentPage.coerceAtMost(sections.lastIndex)) {
+            // Android parity (PdfNavigationDrawerContent): scrollable tabs with
+            // single-line labels so long titles (Chapters/Bookmarks/Highlights)
+            // scroll instead of wrapping.
+            ScrollableTabRow(
+                selectedTabIndex = pagerState.currentPage.coerceAtMost(sections.lastIndex),
+                edgePadding = 8.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 sections.forEachIndexed { index, section ->
                     Tab(
                         selected = pagerState.currentPage == index,
                         onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
-                        text = { Text(readerString(section.stringKey, section.fallbackLabel)) }
+                        text = {
+                            Text(
+                                readerString(section.stringKey, section.fallbackLabel),
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     )
                 }
             }

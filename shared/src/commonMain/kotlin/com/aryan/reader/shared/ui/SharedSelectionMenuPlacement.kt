@@ -209,3 +209,42 @@ private fun clampStart(
     val max = (viewportSize - popupSize - margin).coerceAtLeast(min)
     return preferred.coerceIn(min, max)
 }
+
+/**
+ * Android parity (`PdfVerticalReader.kt` ink selection edit bar): prefers ABOVE
+ * the selection (fixed clearance for the rotate handle), falls back BELOW only
+ * when there is no room above [topInsetPx]. Fully clamped on-screen.
+ *
+ * Pure math (px-in/px-out) so it is unit-testable; the composable converts dp
+ * clearances via density and passes measured [barWidthPx]/[barHeightPx].
+ */
+fun sharedPdfInkSelectionEditBarOffset(
+    selectionLeft: Float,
+    selectionTop: Float,
+    selectionRight: Float,
+    selectionBottom: Float,
+    containerWidth: Float,
+    containerHeight: Float,
+    barWidthPx: Float,
+    barHeightPx: Float,
+    topInsetPx: Float,
+    edgeMarginPx: Float,
+    aboveClearancePx: Float,
+    belowGapPx: Float,
+): Pair<Int, Int> {
+    val aboveY = selectionTop - aboveClearancePx
+    val belowY = selectionBottom + belowGapPx
+    val preferredY = if (aboveY > topInsetPx) aboveY else belowY
+    val halfScreen = containerWidth / 2f
+    val maxShift = (halfScreen - barWidthPx / 2f - edgeMarginPx).coerceAtLeast(0f)
+    val xShift = ((selectionLeft + selectionRight) / 2f - halfScreen)
+        .coerceIn(-maxShift, maxShift)
+    val x = (halfScreen + xShift - barWidthPx / 2f).coerceIn(
+        0f,
+        (containerWidth - barWidthPx).coerceAtLeast(0f)
+    )
+    val topMin = topInsetPx + edgeMarginPx
+    val topMax = (containerHeight - barHeightPx - edgeMarginPx).coerceAtLeast(topMin)
+    val y = preferredY.coerceIn(topMin, topMax)
+    return x.roundToInt() to y.roundToInt()
+}

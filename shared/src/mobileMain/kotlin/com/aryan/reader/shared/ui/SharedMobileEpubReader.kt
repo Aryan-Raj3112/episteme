@@ -69,6 +69,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.Tag
@@ -1231,7 +1232,7 @@ fun SharedMobileEpubReaderScreen(
                                     }
                                 }
                             },
-                            text = { Text(label, maxLines = 1) }
+                            text = { Text(label, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
                         )
                     }
                 }

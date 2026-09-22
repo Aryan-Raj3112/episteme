@@ -280,8 +280,10 @@ private fun DrawScope.drawSharedRotationDegreePill(
  * panel (same anchor): ink-settings slider + palette with live preview and
  * slim Cancel | Done. The spectrum edits the selected palette slot, like the
  * ink settings popup — no new circles are created. Rendered outside the zoom
- * transform; [selectionWindowRect] positions it below the selection (above
- * when there is no room), fully clamped into [containerSizePx].
+ * transform; Android parity (`PdfVerticalReader.kt` ink selection edit bar):
+ * prefers ABOVE the selection (108dp clearance for the rotate handle), falls
+ * back BELOW (12dp gap) when there is no room above the header, fully clamped
+ * into [containerSizePx].
  */
 @Composable
 internal fun SharedPdfInkSelectionEditBar(
@@ -304,21 +306,35 @@ internal fun SharedPdfInkSelectionEditBar(
     var showStylePanel by remember { mutableStateOf(false) }
     var barSizePx by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
-    val marginPx = remember(density) { with(density) { 8.dp.toPx() } }
-    val offset = remember(selectionWindowRect, containerSizePx, barSizePx, marginPx, topInsetPx) {
-        val barW = barSizePx.width.toFloat()
-        val barH = barSizePx.height.toFloat()
-        val maxX = (containerSizePx.width - barW).coerceAtLeast(0f)
-        val x = (selectionWindowRect.center.x - barW / 2f).coerceIn(0f, maxX)
-        val belowY = selectionWindowRect.bottom + marginPx
-        val y = if (belowY + barH <= containerSizePx.height || selectionWindowRect.top - marginPx - barH < topInsetPx) {
-            belowY.coerceAtMost((containerSizePx.height - barH).coerceAtLeast(topInsetPx))
-        } else {
-            (selectionWindowRect.top - marginPx - barH).coerceAtLeast(topInsetPx)
-        }
-        IntOffset(x.roundToInt(), y.roundToInt())
+    // Android parity (PdfVerticalReader.kt): 108dp above clearance (rotate
+    // handle + bar), 12dp below gap, 8dp screen-edge margin.
+    val edgeMarginPx = remember(density) { with(density) { 8.dp.toPx() } }
+    val aboveClearancePx = remember(density) { with(density) { 108.dp.toPx() } }
+    val belowGapPx = remember(density) { with(density) { 12.dp.toPx() } }
+    val offset = remember(selectionWindowRect, containerSizePx, barSizePx, edgeMarginPx, aboveClearancePx, belowGapPx, topInsetPx) {
+        // Keep the whole bar on-screen: clamped horizontally by the measured
+        // bar width and vertically by the measured height. (First frame
+        // measures at Zero size; the clamp tightens on the remeasure pass.)
+        val (x, y) = sharedPdfInkSelectionEditBarOffset(
+            selectionLeft = selectionWindowRect.left,
+            selectionTop = selectionWindowRect.top,
+            selectionRight = selectionWindowRect.right,
+            selectionBottom = selectionWindowRect.bottom,
+            containerWidth = containerSizePx.width.toFloat(),
+            containerHeight = containerSizePx.height.toFloat(),
+            barWidthPx = barSizePx.width.toFloat(),
+            barHeightPx = barSizePx.height.toFloat(),
+            topInsetPx = topInsetPx,
+            edgeMarginPx = edgeMarginPx,
+            aboveClearancePx = aboveClearancePx,
+            belowGapPx = belowGapPx,
+        )
+        IntOffset(x, y)
     }
     Box(modifier = Modifier.fillMaxSize()) {
+        val maxBarWidth = remember(density, containerSizePx) {
+            with(density) { (containerSizePx.width.toFloat() - 16.dp.toPx()).coerceAtLeast(0f).toDp() }
+        }
         Surface(
             color = Color(0xFF1E1E1E),
             contentColor = Color.White,
@@ -327,7 +343,8 @@ internal fun SharedPdfInkSelectionEditBar(
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .offset { offset }
-                .onSizeChanged { barSizePx = it },
+                .onSizeChanged { barSizePx = it }
+                .widthIn(max = maxBarWidth),
         ) {
             if (!showStylePanel) {
                 Row(
