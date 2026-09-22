@@ -1180,7 +1180,7 @@
     <string name="desktop_custom_fonts_desc">Zaimportowane czcionki dla czytnika</string>
     <string name="desktop_delete_font">Usuń czcionkę</string>
     <string name="desktop_delete_font_desc">Usunąć %1$s? Książki korzystające z tej czcionki powrócą do domyślnej czcionki.</string>
-    <string name="desktop_delete_shelf_desc">Usunąć \&quot;%1$s\&quot;? Książki pozostają w Twojej bibliotece.</string>
+    <string name="desktop_delete_shelf_desc">Usunąć \"%1$s\"? Książki pozostają w Twojej bibliotece.</string>
     <string name="desktop_delete_summary">Usuń podsumowanie</string>
     <string name="desktop_disabled">Wyłączony</string>
     <string name="desktop_drop_files_to_import">Upuść pliki do zaimportowania</string>
@@ -1214,7 +1214,7 @@
     <string name="desktop_more_menu">Więcej</string>
     <string name="desktop_no_cached_summaries_book">Nie ma jeszcze żadnych podsumowań tej książki w pamięci podręcznej.</string>
     <string name="desktop_no_custom_fonts_desc">Importuj pliki TTF, OTF lub WOFF2, aby używać ich w książkach.</string>
-    <string name="desktop_no_fonts_matching">Nie znaleziono czcionek pasujących do \&quot;%1$s\&quot;</string>
+    <string name="desktop_no_fonts_matching">Nie znaleziono czcionek pasujących do \"%1$s\"</string>
     <string name="desktop_no_google_account_connected">Nie Google konto jest połączone.</string>
     <string name="desktop_no_summary_cached_section">Brak podsumowania w pamięci podręcznej dla tej sekcji.</string>
     <string name="desktop_offline_oss_reader">Czytnik stacjonarny offline</string>
@@ -1513,7 +1513,6 @@
     <string name="tts_replacements_replace_only_spoken">Zastąp tylko to, co zostało powiedziane</string>
     <string name="tts_replacements_replace_only_spoken_desc">Tekst czytnika, wyróżnienia i lokalizacje pozostają niezmienione.</string>
     <string name="tts_replacements_summary_format">%1$s -&gt; %2$s</string>
-
     <!-- Strings added by the pl language pass (docs/localization-revamp-plan.md §6).
          Register: informal ty; glossary: biblioteka, półka, zakładka, rozdział,
          okładka, chmura, TTS w chmurze, audiobook, minutnik, rozkładówka (page
@@ -1635,7 +1634,7 @@
     <string name="listen_no_tts_books">Nie znaleziono obsługiwanych książek</string>
     <string name="listen_empty">Nie ma jeszcze nic do słuchania</string>
     <string name="listen_empty_desc">Zaimportuj audiobook lub wybierz książkę z biblioteki, aby słuchać przy użyciu syntezatora mowy.</string>
-    <string name="listen_no_matches">Żaden element słuchania nie pasuje do &quot;%1$s&quot;</string>
+    <string name="listen_no_matches">Żaden element słuchania nie pasuje do "%1$s"</string>
     <string name="listen_badge_audiobook">AUDIOBOOK</string>
     <string name="listen_badge_tts">TTS</string>
     <string name="listen_timer">Minutnik</string>
@@ -1668,7 +1667,7 @@
     <string name="visual_options_bottom_toolbar">Pokaż dolny pasek narzędzi</string>
     <string name="visual_options_bottom_toolbar_desc">Ukryj go, aby czytać tylko z górnymi narzędziami</string>
     <string name="search_chapters_placeholder">Szukaj rozdziałów</string>
-    <string name="no_chapters_matching">Nie znaleziono rozdziałów dla &quot;%1$s&quot;.</string>
+    <string name="no_chapters_matching">Nie znaleziono rozdziałów dla "%1$s".</string>
     <string name="visual_options_hide_images">Ukryj obrazy</string>
     <string name="visual_options_hide_images_desc">Włącz, aby czytać ze wszystkimi obrazami książki ukrytymi.</string>
     <string name="visual_options_epub_page_spread">Rozkładówka</string>
@@ -1676,9 +1675,9 @@
     <string name="visual_options_epub_spread_single">Pojedyncza</string>
     <string name="visual_options_epub_spread_two">Dwie strony</string>
     <string name="label_spread_gap">Odstęp rozkładówki</string>
-    <string name="banner_tag_deleted">Usunięto tag &quot;%1$s&quot;.</string>
+    <string name="banner_tag_deleted">Usunięto tag "%1$s".</string>
     <string name="menu_delete_tag">Usuń tag</string>
-    <string name="dialog_delete_tag_desc">Usunąć tag &quot;%1$s&quot;? Zostanie usunięty z każdej książki.</string>
+    <string name="dialog_delete_tag_desc">Usunąć tag "%1$s"? Zostanie usunięty z każdej książki.</string>
     <string name="chapter_of_chapters">Rozdział %1$d z %2$d</string>
     <string name="chapter_number">Rozdział %1$d</string>
     <string name="content_desc_numbered_list">Lista numerowana</string>
