@@ -9,7 +9,7 @@
 #
 # The prebuilt dylibs under third_party/pdfium/{ios-device-arm64,
 # ios-simulator-arm64} are only copied, never modified in place. Re-run this
-# script after updating those pdfium binaries (currently 152.0.7934.0).
+# script after updating those pdfium binaries (currently 156.0.8066.0).
 set -eu
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -23,13 +23,13 @@ BUNDLE_ID="com.aryan.reader.pdfium"
 # Upstream pdfium release. App Store Connect requires CFBundleShortVersionString
 # to be at most three dot-separated integers (server error 90060 rejects e.g.
 # "152.0.7934.0"), so the framework plist uses the truncated form below.
-PDFIUM_VERSION="152.0.7934.0"
-PDFIUM_SHORT_VERSION="152.0.7934"
+PDFIUM_VERSION="156.0.8066.0"
+PDFIUM_SHORT_VERSION="156.0.8066"
 # Must equal the prebuilt binaries' LC_BUILD_VERSION minos (check with
 # `otool -l ... | grep -A3 LC_BUILD_VERSION`) and be <= the app's
 # IPHONEOS_DEPLOYMENT_TARGET. A lower value triggers ITMS-90208 because the
 # bundle would advertise support for OS versions its binary cannot run on.
-MINIMUM_OS="26.0"
+MINIMUM_OS="17.0"
 
 if [ ! -f "$DEVICE_DIR/lib/libpdfium.dylib" ]; then
     echo "Missing device PDFium dylib: $DEVICE_DIR/lib/libpdfium.dylib" >&2
