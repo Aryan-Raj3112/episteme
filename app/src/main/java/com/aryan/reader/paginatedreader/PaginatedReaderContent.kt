@@ -134,6 +134,7 @@ import com.aryan.reader.epubreader.TtsHighlightInfo
 import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
+import com.aryan.reader.shared.ui.drawSharedSpreadSpineCrease
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -2165,7 +2166,9 @@ internal fun PaginatedReaderContent(
                                 isDarkTheme,
                                 pageTurnTouchY,
                                 pageTextureBitmap,
-                                pageTextureAlpha
+                                pageTextureAlpha,
+                                spineCreaseEnabled = isTwoPageSpread,
+                                spreadGutterPx = with(LocalDensity.current) { spreadGutterDp.dp.toPx() }
                             )
                         } else Modifier
 
@@ -3225,7 +3228,9 @@ internal fun Modifier.realisticBookPage(
     isDarkTheme: Boolean,
     touchY: Float?,
     textureBitmap: ImageBitmap? = null,
-    textureAlpha: Float = 0f
+    textureAlpha: Float = 0f,
+    spineCreaseEnabled: Boolean = false,
+    spreadGutterPx: Float = 0f
 ): Modifier = composed {
 
     val frontPath = remember { Path() }
@@ -3264,16 +3269,32 @@ internal fun Modifier.realisticBookPage(
                 }
             }
 
+            fun drawSpineCrease(turnProgress: Float? = null) {
+                if (spineCreaseEnabled) {
+                    drawSharedSpreadSpineCrease(
+                        width = size.width,
+                        height = size.height,
+                        paperIsDark = isDarkTheme,
+                        gutterWidthPx = spreadGutterPx,
+                        turnProgress = turnProgress
+                    )
+                }
+            }
+
             if (abs(pageOffset) < 0.001f) {
                 drawPaperBackground()
                 drawContent()
+                drawSpineCrease()
             }
             else if (pageOffset < 0f && pageOffset > -1f) {
                 val progress = -pageOffset
                 val w = size.width
                 val h = size.height
 
-                val startY = touchY ?: h
+                // Spread + realistic = book leaf hinged at the spine crease:
+                // pin to vertical center so the sheet peels from the right
+                // and settles on the left. Single-page keeps touch diagonal.
+                val startY = if (spineCreaseEnabled) h / 2f else touchY ?: h
                 val rawCenterDist = ((startY - h / 2f) / (h / 2f)).coerceIn(-1f, 1f)
 
                 val flattenFactor = if (progress > 0.75f) {
@@ -3330,7 +3351,14 @@ internal fun Modifier.realisticBookPage(
                         this@drawWithContent.drawContent()
                     }
 
-                    val shadowWidth = (40.dp.toPx() * (1f - progress)).coerceAtLeast(10.dp.toPx())
+                    // Book leaf (spread + realistic): shadow peaks at half-turn
+                    // when the fold hinges at the crease. Single keeps shrink.
+                    val shadowWidth = if (spineCreaseEnabled) {
+                        val lift = kotlin.math.sin(progress * kotlin.math.PI).toFloat()
+                        (10.dp.toPx() + 30.dp.toPx() * lift).coerceAtLeast(10.dp.toPx())
+                    } else {
+                        (40.dp.toPx() * (1f - progress)).coerceAtLeast(10.dp.toPx())
+                    }
                     backPath.rewind()
                     backPath.moveTo(p1X, p1Y)
                     backPath.lineTo(p2X, p2Y)
@@ -3396,22 +3424,26 @@ internal fun Modifier.realisticBookPage(
                             )
                         }
 
+                        val foldAlpha = if (spineCreaseEnabled) 0.16f else 0.1f
                         drawLine(
-                            color = if (isDarkTheme) Color.White.copy(alpha = 0.1f) else Color.Black.copy(alpha = 0.1f),
+                            color = if (isDarkTheme) Color.White.copy(alpha = foldAlpha) else Color.Black.copy(alpha = foldAlpha),
                             start = Offset(p1X, p1Y),
                             end = Offset(p2X, p2Y),
                             strokeWidth = 1.dp.toPx()
                         )
                     }
 
+                    drawSpineCrease(turnProgress = progress)
                 } else {
                     drawPaperBackground()
                     drawContent()
+                    drawSpineCrease()
                 }
             }
             else {
                 drawPaperBackground()
                 drawContent()
+                drawSpineCrease()
             }
 
             val drawDuration = (System.nanoTime() - drawStart) / 1_000_000.0

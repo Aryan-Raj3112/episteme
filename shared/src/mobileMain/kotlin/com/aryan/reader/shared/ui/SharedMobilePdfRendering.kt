@@ -2309,6 +2309,16 @@ internal fun SharedMobilePdfPageSurface(
         if (selectionPreviewById.isEmpty()) annotations
         else annotations.map { selectionPreviewById[it.id] ?: it }
     }
+    // Fresh annotation reads for the gesture blocks below. Those
+    // pointerInput blocks are keyed on tool/canvas/page (NOT on data) so an
+    // in-flight gesture survives recompositions — but that also freezes the
+    // lambdas captured at launch. Without updated-state indirection the
+    // SELECT hit-tests keep reading the launch-era list after draws,
+    // deletes, or undos: deleted ids stay hittable (a tap selects a ghost,
+    // snapshots come back empty, no box/bar renders) and new strokes stay
+    // unhittable until something restarts the block.
+    val latestEffectiveAnnotations by rememberUpdatedState(effectiveAnnotations)
+    val latestBaseAnnotations by rememberUpdatedState(annotations)
     var visiblePageBounds by remember(pageIndex) { mutableStateOf<PdfPageBounds?>(null) }
     val textSession = rememberPdfTextPageSession(book, pageIndex, pdfPassword)
     var allTextHighlightBounds by remember(pageIndex) { mutableStateOf<List<PdfPageBounds>>(emptyList()) }
@@ -2442,7 +2452,10 @@ internal fun SharedMobilePdfPageSurface(
                             if (localCanvasSize.width <= 0 || localCanvasSize.height <= 0) return
                             val point = position.toSharedMobilePdfPoint(localCanvasSize)
                             val width = resolveEraserStrokeWidth(eraserOverride, strokeWidth, eraserStrokeWidth)
-                            val hits = annotations.filter { it.pageIndex == pageIndex && it.kind == PdfAnnotationKind.INK }
+                            // Fresh list (same stale-capture trap as the SELECT
+                            // providers above): the eraser must miss deleted
+                            // strokes and hit newly drawn ones.
+                            val hits = latestBaseAnnotations.filter { it.pageIndex == pageIndex && it.kind == PdfAnnotationKind.INK }
                                 .filter {
                                     SharedPdfInkRenderer.isAnnotationHit(
                                         it,
@@ -2633,8 +2646,8 @@ internal fun SharedMobilePdfPageSurface(
                         overlayOwnsPageProvider = { latestSelectionHost?.overlayOwnedPageIndex == pageIndex },
                         annotationsProvider = {                            val host = latestSelectionHost
                             val preview = host?.previewById.orEmpty()
-                            val base = if (preview.isEmpty()) effectiveAnnotations
-                            else annotations.map { preview[it.id] ?: it }
+                            val base = if (preview.isEmpty()) latestEffectiveAnnotations
+                            else latestBaseAnnotations.map { preview[it.id] ?: it }
                             base.filter { it.pageIndex == pageIndex && it.kind == PdfAnnotationKind.INK }
                         },
                         selectionBoundsProvider = {
@@ -2644,8 +2657,8 @@ internal fun SharedMobilePdfPageSurface(
                                 null
                             } else {
                                 val preview = host.previewById
-                                val base = if (preview.isEmpty()) effectiveAnnotations
-                                else annotations.map { preview[it.id] ?: it }
+                                val base = if (preview.isEmpty()) latestEffectiveAnnotations
+                                else latestBaseAnnotations.map { preview[it.id] ?: it }
                                 sharedPdfSelectionUnionBounds(
                                     base.filter { it.pageIndex == pageIndex && it.id in sel.selectedIds }
                                 )

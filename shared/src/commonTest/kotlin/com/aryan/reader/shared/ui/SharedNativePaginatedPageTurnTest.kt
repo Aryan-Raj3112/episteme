@@ -231,4 +231,91 @@ class SharedNativePaginatedPageTurnTest {
             transparent to paper,
             sharedPaginatedTurnLayerBackgrounds(turnActive = true, overlayFirst = true, baseBackground = paper)
         )
-    }}
+    }
+
+    @Test
+    fun `spread spine crease only draws with animation on and spread mode`() {
+        assertTrue(shouldDrawSpreadSpineCrease(animationEnabled = true, isTwoPageSpread = true))
+        assertFalse(shouldDrawSpreadSpineCrease(animationEnabled = false, isTwoPageSpread = true))
+        assertFalse(shouldDrawSpreadSpineCrease(animationEnabled = true, isTwoPageSpread = false))
+        assertFalse(shouldDrawSpreadSpineCrease(animationEnabled = false, isTwoPageSpread = false))
+    }
+
+    @Test
+    fun `spread turn offset is uniform across every slot in the set`() {
+        val outgoing = List(2) {
+            sharedPaginatedSpreadTurnPageOffset(setLeadSlots = 0, direction = 1, fraction = 0.5f)
+        }
+        assertEquals(outgoing[0], outgoing[1])
+        assertEquals(-0.5f, outgoing[0])
+        val incoming = List(2) {
+            sharedPaginatedSpreadTurnPageOffset(setLeadSlots = 1, direction = 1, fraction = 0.5f)
+        }
+        assertEquals(incoming[0], incoming[1])
+        assertEquals(0.5f, incoming[0])
+        // Ends of the turn park the sheets like a one-page pager step.
+        assertEquals(-1f, sharedPaginatedSpreadTurnPageOffset(setLeadSlots = 0, direction = 1, fraction = 1f))
+        assertEquals(0f, sharedPaginatedSpreadTurnPageOffset(setLeadSlots = 1, direction = 1, fraction = 1f))
+    }
+
+    @Test
+    fun `spread fold sweeps across the spine without nan geometry`() {
+        val width = 800f
+        val height = 600f
+        val spineX = width / 2f
+        val early = spreadPageCurlFold(width, height, progress = 0.1f, touchY = null)
+        val mid = spreadPageCurlFold(width, height, progress = 0.5f, touchY = null)
+        val late = spreadPageCurlFold(width, height, progress = 0.9f, touchY = null)
+        assertTrue(early.valid && mid.valid && late.valid)
+        // Fold starts on the outer edge and moves left past the spine.
+        assertTrue(early.dragX > spineX)
+        assertTrue(mid.dragX < spineX)
+        assertTrue(late.dragX < 0f)
+        // No NaNs in the normal.
+        assertEquals(mid.nx, mid.nx)
+        assertEquals(mid.ny, mid.ny)
+    }
+
+    @Test
+    fun `spread fold corner follows touch y like the single page curl`() {
+        val bottomTouch = spreadPageCurlFold(800f, 600f, progress = 0.3f, touchY = 600f)
+        val topTouch = spreadPageCurlFold(800f, 600f, progress = 0.3f, touchY = 0f)
+        assertTrue(bottomTouch.valid && topTouch.valid)
+        assertEquals(600f, bottomTouch.cornerY)
+        assertEquals(0f, topTouch.cornerY)
+    }
+
+    @Test
+    fun `book flip forces vertical hinge at spine crease`() {
+        val width = 800f
+        val height = 600f
+        val spineX = width / 2f
+        // Even with corner touches, book-flip pins to center for a vertical hinge.
+        val bottomForced = spreadPageCurlFold(width, height, progress = 0.3f, touchY = 600f, forceBookFlip = true)
+        val topForced = spreadPageCurlFold(width, height, progress = 0.3f, touchY = 0f, forceBookFlip = true)
+        assertTrue(bottomForced.valid && topForced.valid)
+        assertTrue(bottomForced.isVerticalBookHinge())
+        assertTrue(topForced.isVerticalBookHinge())
+        // Helper matches the forced fold.
+        val helper = spreadBookFlipFold(width, height, progress = 0.3f)
+        assertTrue(helper.isVerticalBookHinge())
+        assertEquals(bottomForced.midX, helper.midX)
+    }
+
+    @Test
+    fun `book flip peels from right and settles on left`() {
+        val width = 800f
+        val height = 600f
+        val spineX = width / 2f
+        val early = spreadBookFlipFold(width, height, progress = 0.1f)
+        val mid = spreadBookFlipFold(width, height, progress = 0.5f)
+        val late = spreadBookFlipFold(width, height, progress = 0.9f)
+        assertTrue(early.valid && mid.valid && late.valid)
+        assertTrue(early.isVerticalBookHinge())
+        assertTrue(mid.isVerticalBookHinge())
+        assertTrue(late.isVerticalBookHinge())
+        assertTrue(early.dragX > spineX)
+        assertTrue(mid.dragX < spineX)
+        assertTrue(late.dragX < 0f)
+    }
+}

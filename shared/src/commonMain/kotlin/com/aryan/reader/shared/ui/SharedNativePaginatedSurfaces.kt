@@ -92,7 +92,10 @@ internal fun SharedNativePaginatedPage(
     onReaderTap: () -> Unit,
     selectionLayouts: MutableMap<String, SharedNativeTextLayoutInfo>,
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    // Desktop card chrome vs mobile flat (Android benchmark): mobile spreads
+    // render full-bleed with only the gutter spine crease.
+    pageChromeEnabled: Boolean = true
 ) {
     val settings = renderPlan.settings
     val fallbackTextAlign = settings.textAlign.toComposeTextAlign()
@@ -212,7 +215,7 @@ internal fun SharedNativePaginatedPage(
         }
     }
 
-    val showsPageChrome = renderGeometry.showsPageChrome
+    val showsPageChrome = sharedPaginatedPageChromeVisible(renderGeometry, pageChromeEnabled)
     Surface(
         modifier = modifier,
         shape = if (showsPageChrome) RoundedCornerShape(4.dp) else RectangleShape,

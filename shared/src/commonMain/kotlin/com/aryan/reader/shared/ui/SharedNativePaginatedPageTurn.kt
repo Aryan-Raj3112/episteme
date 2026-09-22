@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -58,6 +59,168 @@ internal fun sharedPaginatedTurnPageOffset(
     direction: Int,
     fraction: Float
 ): Float = slotOffsetInSet + direction * (setLeadSlots - turnDistanceSlots * fraction)
+
+/**
+ * Continuous page offset for a two-page spread treated as one sheet: every slot
+ * in the set shares a single offset measured in spread-widths (1 = one full
+ * spread), matching the Android HorizontalPager identity where one pager page
+ * is the whole spread. Outgoing sets use `setLeadSlots = 0`; incoming sets use
+ * `setLeadSlots = 1`.
+ */
+internal fun sharedPaginatedSpreadTurnPageOffset(
+    setLeadSlots: Int,
+    direction: Int,
+    fraction: Float
+): Float = sharedPaginatedTurnPageOffset(
+    slotOffsetInSet = 0,
+    setLeadSlots = setLeadSlots,
+    turnDistanceSlots = 1,
+    direction = direction,
+    fraction = fraction
+)
+
+/**
+ * Idle/mid-turn spine crease for two-page spread: only when the user enabled
+ * realistic page turns AND spread mode is active. Animation off keeps the flat
+ * default gutter.
+ */
+internal fun shouldDrawSpreadSpineCrease(
+    animationEnabled: Boolean,
+    isTwoPageSpread: Boolean
+): Boolean = animationEnabled && isTwoPageSpread
+
+/** Fold-line geometry for the spread sheet curl, in sheet-local coordinates. */
+internal data class SpreadPageFoldGeometry(
+    val valid: Boolean,
+    val progress: Float,
+    val cornerY: Float,
+    val dragX: Float,
+    val dragY: Float,
+    val midX: Float,
+    val midY: Float,
+    val nx: Float,
+    val ny: Float
+)
+
+/**
+ * Same fold math as the single-page curl, with the sheet width equal to the
+ * full spread (both pages + gutter) so the crease sweeps across the spine.
+ *
+ * Book-flip mode ([forceBookFlip] = true) pins the touch to the vertical
+ * center so the fold line stays vertical and hinges at the spine crease:
+ * the sheet peels from the right edge and settles on the left like a real
+ * book leaf, instead of a diagonal corner peel. Spread hosts always use
+ * book-flip; single-page keeps the touch-driven diagonal.
+ */
+internal fun spreadPageCurlFold(
+    width: Float,
+    height: Float,
+    progress: Float,
+    touchY: Float?,
+    forceBookFlip: Boolean = false
+): SpreadPageFoldGeometry {
+    val startY = if (forceBookFlip) height / 2f else touchY ?: height
+    val rawCenterDist = ((startY - height / 2f) / (height / 2f)).coerceIn(-1f, 1f)
+    val flattenFactor = if (progress > 0.75f) {
+        ((progress - 0.75f) / 0.25f).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    val centerDist = rawCenterDist * (1f - flattenFactor)
+    val cornerY = if (centerDist >= 0f) height else 0f
+    val dragX = width - width * 2.2f * progress
+    val dragY = cornerY - height * 0.5f * progress * centerDist
+    val midX = (width + dragX) / 2f
+    val midY = (cornerY + dragY) / 2f
+    val dx = width - dragX
+    val dy = cornerY - dragY
+    val nLen = sqrt(dx * dx + dy * dy)
+    return if (nLen > 0f && nLen == nLen) {
+        SpreadPageFoldGeometry(
+            valid = true,
+            progress = progress,
+            cornerY = cornerY,
+            dragX = dragX,
+            dragY = dragY,
+            midX = midX,
+            midY = midY,
+            nx = dx / nLen,
+            ny = dy / nLen
+        )
+    } else {
+        SpreadPageFoldGeometry(
+            valid = false,
+            progress = progress,
+            cornerY = cornerY,
+            dragX = dragX,
+            dragY = dragY,
+            midX = midX,
+            midY = midY,
+            nx = 0f,
+            ny = 0f
+        )
+    }
+}
+
+/**
+ * Book-like spread flip: vertical fold hinged at the spine crease.
+ * Equivalent to [spreadPageCurlFold] with the touch pinned to the vertical
+ * center, so the sheet peels from the right edge and settles on the left.
+ */
+internal fun spreadBookFlipFold(
+    width: Float,
+    height: Float,
+    progress: Float
+): SpreadPageFoldGeometry = spreadPageCurlFold(
+    width = width,
+    height = height,
+    progress = progress,
+    touchY = height / 2f,
+    forceBookFlip = true
+)
+
+/**
+ * Whether a spread fold is a vertical book hinge (fold line near-vertical).
+ * Book-flip folds have |ny| ~ 0 and |nx| ~ 1 because the touch is centered.
+ */
+internal fun SpreadPageFoldGeometry.isVerticalBookHinge(): Boolean =
+    valid && kotlin.math.abs(ny) < 0.05f && kotlin.math.abs(nx) > 0.95f
+
+/**
+ * Soft spine shadow in the gutter center of a two-page spread. Width tracks the
+ * configured gutter (with a floor) so small PDF-style gaps still read.
+ *
+ * [turnProgress] deepens the hinge mid-turn (0..1, null = settled): the crease
+ * reads as the flip hinge while the sheet peels from the right and settles on
+ * the left, then relaxes back to the idle shadow. Peaks at half-turn.
+ */
+fun DrawScope.drawSharedSpreadSpineCrease(
+    width: Float,
+    height: Float,
+    paperIsDark: Boolean,
+    gutterWidthPx: Float,
+    turnProgress: Float? = null
+) {
+    val spineX = width / 2f
+    val hingeBoost = turnProgress
+        ?.coerceIn(0f, 1f)
+        ?.let { kotlin.math.sin(it * kotlin.math.PI).toFloat() }
+        ?: 0f
+    val halfWidth = maxOf(gutterWidthPx * 0.75f, 12.dp.toPx()) * (1f + hingeBoost * 0.35f)
+    val alpha = 0.12f + hingeBoost * 0.10f
+    val colors = if (paperIsDark) {
+        listOf(Color.Transparent, Color.White.copy(alpha = alpha), Color.Transparent)
+    } else {
+        listOf(Color.Transparent, Color.Black.copy(alpha = alpha), Color.Transparent)
+    }
+    drawRect(
+        brush = Brush.horizontalGradient(
+            colors = colors,
+            startX = spineX - halfWidth,
+            endX = spineX + halfWidth
+        )
+    )
+}
 
 /**
  * Android benchmark rule: single visible-step turns (taps, hardware keys) animate
@@ -148,6 +311,12 @@ internal fun Modifier.sharedRealisticBookPage(
  * whose pages are letterboxed inside a larger pager slot (PDF) can cancel the
  * pager translation themselves and fold just the sheet. Flap tinting is derived
  * from [paperColor] darkness.
+ *
+ * When [spineCreaseEnabled] is true (two-page spread + realistic turns), the
+ * fold is a vertical book hinge at the spine crease: the sheet peels from the
+ * right edge and settles on the left like a real book leaf. A soft spine
+ * shadow is drawn in the gutter center while settled and deepened mid-turn so
+ * the fold reads as hinging at the book spine.
  */
 @Composable
 fun Modifier.realisticPageCurl(
@@ -155,7 +324,9 @@ fun Modifier.realisticPageCurl(
     touchYProvider: () -> Float?,
     paperColor: Color,
     textureBitmap: ImageBitmap? = null,
-    textureAlpha: Float = 0f
+    textureAlpha: Float = 0f,
+    spineCreaseEnabled: Boolean = false,
+    spreadGutterPx: Float = 0f
 ): Modifier {
     val isDarkPaper = sharedReaderPaperIsDark(paperColor)
     val frontPath = remember { Path() }
@@ -175,142 +346,206 @@ fun Modifier.realisticPageCurl(
                 }
             }
 
+            fun drawSpineCrease(turnProgress: Float? = null) {
+                if (spineCreaseEnabled) {
+                    drawSharedSpreadSpineCrease(
+                        width = size.width,
+                        height = size.height,
+                        paperIsDark = isDarkPaper,
+                        gutterWidthPx = spreadGutterPx,
+                        turnProgress = turnProgress
+                    )
+                }
+            }
+
             if (abs(pageOffset) < 0.001f) {
                 drawPaperBackground()
                 drawContent()
+                drawSpineCrease()
             } else if (pageOffset < 0f && pageOffset > -1f) {
                 val progress = -pageOffset
-                val w = size.width
-                val h = size.height
-
-                val startY = touchYProvider() ?: h
-                val rawCenterDist = ((startY - h / 2f) / (h / 2f)).coerceIn(-1f, 1f)
-
-                val flattenFactor = if (progress > 0.75f) {
-                    ((progress - 0.75f) / 0.25f).coerceIn(0f, 1f)
-                } else {
-                    0f
-                }
-                val centerDist = rawCenterDist * (1f - flattenFactor)
-
-                val cornerY = if (centerDist >= 0) h else 0f
-
-                val dragX = w - w * 2.2f * progress
-                val dragY = cornerY - h * 0.5f * progress * centerDist
-
-                val midX = (w + dragX) / 2f
-                val midY = (cornerY + dragY) / 2f
-
-                val dx = w - dragX
-                val dy = cornerY - dragY
-                val nLen = sqrt(dx * dx + dy * dy)
-
-                if (nLen > 0f) {
-                    val nx = dx / nLen
-                    val ny = dy / nLen
-
-                    val huge = w * 3f
-                    val vx = -ny
-
-                    val p1X = midX + vx * huge
-                    val p1Y = midY + nx * huge
-                    val p2X = midX - vx * huge
-                    val p2Y = midY - nx * huge
-
-                    frontPath.rewind()
-                    frontPath.moveTo(p1X, p1Y)
-                    frontPath.lineTo(p2X, p2Y)
-                    frontPath.lineTo(p2X - nx * huge, p2Y - ny * huge)
-                    frontPath.lineTo(p1X - nx * huge, p1Y - ny * huge)
-                    frontPath.close()
-
-                    clipPath(frontPath) {
-                        drawPaperBackground()
-                        this@drawWithContent.drawContent()
-                    }
-
-                    val shadowWidth = (40.dp.toPx() * (1f - progress)).coerceAtLeast(10.dp.toPx())
-                    backPath.rewind()
-                    backPath.moveTo(p1X, p1Y)
-                    backPath.lineTo(p2X, p2Y)
-                    backPath.lineTo(p2X + nx * huge, p2Y + ny * huge)
-                    backPath.lineTo(p1X + nx * huge, p1Y + ny * huge)
-                    backPath.close()
-
-                    val dropShadowBrush = Brush.linearGradient(
-                        colors = listOf(Color.Black.copy(alpha = 0.4f), Color.Transparent),
-                        start = Offset(midX, midY),
-                        end = Offset(midX + nx * shadowWidth, midY + ny * shadowWidth)
-                    )
-                    clipRect(0f, 0f, w, h) {
-                        drawPath(backPath, dropShadowBrush)
-                    }
-
-                    fun reflect(px: Float, py: Float): Offset {
-                        val vX = px - midX
-                        val vY = py - midY
-                        val dist = vX * nx + vY * ny
-                        return Offset(px - 2 * dist * nx, py - 2 * dist * ny)
-                    }
-
-                    val rTL = reflect(0f, 0f)
-                    val rTR = reflect(w, 0f)
-                    val rBR = reflect(w, h)
-                    val rBL = reflect(0f, h)
-
-                    reflectedScreenPath.rewind()
-                    reflectedScreenPath.moveTo(rTL.x, rTL.y)
-                    reflectedScreenPath.lineTo(rTR.x, rTR.y)
-                    reflectedScreenPath.lineTo(rBR.x, rBR.y)
-                    reflectedScreenPath.lineTo(rBL.x, rBL.y)
-                    reflectedScreenPath.close()
-
-                    clipRect(0f, 0f, w, h) {
-                        clipPath(frontPath) {
-                            drawPath(reflectedScreenPath, color = paperColor)
-                            if (textureBitmap != null && textureAlpha > 0f) {
-                                clipPath(reflectedScreenPath) {
-                                    drawRect(
-                                        brush = ShaderBrush(ImageShader(textureBitmap, TileMode.Repeated, TileMode.Repeated)),
-                                        blendMode = BlendMode.SrcOver,
-                                        alpha = textureAlpha
-                                    )
-                                }
-                            }
-                            val flapTint = if (isDarkPaper) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.06f)
-                            drawPath(reflectedScreenPath, color = flapTint)
-
-                            val innerShadowWidth = shadowWidth * 0.7f
-                            val innerShadowBrush = Brush.linearGradient(
-                                colors = listOf(Color.Black.copy(alpha = 0.25f), Color.Black.copy(alpha = 0.05f), Color.Transparent),
-                                start = Offset(midX, midY),
-                                end = Offset(midX - nx * innerShadowWidth, midY - ny * innerShadowWidth)
-                            )
-                            drawPath(reflectedScreenPath, innerShadowBrush)
-
-                            drawPath(
-                                path = reflectedScreenPath,
-                                color = if (isDarkPaper) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.15f),
-                                style = Stroke(width = 1.dp.toPx())
-                            )
-                        }
-
-                        drawLine(
-                            color = if (isDarkPaper) Color.White.copy(alpha = 0.1f) else Color.Black.copy(alpha = 0.1f),
-                            start = Offset(p1X, p1Y),
-                            end = Offset(p2X, p2Y),
-                            strokeWidth = 1.dp.toPx()
-                        )
-                    }
-                } else {
+                val fold = spreadPageCurlFold(
+                    width = size.width,
+                    height = size.height,
+                    progress = progress,
+                    touchY = touchYProvider(),
+                    // Spread + realistic = book leaf hinged at the spine crease:
+                    // pin to vertical center so the sheet peels from the right
+                    // and settles on the left. Single-page keeps touch diagonal.
+                    forceBookFlip = spineCreaseEnabled
+                )
+                if (!fold.valid) {
                     drawPaperBackground()
                     drawContent()
+                    drawSpineCrease()
+                    return@drawWithContent
                 }
+                val w = size.width
+                val h = size.height
+                val cornerY = fold.cornerY
+                val dragX = fold.dragX
+                val dragY = fold.dragY
+                val midX = fold.midX
+                val midY = fold.midY
+                val nx = fold.nx
+                val ny = fold.ny
+
+                val huge = w * 3f
+                val vx = -ny
+
+                val p1X = midX + vx * huge
+                val p1Y = midY + nx * huge
+                val p2X = midX - vx * huge
+                val p2Y = midY - nx * huge
+
+                frontPath.rewind()
+                frontPath.moveTo(p1X, p1Y)
+                frontPath.lineTo(p2X, p2Y)
+                frontPath.lineTo(p2X - nx * huge, p2Y - ny * huge)
+                frontPath.lineTo(p1X - nx * huge, p1Y - ny * huge)
+                frontPath.close()
+
+                clipPath(frontPath) {
+                    drawPaperBackground()
+                    this@drawWithContent.drawContent()
+                }
+
+                // Book leaf (spread + realistic): the flipping sheet lifts off
+                // the spine, so its drop shadow peaks at half-turn when the
+                // fold hinges at the crease. Corner peel (single page) keeps
+                // the shrinking shadow.
+                val shadowWidth = if (spineCreaseEnabled) {
+                    val lift = kotlin.math.sin(progress * kotlin.math.PI).toFloat()
+                    (10.dp.toPx() + 30.dp.toPx() * lift).coerceAtLeast(10.dp.toPx())
+                } else {
+                    (40.dp.toPx() * (1f - progress)).coerceAtLeast(10.dp.toPx())
+                }
+                backPath.rewind()
+                backPath.moveTo(p1X, p1Y)
+                backPath.lineTo(p2X, p2Y)
+                backPath.lineTo(p2X + nx * huge, p2Y + ny * huge)
+                backPath.lineTo(p1X + nx * huge, p1Y + ny * huge)
+                backPath.close()
+
+                val dropShadowBrush = Brush.linearGradient(
+                    colors = listOf(Color.Black.copy(alpha = 0.4f), Color.Transparent),
+                    start = Offset(midX, midY),
+                    end = Offset(midX + nx * shadowWidth, midY + ny * shadowWidth)
+                )
+                clipRect(0f, 0f, w, h) {
+                    drawPath(backPath, dropShadowBrush)
+                }
+
+                fun reflect(px: Float, py: Float): Offset {
+                    val vX = px - midX
+                    val vY = py - midY
+                    val dist = vX * nx + vY * ny
+                    return Offset(px - 2 * dist * nx, py - 2 * dist * ny)
+                }
+
+                val rTL = reflect(0f, 0f)
+                val rTR = reflect(w, 0f)
+                val rBR = reflect(w, h)
+                val rBL = reflect(0f, h)
+
+                reflectedScreenPath.rewind()
+                reflectedScreenPath.moveTo(rTL.x, rTL.y)
+                reflectedScreenPath.lineTo(rTR.x, rTR.y)
+                reflectedScreenPath.lineTo(rBR.x, rBR.y)
+                reflectedScreenPath.lineTo(rBL.x, rBL.y)
+                reflectedScreenPath.close()
+
+                clipRect(0f, 0f, w, h) {
+                    clipPath(frontPath) {
+                        drawPath(reflectedScreenPath, color = paperColor)
+                        if (textureBitmap != null && textureAlpha > 0f) {
+                            clipPath(reflectedScreenPath) {
+                                drawRect(
+                                    brush = ShaderBrush(ImageShader(textureBitmap, TileMode.Repeated, TileMode.Repeated)),
+                                    blendMode = BlendMode.SrcOver,
+                                    alpha = textureAlpha
+                                )
+                            }
+                        }
+                        val flapTint = if (isDarkPaper) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.06f)
+                        drawPath(reflectedScreenPath, color = flapTint)
+
+                        val innerShadowWidth = shadowWidth * 0.7f
+                        val innerShadowBrush = Brush.linearGradient(
+                            colors = listOf(Color.Black.copy(alpha = 0.25f), Color.Black.copy(alpha = 0.05f), Color.Transparent),
+                            start = Offset(midX, midY),
+                            end = Offset(midX - nx * innerShadowWidth, midY - ny * innerShadowWidth)
+                        )
+                        drawPath(reflectedScreenPath, innerShadowBrush)
+
+                        drawPath(
+                            path = reflectedScreenPath,
+                            color = if (isDarkPaper) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.15f),
+                            style = Stroke(width = 1.dp.toPx())
+                        )
+                    }
+
+                    val foldAlpha = if (spineCreaseEnabled) 0.16f else 0.1f
+                    drawLine(
+                        color = if (isDarkPaper) Color.White.copy(alpha = foldAlpha) else Color.Black.copy(alpha = foldAlpha),
+                        start = Offset(p1X, p1Y),
+                        end = Offset(p2X, p2Y),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                }
+                // Keep the spine hinge visible mid-turn so the peel reads as
+                // rotating around the crease, then relaxing to the idle crease.
+                drawSpineCrease(turnProgress = progress)
             } else {
                 drawPaperBackground()
                 drawContent()
+                drawSpineCrease()
             }
         }
+}
+
+/**
+ * Spread-sheet book flip: vertical fold hinged at the spine crease with the
+ * spine crease forced on. Hosts apply this to the whole spread Row (both pages
+ * + gutter). The sheet peels from the right edge and settles on the left.
+ */
+@Composable
+fun Modifier.realisticSpreadPageCurl(
+    pageOffsetProvider: () -> Float,
+    touchYProvider: () -> Float?,
+    paperColor: Color,
+    textureBitmap: ImageBitmap? = null,
+    textureAlpha: Float = 0f,
+    spreadGutterPx: Float = 0f
+): Modifier = realisticPageCurl(
+    pageOffsetProvider = pageOffsetProvider,
+    touchYProvider = touchYProvider,
+    paperColor = paperColor,
+    textureBitmap = textureBitmap,
+    textureAlpha = textureAlpha,
+    spineCreaseEnabled = true,
+    spreadGutterPx = spreadGutterPx
+)
+
+/**
+ * Idle-only spine crease for spread mode when no turn is active (animation on,
+ * settled content). Drawn above the settled page surface.
+ */
+fun Modifier.sharedSpreadSpineCrease(
+    enabled: Boolean,
+    paperIsDark: Boolean,
+    gutterWidthPx: Float
+): Modifier {
+    if (!enabled) return this
+    return this.drawWithContent {
+        drawContent()
+        drawSharedSpreadSpineCrease(
+            width = size.width,
+            height = size.height,
+            paperIsDark = paperIsDark,
+            gutterWidthPx = gutterWidthPx
+        )
+    }
 }
 
 /**

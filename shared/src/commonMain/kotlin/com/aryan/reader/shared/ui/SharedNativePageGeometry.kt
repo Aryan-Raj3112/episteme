@@ -52,6 +52,16 @@ internal data class SharedNativePageRenderGeometry(
 internal val SharedNativePageRenderGeometry.showsPageChrome: Boolean
     get() = pageOuterWidthPx < readerWidthPx - 1
 
+/**
+ * Host-gated page chrome: desktop keeps card chrome on narrow slots, mobile
+ * (Android benchmark parity) renders flat full-bleed spread pages with only
+ * the gutter spine crease.
+ */
+internal fun sharedPaginatedPageChromeVisible(
+    geometry: SharedNativePageRenderGeometry,
+    pageChromeEnabled: Boolean
+): Boolean = pageChromeEnabled && geometry.showsPageChrome
+
 internal data class SharedNativeTextFitLabel(
     val page: ReaderPage,
     val blockIndex: Int,

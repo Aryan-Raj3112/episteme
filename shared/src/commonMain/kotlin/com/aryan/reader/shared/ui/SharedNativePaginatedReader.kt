@@ -40,7 +40,9 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
@@ -309,7 +311,13 @@ fun SharedNativePaginatedReader(
     pageDragController: SharedPaginatedPageDragController? = null,
     // See SharedNativePaginatedPagesContent.background: the host passes
     // Transparent when this reader is the top layer of an active turn.
-    contentBackground: Color = renderPlan.background
+    contentBackground: Color = renderPlan.background,
+    // Two-page spread + realistic turns: soft idle spine in the gutter.
+    spineCreaseEnabled: Boolean = false,
+    // Desktop shows card chrome (rounded corners, border, shadow) on spread
+    // slots narrower than the viewport. Mobile (Android benchmark parity)
+    // renders flat full-bleed pages with only the spine crease in the gutter.
+    pageChromeEnabled: Boolean = true
 ) {
     val visiblePages = renderPlan.visiblePages
     val logicalFirstPage = remember(visiblePages) {
@@ -441,7 +449,9 @@ fun SharedNativePaginatedReader(
             imageContent = imageContent,
             pageTurn = pageTurn,
             magnifierCaptureLayer = magnifierCaptureLayer,
-            background = contentBackground
+            background = contentBackground,
+            spineCreaseEnabled = spineCreaseEnabled,
+            pageChromeEnabled = pageChromeEnabled
         )
         activeSelection?.let { selection ->
             arrayOf(SharedNativeSelectionHandle.START, SharedNativeSelectionHandle.END).forEach { handle ->
@@ -562,11 +572,15 @@ internal fun SharedNativePaginatedPagesContent(
     pageTurn: SharedPaginatedPageTurnSpec?,
     magnifierCaptureLayer: GraphicsLayer?,
     modifier: Modifier = Modifier,
-    // Android benchmark parity: during a realistic turn the two page sets are
-    // stacked (beneath = opaque base fill, top = transparent so the curling
-    // sheet reveals the set beneath with its drop/inner shadows). The overlay
-    // passes Transparent; settled content keeps the default paper fill.
-    background: Color = renderPlan.background
+    // During a realistic turn the two page sets are stacked (beneath = opaque base
+    // fill, top = transparent so the curling sheet reveals the set beneath with its
+    // drop/inner shadows). The overlay passes Transparent; settled content keeps
+    // the default paper fill.
+    background: Color = renderPlan.background,
+    spineCreaseEnabled: Boolean = false,
+    // Android benchmark parity on mobile: flat spread pages, crease only.
+    // Desktop keeps card chrome. See SharedNativePaginatedReader.pageChromeEnabled.
+    pageChromeEnabled: Boolean = true
 ) {
     if (visiblePages.isEmpty()) {
         Box(modifier = modifier, contentAlignment = Alignment.Center) {
@@ -626,13 +640,56 @@ internal fun SharedNativePaginatedPagesContent(
             )
         }
         val paperIsDark = sharedReaderPaperIsDark(renderPlan.background)
+        val isSpreadMode = renderPlan.settings.isTwoPageSpreadEnabled()
+        val gutterWidthPx = with(readerDensity) { pageGap.toPx() }
+        // Spread mode curls the whole Row (both pages + gutter) as one sheet so the
+        // fold sweeps across the spine — Android HorizontalPager benchmark parity.
+        // Single-page keeps the per-slot curl.
+        val spreadRowTurnModifier = when {
+            pageTurn != null && isSpreadMode -> {
+                val spreadOffset = pageTurn.offsetForSlot(0)
+                Modifier
+                    .offset {
+                        IntOffset((spreadOffset * maxWidth.toPx()).roundToInt(), 0)
+                    }
+                    .graphicsLayer {
+                        if (spreadOffset <= 1f && spreadOffset > -1f) {
+                            translationX = -spreadOffset * size.width
+                        }
+                        if (spreadOffset != 0f) {
+                            shadowElevation = 10f
+                            shape = RectangleShape
+                            clip = false
+                        }
+                    }
+                    .realisticSpreadPageCurl(
+                        pageOffsetProvider = { spreadOffset },
+                        touchYProvider = { pageTurn.touchY },
+                        paperColor = renderPlan.background,
+                        spreadGutterPx = gutterWidthPx
+                    )
+            }
+            spineCreaseEnabled && pageTurn == null -> {
+                Modifier.sharedSpreadSpineCrease(
+                    enabled = true,
+                    paperIsDark = paperIsDark,
+                    gutterWidthPx = gutterWidthPx
+                )
+            }
+            else -> Modifier
+        }
+        val rowModifier = if (isSpreadMode) {
+            spreadRowTurnModifier.fillMaxSize()
+        } else {
+            Modifier.fillMaxSize()
+        }
         Row(
-            modifier = Modifier.fillMaxSize(),
+            modifier = rowModifier,
             horizontalArrangement = Arrangement.spacedBy(pageGap, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically
         ) {
             visiblePages.forEachIndexed { slot, page ->
-                val turnModifier = if (pageTurn != null) {
+                val turnModifier = if (pageTurn != null && !isSpreadMode) {
                     // Within a set the relative pager z-order is static (earlier slots stack on
                     // top); cross-layer order is decided by the host Box child order.
                     Modifier
@@ -668,6 +725,7 @@ internal fun SharedNativePaginatedPagesContent(
                     onReaderTap = onReaderTap,
                     selectionLayouts = selectionLayouts,
                     imageContent = imageContent,
+                    pageChromeEnabled = pageChromeEnabled,
                     modifier = turnModifier
                         .width(pageOuterWidth)
                         .fillMaxHeight()
@@ -690,7 +748,9 @@ internal fun SharedNativePaginatedPageTurnOverlay(
     pageTurn: SharedPaginatedPageTurnSpec,
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)? = null,
     modifier: Modifier = Modifier,
-    background: Color = renderPlan.background
+    background: Color = renderPlan.background,
+    spineCreaseEnabled: Boolean = false,
+    pageChromeEnabled: Boolean = true
 ) {
     val selectionLayouts = remember { mutableStateMapOf<String, SharedNativeTextLayoutInfo>() }
     SharedNativePaginatedPagesContent(
@@ -710,7 +770,9 @@ internal fun SharedNativePaginatedPageTurnOverlay(
         pageTurn = pageTurn,
         magnifierCaptureLayer = null,
         modifier = modifier,
-        background = background
+        background = background,
+        spineCreaseEnabled = spineCreaseEnabled,
+        pageChromeEnabled = pageChromeEnabled
     )
 }
 

@@ -852,7 +852,10 @@ internal fun SharedMobileEpubPageInfo(
     settings: ReaderSettings,
     pageInfoPosition: PageInfoPosition,
     applySystemBarsInsets: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    // Two-page spread (Android parity): "3-4" when both pages sit in the same
+    // chapter, otherwise the single-page fallback. Null keeps single-page.
+    spreadPositionLabel: String? = null
 ) {
     val background = if (sharedMobileEpubPageInfoMatchesReaderBackground) {
         settings.readerBackgroundColor()
@@ -862,12 +865,18 @@ internal fun SharedMobileEpubPageInfo(
     val foreground = settings.readerTextColor().copy(alpha = 0.8f)
     val texture = sharedMobileEpubTextureBitmap(settings.textureId)
     val clockTime = rememberReaderClockTime()
-    val centerLabel = pageInfo?.let {
-        "$chapterTitle (${it.currentPageInChapter}/${it.totalPagesInChapter})"
-    } ?: chapterTitle
-    val axDescription = pageInfo?.let {
-        "$chapterTitle, page ${it.currentPageInChapter} of ${it.totalPagesInChapter}, ${formatReaderProgress(progressPercent)} percent"
-    } ?: chapterTitle
+    val positionText = spreadPositionLabel
+        ?: pageInfo?.let { "${it.currentPageInChapter}" }
+    val centerLabel = if (pageInfo != null && positionText != null) {
+        "$chapterTitle ($positionText/${pageInfo.totalPagesInChapter})"
+    } else {
+        chapterTitle
+    }
+    val axDescription = if (pageInfo != null && positionText != null) {
+        "$chapterTitle, page $positionText of ${pageInfo.totalPagesInChapter}, ${formatReaderProgress(progressPercent)} percent"
+    } else {
+        chapterTitle
+    }
     // Temporary clipping diagnosis: environment + inputs + measured rect under
     // one tag. Config logs on input change; layout logs only when the on-screen
     // rect moves (rotation, chrome toggle), so idle sessions stay quiet.

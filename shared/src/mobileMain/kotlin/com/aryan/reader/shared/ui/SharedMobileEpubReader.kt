@@ -66,6 +66,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -130,6 +131,9 @@ import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
 import com.aryan.reader.shared.reader.ReaderSearchOptions
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSpreadLayout
+import com.aryan.reader.shared.reader.isTwoPageSpreadEnabled
+import com.aryan.reader.shared.reader.sharedPaginatedSpreadChapterIndex
+import com.aryan.reader.shared.reader.sharedPaginatedSpreadPositionLabel
 import com.aryan.reader.shared.reader.ReaderViewportSpec
 import com.aryan.reader.shared.reader.SharedEpubPaginationCache
 import com.aryan.reader.shared.reader.SharedMeasuredEpubPaginator
@@ -621,9 +625,18 @@ fun SharedMobileEpubReaderScreen(
     } else {
         0.dp
     }
+    // iOS landscape notch: the physical cutout lives in the horizontal
+    // safeDrawing insets even when status bars hide. Pagination must measure
+    // inside it and rendering must pad inside it, or spread pages hide behind
+    // the notch. Always applied, unlike the chrome-dependent top inset.
+    val readerLayoutDirection = LocalLayoutDirection.current
+    val paginatedViewportHorizontalInsets = WindowInsets.safeDrawing.asPaddingValues().let { pads ->
+        pads.calculateLeftPadding(readerLayoutDirection) + pads.calculateRightPadding(readerLayoutDirection)
+    }
     val paginatedContentViewport = remember(
         readerViewport,
         paginatedViewportTopInset,
+        paginatedViewportHorizontalInsets,
         nativePaginatedPageInfoReserveTop,
         nativePaginatedPageInfoReserveBottom,
         settings.readingMode,
@@ -638,7 +651,11 @@ fun SharedMobileEpubReaderScreen(
                         nativePaginatedPageInfoReserveTop.roundToPx() +
                         nativePaginatedPageInfoReserveBottom.roundToPx()
                     ).coerceAtLeast(0)
-                readerViewport.copy(heightPx = (readerViewport.heightPx - usedHeightPx).coerceAtLeast(1))
+                val usedWidthPx = paginatedViewportHorizontalInsets.roundToPx().coerceAtLeast(0)
+                readerViewport.copy(
+                    widthPx = (readerViewport.widthPx - usedWidthPx).coerceAtLeast(1),
+                    heightPx = (readerViewport.heightPx - usedHeightPx).coerceAtLeast(1)
+                )
             }
         }
     }
@@ -735,11 +752,37 @@ fun SharedMobileEpubReaderScreen(
         if (showSlider) showFormatSheet = false
     }
     val liveVerticalLocator = currentLocator.takeIf { settings.readingMode == ReaderReadingMode.VERTICAL }
-    val pageInfo = remember(loadedBook, pages, currentPageIndex, liveVerticalLocator) {
-        loadedBook?.let { sharedReaderPageInfo(it, pages, currentPageIndex, liveVerticalLocator) }
+    // Android parity (currentSpreadFirstBookPage): paginated info always reads
+    // the normalized spread start so an odd transient index can't show the
+    // previous spread's chapter. Vertical keeps the live locator.
+    val paginatedSpreadStart = ReaderSpreadLayout.normalizePageIndex(currentPageIndex, pageCount, settings)
+    val paginatedInfoPageIndex = if (settings.readingMode == ReaderReadingMode.PAGINATED) {
+        paginatedSpreadStart
+    } else {
+        currentPageIndex
+    }
+    val pageInfo = remember(loadedBook, pages, paginatedInfoPageIndex, liveVerticalLocator) {
+        loadedBook?.let { sharedReaderPageInfo(it, pages, paginatedInfoPageIndex, liveVerticalLocator) }
+    }
+    // Spread-aware chapter + range for the info bar (Android EpubReaderScreen
+    // paginated bar): first page's chapter with "3" or "3-4" inside it.
+    // Falls back to null outside paginated mode so vertical keeps TOC logic.
+    val paginatedSpreadChapterIndex = if (settings.readingMode == ReaderReadingMode.PAGINATED) {
+        remember(pages, paginatedSpreadStart, settings) {
+            sharedPaginatedSpreadChapterIndex(pages, paginatedSpreadStart, settings)
+        }
+    } else {
+        null
+    }
+    val paginatedSpreadPositionLabel = if (settings.readingMode == ReaderReadingMode.PAGINATED) {
+        remember(pages, paginatedSpreadStart, settings) {
+            sharedPaginatedSpreadPositionLabel(pages, paginatedSpreadStart, settings)
+        }
+    } else {
+        null
     }
     val progress = pageInfo?.progressPercent?.toFloat()
-        ?: ((currentPageIndex + 1).toFloat() / pageCount) * 100f
+        ?: ((paginatedInfoPageIndex + 1).toFloat() / pageCount) * 100f
     // Hoisted: the WebView reserve below needs the same bar geometry the
     // overlays further below use. Single definitions here keep the bar height, the
     // safe extension, and the content reserve in agreement.
@@ -1316,6 +1359,11 @@ fun SharedMobileEpubReaderScreen(
                     .onSizeChanged { size ->
                         readerViewport = ReaderViewportSpec(size.width, size.height)
                     }
+                    // Top follows chrome visibility; horizontal notch/cutout is
+                    // physical and always inset so landscape pages never hide
+                    // behind it. Pagination width above subtracts the same
+                    // horizontal insets, keeping measure and render aligned.
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
                     .then(
                         if (!systemUiHidden) {
                             Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
@@ -1539,13 +1587,37 @@ fun SharedMobileEpubReaderScreen(
                             )
 
                             val activeTurn = activePageTurn
+                            val isSpreadTurn = visiblePages.size > 1
+                            // Spread mode: whole Row shares one offset measured in spread-widths
+                            // (Android HorizontalPager: one pager page = the whole spread).
+                            // Single-page keeps per-slot page-width offsets.
+                            fun turnOffset(
+                                slot: Int,
+                                setLeadSlots: Int,
+                                direction: Int,
+                                fraction: Float
+                            ): Float = if (isSpreadTurn) {
+                                sharedPaginatedSpreadTurnPageOffset(
+                                    setLeadSlots = setLeadSlots,
+                                    direction = direction,
+                                    fraction = fraction
+                                )
+                            } else {
+                                sharedPaginatedTurnPageOffset(
+                                    slotOffsetInSet = slot,
+                                    setLeadSlots = setLeadSlots,
+                                    turnDistanceSlots = visiblePages.size,
+                                    direction = direction,
+                                    fraction = fraction
+                                )
+                            }
+                            val incomingLeadSlots = if (isSpreadTurn) 1 else visiblePages.size
                             val incomingTurnSpec = activeTurn?.let { turn ->
                                 SharedPaginatedPageTurnSpec(
                                     offsetForSlot = { slot ->
-                                        sharedPaginatedTurnPageOffset(
-                                            slotOffsetInSet = slot,
-                                            setLeadSlots = visiblePages.size,
-                                            turnDistanceSlots = visiblePages.size,
+                                        turnOffset(
+                                            slot = slot,
+                                            setLeadSlots = incomingLeadSlots,
                                             direction = turn.direction,
                                             fraction = pageTurnFraction.value
                                         )
@@ -1556,10 +1628,9 @@ fun SharedMobileEpubReaderScreen(
                             val outgoingTurnSpec = activeTurn?.let { turn ->
                                 SharedPaginatedPageTurnSpec(
                                     offsetForSlot = { slot ->
-                                        sharedPaginatedTurnPageOffset(
-                                            slotOffsetInSet = slot,
+                                        turnOffset(
+                                            slot = slot,
                                             setLeadSlots = 0,
-                                            turnDistanceSlots = visiblePages.size,
                                             direction = turn.direction,
                                             fraction = pageTurnFraction.value
                                         )
@@ -1567,15 +1638,15 @@ fun SharedMobileEpubReaderScreen(
                                     touchY = turn.touchY
                                 )
                             }
+                            val dragFraction = abs(pageDragPosition.floatValue) / visiblePages.size.coerceAtLeast(1)
                             val dragCurrentSpec = if (pageDragActive) {
                                 SharedPaginatedPageTurnSpec(
                                     offsetForSlot = { slot ->
-                                        sharedPaginatedTurnPageOffset(
-                                            slotOffsetInSet = slot,
+                                        turnOffset(
+                                            slot = slot,
                                             setLeadSlots = 0,
-                                            turnDistanceSlots = visiblePages.size,
                                             direction = pageDragDirection,
-                                            fraction = abs(pageDragPosition.floatValue) / visiblePages.size.coerceAtLeast(1)
+                                            fraction = dragFraction
                                         )
                                     },
                                     touchY = pageTurnTouchY
@@ -1586,12 +1657,11 @@ fun SharedMobileEpubReaderScreen(
                             val dragNeighborSpec = if (pageDragActive) {
                                 SharedPaginatedPageTurnSpec(
                                     offsetForSlot = { slot ->
-                                        sharedPaginatedTurnPageOffset(
-                                            slotOffsetInSet = slot,
-                                            setLeadSlots = visiblePages.size,
-                                            turnDistanceSlots = visiblePages.size,
+                                        turnOffset(
+                                            slot = slot,
+                                            setLeadSlots = incomingLeadSlots,
                                             direction = pageDragDirection,
-                                            fraction = abs(pageDragPosition.floatValue) / visiblePages.size.coerceAtLeast(1)
+                                            fraction = dragFraction
                                         )
                                     },
                                     touchY = pageTurnTouchY
@@ -1629,6 +1699,10 @@ fun SharedMobileEpubReaderScreen(
                                     overlayFirst = overlayFirst,
                                     baseBackground = paginatedRenderPlan.background
                                 )
+                            val spreadSpineCreaseEnabled = shouldDrawSpreadSpineCrease(
+                                animationEnabled = motionPolicy.shouldAnimate(settings.pageTurnAnimationEnabled),
+                                isTwoPageSpread = settings.isTwoPageSpreadEnabled()
+                            )
                             val turnOverlay: @Composable () -> Unit = {
                                 val overlayPlan = when {
                                     dragOverlayPlan != null -> dragOverlayPlan
@@ -1644,6 +1718,10 @@ fun SharedMobileEpubReaderScreen(
                                         selectionHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
                                         pageTurn = overlaySpec,
                                         background = turnOverlayBackground,
+                                        spineCreaseEnabled = spreadSpineCreaseEnabled,
+                                        // Android benchmark parity: flat spread
+                                        // pages with the gutter crease only.
+                                        pageChromeEnabled = false,
                                         imageContent = { image, imageModifier ->
                                             if (!settings.hideImages) {
                                                 SharedMobileEpubNativeImage(
@@ -1731,6 +1809,10 @@ fun SharedMobileEpubReaderScreen(
                                     pageTurn = if (pageDragActive) dragCurrentSpec else incomingTurnSpec,
                                     pageDragController = pageDragController,
                                     contentBackground = turnMainBackground,
+                                    spineCreaseEnabled = spreadSpineCreaseEnabled,
+                                    // Android benchmark parity: flat spread
+                                    // pages with the gutter crease only.
+                                    pageChromeEnabled = false,
                                     // Native-vertical parity (:1809): without this the paginated
                                     // reader falls back to alt-text/file-name labels.
                                     imageContent = { image, imageModifier ->
@@ -2100,9 +2182,19 @@ fun SharedMobileEpubReaderScreen(
                 }
             }
 
-                val chapterTitle = loadedBook?.effectiveReaderTocEntries()?.getOrNull(selectedTocIndex)?.label
-                    ?: loadedBook?.chapters?.getOrNull(currentChapterIndex)?.title
-                    ?: "Chapter ${currentChapterIndex + 1}"
+                // Paginated (Android parity): chapter comes straight from the
+                // visible spread's first page, never from the drawer-selected
+                // TOC row which lags a spread behind after turns. Vertical
+                // keeps the TOC-first behavior.
+                val chapterTitle = if (settings.readingMode == ReaderReadingMode.PAGINATED) {
+                    paginatedSpreadChapterIndex?.let { loadedBook?.chapters?.getOrNull(it)?.title }
+                        ?: loadedBook?.chapters?.getOrNull(currentChapterIndex)?.title
+                        ?: "Chapter ${currentChapterIndex + 1}"
+                } else {
+                    loadedBook?.effectiveReaderTocEntries()?.getOrNull(selectedTocIndex)?.label
+                        ?: loadedBook?.chapters?.getOrNull(currentChapterIndex)?.title
+                        ?: "Chapter ${currentChapterIndex + 1}"
+                }
                 // Temporary: catches chrome strobing (which would leave both
                 // bars mid-animation: overlapping, translucent, gappy).
                 LaunchedEffect(showChrome, pageInfoVisible) {
@@ -2129,6 +2221,7 @@ fun SharedMobileEpubReaderScreen(
                         settings = settings,
                         pageInfoPosition = settings.pageInfoPosition,
                         applySystemBarsInsets = pageInfoApplySystemBarsInsets,
+                        spreadPositionLabel = paginatedSpreadPositionLabel,
                         modifier = Modifier.offset(y = if (showChrome) 55.dp else 0.dp)
                     )
                     }
@@ -2260,7 +2353,8 @@ fun SharedMobileEpubReaderScreen(
                             progressPercent = progress,
                             settings = settings,
                             pageInfoPosition = settings.pageInfoPosition,
-                            applySystemBarsInsets = pageInfoApplySystemBarsInsets
+                            applySystemBarsInsets = pageInfoApplySystemBarsInsets,
+                            spreadPositionLabel = paginatedSpreadPositionLabel
                         )
                         }
                     }
