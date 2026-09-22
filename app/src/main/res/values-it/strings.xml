@@ -1123,11 +1123,11 @@
     <string name="reader_brightness_custom">Luminosità personalizzata</string>
     <string name="reader_brightness_custom_desc">Si applica mentre la schermata di un lettore è aperta.</string>
     <string name="reader_brightness_percent">%1$d%%</string>
-    <string name="banner_shelf_created">Scaffale creato &quot;%1$s&quot;.</string>
-    <string name="banner_smart_shelf_created">Creato scaffale intelligente &quot;%1$s&quot;.</string>
-    <string name="banner_shelf_renamed">Scaffale rinominato in &quot;%1$s&quot;.</string>
-    <string name="banner_shelf_deleted">Scaffale &quot;%1$s&quot; eliminato.</string>
-    <string name="banner_book_updated">Aggiornato &quot;%1$s&quot;.</string>
+    <string name="banner_shelf_created">Scaffale creato "%1$s".</string>
+    <string name="banner_smart_shelf_created">Creato scaffale intelligente "%1$s".</string>
+    <string name="banner_shelf_renamed">Scaffale rinominato in "%1$s".</string>
+    <string name="banner_shelf_deleted">Scaffale "%1$s" eliminato.</string>
+    <string name="banner_book_updated">Aggiornato "%1$s".</string>
     <string name="banner_duplicate_files_already_in_library">Quei file sono già nella libreria.</string>
     <string name="folder_subtitle_folder_book_counts">%1$s - %2$s</string>
     <string name="action_save_annotation">Salva</string>
@@ -1180,7 +1180,7 @@
     <string name="desktop_custom_fonts_desc">Caratteri importati per il lettore</string>
     <string name="desktop_delete_font">Elimina carattere</string>
     <string name="desktop_delete_font_desc">Elimina %1$s? I libri che lo utilizzano torneranno al carattere predefinito.</string>
-    <string name="desktop_delete_shelf_desc">Eliminare \&quot;%1$s\&quot;? I libri rimangono nella tua libreria.</string>
+    <string name="desktop_delete_shelf_desc">Eliminare \"%1$s\"? I libri rimangono nella tua libreria.</string>
     <string name="desktop_delete_summary">Elimina riepilogo</string>
     <string name="desktop_disabled">Disabilitato</string>
     <string name="desktop_drop_files_to_import">Rilascia i file da importare</string>
@@ -1214,7 +1214,7 @@
     <string name="desktop_more_menu">Di più</string>
     <string name="desktop_no_cached_summaries_book">Nessun riepilogo ancora memorizzato nella cache per questo libro.</string>
     <string name="desktop_no_custom_fonts_desc">Importa file TTF, OTF o WOFF2 per usarli nei libri.</string>
-    <string name="desktop_no_fonts_matching">Nessun carattere trovato corrispondente a \&quot;%1$s\&quot;</string>
+    <string name="desktop_no_fonts_matching">Nessun carattere trovato corrispondente a \"%1$s\"</string>
     <string name="desktop_no_google_account_connected">No Google l\'account è collegato.</string>
     <string name="desktop_no_summary_cached_section">Nessun riepilogo memorizzato nella cache per questa sezione.</string>
     <string name="desktop_offline_oss_reader">Lettore desktop offline</string>
@@ -1460,7 +1460,7 @@
     <string name="desktop_no_tags_yet">Nessun tag ancora</string>
     <string name="desktop_no_supported_files_imported">Non è stato importato alcun file supportato.</string>
     <string name="desktop_opds_catalog">Catalogo</string>
-    <string name="desktop_opds_delete_catalog_desc">Eliminare &quot;%1$s&quot;? I libri trasmessi in streaming da questo catalogo potrebbero interrompersi se le credenziali cambiano in seguito.</string>
+    <string name="desktop_opds_delete_catalog_desc">Eliminare "%1$s"? I libri trasmessi in streaming da questo catalogo potrebbero interrompersi se le credenziali cambiano in seguito.</string>
     <string name="desktop_opds_no_catalogs">Nessun cataloghi</string>
     <string name="desktop_opds_no_catalogs_desc">Aggiungi un OPDS catalogo per sfogliare libri a distanza.</string>
     <string name="desktop_opds_subtitle">Sfoglia cataloghi, stream e download</string>
@@ -1513,7 +1513,6 @@
     <string name="tts_replacements_replace_only_spoken">Sostituisci solo ciò che viene detto</string>
     <string name="tts_replacements_replace_only_spoken_desc">Il testo, le evidenziazioni e le posizioni del lettore rimangono invariati.</string>
     <string name="tts_replacements_summary_format">%1$s -&gt; %2$s</string>
-
     <!-- Strings added by the it language pass (docs/localization-revamp-plan.md §6).
          Register: informal tu, infinitive buttons; glossary: libreria, scaffale,
          segnalibro, impostazioni, cloud/TTS cloud (never nuvola), sintesi vocale,
@@ -1634,7 +1633,7 @@
     <string name="listen_no_tts_books">Nessun libro supportato trovato</string>
     <string name="listen_empty">Ancora niente da ascoltare</string>
     <string name="listen_empty_desc">Importa un audiolibro o scegli un libro della libreria da ascoltare con la sintesi vocale.</string>
-    <string name="listen_no_matches">Nessun elemento di ascolto corrisponde a &quot;%1$s&quot;</string>
+    <string name="listen_no_matches">Nessun elemento di ascolto corrisponde a "%1$s"</string>
     <string name="listen_badge_audiobook">AUDIOLIBRO</string>
     <string name="listen_badge_tts">TTS</string>
     <string name="listen_timer">Timer</string>
@@ -1667,7 +1666,7 @@
     <string name="visual_options_bottom_toolbar">Mostra barra inferiore</string>
     <string name="visual_options_bottom_toolbar_desc">Nascondila per leggere solo con gli strumenti superiori</string>
     <string name="search_chapters_placeholder">Cerca capitoli</string>
-    <string name="no_chapters_matching">Nessun capitolo trovato per &quot;%1$s&quot;.</string>
+    <string name="no_chapters_matching">Nessun capitolo trovato per "%1$s".</string>
     <string name="visual_options_hide_images">Nascondi immagini</string>
     <string name="visual_options_hide_images_desc">Attivalo per leggere con tutte le immagini del libro nascoste.</string>
     <string name="visual_options_epub_page_spread">Doppia pagina</string>
@@ -1675,9 +1674,9 @@
     <string name="visual_options_epub_spread_single">Pagina singola</string>
     <string name="visual_options_epub_spread_two">Due pagine</string>
     <string name="label_spread_gap">Spazio tra le pagine</string>
-    <string name="banner_tag_deleted">Tag &quot;%1$s&quot; eliminato.</string>
+    <string name="banner_tag_deleted">Tag "%1$s" eliminato.</string>
     <string name="menu_delete_tag">Elimina tag</string>
-    <string name="dialog_delete_tag_desc">Eliminare il tag &quot;%1$s&quot;? Verrà rimosso da tutti i libri.</string>
+    <string name="dialog_delete_tag_desc">Eliminare il tag "%1$s"? Verrà rimosso da tutti i libri.</string>
     <string name="chapter_of_chapters">Capitolo %1$d di %2$d</string>
     <string name="chapter_number">Capitolo %1$d</string>
     <string name="external_file_behavior_ask_desc">Dopo la chiusura di un file aperto esternamente, chiede se conservarlo nella libreria o rimuoverlo.</string>
