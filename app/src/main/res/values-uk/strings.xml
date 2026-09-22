@@ -1123,11 +1123,11 @@
     <string name="reader_brightness_custom">Власна яскравість</string>
     <string name="reader_brightness_custom_desc">Застосовується, коли відкрито екран читання.</string>
     <string name="reader_brightness_percent">%1$d%%</string>
-    <string name="banner_shelf_created">Створена полиця &quot;%1$s&quot;.</string>
-    <string name="banner_smart_shelf_created">Створено розумну полицю &quot;%1$s&quot;.</string>
-    <string name="banner_shelf_renamed">Полицю перейменовано на &quot;%1$s&quot;.</string>
-    <string name="banner_shelf_deleted">Видалена полиця &quot;%1$s&quot;.</string>
-    <string name="banner_book_updated">Оновлено &quot;%1$s&quot;.</string>
+    <string name="banner_shelf_created">Створена полиця "%1$s".</string>
+    <string name="banner_smart_shelf_created">Створено розумну полицю "%1$s".</string>
+    <string name="banner_shelf_renamed">Полицю перейменовано на "%1$s".</string>
+    <string name="banner_shelf_deleted">Видалена полиця "%1$s".</string>
+    <string name="banner_book_updated">Оновлено "%1$s".</string>
     <string name="banner_duplicate_files_already_in_library">Ці файли вже є в бібліотеці.</string>
     <string name="folder_subtitle_folder_book_counts">%1$s - %2$s</string>
     <string name="action_save_annotation">зберегти</string>
@@ -1180,7 +1180,7 @@
     <string name="desktop_custom_fonts_desc">Імпортовані шрифти для читалки</string>
     <string name="desktop_delete_font">Видалити шрифт</string>
     <string name="desktop_delete_font_desc">Видалити %1$s? Книги, які використовують його, повернуться до шрифту за умовчанням.</string>
-    <string name="desktop_delete_shelf_desc">Видалити \&quot;%1$s\&quot;? Книги залишаються у вашій бібліотеці.</string>
+    <string name="desktop_delete_shelf_desc">Видалити \"%1$s\"? Книги залишаються у вашій бібліотеці.</string>
     <string name="desktop_delete_summary">Видалити резюме</string>
     <string name="desktop_disabled">Вимкнено</string>
     <string name="desktop_drop_files_to_import">Перетягніть файли для імпорту</string>
@@ -1214,7 +1214,7 @@
     <string name="desktop_more_menu">більше</string>
     <string name="desktop_no_cached_summaries_book">Кешованих підсумків для цієї книги ще немає.</string>
     <string name="desktop_no_custom_fonts_desc">Імпортуйте файли TTF, OTF або WOFF2, щоб використовувати їх у книгах.</string>
-    <string name="desktop_no_fonts_matching">Не знайдено шрифтів, що відповідають \&quot;%1$s\&quot;</string>
+    <string name="desktop_no_fonts_matching">Не знайдено шрифтів, що відповідають \"%1$s\"</string>
     <string name="desktop_no_google_account_connected">Ні Google обліковий запис підключено.</string>
     <string name="desktop_no_summary_cached_section">Для цього розділу ще немає збереженого підсумку.</string>
     <string name="desktop_offline_oss_reader">Офлайн-застосунок для читання на комп’ютері</string>
@@ -1460,7 +1460,7 @@
     <string name="desktop_no_tags_yet">Тегів ще немає</string>
     <string name="desktop_no_supported_files_imported">Не було імпортовано жодного підтримуваного файлу.</string>
     <string name="desktop_opds_catalog">Каталог</string>
-    <string name="desktop_opds_delete_catalog_desc">Видалити &quot;%1$s&quot;? Потокові книги з цього каталогу можуть перестати відкриватися, якщо пізніше облікові дані зміняться.</string>
+    <string name="desktop_opds_delete_catalog_desc">Видалити "%1$s"? Потокові книги з цього каталогу можуть перестати відкриватися, якщо пізніше облікові дані зміняться.</string>
     <string name="desktop_opds_no_catalogs">Без каталогів</string>
     <string name="desktop_opds_no_catalogs_desc">Додайте OPDS каталог для перегляду віддалених книг.</string>
     <string name="desktop_opds_subtitle">Переглядайте каталоги, потоки та завантаження</string>
@@ -1513,7 +1513,6 @@
     <string name="tts_replacements_replace_only_spoken">Замінювати тільки сказане</string>
     <string name="tts_replacements_replace_only_spoken_desc">Текст Reader, виділення та розташування залишаються незмінними.</string>
     <string name="tts_replacements_summary_format">%1$s -&gt; %2$s</string>
-
     <!-- Strings added by the uk language pass (docs/localization-revamp-plan.md §6).
          Register: formal Ви; glossary: бібліотека, полиця, закладка, розділ,
          обкладинка, хмара, TTS у хмарі, аудіокнига, хвилинник (sleep timer; not
@@ -1636,7 +1635,7 @@
     <string name="listen_no_tts_books">Підтримуваних книг не знайдено</string>
     <string name="listen_empty">Слухати поки немає чого</string>
     <string name="listen_empty_desc">Імпортуйте аудіокнигу або виберіть книгу з бібліотеки, щоб слухати її синтезованим голосом.</string>
-    <string name="listen_no_matches">Нічого зі слухання не відповідає &quot;%1$s&quot;</string>
+    <string name="listen_no_matches">Нічого зі слухання не відповідає "%1$s"</string>
     <string name="listen_badge_audiobook">АУДІОКНИГА</string>
     <string name="listen_badge_tts">TTS</string>
     <string name="listen_timer">Хвилинник</string>
@@ -1669,7 +1668,7 @@
     <string name="visual_options_bottom_toolbar">Показувати нижню панель інструментів</string>
     <string name="visual_options_bottom_toolbar_desc">Сховайте її, щоб читати лише з верхніми інструментами</string>
     <string name="search_chapters_placeholder">Пошук розділів</string>
-    <string name="no_chapters_matching">Розділів для &quot;%1$s&quot; не знайдено.</string>
+    <string name="no_chapters_matching">Розділів для "%1$s" не знайдено.</string>
     <string name="visual_options_hide_images">Приховати зображення</string>
     <string name="visual_options_hide_images_desc">Увімкніть, щоб читати з усіма зображеннями книги прихованими.</string>
     <string name="visual_options_epub_page_spread">Розворот</string>
@@ -1677,9 +1676,9 @@
     <string name="visual_options_epub_spread_single">Одна сторінка</string>
     <string name="visual_options_epub_spread_two">Дві сторінки</string>
     <string name="label_spread_gap">Проміжок розвороту</string>
-    <string name="banner_tag_deleted">Мітку &quot;%1$s&quot; видалено.</string>
+    <string name="banner_tag_deleted">Мітку "%1$s" видалено.</string>
     <string name="menu_delete_tag">Видалити мітку</string>
-    <string name="dialog_delete_tag_desc">Видалити мітку &quot;%1$s&quot;? Її буде видалено з кожної книги.</string>
+    <string name="dialog_delete_tag_desc">Видалити мітку "%1$s"? Її буде видалено з кожної книги.</string>
     <string name="chapter_of_chapters">Розділ %1$d із %2$d</string>
     <string name="chapter_number">Розділ %1$d</string>
     <string name="content_desc_numbered_list">Нумерований список</string>
