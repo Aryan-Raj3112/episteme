@@ -15,6 +15,23 @@ import kotlin.math.sqrt
  * (see [sharedPdfSnapHighlighterPoint] for the established pattern).
  */
 
+/**
+ * Finger-sized touch slop for SELECT gestures (Android parity: Compose
+ * `ViewConfiguration.touchSlop` ≈ platform scaledTouchSlop ≈ 8dp).
+ *
+ * Both the tap-vs-move disambiguation and the tap hit tolerance derive from
+ * this one value. Without the floor, a platform reporting a tiny slop turns
+ * sub-pixel finger jitter into a phantom "move" — which commits nothing on
+ * an empty selection, so the tap is swallowed — and shrinks hit targets to
+ * the bare stroke half-width. Net effect: taps feel dead while lasso-drag
+ * still works. No-op when the platform already reports at least
+ * [minTouchSlopPx]; callers pass `8.dp.toPx()` for the minimum.
+ */
+fun sharedPdfSelectionTouchSlopPx(platformTouchSlopPx: Float, minTouchSlopPx: Float): Float {
+    val platform = platformTouchSlopPx.takeIf { it.isFinite() }?.coerceAtLeast(0f) ?: 0f
+    return maxOf(platform, minTouchSlopPx.coerceAtLeast(0f))
+}
+
 /** Normalized bounding box of a stroke, or null when there are no points. */
 fun pdfInkPointsBounds(points: List<PdfPagePoint>): PdfPageBounds? {
     if (points.isEmpty()) return null

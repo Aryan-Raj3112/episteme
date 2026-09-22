@@ -238,4 +238,22 @@ class SharedPdfSelectionGeometryTest {
         assertEquals(0.5f, sx2, 1e-6f)
         assertEquals(0.5f, sy2, 1e-6f)
     }
+
+    @Test
+    fun selectionTouchSlopPassesThroughSanePlatformValues() {
+        // Android-scale platform slop is kept as-is (tap-to-select parity).
+        assertEquals(28f, sharedPdfSelectionTouchSlopPx(28f, 24f), 1e-6f)
+        assertEquals(32f, sharedPdfSelectionTouchSlopPx(32f, 24f), 1e-6f)
+    }
+
+    @Test
+    fun selectionTouchSlopFloorsTinyPlatformValuesToFingerSize() {
+        // A tiny platform slop would turn finger jitter into phantom moves
+        // (taps swallowed) and shrink hit targets to the stroke half-width.
+        assertEquals(24f, sharedPdfSelectionTouchSlopPx(0f, 24f), 1e-6f)
+        assertEquals(24f, sharedPdfSelectionTouchSlopPx(2f, 24f), 1e-6f)
+        assertEquals(24f, sharedPdfSelectionTouchSlopPx(-4f, 24f), 1e-6f)
+        assertEquals(24f, sharedPdfSelectionTouchSlopPx(Float.NaN, 24f), 1e-6f)
+        assertEquals(24f, sharedPdfSelectionTouchSlopPx(Float.POSITIVE_INFINITY, 24f), 1e-6f)
+    }
 }

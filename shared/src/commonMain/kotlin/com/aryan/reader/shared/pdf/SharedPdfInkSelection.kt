@@ -186,6 +186,19 @@ fun sharedPdfSelectionStrokeWidthRangeFor(tool: PdfInkTool): ClosedFloatingPoint
 }
 
 /**
+ * Down-dispatch hit slop for the SELECT tool: a tight fraction of the full
+ * finger [touchSlopPx], so freehand lassos can start in the gaps between
+ * strokes in dense ink instead of every down grabbing a nearby stroke (which
+ * routes into tap/move and never draws a lasso trail). Taps stay forgiving:
+ * a gesture that ends without moving re-hits with the full slop before
+ * reporting, so small strokes remain tappable.
+ */
+fun sharedPdfSelectionDispatchSlopPx(touchSlopPx: Float): Float {
+    if (touchSlopPx <= 0f) return 0f
+    return (touchSlopPx / 3f).coerceAtLeast(4f).coerceAtMost(touchSlopPx)
+}
+
+/**
  * Topmost (last-drawn) ink annotation hit by a tap in normalized coords.
  *
  * [tapSlopPx]/[pageWidthPx] give finger tolerance; highlighters use their

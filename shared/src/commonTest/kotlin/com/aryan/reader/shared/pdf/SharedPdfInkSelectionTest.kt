@@ -333,4 +333,60 @@ class SharedPdfInkSelectionTest {
         assertEquals(0xFF123456.toInt(), selected.selectedColorArgb)
         assertEquals(0.01f, selected.strokeWidth)
     }
+
+    @Test
+    fun dispatchSlopIsTightFractionOfFingerSlop() {
+        // 30px finger slop dispatches at 10px so lassos can start in the gaps
+        // between strokes; taps re-hit with the full slop.
+        assertEquals(10f, sharedPdfSelectionDispatchSlopPx(30f))
+        val tight = sharedPdfSelectionDispatchSlopPx(24f)
+        assertTrue(tight < 24f)
+        assertTrue(tight >= 4f)
+    }
+
+    @Test
+    fun dispatchSlopNeverExceedsFingerSlop() {
+        assertEquals(0f, sharedPdfSelectionDispatchSlopPx(0f))
+        assertEquals(4f, sharedPdfSelectionDispatchSlopPx(6f))
+        assertTrue(sharedPdfSelectionDispatchSlopPx(9f) <= 9f)
+    }
+
+    @Test
+    fun dispatchHitCoversStrokeButNotNearbyGap() {
+        // Tight dispatch hit: a tap exactly on the stroke still grabs it,
+        // while a point one full finger-slop away does not (that down routes
+        // to lasso, whose tap ending re-hits generously).
+        val stroke = ink("a", points = listOf(pt(0.5f, 0.5f), pt(0.6f, 0.5f)))
+        val pageWidthPx = 1206f
+        assertNotNull(
+            findSharedPdfTopmostSelectionHit(
+                annotations = listOf(stroke),
+                normX = 0.55f,
+                normY = 0.5f,
+                pageWidthPx = pageWidthPx,
+                pageAspectRatio = 0.707f,
+                tapSlopPx = sharedPdfSelectionDispatchSlopPx(30f),
+            )
+        )
+        assertNull(
+            findSharedPdfTopmostSelectionHit(
+                annotations = listOf(stroke),
+                normX = 0.55f,
+                normY = 0.5f + 30f / pageWidthPx,
+                pageWidthPx = pageWidthPx,
+                pageAspectRatio = 0.707f,
+                tapSlopPx = sharedPdfSelectionDispatchSlopPx(30f),
+            )
+        )
+        assertNotNull(
+            findSharedPdfTopmostSelectionHit(
+                annotations = listOf(stroke),
+                normX = 0.55f,
+                normY = 0.5f + 20f / pageWidthPx,
+                pageWidthPx = pageWidthPx,
+                pageAspectRatio = 0.707f,
+                tapSlopPx = 30f,
+            )
+        )
+    }
 }

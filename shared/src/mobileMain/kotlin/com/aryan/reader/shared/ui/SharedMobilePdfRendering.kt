@@ -152,6 +152,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalViewConfiguration
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.PdfDisplayMode
@@ -192,6 +193,7 @@ import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
 import com.aryan.reader.shared.pdf.visiblePdfPageBounds
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.sharedPdfSelectionUnionBounds
+import com.aryan.reader.shared.pdf.sharedPdfSelectionTouchSlopPx
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfTextDraft
 import com.aryan.reader.shared.pdf.SharedPdfTextDragState
@@ -2292,6 +2294,13 @@ internal fun SharedMobilePdfPageSurface(
     val latestIsActiveStrokeOwner by rememberUpdatedState(isActiveStrokeOwner)
     val latestOnInkStrokeEnd by rememberUpdatedState(onInkStrokeEnd)
     val latestSelectionHost by rememberUpdatedState(selectionHost)
+    // Android parity (scaledTouchSlop ≈ 8dp): floor the SELECT slop so taps
+    // can't degrade into phantom moves on platforms reporting a tiny slop
+    // (tap-to-select parity with `detectPdfInkSelectionGestures`).
+    val selectionTouchSlopPx = sharedPdfSelectionTouchSlopPx(
+        platformTouchSlopPx = LocalViewConfiguration.current.touchSlop,
+        minTouchSlopPx = with(LocalDensity.current) { 8.dp.toPx() },
+    )
     // Live transform preview overlaid on the stored annotations (same ids,
     // moved points). Only the selection page renders previews; everywhere
     // else the map lookup misses and base annotations show.
@@ -2612,12 +2621,12 @@ internal fun SharedMobilePdfPageSurface(
                             }
                         }
                     }
-                    .pointerInput(pageIndex, localCanvasSize, isStylusOnlyMode) {
+                    .pointerInput(pageIndex, localCanvasSize, isStylusOnlyMode, selectionTouchSlopPx) {
                     detectSharedPdfInkSelectionGestures(
                         pageIndex = pageIndex,
                         pageSizePx = localCanvasSize,
                         pageAspectRatio = pageRender.aspectRatio,
-                        touchSlopPx = viewConfiguration.touchSlop,
+                        touchSlopPx = selectionTouchSlopPx,
                         isStylusOnlyMode = isStylusOnlyMode,
                         zoomProvider = { zoomCamera.scale },
                         handleTransformInFlightProvider = { latestSelectionHost?.isHandleTransformInFlight == true },

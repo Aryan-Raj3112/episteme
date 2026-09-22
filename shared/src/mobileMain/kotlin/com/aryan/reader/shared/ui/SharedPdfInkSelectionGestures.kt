@@ -24,6 +24,7 @@ import com.aryan.reader.shared.pdf.sharedPdfPivotForHandle
 import com.aryan.reader.shared.pdf.sharedPdfRotationForDrag
 import com.aryan.reader.shared.pdf.sharedPdfScaleForCornerDrag
 import com.aryan.reader.shared.pdf.sharedPdfScaleXYForEdgeDrag
+import com.aryan.reader.shared.pdf.sharedPdfSelectionDispatchSlopPx
 
 /**
  * Single-finger selection state machine for the SELECT tool (shared mobile
@@ -206,18 +207,22 @@ internal suspend fun AwaitPointerEventScope.runSharedPdfInkSelectionForDown(
         val startNorm = toNorm(down.position)
         val pageAnnotations = annotationsProvider()
 
-        // 1. Stroke hit: tap selects, drag moves.
+        // 1. Stroke hit: tap selects, drag moves. The dispatch hit is tight
+        // (a fraction of the finger slop) so lassos can start in the gaps
+        // between strokes; a down that ends as a tap re-hits generously in
+        // the lasso session below, keeping small strokes tappable.
+        val dispatchSlopPx = sharedPdfSelectionDispatchSlopPx(touchSlopPx)
         val hit = findSharedPdfTopmostSelectionHit(
             annotations = pageAnnotations,
             normX = startNorm.x,
             normY = startNorm.y,
             pageWidthPx = pageSizePx.width.toFloat(),
             pageAspectRatio = pageAspectRatio,
-            tapSlopPx = touchSlopPx,
+            tapSlopPx = dispatchSlopPx,
         )
         pdfInkSelectionLog {
             "page.strokeHit page=$pageIndex id=${hit?.id} " +
-                "norm=(${startNorm.x.format3()},${startNorm.y.format3()}) tapsSlopPx=$touchSlopPx"
+                "norm=(${startNorm.x.format3()},${startNorm.y.format3()}) tapsSlopPx=$dispatchSlopPx"
         }
         if (hit != null) {
             runSharedTapOrMoveSession(
@@ -270,14 +275,18 @@ internal suspend fun AwaitPointerEventScope.runSharedPdfInkSelectionForDown(
 
         // 3. Empty space: tap clears, drag lassos. The lasso-start slop is
         // zoom-compensated (screen px -> page-local px) so lassos trigger
-        // with the same finger travel at any zoom, like Android.
+        // with the same finger travel at any zoom, like Android. A down that
+        // ends as a tap re-hits with the full slop ([touchSlopPx]) so small
+        // strokes near the tap still select instead of clearing.
         runSharedLassoSession(
             downId = down.id,
             touchSlopPx = touchSlopPx / zoomProvider().coerceAtLeast(0.01f),
+            tapHitSlopPx = touchSlopPx,
             zoomProvider = zoomProvider,
             pageWidthPx = pageSizePx.width.toFloat(),
+            pageAspectRatio = pageAspectRatio,
             pageAnnotations = pageAnnotations,
-            onTapResult = { onTapResult(pageIndex, null) },
+            onTapResult = { hitId -> onTapResult(pageIndex, hitId) },
             onLassoResult = { onLassoResult(pageIndex, it) },
             onLassoProgress = onLassoProgress,
             toNorm = toNorm,
@@ -453,10 +462,14 @@ private suspend fun AwaitPointerEventScope.runSharedTapOrMoveSession(
 private suspend fun AwaitPointerEventScope.runSharedLassoSession(
     downId: PointerId,
     touchSlopPx: Float,
+    /** Full finger slop (page px) for the tap re-hit when no lasso starts. */
+    tapHitSlopPx: Float,
+    pageAspectRatio: Float,
     zoomProvider: () -> Float,
     pageWidthPx: Float,
     pageAnnotations: List<SharedPdfAnnotation>,
-    onTapResult: () -> Unit,
+    /** Tap id after a generous re-hit at the down point, or null to clear. */
+    onTapResult: (String?) -> Unit,
     onLassoResult: (Set<String>) -> Unit,
     onLassoProgress: (List<Offset>?) -> Unit,
     toNorm: (Offset) -> PdfPagePoint,
@@ -533,7 +546,23 @@ private suspend fun AwaitPointerEventScope.runSharedLassoSession(
                 pdfInkSelectionLog { "lasso.result ids=$ids" }
                 onLassoResult(ids)
             } else if (!isLasso) {
-                onTapResult()
+                // Tap without a lasso: re-hit generously at the down point
+                // (the dispatch hit above is tight so lassos can start near
+                // ink). A near miss still selects a small stroke; only a true
+                // empty tap clears.
+                val downNorm = trail.firstOrNull()?.let(toNorm)
+                val tapHit = downNorm?.let {
+                    findSharedPdfTopmostSelectionHit(
+                        annotations = pageAnnotations,
+                        normX = it.x,
+                        normY = it.y,
+                        pageWidthPx = pageWidthPx,
+                        pageAspectRatio = pageAspectRatio,
+                        tapSlopPx = tapHitSlopPx,
+                    )
+                }
+                pdfInkSelectionLog { "lasso.tapHit id=${tapHit?.id}" }
+                onTapResult(tapHit?.id)
             }
         }
     }

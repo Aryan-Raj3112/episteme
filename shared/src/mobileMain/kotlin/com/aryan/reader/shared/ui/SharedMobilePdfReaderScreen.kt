@@ -255,6 +255,7 @@ import com.aryan.reader.shared.pdf.SharedPdfSelectionTransform
 import com.aryan.reader.shared.pdf.applySharedPdfSelectionTransform
 import com.aryan.reader.shared.pdf.findSharedPdfSelectionHandleHit
 import com.aryan.reader.shared.pdf.sharedPdfSelectionHandlePositions
+import com.aryan.reader.shared.pdf.sharedPdfSelectionTouchSlopPx
 import com.aryan.reader.shared.pdf.sharedPdfSelectionUnionBounds
 import com.aryan.reader.shared.pdf.sharedPdfStrokeWidthRange
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
@@ -678,6 +679,15 @@ fun SharedMobilePdfReaderHost(
     var annotationSnapPreview by remember(readerSessionKey) { mutableStateOf<DockLocation?>(null) }
     var isAnnotationDockMinimized by remember(readerSessionKey) { mutableStateOf(false) }
     var showAnnotationToolSettings by remember(readerSessionKey) { mutableStateOf(false) }
+    // Android parity (AnnotationSettingsRepository.selectedTool survives edit-mode
+    // toggles): shared edit mode IS the selected tool (NONE = off), so the last
+    // non-NONE tool is remembered here and restored when edit mode reopens —
+    // e.g. highlighter stays selected after closing + reopening edit mode.
+    var lastEditTool by remember(readerSessionKey, initialReaderState) {
+        mutableStateOf(
+            initialReaderState?.selectedTool?.takeIf { it != PdfInkTool.NONE } ?: PdfInkTool.PEN
+        )
+    }
     // Android-parity text dock placement (benchmark: PdfViewerScreen text dock
     // chrome): draggable TOP / BOTTOM / FLOATING like the pen dock, kept
     // in-memory like the pen dock above (Android persists both to prefs).
@@ -1352,7 +1362,17 @@ fun SharedMobilePdfReaderHost(
         if (tool != PdfInkTool.TEXT && readerState.selectedTool == PdfInkTool.TEXT && textDraft != null) {
             dismissTextDraft()
         }
+        if (tool != PdfInkTool.NONE) {
+            lastEditTool = tool
+        }
         dispatch(SharedPdfReaderAction.ToolSelected(tool))
+    }
+
+    // Android parity (edit toggle keeps the tool): opening edit mode restores
+    // the last tool instead of always resetting to PEN; closing clears to NONE
+    // but keeps lastEditTool for the next open.
+    fun toggleEditMode() {
+        setTool(if (readerState.selectedTool == PdfInkTool.NONE) lastEditTool else PdfInkTool.NONE)
     }
 
     // Android-parity annotation dock interactions (benchmark:
@@ -2040,9 +2060,7 @@ fun SharedMobilePdfReaderHost(
                             isAllTextHighlightLoading = isAllTextHighlightLoading,
                             onToggleHighlights = ::toggleAllTextHighlights,
                             onHighlighterTool = { setTool(readerState.lastActiveHighlighterTool) },
-                            onEditMode = {
-                                setTool(if (readerState.selectedTool == PdfInkTool.NONE) PdfInkTool.PEN else PdfInkTool.NONE)
-                            },
+                            onEditMode = ::toggleEditMode,
                             onShowSlider = {
                                 // Android parity: opening the slider reveals the
                                 // chrome (it renders in the bottom-chrome zone).
@@ -2149,6 +2167,7 @@ fun SharedMobilePdfReaderHost(
                         onOpenDrawer = { scope.launch { drawerState.open() } },
                         onSearch = { dispatch(SharedPdfReaderAction.SearchOpened) },
                         onToolSelected = ::setTool,
+                        editModeOpenTool = lastEditTool,
                         ttsState = if (cloudTtsAvailable) {
                             if (cloudTtsState.isPlaying) SharedMobileEpubLocalTtsState.SPEAKING
                             else if (cloudTtsState.isPaused || cloudTtsState.isLoading) SharedMobileEpubLocalTtsState.PAUSED
@@ -2240,7 +2259,13 @@ fun SharedMobilePdfReaderHost(
             // a grab margin (the rotate handle floats above the box) and
             // positioned in container space; touches anywhere else never hit
             // it, so tap / scroll / lasso on other pages work untouched.
-            val selectionViewTouchSlop = LocalViewConfiguration.current.touchSlop
+            val selectionViewTouchSlop = sharedPdfSelectionTouchSlopPx(
+                // Android parity (scaledTouchSlop ≈ 8dp): floor the SELECT
+                // slop so taps can't degrade into phantom moves on platforms
+                // reporting a tiny slop (tap-to-select parity).
+                platformTouchSlopPx = LocalViewConfiguration.current.touchSlop,
+                minTouchSlopPx = with(density) { 8.dp.toPx() },
+            )
             val selectionOverlayMarginPx = with(density) { 72.dp.toPx() }
             val selectionOverlayPage = inkSelection.pageIndex
             val selectionOverlaySurface = selectionOverlayPage?.let { selectionPageWindowRects[it] }
@@ -4838,6 +4863,9 @@ private fun SharedMobilePdfReaderBottomBar(
     onOpenDrawer: () -> Unit,
     onSearch: () -> Unit,
     onToolSelected: (PdfInkTool) -> Unit,
+    // Android parity: reopening edit mode restores the last tool instead of
+    // always resetting to PEN (see toggleEditMode above).
+    editModeOpenTool: PdfInkTool = PdfInkTool.PEN,
     ttsState: SharedMobileEpubLocalTtsState,
     isTtsPlayingOrLoading: Boolean,
             onToggleTts: () -> Unit,
@@ -4897,7 +4925,7 @@ private fun SharedMobilePdfReaderBottomBar(
                         }
                         PdfReaderTool.EDIT_MODE -> SharedMobilePdfBottomToolButton(
                             selected = state.selectedTool != PdfInkTool.NONE,
-                            onClick = { onToolSelected(if (state.selectedTool == PdfInkTool.NONE) PdfInkTool.PEN else PdfInkTool.NONE) },
+                            onClick = { onToolSelected(if (state.selectedTool == PdfInkTool.NONE) editModeOpenTool else PdfInkTool.NONE) },
                         ) { Icon(Icons.Default.Edit, contentDescription = sharedPdfReaderToolTitle(tool)) }
                         PdfReaderTool.TTS_CONTROLS -> SharedMobilePdfBottomToolButton(onClick = onToggleTts) {
                             Icon(
