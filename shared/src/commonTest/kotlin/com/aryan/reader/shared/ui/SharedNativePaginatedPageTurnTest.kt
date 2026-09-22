@@ -286,36 +286,64 @@ class SharedNativePaginatedPageTurnTest {
     }
 
     @Test
-    fun `book flip forces vertical hinge at spine crease`() {
+    fun `book flip hinges at spine with a hint of corner curl`() {
         val width = 800f
         val height = 600f
-        val spineX = width / 2f
-        // Even with corner touches, book-flip pins to center for a vertical hinge.
+        // Center touch (tap turns without a corner bias) stays a pure hinge.
+        val helper = spreadBookFlipFold(width, height, progress = 0.3f)
+        assertTrue(helper.valid)
+        assertTrue(helper.isVerticalBookHinge())
+        // Corner touches keep the corner side but only tilt the fold a little.
         val bottomForced = spreadPageCurlFold(width, height, progress = 0.3f, touchY = 600f, forceBookFlip = true)
         val topForced = spreadPageCurlFold(width, height, progress = 0.3f, touchY = 0f, forceBookFlip = true)
         assertTrue(bottomForced.valid && topForced.valid)
-        assertTrue(bottomForced.isVerticalBookHinge())
-        assertTrue(topForced.isVerticalBookHinge())
-        // Helper matches the forced fold.
-        val helper = spreadBookFlipFold(width, height, progress = 0.3f)
-        assertTrue(helper.isVerticalBookHinge())
-        assertEquals(bottomForced.midX, helper.midX)
+        assertEquals(600f, bottomForced.cornerY)
+        assertEquals(0f, topForced.cornerY)
+        assertTrue(kotlin.math.abs(bottomForced.ny) < 0.30f)
+        assertTrue(kotlin.math.abs(topForced.ny) < 0.30f)
+        assertTrue(bottomForced.nx > 0.9f)
+        assertTrue(topForced.nx > 0.9f)
+        // Same sweep as the helper regardless of touch height.
+        assertEquals(helper.midX, bottomForced.midX)
+        assertEquals(helper.dragX, bottomForced.dragX)
     }
 
     @Test
-    fun `book flip peels from right and settles on left`() {
+    fun `corner peel keeps pager exit sweep while book flip parks at spine`() {
+        val width = 800f
+        val height = 600f
+        // Single-page corner peel exits past the left edge like a pager slot.
+        val peelSettled = spreadPageCurlFold(width, height, progress = 1f, touchY = null)
+        assertTrue(peelSettled.valid)
+        assertTrue(peelSettled.dragX < 0f)
+        // Spread book leaf parks at the spine instead.
+        val flipSettled = spreadPageCurlFold(width, height, progress = 1f, touchY = null, forceBookFlip = true)
+        assertTrue(flipSettled.valid)
+        assertEquals(0f, flipSettled.dragX)
+        assertEquals(width / 2f, flipSettled.midX)
+    }
+
+    @Test
+    fun `book flip peels from right and settles onto the left page`() {
         val width = 800f
         val height = 600f
         val spineX = width / 2f
         val early = spreadBookFlipFold(width, height, progress = 0.1f)
         val mid = spreadBookFlipFold(width, height, progress = 0.5f)
-        val late = spreadBookFlipFold(width, height, progress = 0.9f)
-        assertTrue(early.valid && mid.valid && late.valid)
+        val settled = spreadBookFlipFold(width, height, progress = 1f)
+        assertTrue(early.valid && mid.valid && settled.valid)
         assertTrue(early.isVerticalBookHinge())
         assertTrue(mid.isVerticalBookHinge())
-        assertTrue(late.isVerticalBookHinge())
+        assertTrue(settled.isVerticalBookHinge())
+        // Peel starts at the right edge and crosses toward the spine.
         assertTrue(early.dragX > spineX)
-        assertTrue(mid.dragX < spineX)
-        assertTrue(late.dragX < 0f)
+        assertTrue(mid.dragX <= spineX)
+        // Settles with the fold parked at the spine — the right leaf lands on
+        // the left page instead of flying past it.
+        assertEquals(0f, settled.dragX)
+        assertEquals(spineX, settled.midX)
+        // No NaNs in the normal.
+        assertEquals(mid.nx, mid.nx)
+        assertEquals(mid.ny, mid.ny)
     }
 }

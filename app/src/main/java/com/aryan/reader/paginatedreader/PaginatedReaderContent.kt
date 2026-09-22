@@ -3281,20 +3281,29 @@ internal fun Modifier.realisticBookPage(
                 }
             }
 
+            // Turn-only crease: settled spreads stay flat like the iOS reader.
+            // The crease, fold line, and lift shading appear only mid-turn.
             if (abs(pageOffset) < 0.001f) {
                 drawPaperBackground()
                 drawContent()
-                drawSpineCrease()
             }
             else if (pageOffset < 0f && pageOffset > -1f) {
                 val progress = -pageOffset
                 val w = size.width
                 val h = size.height
 
-                // Spread + realistic = book leaf hinged at the spine crease:
-                // pin to vertical center so the sheet peels from the right
-                // and settles on the left. Single-page keeps touch diagonal.
-                val startY = if (spineCreaseEnabled) h / 2f else touchY ?: h
+                // Spread + realistic = book leaf hinged at the spine crease with
+                // a hint of corner curl toward the finger: the right leaf peels
+                // off and settles onto the left page. Single-page keeps the
+                // touch-driven diagonal corner peel.
+                // Blend 0.35 / sweep 1.0 mirror shared SpreadBookFlipCornerBlend
+                // and SpreadBookFlipSweep (internal to :shared): keep in sync.
+                val startY = if (spineCreaseEnabled) {
+                    val touchOrCenter = touchY ?: h / 2f
+                    h / 2f + (touchOrCenter - h / 2f) * 0.35f
+                } else {
+                    touchY ?: h
+                }
                 val rawCenterDist = ((startY - h / 2f) / (h / 2f)).coerceIn(-1f, 1f)
 
                 val flattenFactor = if (progress > 0.75f) {
@@ -3306,7 +3315,11 @@ internal fun Modifier.realisticBookPage(
 
                 val cornerY = if (centerDist >= 0) h else 0f
 
-                val dragX = w - w * 2.2f * progress
+                // Book-flip sweep parks the fold at the spine at progress 1 so
+                // the leaf settles onto the left page; corner peels keep the
+                // longer pager-exit sweep. See shared SpreadBookFlipSweep.
+                val sweep = if (spineCreaseEnabled) 1.0f else 2.2f
+                val dragX = w - w * sweep * progress
                 val dragY = cornerY - h * 0.5f * progress * centerDist
 
                 val midX = (w + dragX) / 2f
@@ -3349,6 +3362,28 @@ internal fun Modifier.realisticBookPage(
                     clipPath(frontPath) {
                         drawPaperBackground()
                         this@drawWithContent.drawContent()
+                    }
+
+                    // Lifting-paper sheen on the book leaf beside the fold,
+                    // peaking half-turn. Corner peels keep their flat front.
+                    if (spineCreaseEnabled) {
+                        val lift = kotlin.math.sin(progress * kotlin.math.PI).toFloat()
+                        if (lift > 0.01f) {
+                            val sheenWidth = 10.dp.toPx() + 26.dp.toPx() * lift
+                            val sheenColor = if (isDarkTheme) {
+                                Color.White.copy(alpha = 0.07f * lift)
+                            } else {
+                                Color.White.copy(alpha = 0.12f * lift)
+                            }
+                            val sheenBrush = Brush.linearGradient(
+                                colors = listOf(Color.Transparent, sheenColor),
+                                start = Offset(midX - nx * sheenWidth, midY - ny * sheenWidth),
+                                end = Offset(midX, midY)
+                            )
+                            clipPath(frontPath) {
+                                drawRect(sheenBrush)
+                            }
+                        }
                     }
 
                     // Book leaf (spread + realistic): shadow peaks at half-turn

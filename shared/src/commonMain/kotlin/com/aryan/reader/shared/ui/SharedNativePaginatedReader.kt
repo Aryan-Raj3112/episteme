@@ -642,9 +642,10 @@ internal fun SharedNativePaginatedPagesContent(
         val paperIsDark = sharedReaderPaperIsDark(renderPlan.background)
         val isSpreadMode = renderPlan.settings.isTwoPageSpreadEnabled()
         val gutterWidthPx = with(readerDensity) { pageGap.toPx() }
-        // Spread mode curls the whole Row (both pages + gutter) as one sheet so the
-        // fold sweeps across the spine — Android HorizontalPager benchmark parity.
-        // Single-page keeps the per-slot curl.
+        // Spread mode curls the whole Row (both pages + gutter) as one leaf hinged
+        // at the spine — Android HorizontalPager benchmark parity. The crease and
+        // fold shading draw only mid-turn (inside the curl modifier); settled
+        // spreads stay flat. Single-page keeps the per-slot curl.
         val spreadRowTurnModifier = when {
             pageTurn != null && isSpreadMode -> {
                 val spreadOffset = pageTurn.offsetForSlot(0)
@@ -668,13 +669,6 @@ internal fun SharedNativePaginatedPagesContent(
                         paperColor = renderPlan.background,
                         spreadGutterPx = gutterWidthPx
                     )
-            }
-            spineCreaseEnabled && pageTurn == null -> {
-                Modifier.sharedSpreadSpineCrease(
-                    enabled = true,
-                    paperIsDark = paperIsDark,
-                    gutterWidthPx = gutterWidthPx
-                )
             }
             else -> Modifier
         }

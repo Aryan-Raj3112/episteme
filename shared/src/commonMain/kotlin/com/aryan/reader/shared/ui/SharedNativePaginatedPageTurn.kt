@@ -103,14 +103,34 @@ internal data class SpreadPageFoldGeometry(
 )
 
 /**
+ * How much of the finger's corner bias a spread book leaf keeps. 0 = pure
+ * vertical spine hinge, 1 = full diagonal corner peel. A small blend keeps the
+ * fold hinged at the spine while the free corner still follows the finger,
+ * like a real page pinched at the corner.
+ */
+internal const val SpreadBookFlipCornerBlend = 0.35f
+
+/**
+ * Sweep distance of a spread book leaf as a fraction of the spread width.
+ * 1.0 parks the fold exactly at the spine ([width]/2) when progress hits 1,
+ * so the right leaf settles onto the left page instead of flying past it.
+ * Single-page corner peels keep the longer 2.2 sweep that exits off-screen
+ * like a pager slot.
+ */
+internal const val SpreadBookFlipSweep = 1.0f
+
+internal const val SpreadCornerPeelSweep = 2.2f
+
+/**
  * Same fold math as the single-page curl, with the sheet width equal to the
  * full spread (both pages + gutter) so the crease sweeps across the spine.
  *
- * Book-flip mode ([forceBookFlip] = true) pins the touch to the vertical
- * center so the fold line stays vertical and hinges at the spine crease:
- * the sheet peels from the right edge and settles on the left like a real
- * book leaf, instead of a diagonal corner peel. Spread hosts always use
- * book-flip; single-page keeps the touch-driven diagonal.
+ * Book-flip mode ([forceBookFlip] = true) blends the touch toward the vertical
+ * center (see [SpreadBookFlipCornerBlend]) so the fold stays hinged at the
+ * spine crease while the free corner still curls toward the finger, and parks
+ * the fold at the spine at progress 1 ([SpreadBookFlipSweep]) so the right
+ * leaf peels off and settles onto the left page. Spread hosts always use
+ * book-flip; single-page keeps the touch-driven diagonal corner peel.
  */
 internal fun spreadPageCurlFold(
     width: Float,
@@ -119,7 +139,12 @@ internal fun spreadPageCurlFold(
     touchY: Float?,
     forceBookFlip: Boolean = false
 ): SpreadPageFoldGeometry {
-    val startY = if (forceBookFlip) height / 2f else touchY ?: height
+    val startY = if (forceBookFlip) {
+        val touchOrCenter = touchY ?: height / 2f
+        height / 2f + (touchOrCenter - height / 2f) * SpreadBookFlipCornerBlend
+    } else {
+        touchY ?: height
+    }
     val rawCenterDist = ((startY - height / 2f) / (height / 2f)).coerceIn(-1f, 1f)
     val flattenFactor = if (progress > 0.75f) {
         ((progress - 0.75f) / 0.25f).coerceIn(0f, 1f)
@@ -128,7 +153,8 @@ internal fun spreadPageCurlFold(
     }
     val centerDist = rawCenterDist * (1f - flattenFactor)
     val cornerY = if (centerDist >= 0f) height else 0f
-    val dragX = width - width * 2.2f * progress
+    val sweep = if (forceBookFlip) SpreadBookFlipSweep else SpreadCornerPeelSweep
+    val dragX = width - width * sweep * progress
     val dragY = cornerY - height * 0.5f * progress * centerDist
     val midX = (width + dragX) / 2f
     val midY = (cornerY + dragY) / 2f
@@ -163,9 +189,9 @@ internal fun spreadPageCurlFold(
 }
 
 /**
- * Book-like spread flip: vertical fold hinged at the spine crease.
- * Equivalent to [spreadPageCurlFold] with the touch pinned to the vertical
- * center, so the sheet peels from the right edge and settles on the left.
+ * Book-like spread flip: fold hinged at the spine crease with a hint of the
+ * finger's corner bias ([SpreadBookFlipCornerBlend]), parking at the spine at
+ * progress 1 so the right leaf peels off and settles onto the left page.
  */
 internal fun spreadBookFlipFold(
     width: Float,
@@ -180,8 +206,9 @@ internal fun spreadBookFlipFold(
 )
 
 /**
- * Whether a spread fold is a vertical book hinge (fold line near-vertical).
- * Book-flip folds have |ny| ~ 0 and |nx| ~ 1 because the touch is centered.
+ * Whether a spread fold is a near-vertical book hinge (fold line upright).
+ * Center-touched book flips have |ny| ~ 0 and |nx| ~ 1; corner-touched flips
+ * keep a bounded tilt from [SpreadBookFlipCornerBlend].
  */
 internal fun SpreadPageFoldGeometry.isVerticalBookHinge(): Boolean =
     valid && kotlin.math.abs(ny) < 0.05f && kotlin.math.abs(nx) > 0.95f
@@ -313,10 +340,10 @@ internal fun Modifier.sharedRealisticBookPage(
  * from [paperColor] darkness.
  *
  * When [spineCreaseEnabled] is true (two-page spread + realistic turns), the
- * fold is a vertical book hinge at the spine crease: the sheet peels from the
- * right edge and settles on the left like a real book leaf. A soft spine
- * shadow is drawn in the gutter center while settled and deepened mid-turn so
- * the fold reads as hinging at the book spine.
+ * fold hinges at the spine crease with a hint of corner curl toward the finger:
+ * the right leaf peels off and settles onto the left page. The spine crease,
+ * fold line, and lift shading draw only mid-turn — settled spreads stay flat
+ * like the iOS reader.
  */
 @Composable
 fun Modifier.realisticPageCurl(
@@ -358,10 +385,11 @@ fun Modifier.realisticPageCurl(
                 }
             }
 
+            // Turn-only crease: settled spreads stay flat. The crease, fold
+            // line, and lift shading appear only while a turn is in flight.
             if (abs(pageOffset) < 0.001f) {
                 drawPaperBackground()
                 drawContent()
-                drawSpineCrease()
             } else if (pageOffset < 0f && pageOffset > -1f) {
                 val progress = -pageOffset
                 val fold = spreadPageCurlFold(
@@ -408,6 +436,29 @@ fun Modifier.realisticPageCurl(
                 clipPath(frontPath) {
                     drawPaperBackground()
                     this@drawWithContent.drawContent()
+                }
+
+                // Lifting-paper sheen on the book leaf beside the fold: catches
+                // light as the sheet rises off the spine, peaking half-turn.
+                // Corner peels keep their flat front.
+                if (spineCreaseEnabled) {
+                    val lift = kotlin.math.sin(progress * kotlin.math.PI).toFloat()
+                    if (lift > 0.01f) {
+                        val sheenWidth = 10.dp.toPx() + 26.dp.toPx() * lift
+                        val sheenColor = if (isDarkPaper) {
+                            Color.White.copy(alpha = 0.07f * lift)
+                        } else {
+                            Color.White.copy(alpha = 0.12f * lift)
+                        }
+                        val sheenBrush = Brush.linearGradient(
+                            colors = listOf(Color.Transparent, sheenColor),
+                            start = Offset(midX - nx * sheenWidth, midY - ny * sheenWidth),
+                            end = Offset(midX, midY)
+                        )
+                        clipPath(frontPath) {
+                            drawRect(sheenBrush)
+                        }
+                    }
                 }
 
                 // Book leaf (spread + realistic): the flipping sheet lifts off
@@ -505,9 +556,10 @@ fun Modifier.realisticPageCurl(
 }
 
 /**
- * Spread-sheet book flip: vertical fold hinged at the spine crease with the
- * spine crease forced on. Hosts apply this to the whole spread Row (both pages
- * + gutter). The sheet peels from the right edge and settles on the left.
+ * Spread-sheet book flip: fold hinged at the spine crease (with a hint of
+ * corner curl) and the spine crease forced on mid-turn. Hosts apply this to
+ * the whole spread Row (both pages + gutter). The right leaf peels off and
+ * settles onto the left page; settled spreads stay flat.
  */
 @Composable
 fun Modifier.realisticSpreadPageCurl(
