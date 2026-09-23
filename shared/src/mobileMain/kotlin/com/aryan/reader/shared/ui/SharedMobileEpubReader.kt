@@ -1666,18 +1666,33 @@ fun SharedMobileEpubReaderScreen(
                                     touchY = turn.touchY
                                 )
                             }
-                            val dragFraction = abs(pageDragPosition.floatValue) / visiblePages.size.coerceAtLeast(1)
+                            // Android only renders the curl while realistic page turns are
+                            // enabled (`PaginatedReaderContent`: `spreadPageModifier =
+                            // if (isPageTurnAnimationEnabled) ... else Modifier`); with the
+                            // setting off its pager just slides the page sets. Match that:
+                            // the drag follows the finger 1:1 as a flat pager slide, and the
+                            // physical slide direction flips for right-to-left pagination
+                            // because the pager's reverseLayout does (the curl keeps using
+                            // the Android fold math in pager-index space).
+                            val dragCurlEnabled = motionPolicy.shouldAnimate(settings.pageTurnAnimationEnabled)
+                            val dragDirection = if (dragCurlEnabled) {
+                                pageDragDirection
+                            } else {
+                                sharedPaginatedSlideDirection(pageDragDirection, settings.rightToLeftPagination)
+                            }
+                            val dragFractionOfPages = { abs(pageDragPosition.floatValue) / visiblePages.size.coerceAtLeast(1) }
                             val dragCurrentSpec = if (pageDragActive) {
                                 SharedPaginatedPageTurnSpec(
                                     offsetForSlot = { slot ->
                                         turnOffset(
                                             slot = slot,
                                             setLeadSlots = 0,
-                                            direction = pageDragDirection,
-                                            fraction = dragFraction
+                                            direction = dragDirection,
+                                            fraction = dragFractionOfPages()
                                         )
                                     },
-                                    touchY = pageTurnTouchY
+                                    touchY = pageTurnTouchY,
+                                    curlEnabled = dragCurlEnabled
                                 )
                             } else {
                                 null
@@ -1688,11 +1703,12 @@ fun SharedMobileEpubReaderScreen(
                                         turnOffset(
                                             slot = slot,
                                             setLeadSlots = incomingLeadSlots,
-                                            direction = pageDragDirection,
-                                            fraction = dragFraction
+                                            direction = dragDirection,
+                                            fraction = dragFractionOfPages()
                                         )
                                     },
-                                    touchY = pageTurnTouchY
+                                    touchY = pageTurnTouchY,
+                                    curlEnabled = dragCurlEnabled
                                 )
                             } else {
                                 null
@@ -1710,7 +1726,7 @@ fun SharedMobileEpubReaderScreen(
                             // keeps the incoming set beneath the curling set, while a backward turn
                             // or drag un-curls the incoming set on top.
                             val overlayFirst = if (pageDragActive) {
-                                pageDragDirection > 0
+                                dragDirection > 0
                             } else {
                                 (activeTurn?.direction ?: 0) < 0
                             }
@@ -1720,7 +1736,11 @@ fun SharedMobileEpubReaderScreen(
                             // the top layer goes transparent — otherwise the top layer's
                             // full-size paper background hides the incoming set until the turn
                             // overlay is removed at the end.
-                            val turnLayerActive = activeTurn != null || dragOverlayPlan != null
+                            // A slide-only drag keeps both page sets opaque: they sit side by
+                            // side like pager slots, so neither may go transparent (that
+                            // transparency exists to let a curling sheet reveal the set
+                            // beneath it).
+                            val turnLayerActive = activeTurn != null || (dragOverlayPlan != null && dragCurlEnabled)
                             val (turnMainBackground, turnOverlayBackground) =
                                 sharedPaginatedTurnLayerBackgrounds(
                                     turnActive = turnLayerActive,

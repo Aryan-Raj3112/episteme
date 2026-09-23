@@ -42,8 +42,29 @@ import kotlin.math.sqrt
  */
 data class SharedPaginatedPageTurnSpec(
     val offsetForSlot: (slot: Int) -> Float,
-    val touchY: Float?
+    val touchY: Float?,
+    /**
+     * Whether the sheets also curl. Android only applies its curl modifier while
+     * realistic page turns are enabled (`PaginatedReaderContent`:
+     * `spreadPageModifier = if (isPageTurnAnimationEnabled) ... else Modifier`) and
+     * otherwise just slides the pager. A slide-only spec keeps the offset
+     * translation and draws the pages flat.
+     */
+    val curlEnabled: Boolean = true
 )
+
+/**
+ * Physical (on-screen) turn direction for a plain pager slide, where the page sets
+ * follow the finger instead of being hidden behind the curl.
+ *
+ * Curl offsets feed the Android fold math and stay in pager-index space, but the
+ * slide is the pager's own translation, which `reverseLayout` flips for
+ * right-to-left pagination.
+ */
+internal fun sharedPaginatedSlideDirection(
+    indexDirection: Int,
+    rightToLeftPagination: Boolean
+): Int = if (rightToLeftPagination) -indexDirection else indexDirection
 
 /**
  * Continuous page offset for a page at [slotOffsetInSet] inside a page set whose

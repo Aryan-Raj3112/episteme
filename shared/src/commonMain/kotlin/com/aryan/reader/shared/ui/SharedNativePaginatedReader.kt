@@ -648,26 +648,38 @@ internal fun SharedNativePaginatedPagesContent(
         // spreads stay flat. Single-page keeps the per-slot curl.
         val spreadRowTurnModifier = when {
             pageTurn != null && isSpreadMode -> {
-                val spreadOffset = pageTurn.offsetForSlot(0)
+                val turnSpec = pageTurn
                 Modifier
                     .offset {
-                        IntOffset((spreadOffset * maxWidth.toPx()).roundToInt(), 0)
+                        // Offset reads stay in the layout/draw phases so a turn or
+                        // drag never recomposes the page tree per frame.
+                        IntOffset((turnSpec.offsetForSlot(0) * maxWidth.toPx()).roundToInt(), 0)
                     }
-                    .graphicsLayer {
-                        if (spreadOffset <= 1f && spreadOffset > -1f) {
-                            translationX = -spreadOffset * size.width
+                    .then(
+                        // Slide-only (realistic page turns off): the offset above is the
+                        // whole motion, exactly like the Android pager moving its slots.
+                        if (!turnSpec.curlEnabled) {
+                            Modifier
+                        } else {
+                            Modifier
+                                .graphicsLayer {
+                                    val spreadOffset = turnSpec.offsetForSlot(0)
+                                    if (spreadOffset <= 1f && spreadOffset > -1f) {
+                                        translationX = -spreadOffset * size.width
+                                    }
+                                    if (spreadOffset != 0f) {
+                                        shadowElevation = 10f
+                                        shape = RectangleShape
+                                        clip = false
+                                    }
+                                }
+                                .realisticSpreadPageCurl(
+                                    pageOffsetProvider = { turnSpec.offsetForSlot(0) },
+                                    touchYProvider = { turnSpec.touchY },
+                                    paperColor = renderPlan.background,
+                                    spreadGutterPx = gutterWidthPx
+                                )
                         }
-                        if (spreadOffset != 0f) {
-                            shadowElevation = 10f
-                            shape = RectangleShape
-                            clip = false
-                        }
-                    }
-                    .realisticSpreadPageCurl(
-                        pageOffsetProvider = { spreadOffset },
-                        touchYProvider = { pageTurn.touchY },
-                        paperColor = renderPlan.background,
-                        spreadGutterPx = gutterWidthPx
                     )
             }
             else -> Modifier
@@ -686,20 +698,29 @@ internal fun SharedNativePaginatedPagesContent(
                 val turnModifier = if (pageTurn != null && !isSpreadMode) {
                     // Within a set the relative pager z-order is static (earlier slots stack on
                     // top); cross-layer order is decided by the host Box child order.
+                    val turnSpec = pageTurn
+                    val turnSlot = slot
                     Modifier
-                        .zIndex(-slot.toFloat())
+                        .zIndex(-turnSlot.toFloat())
                         .offset {
                             // Pager natural position: the curl's translationX cancels it while
                             // |offset| < 1, and at |offset| >= 1 the page rests off-screen exactly
-                            // like a HorizontalPager slot.
-                            val pageOffset = pageTurn.offsetForSlot(slot)
+                            // like a HorizontalPager slot. Without the curl the offset itself is
+                            // the slide, matching the Android pager with page turns disabled.
+                            val pageOffset = turnSpec.offsetForSlot(turnSlot)
                             IntOffset((pageOffset * pageOuterWidth.toPx()).roundToInt(), 0)
                         }
-                        .sharedRealisticBookPage(
-                            pageOffsetProvider = { pageTurn.offsetForSlot(slot) },
-                            touchYProvider = { pageTurn.touchY },
-                            paperColor = renderPlan.background,
-                            isDarkPaper = paperIsDark
+                        .then(
+                            if (!turnSpec.curlEnabled) {
+                                Modifier
+                            } else {
+                                Modifier.sharedRealisticBookPage(
+                                    pageOffsetProvider = { turnSpec.offsetForSlot(turnSlot) },
+                                    touchYProvider = { turnSpec.touchY },
+                                    paperColor = renderPlan.background,
+                                    isDarkPaper = paperIsDark
+                                )
+                            }
                         )
                 } else {
                     Modifier

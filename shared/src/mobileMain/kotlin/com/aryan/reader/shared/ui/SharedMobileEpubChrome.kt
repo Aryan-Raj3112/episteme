@@ -445,19 +445,26 @@ internal fun SharedMobileEpubTopBar(
                                 }
                             }
                             ReaderTool.TAP_TO_TURN -> SharedMobileEpubSwitchMenuItem(
-                                "Tap to Turn Pages",
+                                readerString("menu_tap_to_turn_pages", "Tap to Turn Pages"),
                                 tapToNavigateEnabled,
                                 onTapToNavigateChange,
                                 enabled = readingMode == ReaderReadingMode.PAGINATED
                             )
                             ReaderTool.PAGE_TURN_ANIM -> SharedMobileEpubSwitchMenuItem(
-                                "Realistic Page Turns",
+                                readerString("menu_realistic_page_turns", "Realistic Page Turns"),
                                 pageTurnAnimationEnabled,
                                 onPageTurnAnimationChange,
                                 enabled = readingMode == ReaderReadingMode.PAGINATED
                             )
                             ReaderTool.BOOKMARK -> DropdownMenuItem(
-                                text = { Text(if (isBookmarked) "Remove Bookmark" else "Bookmark this page") },
+                                text = {
+                                    Text(
+                                        readerString(
+                                            if (isBookmarked) "menu_remove_bookmark" else "menu_bookmark_this_page",
+                                            if (isBookmarked) "Remove bookmark" else "Bookmark this page"
+                                        )
+                                    )
+                                },
                                 onClick = { onBookmark(); onShowMoreChange(false) },
                                 leadingIcon = { Icon(if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, contentDescription = null) }
                             )

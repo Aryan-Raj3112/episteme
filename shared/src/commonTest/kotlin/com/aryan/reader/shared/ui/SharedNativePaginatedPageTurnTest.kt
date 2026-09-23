@@ -129,6 +129,23 @@ class SharedNativePaginatedPageTurnTest {
     }
 
     @Test
+    fun `slide only turns follow the finger and flip for right to left`() {
+        // LTR: swiping left moves forward, so the page sets travel left with the finger.
+        assertEquals(1, sharedPaginatedSlideDirection(indexDirection = 1, rightToLeftPagination = false))
+        assertEquals(-1, sharedPaginatedSlideDirection(indexDirection = -1, rightToLeftPagination = false))
+        // RTL: forward is a rightward swipe, so the physical travel mirrors
+        // (Android's pager reverseLayout flip) while the curl keeps index space.
+        assertEquals(-1, sharedPaginatedSlideDirection(indexDirection = 1, rightToLeftPagination = true))
+        assertEquals(1, sharedPaginatedSlideDirection(indexDirection = -1, rightToLeftPagination = true))
+    }
+
+    @Test
+    fun `turn specs curl unless the host turns realistic page turns off`() {
+        assertTrue(SharedPaginatedPageTurnSpec(offsetForSlot = { 0f }, touchY = null).curlEnabled)
+        assertFalse(SharedPaginatedPageTurnSpec(offsetForSlot = { 0f }, touchY = null, curlEnabled = false).curlEnabled)
+    }
+
+    @Test
     fun `paper darkness drives the flap tint like the android dark theme flag`() {
         assertFalse(sharedReaderPaperIsDark(androidx.compose.ui.graphics.Color.White))
         assertTrue(sharedReaderPaperIsDark(androidx.compose.ui.graphics.Color(0xFF1C1B1F)))

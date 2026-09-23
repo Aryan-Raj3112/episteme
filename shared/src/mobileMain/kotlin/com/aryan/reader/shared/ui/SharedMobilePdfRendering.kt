@@ -95,6 +95,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -178,6 +179,7 @@ import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.RealisticPdfPageTurnAnimationSpec
 import com.aryan.reader.shared.pdf.pdfPaginatedPagePaperColor
 import com.aryan.reader.shared.pdf.shouldPlayRealisticPdfPageTurn
+import com.aryan.reader.shared.pdf.pdfPagerTurnStackOrder
 import com.aryan.reader.shared.pdf.sharedPdfSnapHighlighterPoint
 import com.aryan.reader.shared.pdf.pdfPaginationEdgeTarget
 import com.aryan.reader.shared.pdf.centeredPdfPageScrollOffset
@@ -322,6 +324,14 @@ internal fun SharedMobilePdfZoomViewport(
     content: @Composable (PdfZoomCamera) -> Unit
 ) {
     val latestCamera by rememberUpdatedState(camera)
+    // The tap/zoom handlers below are keyed on geometry, not on the callbacks, so
+    // they keep the lambdas captured at launch (Compose only restarts a
+    // pointerInput block when its keys change or the block comes from another call
+    // site). Reading the host's tap action through updated state is what Android
+    // does for every page tap callback (PdfPageComposable) and is what makes a
+    // settings toggle such as "Tap to Turn Pages" take effect on the next tap
+    // instead of only after the page slot is recreated.
+    val latestOnSingleTap by rememberUpdatedState(onSingleTap)
     var viewport by remember { mutableStateOf(IntSize.Zero) }
     val oneHandZoomDistancePx = with(LocalDensity.current) { 240.dp.toPx() }
     val scope = rememberCoroutineScope()
@@ -468,7 +478,7 @@ internal fun SharedMobilePdfZoomViewport(
                             }
                         }
                     } catch (_: PointerEventTimeoutCancellationException) {
-                        if (!firstUp.isConsumed) onSingleTap(firstDown.position)
+                        if (!firstUp.isConsumed) latestOnSingleTap(firstDown.position)
                         return@awaitEachGesture
                     }
                     val pivot = secondDown?.position ?: firstDown.position
@@ -1282,19 +1292,31 @@ internal fun SharedMobilePdfPaginatedPages(
                     }
                 )
         ) { pagerPage ->
-        val turnPageOffset =
-            if (realisticTurnActive) {
+        // Android reads the continuous pager offset in composition for every frame
+        // of a turn (`zIndex(-turnPageOffset)` plus a graphicsLayer lambda). Doing
+        // the same here re-runs this whole pager slot — page tiles, text layers,
+        // selection surfaces — once per animation frame, which is what makes the
+        // realistic tap turn stutter on iOS. The slot now reads the offset through
+        // a provider inside the layout/draw lambdas (no recomposition) and keeps
+        // only the draw-order bucket in composition; see pdfPagerTurnStackOrder.
+        val pageOffsetProvider = remember(pagerState, pagerPage) {
+            {
                 (pagerPage - pagerState.currentPage) - pagerState.currentPageOffsetFraction
-            } else {
-                0f
             }
+        }
+        val turnStackOrder by remember(pageOffsetProvider, realisticTurnActive) {
+            derivedStateOf {
+                if (realisticTurnActive) pdfPagerTurnStackOrder(pageOffsetProvider()) else 0f
+            }
+        }
         // Pager natural position: the curl's counter-translation cancels the pager's
         // own translation while |offset| < 1, exactly like the Android benchmark, and
         // at |offset| >= 1 the page rests off-screen like a HorizontalPager slot.
         val turnSlotModifier = if (realisticTurnActive) {
             Modifier
-                .zIndex(-turnPageOffset)
+                .zIndex(turnStackOrder)
                 .graphicsLayer {
+                    val turnPageOffset = pageOffsetProvider()
                     if (turnPageOffset <= 1f && turnPageOffset > -1f) {
                         translationX = -turnPageOffset * size.width
                     }
@@ -1305,14 +1327,14 @@ internal fun SharedMobilePdfPaginatedPages(
         val turnSheetModifier = if (realisticTurnActive) {
             Modifier
                 .graphicsLayer {
-                    if (turnPageOffset != 0f) {
+                    if (pageOffsetProvider() != 0f) {
                         shadowElevation = 10f
                         shape = RectangleShape
                         clip = false
                     }
                 }
                 .realisticPageCurl(
-                    pageOffsetProvider = { turnPageOffset },
+                    pageOffsetProvider = pageOffsetProvider,
                     touchYProvider = { pageTurnTouchY },
                     paperColor = pagePaperColor
                 )
@@ -1336,31 +1358,33 @@ internal fun SharedMobilePdfPaginatedPages(
             onSingleTap = { offset ->
                 val viewportWidthForTap = paginationViewportSize.width.toFloat()
                 val edge = viewportWidthForTap * 0.25f
+                // Android parity (PdfViewerScreen.onPaginationPreSingleTap): an edge
+                // tap turns pages only while the page is unzoomed (1.02 tolerance) or
+                // the scroll lock pins the camera, it counts as handled even at the
+                // first/last spread (so the chrome stays put), and single-step turns
+                // snap unless the realistic curl is playing.
+                val canTurnPagesByTap = tapToTurnPages && (zoomCamera.scale <= 1.02f || isScrollLocked)
                 fun turnPager(target: Int) {
+                    if (target == pagerState.currentPage) return
                     onManualPageTurnStarted()
                     scope.launch {
                         if (shouldPlayRealisticPdfPageTurn(latestRealisticTurnActive, pagerState.currentPage, target)) {
                             pagerState.animateScrollToPage(target, animationSpec = RealisticPdfPageTurnAnimationSpec)
                         } else {
-                            pagerState.animateScrollToPage(target)
+                            pagerState.scrollToPage(target)
                         }
                     }
                 }
+                fun edgeTarget(tappedLeftEdge: Boolean): Int? = pdfPaginationEdgeTarget(
+                    currentPage = pagerPage,
+                    lastPage = spreadStarts.lastIndex,
+                    tappedLeftEdge = tappedLeftEdge,
+                    rightToLeft = rightToLeftPagination,
+                )
                 when {
-                    tapToTurnPages && !zoomCamera.isZoomed() && offset.x < edge ->
-                        pdfPaginationEdgeTarget(
-                            currentPage = pagerPage,
-                            lastPage = spreadStarts.lastIndex,
-                            tappedLeftEdge = true,
-                            rightToLeft = rightToLeftPagination,
-                        )?.let(::turnPager)
-                    tapToTurnPages && !zoomCamera.isZoomed() && offset.x > viewportWidthForTap - edge ->
-                        pdfPaginationEdgeTarget(
-                            currentPage = pagerPage,
-                            lastPage = spreadStarts.lastIndex,
-                            tappedLeftEdge = false,
-                            rightToLeft = rightToLeftPagination,
-                        )?.let(::turnPager)
+                    !canTurnPagesByTap -> onToggleChrome()
+                    offset.x < edge -> turnPager(edgeTarget(tappedLeftEdge = true) ?: pagerPage)
+                    offset.x > viewportWidthForTap - edge -> turnPager(edgeTarget(tappedLeftEdge = false) ?: pagerPage)
                     else -> onToggleChrome()
                 }
             },

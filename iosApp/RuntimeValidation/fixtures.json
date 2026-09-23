@@ -141,6 +141,16 @@
       ]
     },
     {
+      "id": "pagination-page-turns",
+      "surface": "pdf-and-epub-paginated-readers",
+      "expected": [
+        "PDF: toggling Tap to Turn Pages takes effect on the very next edge tap, without turning pages manually first, and disabling it stops edge taps on the next tap as well. Tapping an edge on the first or last spread does nothing but keeps the chrome hidden, like Android.",
+        "PDF: with Tap to Turn Pages and Realistic Page Turns both on, an edge tap plays the 700 ms curl without stutter, and a single-step tap turn snaps instantly while the curl is off (Android scrollToPage).",
+        "EPUB: with Realistic Page Turns off, a swipe in paginated mode slides the page sets flat like the Android pager - no page curl - and the curl returns as soon as the setting is on.",
+        "Both readers in right-to-left pagination: edge taps advance toward the left in RTL, swipes follow the finger (EPUB slides right for a forward turn), and two-page spreads keep the mirrored page order."
+      ]
+    },
+    {
       "id": "performance",
       "surface": "reader-and-library",
       "expected": [
