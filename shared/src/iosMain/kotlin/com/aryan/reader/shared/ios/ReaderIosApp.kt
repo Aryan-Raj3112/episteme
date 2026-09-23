@@ -226,7 +226,7 @@ import com.aryan.reader.shared.toSharedMobileReaderState
 import com.aryan.reader.shared.sharedSettingsHubModel
 import com.aryan.reader.shared.sharedLegalLinksForProfile
 import com.aryan.reader.shared.sharedAppLanguageLabel
-import com.aryan.reader.shared.sharedAppLanguages
+import com.aryan.reader.shared.sharedAppLanguageOption
 import com.aryan.reader.shared.shouldApplyMobileFolderScan
 import com.aryan.reader.shared.shouldRequestCloudSyncAfterFolderSyncChange
 import com.aryan.reader.shared.opds.OpdsEntry
@@ -258,6 +258,7 @@ import com.aryan.reader.shared.ui.SharedGoogleFontsBottomSheet
 import com.aryan.reader.shared.ui.SharedGoogleFontsLabels
 import com.aryan.reader.shared.ui.SharedMobileFontsScreen
 import com.aryan.reader.shared.ui.SharedMobileFontsStrings
+import com.aryan.reader.shared.ui.SharedMobileLanguageSelectionList
 import com.aryan.reader.shared.ui.SharedMobileTopAppBar
 import com.aryan.reader.shared.ui.resolveSharedAppDarkTheme
 import com.aryan.reader.shared.ui.SharedAboutScreen
@@ -5375,7 +5376,11 @@ private fun ReaderIosApp(
                                 includePdfFileNameDisplayName = true,
                                 usePdfFileNameAsDisplayName = state.usePdfFileNameAsDisplayName,
                                 hideReaderAi = state.hideReaderAi,
-                                languageSummary = sharedAppLanguageLabel(state.appLanguageTag),
+                                // Android parity: the settings summary shows the
+                                // translated language name, not the English one.
+                                languageSummary = sharedAppLanguageOption(state.appLanguageTag).let { option ->
+                                    readerString(option.labelKey, sharedAppLanguageLabel(state.appLanguageTag))
+                                },
                             )
                          )
                          Scaffold(
@@ -5727,25 +5732,17 @@ private fun ReaderIosApp(
                         modifier = Modifier.fillMaxSize().statusBarsPadding(),
                     )
                     IosUtilityScreen.LANGUAGE -> IosUtilityPage(title = readerString("options_language", "Language"), onBack = { utilityScreen = languageReturnScreen }) {
-                        LazyColumn(modifier = Modifier.fillMaxSize()) {
-                            items(sharedAppLanguages, key = { it.tag ?: "system" }) { language ->
-                                TextButton(
-                                    onClick = {
-                                        state = state.copy(appLanguageTag = language.tag)
-                                        utilityScreen = languageReturnScreen
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Text(
-                                        if (language.tag == state.appLanguageTag) {
-                                            "✓ ${language.label}"
-                                        } else {
-                                            language.label
-                                        }
-                                    )
-                                }
-                            }
-                        }
+                        // Android parity: the same search-filtered, radio-buttoned
+                        // list as HomeScreen's LanguageSelectionDialog, with the
+                        // localized labels resolving from the Android catalog.
+                        SharedMobileLanguageSelectionList(
+                            selectedTag = state.appLanguageTag,
+                            onSelect = { tag ->
+                                state = state.copy(appLanguageTag = tag)
+                                utilityScreen = languageReturnScreen
+                            },
+                            modifier = Modifier.fillMaxSize().statusBarsPadding(),
+                        )
                     }
                     IosUtilityScreen.FEEDBACK -> IosUtilityPage(title = readerString("feedback_title", "Feedback"), onBack = { utilityScreen = null }) {
                         SharedHelpFeedbackScreen(

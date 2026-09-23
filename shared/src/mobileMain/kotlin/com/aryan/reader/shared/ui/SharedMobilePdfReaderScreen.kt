@@ -1,6 +1,7 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -139,6 +140,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
@@ -1837,6 +1839,17 @@ fun SharedMobilePdfReaderHost(
         }
     }
 
+    LaunchedEffect(readerSessionKey, pdfTts.isSessionActive, pendingTtsStart) {
+        // Android parity (PdfViewerScreen): auto-scroll and TTS share the bottom
+        // chrome and can never be active together — starting TTS turns
+        // auto-scroll off, so the two overlays never stack or overlap.
+        if ((pdfTts.isSessionActive || pendingTtsStart != null) && autoScrollModeActive) {
+            autoScrollModeActive = false
+            autoScrollPlaying = false
+            autoScrollTemporarilyPaused = false
+        }
+    }
+
     LaunchedEffect(readerSessionKey, readerState.searchQuery) {
         val query = readerState.searchQuery.trim()
         if (query.isBlank()) {
@@ -2925,41 +2938,85 @@ fun SharedMobilePdfReaderHost(
                         )
                     }
                 }
+                // Android parity (PdfViewerScreen autoScrollPadding /
+                // autoScrollAlignmentBias): the overlay clears the bottom
+                // toolbar plus the navigation inset while the chrome is visible
+                // and drops to 16.dp + inset when it is hidden, hugging the right
+                // edge while collapsed and centring when expanded. The previous
+                // fixed 12.dp padding plus a 76.dp TTS lift let it sit on the
+                // toolbar and drift from the EPUB overlay.
+                val pdfAutoScrollBottomPadding by animateDpAsState(
+                    targetValue = sharedMobilePdfAutoScrollBottomPadding(showChrome, effectiveBottomSystemInset),
+                    animationSpec = tween(PdfChromeMotionDurationMillis),
+                    label = "PdfAutoScrollBottomPadding"
+                )
+                val pdfAutoScrollAlignBias by animateFloatAsState(
+                    targetValue = sharedMobileAutoScrollAlignmentBias(autoScrollCollapsed),
+                    animationSpec = tween(PdfChromeMotionDurationMillis),
+                    label = "PdfAutoScrollAlign"
+                )
                 AnimatedVisibility(
                     visible = autoScrollModeActive && readerState.displayMode == PdfDisplayMode.VERTICAL_SCROLL,
                     enter = slideInVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeIn(tween(PdfChromeMotionDurationMillis)),
                     exit = slideOutVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeOut(tween(PdfChromeMotionDurationMillis)),
-                    modifier = Modifier.align(Alignment.BottomCenter),
+                    modifier = Modifier
+                        .align(BiasAlignment(pdfAutoScrollAlignBias, 1f))
+                        .padding(bottom = pdfAutoScrollBottomPadding)
+                        .padding(horizontal = SharedMobileAutoScrollHorizontalPadding),
                 ) {
-                    SharedMobilePdfAutoScrollControls(
+                    SharedMobileAutoScrollControls(
                         isPlaying = autoScrollPlaying,
-                        isTemporarilyPaused = autoScrollTemporarilyPaused,
-                        profile = autoScrollProfile,
+                        isTempPaused = autoScrollTemporarilyPaused,
+                        speed = autoScrollProfile.speed,
+                        minSpeed = autoScrollProfile.minSpeed,
+                        maxSpeed = autoScrollProfile.maxSpeed,
                         isLocalMode = autoScrollIsLocal,
                         isMusicianMode = autoScrollMusicianMode,
                         useSlider = autoScrollUseSlider,
                         isCollapsed = autoScrollCollapsed,
                         onPlayPause = {
-                            autoScrollPlaying = !autoScrollPlaying
-                            autoScrollTemporarilyPaused = false
+                            // Android parity (onPlayPauseToggle): pausing clears
+                            // the temporary pause too.
+                            if (autoScrollPlaying) {
+                                autoScrollPlaying = false
+                                autoScrollTemporarilyPaused = false
+                            } else {
+                                autoScrollPlaying = true
+                                autoScrollTemporarilyPaused = false
+                            }
                         },
-                        onProfileChange = ::updateAutoScrollProfile,
-                        onLocalModeChange = ::setAutoScrollLocalMode,
-                        onMusicianModeChange = {
-                            autoScrollMusicianMode = it
-                            onPdfAutoScrollMusicianModeChange(it)
-                            if (it) showChrome = false
+                        onSpeedChange = { requested ->
+                            updateAutoScrollProfile(
+                                autoScrollProfile.copy(speed = snapSharedMobileAutoScrollSpeed(requested))
+                            )
                         },
-                        onUseSliderChange = {
-                            autoScrollUseSlider = it
-                            onPdfAutoScrollUseSliderChange(it)
+                        onMinSpeedChange = { requested ->
+                            updateAutoScrollProfile(
+                                autoScrollProfile.withMinSpeed(snapSharedMobileAutoScrollSpeed(requested))
+                            )
                         },
-                        onCollapsedChange = { autoScrollCollapsed = it },
+                        onMaxSpeedChange = { requested ->
+                            updateAutoScrollProfile(
+                                autoScrollProfile.withMaxSpeed(snapSharedMobileAutoScrollSpeed(requested))
+                            )
+                        },
+                        onInputModeToggle = {
+                            autoScrollUseSlider = !autoScrollUseSlider
+                            onPdfAutoScrollUseSliderChange(autoScrollUseSlider)
+                        },
+                        onMusicianModeToggle = {
+                            val next = !autoScrollMusicianMode
+                            autoScrollMusicianMode = next
+                            onPdfAutoScrollMusicianModeChange(next)
+                            if (next) showChrome = false
+                        },
+                        onCollapseChange = { autoScrollCollapsed = it },
                         onScrollToTop = {
                             autoScrollPauseDurationMillis = 1_000L
                             autoScrollInteractionToken++
                             navigateToPage(0, recordHistory = false, reason = PdfNavigationReason.PAGE_TURN)
                         },
+                        onLocalModeChange = ::setAutoScrollLocalMode,
                         onClose = {
                             autoScrollModeActive = false
                             autoScrollPlaying = false
@@ -2968,11 +3025,6 @@ fun SharedMobilePdfReaderHost(
                             // onClose): closing restores the chrome.
                             showChrome = true
                         },
-                        modifier = Modifier.padding(
-                            start = 12.dp,
-                            end = 12.dp,
-                            bottom = ttsBottomPadding + if (pdfTts.isSessionActive || pendingTtsStart != null) 76.dp else 0.dp,
-                        ),
                     )
                 }
                 AnimatedVisibility(

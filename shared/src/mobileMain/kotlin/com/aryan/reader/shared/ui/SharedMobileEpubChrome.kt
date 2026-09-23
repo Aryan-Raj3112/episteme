@@ -530,15 +530,11 @@ internal fun SharedMobileEpubTopBar(
                             )
                             ReaderTool.KEEP_SCREEN_ON -> SharedMobileEpubSwitchMenuItem("Keep Screen On", keepScreenOn, onKeepScreenOnChange)
                             ReaderTool.AUTO_SCROLL -> DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        if (autoScroll) {
-                                            readerString("desktop_stop_auto_scroll", "Stop auto scroll")
-                                        } else {
-                                            readerString("menu_auto_scroll", "Auto Scroll")
-                                        }
-                                    )
-                                },
+                                // Android parity (EpubReaderControls
+                                // EpubOverflowMenuSection.AUTO_SCROLL): the item
+                                // always reads "Auto Scroll" and is only enabled
+                                // for vertical reading while TTS is idle.
+                                text = { Text(readerString("menu_auto_scroll", "Auto Scroll")) },
                                 enabled = readingMode == ReaderReadingMode.VERTICAL &&
                                     !ttsBusy,
                                 onClick = { onAutoScrollChange(!autoScroll); onShowMoreChange(false) }

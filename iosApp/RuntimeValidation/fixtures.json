@@ -113,6 +113,34 @@
       ]
     },
     {
+      "id": "pdf-ink-gesture",
+      "surface": "pdf-reader-annotations",
+      "expected": [
+        "A finger or Pencil touch starts ink on the down: the stroke begins exactly under the touch and keeps drawing through fast flicks, without waiting for the touch slop and without dropping mid-line movement.",
+        "A plain tap commits a single-point dot, a second finger cancels the stroke (Android parity), and drawing still works while zoomed and panned.",
+        "Eraser strokes and the Pencil shortcut erase live without leaving ink behind, and the annotations land on the page under the touch on every visible page."
+      ]
+    },
+    {
+      "id": "auto-scroll-chrome",
+      "surface": "epub-and-pdf-readers",
+      "expected": [
+        "The auto-scroll overlay renders identically in the EPUB and PDF vertical readers (same speed menus, slider/stepper and icons as Android) and never overlaps the bottom toolbar: visible chrome clears the bar plus the safe-area inset, hidden chrome drops to the Android rest padding.",
+        "Collapsing the overlay hugs the right edge, expanding centres it, and starting auto-scroll reveals the chrome unless musician mode is on; closing it restores the chrome.",
+        "Starting TTS turns auto-scroll off, and stepping the speed with + or - always reads one decimal (4.0x, never 3.999999).",
+        "EPUB vertical auto-scroll scrolls smoothly at every speed, matching Android's frame-driven pacing instead of stepping."
+      ]
+    },
+    {
+      "id": "home-language-selection",
+      "surface": "settings-language",
+      "expected": [
+        "Home > Language matches Android: a search field with the localized Search/Clear labels, radio-button rows with translated language names, and the shared no-results message.",
+        "Filtering accepts tags, aliases and accented or decomposed queries (turkce, espanol, zh cn) and behaves the same as Android's language dialog.",
+        "Picking a language applies it to the reader chrome and the settings summary shows the translated language name."
+      ]
+    },
+    {
       "id": "performance",
       "surface": "reader-and-library",
       "expected": [

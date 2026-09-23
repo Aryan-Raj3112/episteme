@@ -145,213 +145,6 @@ internal fun SharedMobileEpubMusicianOverlay(
 }
 
 @Composable
-internal fun SharedMobileEpubAutoScrollControls(
-    isPlaying: Boolean,
-    profile: ReaderAutoScrollProfile,
-    isLocalMode: Boolean,
-    useSlider: Boolean,
-    isMusicianMode: Boolean,
-    isCollapsed: Boolean,
-    onPlayPause: () -> Unit,
-    onSpeedChange: (Float) -> Unit,
-    onMinSpeedChange: (Float) -> Unit,
-    onMaxSpeedChange: (Float) -> Unit,
-    onInputModeToggle: () -> Unit,
-    onMusicianModeToggle: () -> Unit,
-    onCollapseChange: (Boolean) -> Unit,
-    onScrollToTop: () -> Unit,
-    onLocalModeChange: (Boolean) -> Unit,
-    onClose: () -> Unit,
-    isTempPaused: Boolean = false,
-    modifier: Modifier = Modifier
-) {
-    var showModeMenu by remember { mutableStateOf(false) }
-    val profile = profile.sanitized()
-    val speedOptions = listOf(0.1f, 0.5f, 1f, 1.5f, 2f, 3f, 4f, 5f, 6f, 7f, 8f, 9f, 10f)
-    Surface(
-        modifier = modifier
-            .then(if (isCollapsed) Modifier else Modifier.fillMaxWidth())
-            .widthIn(max = 400.dp)
-            .animateContentSize(),
-        shape = RoundedCornerShape(28.dp),
-        tonalElevation = 8.dp,
-        shadowElevation = 8.dp
-    ) {
-        // Android parity (AutoScrollControls): collapse crossfades, not snaps.
-        AnimatedContent(
-            targetState = isCollapsed,
-            transitionSpec = { fadeIn(animationSpec = tween(200)) togetherWith fadeOut(animationSpec = tween(200)) },
-            label = "EpubAutoScrollCollapse"
-        ) { collapsed ->
-            if (collapsed) {
-            Row(
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                IconButton(onClick = { onCollapseChange(false) }, modifier = Modifier.size(36.dp)) {
-                    Icon(
-                    Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = readerString("auto_scroll_expand", "Expand Auto Scroll"),
-                )
-                }
-                Box(contentAlignment = Alignment.Center) {
-                    IconButton(onClick = onPlayPause, modifier = Modifier.size(36.dp)) {
-                        Icon(
-                            if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (isPlaying) "Pause auto scroll" else "Resume auto scroll",
-                        )
-                    }
-                    // Android benchmark (EpubReaderControls.kt:1283-1289): spinner
-                    // over play while temporarily paused (e.g. finger on screen).
-                    if (isTempPaused && isPlaying) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(36.dp),
-                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
-                            strokeWidth = 2.dp
-                        )
-                    }
-                }
-            }
-        } else Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(contentAlignment = Alignment.Center) {
-                    IconButton(onClick = onPlayPause) {
-                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = if (isPlaying) "Pause auto scroll" else "Resume auto scroll")
-                    }
-                    // Android benchmark (EpubReaderControls.kt:1447-1453).
-                    if (isTempPaused && isPlaying) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(48.dp),
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                            strokeWidth = 3.dp
-                        )
-                    }
-                }
-                Box {
-                    TextButton(onClick = { showModeMenu = true }) {
-                        Text(if (isLocalMode) "Local Speed" else "Global Speed")
-                        Icon(
-                        Icons.Default.ArrowDropDown,
-                        contentDescription = readerString("auto_scroll_select_mode", "Select auto-scroll mode"),
-                    )
-                    }
-                    DropdownMenu(expanded = showModeMenu, onDismissRequest = { showModeMenu = false }) {
-                        DropdownMenuItem(
-                            text = { Column { Text(readerString("auto_scroll_global_label", "Global Speed"), fontWeight = FontWeight.Bold); Text(
-                                        readerString("auto_scroll_desc_global", "Applies to all files"),
-                                        style = MaterialTheme.typography.bodySmall,
-                                    ) } },
-                            trailingIcon = { if (!isLocalMode) Text("✓") },
-                            onClick = { onLocalModeChange(false); showModeMenu = false }
-                        )
-                        DropdownMenuItem(
-                            text = { Column { Text(readerString("auto_scroll_local_label", "Local Speed"), fontWeight = FontWeight.Bold); Text(
-                                        readerString("auto_scroll_desc_local", "Saved for this file only"),
-                                        style = MaterialTheme.typography.bodySmall,
-                                    ) } },
-                            trailingIcon = { if (isLocalMode) Text("✓") },
-                            onClick = { onLocalModeChange(true); showModeMenu = false }
-                        )
-                    }
-                }
-                Spacer(Modifier.weight(1f))
-                Text("${sharedMobileAutoScrollSpeedLabel(profile.speed)}x", style = MaterialTheme.typography.labelLarge)
-                IconButton(onClick = onScrollToTop) {
-                    Icon(
-                        Icons.Default.ArrowUpward,
-                        contentDescription = readerString("auto_scroll_scroll_to_top", "Scroll to top"),
-                    )
-                }
-                IconButton(onClick = onMusicianModeToggle) {
-                    Icon(
-                        SharedReaderIcons.MusicNote,
-                        contentDescription = if (isMusicianMode) "Disable musician mode" else "Enable musician mode",
-                        tint = if (isMusicianMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                IconButton(onClick = onInputModeToggle) {
-                    Icon(
-                        Icons.Default.SwapHoriz,
-                        contentDescription = readerString("auto_scroll_swap_controls", "Swap speed controls"),
-                    )
-                }
-                IconButton(onClick = { onCollapseChange(true) }) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = readerString("auto_scroll_collapse", "Collapse Auto Scroll"),
-                    )
-                }
-                IconButton(onClick = onClose) {
-                    Icon(
-                        Icons.Default.Close,
-                        contentDescription = readerString("desktop_stop_auto_scroll", "Stop auto scroll"),
-                    )
-                }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                SharedMobileEpubSpeedMenu("Min", profile.minSpeed, speedOptions, onMinSpeedChange)
-                SharedMobileEpubSpeedMenu("Max", profile.maxSpeed, speedOptions, onMaxSpeedChange)
-            }
-            if (useSlider) {
-                Slider(
-                    value = profile.speed,
-                    onValueChange = { onSpeedChange((it * 10f).roundToInt() / 10f) },
-                    valueRange = profile.minSpeed..profile.maxSpeed.coerceAtLeast(profile.minSpeed + 0.1f),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    IconButton(onClick = { onSpeedChange((profile.speed - 0.1f).coerceAtLeast(profile.minSpeed)) }) {
-                        Icon(Icons.Default.Remove, contentDescription = readerString("content_desc_slower", "Slower"))
-                    }
-                    Text("${sharedMobileAutoScrollSpeedLabel(profile.speed)}x", style = MaterialTheme.typography.titleMedium)
-                    IconButton(onClick = { onSpeedChange((profile.speed + 0.1f).coerceAtMost(profile.maxSpeed)) }) {
-                        Icon(Icons.Default.Add, contentDescription = readerString("content_desc_faster", "Faster"))
-                    }
-                }
-            }
-            }
-        }
-    }
-}
-
-@Composable
-internal fun SharedMobileEpubSpeedMenu(
-    label: String,
-    value: Float,
-    options: List<Float>,
-    onValueChange: (Float) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        TextButton(onClick = { expanded = true }) {
-            Text("$label ${sharedMobileAutoScrollSpeedLabel(value)}x")
-            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            options.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text("${sharedMobileAutoScrollSpeedLabel(option)}x") },
-                    trailingIcon = { if (option == value) Text("✓") },
-                    onClick = {
-                        onValueChange(option)
-                        expanded = false
-                    },
-                )
-            }
-        }
-    }
-}
-
-internal fun sharedMobileAutoScrollSpeedLabel(value: Float): String =
-    if (value % 1f == 0f) value.roundToInt().toString() else ((value * 10f).roundToInt() / 10f).toString()
-
-@Composable
 internal fun sharedMobileEpubTextureBitmap(textureId: String?): ImageBitmap? {
     val resource = when (textureId) {
         ReaderTexture.NATURAL_WHITE.id -> Res.drawable.ep_naturalwhite
@@ -366,19 +159,29 @@ internal fun sharedMobileEpubTextureBitmap(textureId: String?): ImageBitmap? {
 }
 
 internal fun sharedMobileEpubAutoScrollStartScript(speed: Float): String {
-    val effectiveSpeed = readerAutoScrollPixelsPerSecond(speed)
-    // Android parity (epub_reader.js autoScroll loop): Android accumulates
-    // speed*0.5px per animation frame with no timer floor, so top speeds stay
-    // distinct. The old 1px-tick interval (1000/speed, 6ms floor) capped iOS at
-    // ~166px/s, making 5.5x-10x look dead. Use a fixed 50ms tick with a pixel
-    // accumulator instead: fractional speeds stay smooth and the full 0.1-10x
-    // range maps to distinct px/s with no clamp.
+    val pixelsPerSecond = readerAutoScrollPixelsPerSecond(speed)
+    // Android parity (epub_reader.js autoScroll loop): Android runs the pixel
+    // accumulator off requestAnimationFrame, so the scroll moves in lockstep
+    // with the display refresh. iOS used a 50ms setInterval, which can only
+    // tick ~20 times a second and lands off-frame — that is what made the
+    // EPUB auto-scroll visibly jitter. Drive the same accumulator from
+    // requestAnimationFrame and scale it by the real frame delta, so the
+    // speed stays $pixelsPerSecond px/s (readerAutoScrollPixelsPerSecond) on
+    // 60Hz and 120Hz displays alike.
     return """
     (function () {
-      if (window.readerIosAutoScrollTimer) window.clearInterval(window.readerIosAutoScrollTimer);
+      if (window.readerIosAutoScrollFrame) window.cancelAnimationFrame(window.readerIosAutoScrollFrame);
+      window.readerIosAutoScrollFrame = null;
       window.readerIosAutoScrollAccumulator = 0;
-      window.readerIosAutoScrollTimer = window.setInterval(function () {
-        window.readerIosAutoScrollAccumulator += $effectiveSpeed * 0.05;
+      window.readerIosAutoScrollLastFrame = 0;
+      window.readerIosAutoScrollStep = function (timestamp) {
+        if (!window.readerIosAutoScrollFrame) return;
+        var previous = window.readerIosAutoScrollLastFrame || timestamp;
+        var deltaSeconds = (timestamp - previous) / 1000;
+        window.readerIosAutoScrollLastFrame = timestamp;
+        window.readerIosAutoScrollFrame = window.requestAnimationFrame(window.readerIosAutoScrollStep);
+        if (deltaSeconds <= 0 || deltaSeconds > 0.1) return;
+        window.readerIosAutoScrollAccumulator += $pixelsPerSecond * deltaSeconds;
         var pixels = Math.floor(window.readerIosAutoScrollAccumulator);
         if (pixels >= 1) {
           window.readerIosAutoScrollAccumulator -= pixels;
@@ -386,21 +189,22 @@ internal fun sharedMobileEpubAutoScrollStartScript(speed: Float): String {
         }
         var root = document.documentElement;
         if (window.scrollY + window.innerHeight >= root.scrollHeight - 2) {
-          window.clearInterval(window.readerIosAutoScrollTimer);
-          window.readerIosAutoScrollTimer = null;
+          window.cancelAnimationFrame(window.readerIosAutoScrollFrame);
+          window.readerIosAutoScrollFrame = null;
           if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
             window.kmpJsBridge.callNative('readerAutoScrollChapterEnd', '{}');
           }
         }
-      }, 50);
+      };
+      window.readerIosAutoScrollFrame = window.requestAnimationFrame(window.readerIosAutoScrollStep);
     })();
 """.trimIndent()
 }
 
 internal val SharedMobileEpubAutoScrollStopScript = """
     (function () {
-      if (window.readerIosAutoScrollTimer) window.clearInterval(window.readerIosAutoScrollTimer);
-      window.readerIosAutoScrollTimer = null;
+      if (window.readerIosAutoScrollFrame) window.cancelAnimationFrame(window.readerIosAutoScrollFrame);
+      window.readerIosAutoScrollFrame = null;
     })();
 """.trimIndent()
 

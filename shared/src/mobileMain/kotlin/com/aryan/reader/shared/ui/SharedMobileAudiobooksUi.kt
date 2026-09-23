@@ -1746,7 +1746,15 @@ private val SharedAudiobookSort.fallbackLabel: String
     }
 
 private fun audiobookSpeedLabel(speed: Float): String {
-    val number = if (speed % 1f == 0f) speed.toInt().toString() else speed.toString()
+    // Snap to the 0.01 grid before formatting: raw Float interpolation leaks
+    // noise such as `1.2000001` on iOS for speeds that are computed rather than
+    // taken from the fixed option list.
+    val scaled = (speed.coerceIn(0.1f, 10f) * 100f).roundToInt()
+    val number = when {
+        scaled % 100 == 0 -> "${scaled / 100}"
+        scaled % 10 == 0 -> "${scaled / 100}.${(scaled % 100) / 10}"
+        else -> "${scaled / 100}.${(scaled % 100).toString().padStart(2, '0')}"
+    }
     return "$number×"
 }
 

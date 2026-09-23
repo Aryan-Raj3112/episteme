@@ -724,6 +724,18 @@ fun SharedMobileEpubReaderScreen(
     LaunchedEffect(localTts.isSessionActive) {
         if (!localTts.isSessionActive) detachedTtsChunkIndex = null
     }
+    LaunchedEffect(localTts.isSessionActive, cloudTtsState.isPlaying, cloudTtsState.isLoading) {
+        // Android parity (EpubReaderScreen.startTts): starting TTS turns
+        // auto-scroll off. Android never lifts the auto-scroll overlay above the
+        // TTS bar because the two can only be active one at a time.
+        val ttsActive = localTts.isSessionActive || cloudTtsState.isPlaying || cloudTtsState.isLoading
+        if (ttsActive && autoScrollModeActive) {
+            autoScrollModeActive = false
+            autoScroll = false
+            autoScrollTemporarilyPaused = false
+            autoScrollPauseRequestId++
+        }
+    }
     LaunchedEffect(loadedBook, searchQuery, searchRequestId, pages) {
         val epub = loadedBook
         val query = searchQuery.trim()
@@ -2354,9 +2366,15 @@ fun SharedMobileEpubReaderScreen(
                         },
                         autoScroll = autoScrollModeActive,
                         onAutoScrollChange = { active ->
+                            // Android parity (onStartAutoScroll): starting
+                            // auto-scroll starts playing and reveals the chrome
+                            // unless musician mode owns the screen.
                             autoScrollModeActive = active
                             autoScroll = active
-                            if (active && autoScrollMusicianMode) showChrome = false
+                            if (active) {
+                                autoScrollTemporarilyPaused = false
+                                showChrome = !autoScrollMusicianMode
+                            }
                         },
                     )
                 }
@@ -2506,6 +2524,28 @@ fun SharedMobileEpubReaderScreen(
                         )
                     }
                 }
+                val epubEffectiveBottomInset = if (!navigationUiHidden) {
+                    WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
+                } else {
+                    0.dp
+                }
+                // Android parity (EpubReaderScreen autoScrollPadding /
+                // autoScrollAlignmentBias): the overlay clears the bottom
+                // toolbar plus the home-indicator inset when the chrome is
+                // visible and drops to 32.dp when it is hidden, hugging the
+                // right edge while collapsed and centring when expanded. The
+                // old fixed -52.dp/-12.dp offset ignored the inset, which is
+                // why it overlapped the bottom bar on device.
+                val epubAutoScrollBottomPadding by animateDpAsState(
+                    targetValue = sharedMobileEpubAutoScrollBottomPadding(showChrome, epubEffectiveBottomInset),
+                    animationSpec = tween(motionPolicy.durationMillis(200)),
+                    label = "EpubAutoScrollBottomPadding"
+                )
+                val epubAutoScrollAlignBias by animateFloatAsState(
+                    targetValue = sharedMobileAutoScrollAlignmentBias(autoScrollCollapsed),
+                    animationSpec = tween(motionPolicy.durationMillis(200)),
+                    label = "EpubAutoScrollAlign"
+                )
                 // Android parity: auto-scroll chrome slides+fades with the
                 // shared 200ms spec instead of popping.
                 AnimatedVisibility(
@@ -2513,20 +2553,35 @@ fun SharedMobileEpubReaderScreen(
                     enter = slideInVertically(animationSpec = tween(motionPolicy.durationMillis(200))) { it } + fadeIn(animationSpec = tween(motionPolicy.durationMillis(200))),
                     exit = slideOutVertically(animationSpec = tween(motionPolicy.durationMillis(200))) { it } + fadeOut(animationSpec = tween(motionPolicy.durationMillis(200))),
                     modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(horizontal = 12.dp)
+                        .align(BiasAlignment(epubAutoScrollAlignBias, 1f))
+                        .padding(bottom = epubAutoScrollBottomPadding)
+                        .padding(horizontal = SharedMobileAutoScrollHorizontalPadding)
                 ) {
-                    SharedMobileEpubAutoScrollControls(
+                    SharedMobileAutoScrollControls(
                         isPlaying = autoScroll,
                         isTempPaused = autoScrollTemporarilyPaused,
-                        profile = autoScrollProfile,
+                        speed = autoScrollProfile.speed,
+                        minSpeed = autoScrollProfile.minSpeed,
+                        maxSpeed = autoScrollProfile.maxSpeed,
                         isLocalMode = autoScrollIsLocal,
                         useSlider = autoScrollUseSlider,
                         isMusicianMode = autoScrollMusicianMode,
                         isCollapsed = autoScrollCollapsed,
-                        onPlayPause = { autoScroll = !autoScroll },
+                        onPlayPause = {
+                            // Android parity (onPlayPauseToggle): pausing also
+                            // clears the temporary pause so a resumed stroke can
+                            // never stay stuck behind the spinner.
+                            if (autoScroll) {
+                                autoScroll = false
+                                autoScrollTemporarilyPaused = false
+                                autoScrollPauseRequestId++
+                            } else {
+                                autoScroll = true
+                                autoScrollTemporarilyPaused = false
+                            }
+                        },
                         onSpeedChange = { requested ->
-                            val next = autoScrollProfile.copy(speed = requested).sanitized()
+                            val next = autoScrollProfile.copy(speed = snapSharedMobileAutoScrollSpeed(requested)).sanitized()
                             autoScrollProfile = next
                             if (autoScrollIsLocal) {
                                 autoScrollLocalProfile = next
@@ -2535,13 +2590,13 @@ fun SharedMobileEpubReaderScreen(
                             }
                         },
                         onMinSpeedChange = { requested ->
-                            val next = autoScrollProfile.withMinSpeed(requested)
+                            val next = autoScrollProfile.withMinSpeed(snapSharedMobileAutoScrollSpeed(requested))
                             autoScrollProfile = next
                             if (autoScrollIsLocal) autoScrollLocalProfile = next
                             else onReaderAutoScrollProfileChange(next)
                         },
                         onMaxSpeedChange = { requested ->
-                            val next = autoScrollProfile.withMaxSpeed(requested)
+                            val next = autoScrollProfile.withMaxSpeed(snapSharedMobileAutoScrollSpeed(requested))
                             autoScrollProfile = next
                             if (autoScrollIsLocal) autoScrollLocalProfile = next
                             else onReaderAutoScrollProfileChange(next)
@@ -2581,10 +2636,10 @@ fun SharedMobileEpubReaderScreen(
                             autoScroll = false
                             autoScrollModeActive = false
                             autoScrollTemporarilyPaused = false
+                            // Android parity (AutoScrollControls onClose):
+                            // closing the overlay restores the chrome.
                             showChrome = true
                         },
-                        modifier = Modifier
-                            .offset(y = if (showChrome) (-52).dp else (-12).dp)
                     )
                 }
                 if (autoScrollModeActive && autoScrollMusicianMode && settings.readingMode == ReaderReadingMode.VERTICAL) {
@@ -2693,11 +2748,6 @@ fun SharedMobileEpubReaderScreen(
                 // the home-indicator inset and overlapped when both bars showed,
                 // so derive the stack from the toolbar + safe inset like the
                 // benchmark (bottomPadding + 45.dp + jump).
-                val epubEffectiveBottomInset = if (!navigationUiHidden) {
-                    WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
-                } else {
-                    0.dp
-                }
                 val epubBottomChromePadding = sharedMobileEpubBottomChromePadding(epubEffectiveBottomInset)
                 val epubJumpVisible = showChrome && !showSearch && jumpHistory.hasJumpTargets
                 val epubPageInfoBottomVisible = pageInfoVisible &&

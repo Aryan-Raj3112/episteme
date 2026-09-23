@@ -24,6 +24,22 @@ fun sharedPdfIsInkDownAllowed(isStylusOnlyMode: Boolean, type: PointerType): Boo
     return !isStylusOnlyMode || type != PointerType.Touch
 }
 
+/**
+ * Android parity (PdfVerticalReader globalDrawingModifier).
+ *
+ * Android starts an ink stroke on the pointer down: `onDrawStart` runs
+ * immediately and the down is consumed, so a stroke never waits for the touch
+ * slop and never starts from a stale position. It then feeds every pressed
+ * position change into the stroke without checking whether something upstream
+ * consumed that change (the shared renderer used to skip `isConsumed` changes,
+ * which silently dropped mid-line movement and whole fast strokes on iOS).
+ *
+ * Keeping the rule in one place lets both platforms share the exact contract
+ * and pins it with tests.
+ */
+fun sharedPdfInkStrokeConsumesMove(isPressed: Boolean, positionChanged: Boolean): Boolean =
+    isPressed && positionChanged
+
 sealed interface SharedPdfInkRenderData {
     data class Standard(
         val path: Path,
