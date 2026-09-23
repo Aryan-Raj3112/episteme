@@ -5,9 +5,9 @@
     <span>&nbsp;Episteme Reader</span>
   </h1>
 
-  <p>A modern, offline-first, privacy-focused document and e-book reader for Android and desktop, built with Kotlin Multiplatform and Compose.</p>
+  <p>A modern, offline-first, privacy-focused document and e-book reader for mobile and desktop, built with Kotlin Multiplatform and Compose.</p>
 
-  <a href="https://epistemereader.com"><img alt="Download from epistemereader.com" src="https://img.shields.io/badge/Download-epistemereader.com-2f6f5e?style=for-the-badge" height="44" align="absmiddle"/></a>&nbsp;&nbsp;<a href="https://f-droid.org/packages/com.aryan.reader.oss/"><img alt="Get it on F-Droid" src="https://f-droid.org/badge/get-it-on.png" height="66" align="absmiddle"/></a>&nbsp;<a href="https://play.google.com/store/apps/details?id=com.aryan.reader"><img alt="Get it on Google Play" src="https://upload.wikimedia.org/wikipedia/commons/7/78/Google_Play_Store_badge_EN.svg" height="44" align="absmiddle"/></a>&nbsp;&nbsp;&nbsp;<a href="https://apps.obtainium.imranr.dev/redirect.html?r=obtainium://add/https://github.com/Aryan-Raj3112/episteme"><img alt="Get it on Obtainium" src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" height="64" align="absmiddle"/></a>
+  <a href="https://epistemereader.com"><img alt="Download from epistemereader.com" src="https://img.shields.io/badge/Download-epistemereader.com-2f6f5e?style=for-the-badge" height="44" align="absmiddle"/></a>&nbsp;&nbsp;<a href="https://f-droid.org/packages/com.aryan.reader.oss/"><img alt="Get it on F-Droid" src="https://f-droid.org/badge/get-it-on.png" height="66" align="absmiddle"/></a>&nbsp;<a href="https://play.google.com/store/apps/details?id=com.aryan.reader"><img alt="Get it on Google Play" src="https://upload.wikimedia.org/wikipedia/commons/7/78/Google_Play_Store_badge_EN.svg" height="44" align="absmiddle"/></a>&nbsp;&nbsp;<a href="https://apps.apple.com/us/app/episteme-pdf-ebook-reader/id6803775133"><img alt="Download on the App Store" src="https://upload.wikimedia.org/wikipedia/commons/3/3c/Download_on_the_App_Store_Badge.svg" height="44" align="absmiddle"/></a>&nbsp;&nbsp;&nbsp;<a href="https://apps.obtainium.imranr.dev/redirect.html?r=obtainium://add/https://github.com/Aryan-Raj3112/episteme"><img alt="Get it on Obtainium" src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" height="64" align="absmiddle"/></a>
 
 </div>
 
@@ -16,9 +16,9 @@
 <table>
   <tr>
     <td width="50%" align="center">
-      <img src="docs/EPISTEME.png" alt="Episteme Reader on Android"/>
+      <img src="docs/EPISTEME.png" alt="Episteme Reader on mobile"/>
       <br/>
-      <sub>Android</sub>
+      <sub>Mobile</sub>
     </td>
     <td width="50%" align="center">
       <img src="docs/EPISTEME_desktop.png" alt="Episteme Reader on desktop"/>
@@ -30,7 +30,7 @@
 
 ## Overview
 
-Episteme Reader is a customizable reader for documents, e-books, comics, and text-heavy files. The app is designed around local-first reading, deep typography controls, flexible layouts, and a consistent Kotlin Multiplatform core across Android and desktop.
+Episteme Reader is a customizable reader for documents, e-books, comics, and text-heavy files. The app is designed around local-first reading, deep typography controls, flexible layouts, and a consistent Kotlin Multiplatform core across mobile and desktop.
 
 The same core reading experience is available across editions. The main differences are distribution channel, network access, and whether proprietary online services are included.
 
