@@ -24,12 +24,22 @@ class SharedPdfInkAppearanceTest {
     }
 
     @Test
+    fun `appearance stream draws a zero-length round-capped segment for a single-point dot`() {
+        val content = sharedPdfInkAppearanceContent(
+            pagePoints = listOf(PdfPagePoint(10f, 20f)),
+            strokeWidthPdfUnits = 2.5f,
+            colorArgb = 0xFFFF0000.toInt(),
+        )
+
+        assertTrue(content.contains("10 20 m"))
+        assertTrue(content.contains("10 20 l"))
+        assertTrue(content.contains("1 J\n1 j\n"))
+        assertTrue(content.contains("S\n"))
+    }
+
+    @Test
     fun `appearance stream is empty for degenerate input`() {
         assertEquals("", sharedPdfInkAppearanceContent(emptyList(), 1f, 0xFF000000.toInt()))
-        assertEquals(
-            "",
-            sharedPdfInkAppearanceContent(listOf(PdfPagePoint(1f, 1f)), 1f, 0xFF000000.toInt()),
-        )
         assertEquals(
             "",
             sharedPdfInkAppearanceContent(

@@ -1633,7 +1633,7 @@ object DesktopPdfium {
         annotation: SharedPdfInkAnnotationExport
     ): Boolean {
         if (annotation.pageIndex !in 0 until pageCount ||
-            annotation.points.size < 2
+            annotation.points.isEmpty()
         ) return false
 
         return runCatching {
@@ -1641,7 +1641,7 @@ object DesktopPdfium {
                 val pageWidth = api.FPDF_GetPageWidthF(page).takeIf { it > 0f } ?: return@usePointer false
                 val pageHeight = api.FPDF_GetPageHeightF(page).takeIf { it > 0f } ?: return@usePointer false
                 val exportPoints = annotation.pdfInkAppearancePoints(pageWidth, pageHeight)
-                if (exportPoints.size < 2) return@usePointer false
+                if (exportPoints.isEmpty()) return@usePointer false
                 val nativePoints = FsPointF().toArray(exportPoints.size) as Array<FsPointF>
                 var minX = pageWidth
                 var maxX = 0f

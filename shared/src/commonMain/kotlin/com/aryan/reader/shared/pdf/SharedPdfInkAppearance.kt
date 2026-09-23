@@ -16,7 +16,7 @@ fun sharedPdfInkAppearanceContent(
     strokeWidthPdfUnits: Float,
     colorArgb: Int,
 ): String {
-    if (pagePoints.size < 2 || strokeWidthPdfUnits <= 0f) return ""
+    if (pagePoints.isEmpty() || strokeWidthPdfUnits <= 0f) return ""
 
     val red = ((colorArgb ushr 16) and 0xFF) / 255f
     val green = ((colorArgb ushr 8) and 0xFF) / 255f
@@ -34,11 +34,23 @@ fun sharedPdfInkAppearanceContent(
         append(" w\n")
         // Round caps/joins match on-screen pen rendering; PDFium default is butt/miter.
         append("1 J\n1 j\n")
+        // Single-point taps are zero-length segments: with round caps (1 J),
+        // PDF viewers paint a filled circle of diameter = line width (the dot).
         pagePoints.forEachIndexed { index, point ->
             append(pdfFixed(point.x))
             append(' ')
             append(pdfFixed(point.y))
-            append(if (index == 0) " m\n" else " l\n")
+            if (index == 0) {
+                append(" m\n")
+                if (pagePoints.size == 1) {
+                    append(pdfFixed(point.x))
+                    append(' ')
+                    append(pdfFixed(point.y))
+                    append(" l\n")
+                }
+            } else {
+                append(" l\n")
+            }
         }
         append("S\n")
         append("Q\n")

@@ -73,6 +73,38 @@ class PdfiumAnnotationExporterTest {
     }
 
     @Test
+    fun `buildPayload exports single-point ink dots with zero-length appearance`() {
+        val payload = PdfiumAnnotationExporter.buildPayload(
+            inkAnnotations = mapOf(
+                0 to listOf(
+                    PdfAnnotation(
+                        type = AnnotationType.INK,
+                        inkType = InkType.PEN,
+                        pageIndex = 0,
+                        points = listOf(PdfPoint(0.25f, 0.75f)),
+                        color = Color(0xFFFF0000),
+                        strokeWidth = 0.0125f,
+                        id = "dot-1"
+                    )
+                )
+            ),
+            textBoxes = emptyList(),
+            highlights = emptyList()
+        )
+
+        assertArrayEquals(intArrayOf(0), payload.inkPageIndices)
+        assertArrayEquals(intArrayOf(1), payload.inkPointCounts)
+        assertArrayEquals(floatArrayOf(0.25f, 0.75f), payload.inkPoints, 0.0001f)
+        assertEquals("dot-1", payload.inkNames.single())
+        val appearance = payload.inkAppearances.single()
+        assertTrue(appearance.startsWith("q\n"))
+        assertTrue(appearance.contains(" m"))
+        assertTrue(appearance.contains(" l"))
+        assertTrue(appearance.contains("S\n"))
+        assertTrue(appearance.contains("1 J\n1 j\n"))
+    }
+
+    @Test
     fun `buildPayload trims chisel highlighter endpoints for pdf ink caps`() {
         val payload = PdfiumAnnotationExporter.buildPayload(
             inkAnnotations = mapOf(

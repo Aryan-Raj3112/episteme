@@ -285,7 +285,7 @@ private fun addIosPdfInkAnnotation(
     pageHeight: Float,
 ): Boolean {
     val points = ink.pdfInkAppearancePoints(pageWidth, pageHeight)
-    if (points.size < 2) return false
+    if (points.isEmpty()) return false
     val annotation = FPDFPage_CreateAnnot(page, FPDF_ANNOT_INK) ?: return false
     return try {
         memScoped {

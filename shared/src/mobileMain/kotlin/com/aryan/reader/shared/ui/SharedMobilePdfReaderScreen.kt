@@ -1478,7 +1478,9 @@ fun SharedMobilePdfReaderHost(
             commitEraseBatch(pageIndex)
             return
         }
-        if (activeStroke.size < 2 || effectiveTool == PdfInkTool.NONE || effectiveTool == PdfInkTool.TEXT) {
+        // Android parity: a single-point tap commits a visible ink dot
+        // (size == 1). Empty strokes still do nothing.
+        if (activeStroke.isEmpty() || effectiveTool == PdfInkTool.NONE || effectiveTool == PdfInkTool.TEXT) {
             activeStroke.clear()
             commitEraseBatch(pageIndex)
             return

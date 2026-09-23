@@ -37,6 +37,21 @@ class IosPdfInkAppearanceExportTest {
 
     @Test
     fun inkExportWritesAppearanceStreamAndInkList() = runTest {
+        exportAndAssertInkAppearance(
+            points = listOf(
+                PdfPagePoint(0.2f, 0.3f),
+                PdfPagePoint(0.5f, 0.6f),
+                PdfPagePoint(0.8f, 0.4f),
+            ),
+        )
+    }
+
+    @Test
+    fun inkExportWritesSinglePointDotAppearance() = runTest {
+        exportAndAssertInkAppearance(points = listOf(PdfPagePoint(0.4f, 0.5f)))
+    }
+
+    private fun exportAndAssertInkAppearance(points: List<PdfPagePoint>) = runTest {
         val source = temporaryPath(suffix = "source.pdf")
         val destination = temporaryPath(suffix = "exported.pdf")
         val staged = minimalPdfBytes().toNSData().writeToFile(source, atomically = true)
@@ -50,11 +65,7 @@ class IosPdfInkAppearanceExportTest {
                         pageIndex = 0,
                         kind = PdfAnnotationKind.INK,
                         tool = PdfInkTool.PEN,
-                        points = listOf(
-                            PdfPagePoint(0.2f, 0.3f),
-                            PdfPagePoint(0.5f, 0.6f),
-                            PdfPagePoint(0.8f, 0.4f),
-                        ),
+                        points = points,
                         colorArgb = 0xFFFF0000.toInt(),
                         strokeWidth = 2f,
                     ),
@@ -85,6 +96,7 @@ class IosPdfInkAppearanceExportTest {
         assertTrue(appearance.contains(" l"), "Exported AP missing lineto operator: $appearance")
         assertTrue(appearance.contains("S"), "Exported AP missing stroke operator: $appearance")
         assertTrue(appearance.contains("RG"), "Exported AP missing stroke color: $appearance")
+        assertTrue(appearance.contains("1 J"), "Exported AP missing round line cap: $appearance")
 
         NSFileManager.defaultManager.removeItemAtPath(source, error = null)
         NSFileManager.defaultManager.removeItemAtPath(destination, error = null)
@@ -105,25 +117,21 @@ class IosPdfInkAppearanceExportTest {
                         if (FPDFAnnot_GetSubtype(annot) != FPDF_ANNOT_INK) continue
                         return memScoped {
                             val length = FPDFAnnot_GetAP(annot, FPDF_ANNOT_APPEARANCEMODE_NORMAL, null, 0u)
-                                .toLong()
-                            assertTrue(length > 1L, "Ink annotation has empty /AP")
-                            val buffer = allocArray<Short>((length / 2 + 1).toInt())
-                            FPDFAnnot_GetAP(
-                                annot,
-                                FPDF_ANNOT_APPEARANCEMODE_NORMAL,
-                                buffer,
-                                length.toULong(),
-                            )
-                            // UTF-16LE → String
-                            buildString {
-                                var offset = 0
-                                while (offset < length) {
-                                    val code = buffer[offset / 2].toInt() and 0xFFFF
-                                    if (code == 0) break
-                                    append(code.toChar())
-                                    offset += 2
-                                }
+                                .toInt()
+                            assertTrue(length > 2, "Ink annotation has empty /AP")
+                            val utf16 = UShortArray((length + 1) / 2)
+                            val written = utf16.usePinned { pinned ->
+                                FPDFAnnot_GetAP(
+                                    annot,
+                                    FPDF_ANNOT_APPEARANCEMODE_NORMAL,
+                                    pinned.addressOf(0),
+                                    length.toULong(),
+                                ).toInt()
                             }
+                            assertTrue(written > 2, "FPDFAnnot_GetAP wrote no appearance")
+                            utf16.takeWhile { it != 0.toUShort() }
+                                .map { it.toInt().toChar() }
+                                .joinToString("")
                         }
                     } finally {
                         FPDFPage_CloseAnnot(annot)

@@ -2504,14 +2504,27 @@ internal fun SharedMobilePdfPageSurface(
                                         committed = true
                                     } else {
                                         // Android parity (PdfPageComposable tap
-                                        // -> onDrawStart -> onDrawEnd): a tap
-                                        // without drag dismisses the
-                                        // tool-settings popup like the
-                                        // drag-start path does. Taps previously
-                                        // fell through here without notifying,
-                                        // so the popup stayed open on iOS.
-                                        latestOnInkStrokeStart(pageIndex)
-                                        clearOwnedStroke()
+                                        // -> onDrawStart -> onDrawEnd): a plain
+                                        // tap commits a single-point ink dot.
+                                        // When the tool-settings popup is open,
+                                        // stroke start only dismisses it (no
+                                        // drawing), matching onDrawStartStable.
+                                        if (latestOnInkStrokeStart(pageIndex)) {
+                                            clearOwnedStroke()
+                                            return@awaitEachGesture
+                                        }
+                                        val strokeEraser = eraserOverride || selectedTool == PdfInkTool.ERASER
+                                        val drawsInk = !strokeEraser &&
+                                            selectedTool != PdfInkTool.NONE &&
+                                            selectedTool != PdfInkTool.TEXT
+                                        if (drawsInk && localCanvasSize.width > 0 && localCanvasSize.height > 0) {
+                                            clearOwnedStroke()
+                                            (activeStroke as? MutableList<PdfPagePoint>)?.add(
+                                                down.position.toSharedMobilePdfPoint(localCanvasSize)
+                                            )
+                                        }
+                                        onFinishInkStroke(pageIndex, eraserOverride)
+                                        committed = true
                                     }
                                     return@awaitEachGesture
                                 }

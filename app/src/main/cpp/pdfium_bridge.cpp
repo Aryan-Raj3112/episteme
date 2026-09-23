@@ -1295,7 +1295,9 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
         int pageIndex = inkPageIndices[i];
         int pointOffset = inkPointOffsets[i];
         int pointCount = inkPointCounts[i];
-        if (pageIndex < 0 || pageIndex >= pageCount || pointOffset < 0 || pointCount < 2 ||
+        // Single-point taps export as zero-length ink strokes (dot). Empty
+        // point lists are invalid; PDFium still needs at least one point.
+        if (pageIndex < 0 || pageIndex >= pageCount || pointOffset < 0 || pointCount < 1 ||
             (pointOffset + pointCount) * 2 > static_cast<int>(inkPoints.size())) {
             hadFailure = true;
             continue;
