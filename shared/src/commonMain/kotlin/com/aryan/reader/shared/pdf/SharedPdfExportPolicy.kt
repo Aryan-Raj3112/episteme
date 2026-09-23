@@ -41,3 +41,18 @@ fun sharedPdfExportMode(snapshot: SharedPdfExportSnapshot): SharedPdfExportMode 
         SharedPdfExportMode.ORIGINAL
     }
 }
+
+/**
+ * Android benchmark (`PdfViewerScreen.shareOriginalPdf` / `launchOriginalSaveCopy`):
+ * an original export is a raw source-byte copy. Strip reader-owned content so
+ * [sharedPdfExportMode] resolves to [SharedPdfExportMode.ORIGINAL] (and unsupported
+ * rich-text states never block a pure original export when the format dialog was skipped).
+ */
+fun sharedPdfOriginalExportSnapshot(state: SharedPdfReaderState): SharedPdfExportSnapshot =
+    SharedPdfExportSnapshot(
+        state = state.copy(
+            annotations = emptyList(),
+            blankPageInsertions = emptyList(),
+            richTextDocumentJson = "",
+        ),
+    )

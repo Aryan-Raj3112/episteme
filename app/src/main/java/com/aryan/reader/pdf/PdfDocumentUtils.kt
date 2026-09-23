@@ -194,13 +194,13 @@ internal fun generateShortId(): String {
 }
 
 internal fun getSuggestedFilename(originalName: String?, isAnnotated: Boolean): String {
-    val base = originalName?.substringBeforeLast('.') ?: "Document"
-    val safeBase = base.replace("[^a-zA-Z0-9._-]".toRegex(), "_").take(50)
-
-    val suffix = if (isAnnotated) "_annotated" else ""
-    val shortId = generateShortId()
-
-    return "${safeBase}${suffix}_${shortId}.pdf"
+    // Single source of truth lives in shared (SharedPdfExportFilenames) so iOS share/save uses
+    // the identical suggested-name logic; Android remains the benchmark behavior.
+    return com.aryan.reader.shared.pdf.suggestSharedPdfExportFilename(
+        originalName = originalName,
+        isAnnotated = isAnnotated,
+        randomSuffix = Random.nextInt(1000, 9999),
+    )
 }
 
 internal fun hasExportablePdfAnnotations(

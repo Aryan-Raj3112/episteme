@@ -272,6 +272,7 @@ import com.aryan.reader.shared.pdf.SharedPdfReaderGlobalResource
 import com.aryan.reader.shared.pdf.SharedPdfReaderHostConfig
 import com.aryan.reader.shared.pdf.SharedPdfReaderSessionKey
 import com.aryan.reader.shared.pdf.SharedPdfExportSnapshot
+import com.aryan.reader.shared.pdf.sharedPdfOriginalExportSnapshot
 import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
 import com.aryan.reader.shared.pdf.SharedPdfVirtualPage
@@ -2082,25 +2083,34 @@ fun SharedMobilePdfReaderHost(
                             onWordReplacements = { if (ownsGlobalModal && ownsTts) showTtsReplacementsSheet = true },
                             onNativeAction = { action ->
                                 if (ownsNativeAction) {
+                                    val exportableAnnotations = shouldShowPdfAnnotationExportChoice(
+                                        sidecarsReady = true,
+                                        inkAnnotationCounts = readerState.annotations
+                                            .filter { it.kind == PdfAnnotationKind.INK }
+                                            .groupBy { it.pageIndex }
+                                            .values
+                                            .map { it.size },
+                                        textBoxCount = readerState.annotations.count { it.kind == PdfAnnotationKind.TEXT },
+                                        highlightCount = readerState.annotations.count { it.kind == PdfAnnotationKind.HIGHLIGHT },
+                                    )
                                     if (action == SharedMobilePdfNativeAction.PRINT && pdfPassword != null) {
                                         // Android parity (print-blocked banner):
                                         // a transient host banner, not a modal
                                         // dialog, using the benchmark copy.
                                         onPasswordProtectedPrint(passwordPrintBlockedMessage)
-                                    } else if (action == SharedMobilePdfNativeAction.SHARE && shouldShowPdfAnnotationExportChoice(
-                                            sidecarsReady = true,
-                                            inkAnnotationCounts = readerState.annotations
-                                                .filter { it.kind == PdfAnnotationKind.INK }
-                                                .groupBy { it.pageIndex }
-                                                .values
-                                                .map { it.size },
-                                            textBoxCount = readerState.annotations.count { it.kind == PdfAnnotationKind.TEXT },
-                                            highlightCount = readerState.annotations.count { it.kind == PdfAnnotationKind.HIGHLIGHT },
-                                        )
-                                    ) {
+                                    } else if (action == SharedMobilePdfNativeAction.SHARE && exportableAnnotations) {
                                         showShareFormatChoice = true
-                                    } else if (action == SharedMobilePdfNativeAction.SAVE_COPY) {
+                                    } else if (action == SharedMobilePdfNativeAction.SHARE) {
+                                        // Android benchmark (requestShare → shareOriginalPdf):
+                                        // without exportable annotations there is no dialog and the
+                                        // original bytes are staged/shared under a suggested name.
+                                        dispatchNativePdfAction(action, sharedPdfOriginalExportSnapshot(readerState))
+                                    } else if (action == SharedMobilePdfNativeAction.SAVE_COPY && exportableAnnotations) {
                                         showSaveFormatChoice = true
+                                    } else if (action == SharedMobilePdfNativeAction.SAVE_COPY) {
+                                        // Android benchmark (requestSaveCopy → launchOriginalSaveCopy):
+                                        // the format dialog is skipped when there is nothing to choose.
+                                        dispatchNativePdfAction(action, sharedPdfOriginalExportSnapshot(readerState))
                                     } else {
                                         dispatchNativePdfAction(action, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
                                     }
@@ -3836,7 +3846,10 @@ fun SharedMobilePdfReaderHost(
             },
             onOriginal = {
                 showShareFormatChoice = false
-                dispatchNativePdfAction(SharedMobilePdfNativeAction.SHARE_ORIGINAL, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
+                dispatchNativePdfAction(
+                    SharedMobilePdfNativeAction.SHARE_ORIGINAL,
+                    sharedPdfOriginalExportSnapshot(readerState),
+                )
             },
             onDismiss = { showShareFormatChoice = false },
         )
@@ -3863,13 +3876,7 @@ fun SharedMobilePdfReaderHost(
                 showSaveFormatChoice = false
                 dispatchNativePdfAction(
                     SharedMobilePdfNativeAction.SAVE_COPY,
-                    SharedPdfExportSnapshot(
-                        readerState.copy(
-                            annotations = emptyList(),
-                            blankPageInsertions = emptyList(),
-                            richTextDocumentJson = ""
-                        )
-                    )
+                    sharedPdfOriginalExportSnapshot(readerState),
                 )
             },
             onDismiss = { showSaveFormatChoice = false },

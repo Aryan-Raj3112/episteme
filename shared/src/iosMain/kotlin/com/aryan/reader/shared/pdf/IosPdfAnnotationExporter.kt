@@ -59,8 +59,12 @@ import platform.posix.FILE
 import platform.posix.fclose
 import platform.posix.fopen
 import platform.posix.fwrite
+import kotlin.math.max
+import kotlin.math.min
 
 private const val IOS_PDF_ANNOTATION_FLAG_PRINT = 4
+private const val IOS_PDF_HIGHLIGHT_ALPHA = 102u
+private const val IOS_PDF_MARKUP_ALPHA = 235u
 
 internal suspend fun exportIosPdfAnnotations(
     sourcePath: String,
@@ -68,7 +72,10 @@ internal suspend fun exportIosPdfAnnotations(
     password: String?,
     snapshot: SharedPdfExportSnapshot,
 ): Boolean = withContext(Dispatchers.Default) {
-    IosPdfiumRuntime.mutex.withLock {
+    // The caller surfaces false as an "Unable to export" message; never throw, or the reader
+    // format dialog dismisses with no feedback at all.
+    try {
+        IosPdfiumRuntime.mutex.withLock {
         IosPdfiumRuntime.ensureInitialized()
         val sourceDocument = FPDF_LoadDocument(sourcePath, password) ?: return@withLock false
         var destinationDocument: com.aryan.reader.shared.pdfium.c.FPDF_DOCUMENT? = null
@@ -170,6 +177,9 @@ internal suspend fun exportIosPdfAnnotations(
             destinationDocument?.let { FPDF_CloseDocument(it) } ?: FPDF_CloseDocument(sourceDocument)
             if (destinationDocument != null) FPDF_CloseDocument(sourceDocument)
         }
+        }
+    } catch (_: Throwable) {
+        false
     }
 }
 
@@ -190,11 +200,18 @@ private fun addIosPdfRasterOverlay(
     try {
         val image = FPDFPageObj_NewImageObj(document) ?: return@usePinned false
         if (FPDFImageObj_SetBitmap(null, 0, image, bitmap) == 0) return@usePinned false
-        val left = overlay.bounds.left * pageWidth
-        val bottom = (1f - overlay.bounds.bottom) * pageHeight
-        val width = (overlay.bounds.right - overlay.bounds.left) * pageWidth
-        val height = (overlay.bounds.bottom - overlay.bounds.top) * pageHeight
-        if (FPDFImageObj_SetMatrix(image, width.toDouble(), 0.0, 0.0, height.toDouble(), left.toDouble(), bottom.toDouble()) == 0) {
+        // Android benchmark (pdfium_bridge.cpp raster path): clamp normalized bounds and reject
+        // degenerate rects so a malformed overlay never inserts a zero-size image object.
+        val left = overlay.bounds.left.coerceIn(0f, 1f) * pageWidth
+        val top = (1f - overlay.bounds.top.coerceIn(0f, 1f)) * pageHeight
+        val right = overlay.bounds.right.coerceIn(0f, 1f) * pageWidth
+        val bottom = (1f - overlay.bounds.bottom.coerceIn(0f, 1f)) * pageHeight
+        val rectWidth = max(left, right) - min(left, right)
+        val rectHeight = max(top, bottom) - min(top, bottom)
+        if (rectWidth <= 0.5f || rectHeight <= 0.5f) return@usePinned false
+        val rectLeft = min(left, right)
+        val rectBottom = min(top, bottom)
+        if (FPDFImageObj_SetMatrix(image, rectWidth.toDouble(), 0.0, 0.0, rectHeight.toDouble(), rectLeft.toDouble(), rectBottom.toDouble()) == 0) {
             return@usePinned false
         }
         FPDFPage_InsertObject(page, image)
@@ -221,22 +238,43 @@ private fun addIosPdfInkAnnotation(
                 nativePoints[index].y = (1f - point.y.coerceIn(0f, 1f)) * pageHeight
             }
             if (FPDFAnnot_AddInkStroke(annotation, nativePoints, points.size.toULong()) < 0) return@memScoped false
-            val padding = ink.strokeWidth * pageWidth
+            // Android benchmark (pdfium_bridge.cpp ink path + DesktopPdfium): stroke width has a
+            // 0.25pt floor, the annot rect pads by 1.5x stroke, and opaque highlighters burn at
+            // alpha 102 to match the on-screen chisel rendering.
+            val strokeWidth = max(0.25f, ink.strokeWidth * pageWidth)
+            val padding = strokeWidth * 1.5f
+            val minX = points.minOf { it.x.coerceIn(0f, 1f) } * pageWidth
+            val maxX = points.maxOf { it.x.coerceIn(0f, 1f) } * pageWidth
+            val minPdfY = (1f - points.maxOf { it.y.coerceIn(0f, 1f) }) * pageHeight
+            val maxPdfY = (1f - points.minOf { it.y.coerceIn(0f, 1f) }) * pageHeight
             val bounds = alloc<FS_RECTF> {
-                left = (points.minOf { it.x } * pageWidth - padding).coerceAtLeast(0f)
-                right = (points.maxOf { it.x } * pageWidth + padding).coerceAtMost(pageWidth)
-                top = ((1f - points.minOf { it.y }) * pageHeight + padding).coerceAtMost(pageHeight)
-                bottom = ((1f - points.maxOf { it.y }) * pageHeight - padding).coerceAtLeast(0f)
+                left = min(minX, maxX) - padding
+                right = max(minX, maxX) + padding
+                top = max(minPdfY, maxPdfY) + padding
+                bottom = min(minPdfY, maxPdfY) - padding
             }
             FPDFAnnot_SetRect(annotation, bounds.ptr)
-            FPDFAnnot_SetBorder(annotation, 0f, 0f, ink.strokeWidth * pageWidth)
-            setIosPdfAnnotationColor(annotation, ink.colorArgb)
+            FPDFAnnot_SetBorder(annotation, 0f, 0f, strokeWidth)
+            setIosPdfAnnotationColor(annotation, iosPdfInkColorArgb(ink))
             FPDFAnnot_SetFlags(annotation, IOS_PDF_ANNOTATION_FLAG_PRINT)
             setIosPdfAnnotationMetadata(annotation, ink.id, ink.contents)
+            // Android benchmark (pdfium_bridge.cpp): GenerateContent is best-effort after ink; a
+            // zero return does not fail the export, only raster requires it.
+            FPDFPage_GenerateContent(page)
             true
         }
     } finally {
         FPDFPage_CloseAnnot(annotation)
+    }
+}
+
+private fun iosPdfInkColorArgb(ink: SharedPdfInkAnnotationExport): Int {
+    val alpha = (ink.colorArgb ushr 24) and 0xFF
+    if (alpha != 255) return ink.colorArgb
+    return when (ink.tool) {
+        PdfInkTool.HIGHLIGHTER, PdfInkTool.HIGHLIGHTER_ROUND ->
+            (ink.colorArgb and 0x00FFFFFF) or (102 shl 24)
+        else -> ink.colorArgb
     }
 }
 
@@ -252,34 +290,60 @@ private fun addIosPdfHighlightAnnotation(
         com.aryan.reader.shared.HighlightStyle.WAVY_UNDERLINE -> FPDF_ANNOT_SQUIGGLY
         com.aryan.reader.shared.HighlightStyle.STRIKETHROUGH -> FPDF_ANNOT_STRIKEOUT
     }
+    if (highlight.boundsList.isEmpty()) return false
     val annotation = FPDFPage_CreateAnnot(page, subtype) ?: return false
     return try {
         memScoped {
             var attachmentPointsWritten = true
+            var unionLeft = 0f
+            var unionRight = 0f
+            var unionTop = 0f
+            var unionBottom = 0f
+            var quadCount = 0
             highlight.boundsList.forEach { bounds ->
-                val left = bounds.left * pageWidth
-                val right = bounds.right * pageWidth
-                val top = (1f - bounds.top) * pageHeight
-                val bottom = (1f - bounds.bottom) * pageHeight
+                // Android benchmark: clamp normalized bounds, skip degenerate quads, union the rest.
+                val left = min(bounds.left, bounds.right).coerceIn(0f, 1f) * pageWidth
+                val right = max(bounds.left, bounds.right).coerceIn(0f, 1f) * pageWidth
+                val top = (1f - min(bounds.top, bounds.bottom).coerceIn(0f, 1f)) * pageHeight
+                val bottom = (1f - max(bounds.top, bounds.bottom).coerceIn(0f, 1f)) * pageHeight
+                if (right <= left || top <= bottom) return@forEach
                 val quad = alloc<FS_QUADPOINTSF> {
                     x1 = left; y1 = top; x2 = right; y2 = top
                     x3 = left; y3 = bottom; x4 = right; y4 = bottom
                 }
                 attachmentPointsWritten = FPDFAnnot_AppendAttachmentPoints(annotation, quad.ptr) != 0 && attachmentPointsWritten
+                if (quadCount == 0) {
+                    unionLeft = left; unionRight = right; unionTop = top; unionBottom = bottom
+                } else {
+                    unionLeft = min(unionLeft, left)
+                    unionRight = max(unionRight, right)
+                    unionTop = max(unionTop, top)
+                    unionBottom = min(unionBottom, bottom)
+                }
+                quadCount++
             }
+            if (quadCount == 0) return@memScoped false
+            // Android pads the union rect by 1pt so thin highlights keep a valid annot rect.
             val rect = alloc<FS_RECTF> {
-                left = highlight.boundsList.minOf { it.left } * pageWidth
-                right = highlight.boundsList.maxOf { it.right } * pageWidth
-                top = (1f - highlight.boundsList.minOf { it.top }) * pageHeight
-                bottom = (1f - highlight.boundsList.maxOf { it.bottom }) * pageHeight
+                left = min(unionLeft, unionRight) - 1f
+                right = max(unionLeft, unionRight) + 1f
+                top = max(unionTop, unionBottom) + 1f
+                bottom = min(unionTop, unionBottom) - 1f
             }
             FPDFAnnot_SetRect(annotation, rect.ptr)
-            setIosPdfAnnotationColor(annotation, highlight.colorArgb)
+            setIosPdfAnnotationColor(annotation, iosPdfHighlightColorArgb(highlight))
             FPDFAnnot_SetFlags(annotation, IOS_PDF_ANNOTATION_FLAG_PRINT)
             setIosPdfAnnotationMetadata(annotation, highlight.id, highlight.contents)
-            val commentsWritten = highlight.comments.all { comment ->
-                addIosPdfHighlightComment(page, comment, rect, pageWidth, pageHeight, highlight.colorArgb)
+            var commentsWritten = true
+            highlight.comments.forEachIndexed { index, comment ->
+                commentsWritten = addIosPdfHighlightComment(
+                    page, comment, unionRight, unionTop, pageWidth, pageHeight,
+                    highlight.colorArgb, index,
+                ) && commentsWritten
             }
+            // Android benchmark: GenerateContent after highlight is best-effort (only raster
+            // failures mark the export hadFailure).
+            FPDFPage_GenerateContent(page)
             attachmentPointsWritten && commentsWritten
         }
     } finally {
@@ -287,32 +351,62 @@ private fun addIosPdfHighlightAnnotation(
     }
 }
 
+private fun iosPdfHighlightColorArgb(highlight: SharedPdfHighlightAnnotationExport): Int {
+    val alpha = (highlight.colorArgb ushr 24) and 0xFF
+    if (alpha != 255) return highlight.colorArgb
+    // Android benchmark (pdfium_bridge.cpp): opaque highlights burn at 102, other markup at 235.
+    val targetAlpha = when (highlight.style) {
+        com.aryan.reader.shared.HighlightStyle.BACKGROUND -> IOS_PDF_HIGHLIGHT_ALPHA
+        else -> IOS_PDF_MARKUP_ALPHA
+    }.toInt()
+    return (highlight.colorArgb and 0x00FFFFFF) or (targetAlpha shl 24)
+}
+
 private fun addIosPdfHighlightComment(
     page: com.aryan.reader.shared.pdfium.c.FPDF_PAGE,
     comment: SharedPdfHighlightCommentExport,
-    highlightRect: FS_RECTF,
+    anchorRight: Float,
+    anchorTop: Float,
     pageWidth: Float,
     pageHeight: Float,
-    commentColorArgb: Int,
+    highlightColorArgb: Int,
+    commentIndex: Int,
 ): Boolean {
     val annotation = FPDFPage_CreateAnnot(page, FPDF_ANNOT_TEXT) ?: return false
     return try {
         memScoped {
-            val size = 24f.coerceAtMost(minOf(pageWidth, pageHeight))
-            val left = highlightRect.right.coerceIn(0f, (pageWidth - size).coerceAtLeast(0f))
-            val bottom = (highlightRect.top - size).coerceIn(0f, (pageHeight - size).coerceAtLeast(0f))
+            // Android benchmark (make_pdf_comment_rect): icon scales with page width, stacks by
+            // index, and clamps inside the page so the note icon is always tappable.
+            val iconSize = min(18f, max(10f, pageWidth * 0.03f))
+            val left = (anchorRight + 2f).coerceIn(0f, (pageWidth - iconSize).coerceAtLeast(0f))
+            var top = anchorTop - commentIndex * (iconSize + 2f)
+            if (top > pageHeight) top = pageHeight
+            if (top - iconSize < 0f) top = min(pageHeight, iconSize)
             val rect = alloc<FS_RECTF> {
                 this.left = left
-                right = left + size
-                this.bottom = bottom
-                top = bottom + size
+                right = left + iconSize
+                this.bottom = top - iconSize
+                this.top = top
             }
             FPDFAnnot_SetRect(annotation, rect.ptr)
-            setIosPdfAnnotationColor(annotation, commentColorArgb)
+            // Android uses the highlight RGB fully opaque for the note icon.
+            val opaque = (highlightColorArgb and 0x00FFFFFF) or (255 shl 24)
+            setIosPdfAnnotationColor(annotation, opaque)
             FPDFAnnot_SetFlags(annotation, IOS_PDF_ANNOTATION_FLAG_PRINT)
             setIosPdfAnnotationString(annotation, "NM", comment.id)
             if (comment.author.isNotBlank()) setIosPdfAnnotationString(annotation, "T", comment.author)
             setIosPdfAnnotationString(annotation, "Contents", comment.contents)
+            sharedPdfDateString(comment.createdAt).takeIf { it.isNotBlank() }?.let {
+                setIosPdfAnnotationString(annotation, "CreationDate", it)
+            }
+            val modified = sharedPdfDateString(comment.modifiedAt).ifBlank { sharedPdfDateString(comment.createdAt) }
+            modified.takeIf { it.isNotBlank() }?.let {
+                setIosPdfAnnotationString(annotation, "M", it)
+            }
+            // Note: bundled iOS pdfium headers expose FPDFAnnot_GetLinkedAnnot but not
+            // FPDFAnnot_SetLinkedAnnot, so IRT reply linking (Android/Desktop) cannot be set here.
+            // The shared mapper already collapses each highlight thread to a single visible
+            // "${highlightId}_comments" note, so the full thread survives as Contents without IRT.
             true
         }
     } finally {

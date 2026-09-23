@@ -73,4 +73,30 @@ class SharedPdfExportPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun originalExportSnapshotStripsReaderOwnedContent() {
+        val ink = SharedPdfAnnotation(
+            id = "ink",
+            pageIndex = 0,
+            kind = PdfAnnotationKind.INK,
+            points = listOf(PdfPagePoint(0.1f, 0.2f), PdfPagePoint(0.3f, 0.4f)),
+            colorArgb = 0xFF112233.toInt(),
+        )
+        val state = SharedPdfReaderState(
+            annotations = listOf(ink),
+            blankPageInsertions = listOf(SharedPdfBlankPageInsertion(0)),
+            richTextDocumentJson = SharedPdfRichTextSerializer.encode(SharedPdfRichDocument("Keep this")),
+        )
+
+        val original = sharedPdfOriginalExportSnapshot(state)
+
+        assertEquals(SharedPdfExportMode.ORIGINAL, sharedPdfExportMode(original))
+        assertEquals(emptyList(), original.state.annotations)
+        assertEquals(emptyList(), original.state.blankPageInsertions)
+        assertEquals("", original.state.richTextDocumentJson)
+        assertEquals(emptyList(), original.richTextPageLayouts)
+        // Source state is left untouched for the annotated path.
+        assertEquals(listOf(ink), state.annotations)
+    }
 }

@@ -1073,8 +1073,12 @@ private func uniqueImportedFileName(_ fileName: String) -> String {
 
 /// Startup orphan sweep (Android `MainViewModel.sweepOrphanedCache` parity,
 /// temp-only): removes crash-orphaned `tmp/ExternalOpen/<requestId>/`
-/// staging directories and `reader-export-*.pdf` share copies older than
-/// 1 hour (Android's `deleteStaleTemporaryBookDirs(1h)` threshold).
+/// staging directories older than 1 hour (Android's
+/// `deleteStaleTemporaryBookDirs(1h)` threshold) and PDF share/save staging
+/// copies older than 24h (Android `AndroidShareArtifactManager`
+/// `DEFAULT_TTL_MILLIS`; the share sheet / document picker has no completion
+/// callback, so copies are retained with a bounded TTL instead of immediate
+/// deletion).
 /// Library storage (`Imports/`, `LocalFolders/`) is never touched: those
 /// files ARE the library, and Android only sweeps cache/tmp patterns too.
 /// The pending-external-removal drain already runs in Kotlin startup state
@@ -1083,7 +1087,8 @@ private func uniqueImportedFileName(_ fileName: String) -> String {
 private func sweepStaleTemporaryFiles(maxAge: TimeInterval = 3600) {
     let fileManager = FileManager.default
     let cutoff = Date().addingTimeInterval(-maxAge)
-    func removeIfStale(_ url: URL) {
+    let shareCutoff = Date().addingTimeInterval(-86400)
+    func removeIfStale(_ url: URL, cutoff: Date = Date().addingTimeInterval(-3600)) {
         guard let modified = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
               modified < cutoff else { return }
         try? fileManager.removeItem(at: url)
@@ -1098,17 +1103,41 @@ private func sweepStaleTemporaryFiles(maxAge: TimeInterval = 3600) {
         includingPropertiesForKeys: [.contentModificationDateKey],
         options: [.skipsHiddenFiles]
     ) {
-        for entry in entries { removeIfStale(entry) }
+        for entry in entries { removeIfStale(entry, cutoff: cutoff) }
     }
-    // One-shot PDF share exports (Kotlin `IosPdfSaveCopy`); the share sheet
-    // consumes them immediately, so survivors are crash leftovers.
+    // Leftover nested staging dirs from an earlier layout
+    // (`tmp/shared_files/share-<UUID>/`); flat staging replaced them because
+    // `UIActivityViewController` item loading fails for the nested path.
+    let shareRoot = tempRoot.appendingPathComponent("shared_files", isDirectory: true)
+    if let entries = try? fileManager.contentsOfDirectory(
+        at: shareRoot,
+        includingPropertiesForKeys: [.contentModificationDateKey],
+        options: [.skipsHiddenFiles]
+    ) {
+        for entry in entries where entry.lastPathComponent.hasPrefix("share-") {
+            removeIfStale(entry, cutoff: shareCutoff)
+        }
+    }
+    // One-shot PDF share/save copies (Kotlin `IosShareArtifactManager`): flat
+    // `tmp/<base>[_annotated]_NNNN.pdf` plus legacy `tmp/reader-export-*`.
+    // The share sheet consumes them immediately, so survivors are crash leftovers.
+    // Match the 4-digit suffix without NSRegularExpression: `<name>_NNNN.pdf`.
+    func isStagedPdfCopy(_ name: String) -> Bool {
+        guard name.hasSuffix(".pdf") else { return false }
+        if name.hasPrefix("reader-export-") { return true }
+        let stem = name.dropLast(4)
+        guard stem.count > 6 else { return false }
+        let suffix = stem.suffix(5)
+        guard suffix.first == "_" else { return false }
+        return suffix.dropFirst().allSatisfy { $0.isNumber }
+    }
     if let entries = try? fileManager.contentsOfDirectory(
         at: tempRoot,
         includingPropertiesForKeys: [.contentModificationDateKey],
         options: [.skipsHiddenFiles]
     ) {
-        for entry in entries where entry.lastPathComponent.hasPrefix("reader-export-") {
-            removeIfStale(entry)
+        for entry in entries where isStagedPdfCopy(entry.lastPathComponent) {
+            removeIfStale(entry, cutoff: shareCutoff)
         }
     }
 }

@@ -96,6 +96,10 @@ private fun SharedPdfAnnotation.toIosPdfTextBoxOverlay(
     fontRegistry: IosPdfTextFontRegistry,
 ): IosPdfRasterOverlay? {
     val safeBounds = bounds?.normalizedIosPdfBounds() ?: return null
+    // Android benchmark (sanitizeRasterText): page breaks become newlines, zero-width chars are
+    // dropped, carriage returns become spaces so the rasterized copy matches the editor.
+    val safeText = text.sanitizeIosPdfRasterText()
+    if (pageIndex < 0 || safeText.isBlank()) return null
     val exportHeight = iosPdfExportHeight(pageHeight)
     val exportWidth = exportHeight * (pageWidth / pageHeight.coerceAtLeast(1f))
     val width = ceil((safeBounds.right - safeBounds.left) * exportWidth).toInt().coerceAtLeast(1)
@@ -116,14 +120,16 @@ private fun SharedPdfAnnotation.toIosPdfTextBoxOverlay(
         fontFamily = null,
     )
     val pixels = renderIosPdfParagraph(
-        text = AnnotatedString(text, listOf(AnnotatedString.Range(style, 0, text.length))),
+        text = AnnotatedString(safeText, listOf(AnnotatedString.Range(style, 0, safeText.length))),
         width = width,
         height = height,
         padding = padding,
         fallbackFontName = fontRegistry.familyName(fontPath, fontName),
         fontRegistry = fontRegistry,
     ) ?: return null
-    return IosPdfRasterOverlay(pageIndex, safeBounds, width, height, pixels)
+    // Android benchmark (Bitmap.toRasterOverlay): crop transparent margins so the embedded image
+    // is tight to the glyphs instead of the full text-box bitmap.
+    return cropIosPdfRasterOverlay(pageIndex, safeBounds, width, height, pixels)
 }
 
 private fun SharedPdfRichPageLayout.toIosPdfRichTextOverlay(
@@ -131,7 +137,7 @@ private fun SharedPdfRichPageLayout.toIosPdfRichTextOverlay(
     pageHeight: Float,
     fontRegistry: IosPdfTextFontRegistry,
 ): IosPdfRasterOverlay? {
-    val text = visibleText.withoutTrailingIosPdfPageBreak()
+    val text = visibleText.withoutTrailingIosPdfPageBreak().sanitizeIosPdfRasterTextPreservingLength()
     if (text.text.isBlank()) return null
     val bounds = PdfPageBounds(0.1f, 0.08f, 0.9f, 0.92f)
     val exportHeight = iosPdfExportHeight(pageHeight)
@@ -145,7 +151,80 @@ private fun SharedPdfRichPageLayout.toIosPdfRichTextOverlay(
         padding = 0f,
         fontRegistry = fontRegistry,
     ) ?: return null
-    return IosPdfRasterOverlay(pageIndex, bounds, width, height, pixels)
+    return cropIosPdfRasterOverlay(pageIndex, bounds, width, height, pixels)
+}
+
+internal fun cropIosPdfRasterOverlay(
+    pageIndex: Int,
+    bounds: PdfPageBounds,
+    width: Int,
+    height: Int,
+    bgraPixels: ByteArray,
+): IosPdfRasterOverlay? {
+    if (width <= 0 || height <= 0 || bgraPixels.size < width * height * 4) return null
+    var minX = width
+    var minY = height
+    var maxX = -1
+    var maxY = -1
+    for (y in 0 until height) {
+        val rowOffset = y * width * 4
+        for (x in 0 until width) {
+            // BGRA_8888 premul: alpha is the 4th byte; transparent texels are skipped like Android.
+            if (bgraPixels[rowOffset + x * 4 + 3] != 0.toByte()) {
+                if (x < minX) minX = x
+                if (x > maxX) maxX = x
+                if (y < minY) minY = y
+                if (y > maxY) maxY = y
+            }
+        }
+    }
+    if (maxX < minX || maxY < minY) return null
+    val cropWidth = maxX - minX + 1
+    val cropHeight = maxY - minY + 1
+    val cropped = ByteArray(cropWidth * cropHeight * 4)
+    for (row in 0 until cropHeight) {
+        val srcOffset = ((minY + row) * width + minX) * 4
+        val dstOffset = row * cropWidth * 4
+        bgraPixels.copyInto(cropped, dstOffset, srcOffset, srcOffset + cropWidth * 4)
+    }
+    val boundsWidth = bounds.right - bounds.left
+    val boundsHeight = bounds.bottom - bounds.top
+    return IosPdfRasterOverlay(
+        pageIndex = pageIndex,
+        bounds = PdfPageBounds(
+            left = bounds.left + boundsWidth * (minX.toFloat() / width),
+            top = bounds.top + boundsHeight * (minY.toFloat() / height),
+            right = bounds.left + boundsWidth * ((maxX + 1).toFloat() / width),
+            bottom = bounds.top + boundsHeight * ((maxY + 1).toFloat() / height),
+        ),
+        width = cropWidth,
+        height = cropHeight,
+        bgraPixels = cropped,
+    )
+}
+
+private fun String.sanitizeIosPdfRasterText(): String =
+    replace(SHARED_PDF_PAGE_BREAK_CHAR, '\n')
+        .replace("\u200B", "")
+        .replace('\r', ' ')
+
+private fun AnnotatedString.sanitizeIosPdfRasterTextPreservingLength(): AnnotatedString {
+    if (text.indexOf(SHARED_PDF_PAGE_BREAK_CHAR) < 0 && text.indexOf('\r') < 0) return this
+    val sanitized = text.replace(SHARED_PDF_PAGE_BREAK_CHAR, '\n').replace('\r', ' ')
+    if (sanitized.length != text.length) return this
+    // Length-preserving replacements keep every span offset valid; rebuild via Builder so the
+    // rich-font path annotations (IOS_PDF_RICH_FONT_PATH_TAG) survive for the font registry.
+    return AnnotatedString.Builder(sanitized).apply {
+        spanStyles.forEach { range -> addStyle(range.item, range.start, range.end) }
+        paragraphStyles.forEach { range -> addStyle(range.item, range.start, range.end) }
+        getStringAnnotations(
+            tag = IOS_PDF_RICH_FONT_PATH_TAG,
+            start = 0,
+            end = length,
+        ).forEach { annotation ->
+            addStringAnnotation(annotation.tag, annotation.item, annotation.start, annotation.end)
+        }
+    }.toAnnotatedString()
 }
 
 private fun renderIosPdfParagraph(
