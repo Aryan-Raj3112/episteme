@@ -94,6 +94,7 @@ typedef int (*FPDFAnnot_SetColor_t)(void* annot, int type, unsigned int R, unsig
 typedef int (*FPDFAnnot_SetBorder_t)(void* annot, float horizontal_radius, float vertical_radius, float border_width);
 typedef int (*FPDFAnnot_SetStringValue_t)(void* annot, const char* key, const unsigned short* value);
 typedef int (*FPDFAnnot_AddInkStroke_t)(void* annot, const FS_POINTF_BRIDGE* points, size_t point_count);
+typedef int (*FPDFAnnot_SetAP_t)(void* annot, int appearance_mode, const unsigned short* value);
 typedef int (*FPDFAnnot_AppendAttachmentPoints_t)(void* annot, const FS_QUADPOINTSF_BRIDGE* quad_points);
 typedef void (*FPDFPage_InsertObject_t)(void* page, void* page_object);
 typedef void* (*FPDFPageObj_NewImageObj_t)(void* document);
@@ -176,6 +177,7 @@ static FPDFAnnot_SetColor_t set_annot_color_func = nullptr;
 static FPDFAnnot_SetBorder_t set_annot_border_func = nullptr;
 static FPDFAnnot_SetStringValue_t set_annot_string_value_func = nullptr;
 static FPDFAnnot_AddInkStroke_t add_ink_stroke_func = nullptr;
+static FPDFAnnot_SetAP_t set_annot_ap_func = nullptr;
 static FPDFAnnot_AppendAttachmentPoints_t append_attachment_points_func = nullptr;
 static FPDFPage_InsertObject_t insert_page_object_func = nullptr;
 static FPDFPageObj_NewImageObj_t new_image_object_func = nullptr;
@@ -240,6 +242,7 @@ static bool init_pdfium() {
     set_annot_border_func  = (FPDFAnnot_SetBorder_t)      dlsym(pdfium_handle, "FPDFAnnot_SetBorder");
     set_annot_string_value_func = (FPDFAnnot_SetStringValue_t) dlsym(pdfium_handle, "FPDFAnnot_SetStringValue");
     add_ink_stroke_func    = (FPDFAnnot_AddInkStroke_t)   dlsym(pdfium_handle, "FPDFAnnot_AddInkStroke");
+    set_annot_ap_func      = (FPDFAnnot_SetAP_t)          dlsym(pdfium_handle, "FPDFAnnot_SetAP");
     append_attachment_points_func = (FPDFAnnot_AppendAttachmentPoints_t) dlsym(pdfium_handle, "FPDFAnnot_AppendAttachmentPoints");
     insert_page_object_func = (FPDFPage_InsertObject_t)   dlsym(pdfium_handle, "FPDFPage_InsertObject");
     new_image_object_func = (FPDFPageObj_NewImageObj_t)   dlsym(pdfium_handle, "FPDFPageObj_NewImageObj");
@@ -734,6 +737,38 @@ static bool set_annot_string_from_ascii(void* annot, const char* key, const std:
     return set_annot_string_value_func(annot, key, wide.data()) != 0;
 }
 
+static bool set_annot_ap_from_jstring(JNIEnv* env, void* annot, int appearance_mode, jstring value) {
+    if (!set_annot_ap_func || !annot || !value) return false;
+    jsize length = env->GetStringLength(value);
+    const jchar* chars = env->GetStringChars(value, nullptr);
+    if (!chars) return false;
+
+    std::vector<unsigned short> wide(static_cast<size_t>(length) + 1);
+    for (jsize i = 0; i < length; i++) {
+        wide[static_cast<size_t>(i)] = static_cast<unsigned short>(chars[i]);
+    }
+    wide[static_cast<size_t>(length)] = 0;
+    env->ReleaseStringChars(value, chars);
+
+    return set_annot_ap_func(annot, appearance_mode, wide.data()) != 0;
+}
+
+static bool set_annot_ap_from_array(JNIEnv* env, void* annot, int appearance_mode, jobjectArray array, size_t index) {
+    if (!array) return false;
+    jsize length = env->GetArrayLength(array);
+    if (index >= static_cast<size_t>(length)) return false;
+
+    auto value = static_cast<jstring>(env->GetObjectArrayElement(array, static_cast<jsize>(index)));
+    if (!value) return false;
+    if (env->GetStringLength(value) <= 0) {
+        env->DeleteLocalRef(value);
+        return false;
+    }
+    bool result = set_annot_ap_from_jstring(env, annot, appearance_mode, value);
+    env->DeleteLocalRef(value);
+    return result;
+}
+
 static void argb_to_rgba(jint color, unsigned int* r, unsigned int* g, unsigned int* b, unsigned int* a) {
     unsigned int argb = static_cast<unsigned int>(color);
     *a = (argb >> 24) & 0xFF;
@@ -1121,6 +1156,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
         jfloatArray inkPointsArray,
         jobjectArray inkNamesArray,
         jobjectArray inkContentsArray,
+        jobjectArray inkAppearancesArray,
         jintArray textPageIndicesArray,
         jfloatArray textBoundsArray,
         jintArray textColorsArray,
@@ -1323,6 +1359,10 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
 
         set_annot_string_from_array(env, annot, "NM", inkNamesArray, i);
         set_annot_string_from_array(env, annot, "Contents", inkContentsArray, i);
+        // Preview.app draws the annotation border rectangle when /AP is missing
+        // and does not rebuild the path from /InkList. SetBorder clears any
+        // existing appearance, so install the stroke stream after the border.
+        set_annot_ap_from_array(env, annot, 0 /* Normal */, inkAppearancesArray, i);
         if (generate_content_func) generate_content_func(page);
         close_annot_func(annot);
         close_page_func(page);

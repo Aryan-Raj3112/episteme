@@ -11,6 +11,7 @@ import com.aryan.reader.shared.opds.OpdsCatalog
 import com.aryan.reader.shared.opds.OpdsStreamReference
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfPageBounds
+import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.PdfZoomSpec
 import com.aryan.reader.shared.pdf.PdfiumAnnotationSubtype
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
@@ -30,6 +31,7 @@ import com.aryan.reader.shared.pdf.SharedPdfRichPageLayout
 import com.aryan.reader.shared.pdf.SharedPdfSearchIndex
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
 import com.aryan.reader.shared.pdf.pdfInkAppearancePoints
+import com.aryan.reader.shared.pdf.sharedPdfInkAppearanceContent
 import com.sun.jna.Callback
 import com.sun.jna.Library
 import com.sun.jna.Memory
@@ -1679,6 +1681,22 @@ object DesktopPdfium {
                         nativePoints.first(),
                         NativeLong(exportPoints.size.toLong())
                     ) >= 0
+                    // Preview.app draws the annotation border rectangle when /AP is missing
+                    // and does not rebuild the path from /InkList. SetBorder clears any
+                    // existing appearance, so install the stroke stream after the border.
+                    val appearance = sharedPdfInkAppearanceContent(
+                        pagePoints = exportPoints.map { point ->
+                            PdfPagePoint(
+                                x = point.x.coerceIn(0f, 1f) * pageWidth,
+                                y = (1f - point.y.coerceIn(0f, 1f)) * pageHeight,
+                            )
+                        },
+                        strokeWidthPdfUnits = strokeWidth,
+                        colorArgb = annotation.colorArgb,
+                    )
+                    if (appearance.isNotEmpty()) {
+                        setPdfiumAnnotationAppearance(annot, appearance)
+                    }
                     runCatching { api.FPDFPage_GenerateContent(page) }
                     added
                 } finally {
@@ -1919,6 +1937,14 @@ object DesktopPdfium {
         val memory = Memory(bytes.size.toLong())
         memory.write(0, bytes, 0, bytes.size)
         api.FPDFAnnot_SetStringValue(annotation, key, memory)
+    }
+
+    private fun setPdfiumAnnotationAppearance(annotation: Pointer, content: String) {
+        // FPDFAnnot_SetAP expects UTF-16LE (NUL-terminated wide string); mode 0 = Normal.
+        val bytes = (content + "\u0000").toByteArray(Charsets.UTF_16LE)
+        val memory = Memory(bytes.size.toLong())
+        memory.write(0, bytes, 0, bytes.size)
+        runCatching { api.FPDFAnnot_SetAP(annotation, 0, memory) }
     }
 
     private fun pdfRect(left: Float, top: Float, right: Float, bottom: Float, padding: Float): FsRectF {
@@ -2389,6 +2415,7 @@ object DesktopPdfium {
         fun FPDFAnnot_AddInkStroke(annotation: Pointer, points: FsPointF, pointCount: NativeLong): Int
         fun FPDFAnnot_AppendAttachmentPoints(annotation: Pointer, quadPoints: FsQuadPointsF): Int
         fun FPDFAnnot_SetFlags(annotation: Pointer, flags: Int): Int
+        fun FPDFAnnot_SetAP(annotation: Pointer, appearanceMode: Int, value: Pointer): Int
         fun FPDFPage_InsertObject(page: Pointer, pageObject: Pointer)
         fun FPDFPageObj_NewImageObj(document: Pointer): Pointer?
         fun FPDFImageObj_SetMatrix(

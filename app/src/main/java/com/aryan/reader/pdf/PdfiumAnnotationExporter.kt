@@ -44,6 +44,7 @@ import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationExportMapper
 import com.aryan.reader.shared.pdf.pdfInkAppearancePoints
+import com.aryan.reader.shared.pdf.sharedPdfInkAppearanceContent
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -152,6 +153,7 @@ internal object PdfiumAnnotationExporter {
                             inkPoints = payload.inkPoints,
                             inkNames = payload.inkNames,
                             inkContents = payload.inkContents,
+                            inkAppearances = payload.inkAppearances,
                             textPageIndices = payload.textPageIndices,
                             textBounds = payload.textBounds,
                             textColors = payload.textColors,
@@ -252,10 +254,14 @@ internal object PdfiumAnnotationExporter {
         val inkPoints = FloatArray(inkPointsForExport.sumOf { it.size } * 2)
         val inkNames = Array(inkItems.size) { "" }
         val inkContents = Array(inkItems.size) { "" }
+        val inkAppearances = Array(inkItems.size) { "" }
 
         var inkPointCursor = 0
         inkItems.forEachIndexed { index, annotation ->
             val points = inkPointsForExport[index]
+            val pageSize = pageSizeFor(pageSizes, annotation.pageIndex)
+            val pageWidth = pageSize.width.toFloat()
+            val pageHeight = pageSize.height.toFloat()
             inkPageIndices[index] = annotation.pageIndex
             inkTypes[index] = annotation.tool.toAndroidInkTypeOrdinal()
             inkColors[index] = annotation.colorArgb
@@ -264,6 +270,20 @@ internal object PdfiumAnnotationExporter {
             inkPointCounts[index] = points.size
             inkNames[index] = annotation.id
             inkContents[index] = annotation.contents
+            // Preview.app draws the annotation border rectangle when /AP is missing
+            // and does not rebuild the path from /InkList. SetBorder clears any
+            // existing appearance, so install the stroke stream after the border.
+            val strokeWidthPdfUnits = maxOf(0.25f, annotation.strokeWidth * pageWidth)
+            inkAppearances[index] = sharedPdfInkAppearanceContent(
+                pagePoints = points.map { point ->
+                    PdfPagePoint(
+                        x = point.x.coerceIn(0f, 1f) * pageWidth,
+                        y = (1f - point.y.coerceIn(0f, 1f)) * pageHeight,
+                    )
+                },
+                strokeWidthPdfUnits = strokeWidthPdfUnits,
+                colorArgb = annotation.colorArgb,
+            )
             points.forEach { point ->
                 inkPoints[inkPointCursor++] = point.x
                 inkPoints[inkPointCursor++] = point.y
@@ -363,6 +383,7 @@ internal object PdfiumAnnotationExporter {
             inkPoints = inkPoints,
             inkNames = inkNames,
             inkContents = inkContents,
+            inkAppearances = inkAppearances,
             textPageIndices = textPageIndices,
             textBounds = textBounds,
             textColors = textColors,
@@ -956,6 +977,7 @@ internal data class PdfiumAnnotationExportPayload(
     val inkPoints: FloatArray,
     val inkNames: Array<String>,
     val inkContents: Array<String>,
+    val inkAppearances: Array<String>,
     val textPageIndices: IntArray,
     val textBounds: FloatArray,
     val textColors: IntArray,

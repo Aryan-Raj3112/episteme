@@ -8,11 +8,13 @@ import com.aryan.reader.shared.pdfium.c.FPDFBitmap_CreateEx
 import com.aryan.reader.shared.pdfium.c.FPDFBitmap_Destroy
 import com.aryan.reader.shared.pdfium.c.FPDFAnnot_AddInkStroke
 import com.aryan.reader.shared.pdfium.c.FPDFAnnot_AppendAttachmentPoints
+import com.aryan.reader.shared.pdfium.c.FPDFAnnot_SetAP
 import com.aryan.reader.shared.pdfium.c.FPDFAnnot_SetBorder
 import com.aryan.reader.shared.pdfium.c.FPDFAnnot_SetColor
 import com.aryan.reader.shared.pdfium.c.FPDFAnnot_SetRect
 import com.aryan.reader.shared.pdfium.c.FPDFAnnot_SetFlags
 import com.aryan.reader.shared.pdfium.c.FPDFAnnot_SetStringValue
+import com.aryan.reader.shared.pdfium.c.FPDF_ANNOT_APPEARANCEMODE_NORMAL
 import com.aryan.reader.shared.pdfium.c.FPDFPage_CloseAnnot
 import com.aryan.reader.shared.pdfium.c.FPDFPage_CreateAnnot
 import com.aryan.reader.shared.pdfium.c.FPDFPage_GenerateContent
@@ -313,6 +315,22 @@ private fun addIosPdfInkAnnotation(
             setIosPdfAnnotationColor(annotation, iosPdfInkColorArgb(ink))
             FPDFAnnot_SetFlags(annotation, IOS_PDF_ANNOTATION_FLAG_PRINT)
             setIosPdfAnnotationMetadata(annotation, ink.id, ink.contents)
+            // Preview.app draws the annotation border rectangle when /AP is missing
+            // and does not rebuild the path from /InkList. SetBorder clears any
+            // existing appearance, so install the stroke stream after the border.
+            val appearance = sharedPdfInkAppearanceContent(
+                pagePoints = points.mapIndexed { index, point ->
+                    PdfPagePoint(
+                        x = point.x.coerceIn(0f, 1f) * pageWidth,
+                        y = (1f - point.y.coerceIn(0f, 1f)) * pageHeight,
+                    )
+                },
+                strokeWidthPdfUnits = strokeWidth,
+                colorArgb = iosPdfInkColorArgb(ink),
+            )
+            if (appearance.isNotEmpty()) {
+                setIosPdfAnnotationAppearance(annotation, appearance)
+            }
             // Android benchmark (pdfium_bridge.cpp): GenerateContent is best-effort after ink; a
             // zero return does not fail the export, only raster requires it.
             FPDFPage_GenerateContent(page)
@@ -320,6 +338,19 @@ private fun addIosPdfInkAnnotation(
         }
     } finally {
         FPDFPage_CloseAnnot(annotation)
+    }
+}
+
+private fun setIosPdfAnnotationAppearance(
+    annotation: com.aryan.reader.shared.pdfium.c.FPDF_ANNOTATION,
+    content: String,
+) {
+    // FPDFAnnot_SetAP expects UTF-16LE (NUL-terminated wide string).
+    val utf16 = UShortArray(content.length + 1) { index ->
+        content.getOrNull(index)?.code?.toUShort() ?: 0u
+    }
+    utf16.usePinned { pinned ->
+        FPDFAnnot_SetAP(annotation, FPDF_ANNOT_APPEARANCEMODE_NORMAL, pinned.addressOf(0))
     }
 }
 

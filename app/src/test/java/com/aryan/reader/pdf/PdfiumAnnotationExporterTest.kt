@@ -65,6 +65,11 @@ class PdfiumAnnotationExporterTest {
         assertArrayEquals(floatArrayOf(0.1f, 0.2f, 0.3f, 0.4f), payload.inkPoints, 0.0001f)
         assertEquals("", payload.inkContents.single())
         assertEquals("ink-1", payload.inkNames.single())
+        val appearance = payload.inkAppearances.single()
+        assertTrue(appearance.startsWith("q\n"))
+        assertTrue(appearance.contains(" m"))
+        assertTrue(appearance.contains(" l"))
+        assertTrue(appearance.contains("S\n"))
     }
 
     @Test
