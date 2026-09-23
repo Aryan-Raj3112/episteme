@@ -597,9 +597,14 @@ fun SharedMobileEpubReaderScreen(
         }
     }
 
+    // Android parity (PaginatedReader 400ms debounce): format sliders fire
+    // onSettingsChange per pixel; without a debounce every tick pays a full
+    // ReaderEngine.createSession + repaginate + persist, which froze iOS while
+    // fiddling with font settings. Initial open stays fast (no delay when no
+    // pages yet); subsequent layout changes wait for 400ms quiet.
     LaunchedEffect(loadedBook, paginatedSettings.layoutSignature()) {
         val epub = loadedBook ?: return@LaunchedEffect
-        if (pages.isNotEmpty()) delay(180)
+        if (pages.isNotEmpty()) delay(400)
         if (measuredPagesApplied) return@LaunchedEffect
         val locator = currentLocator ?: book.readerPosition
         val sessionMark = sharedEpubOpenTraceMark()
@@ -669,6 +674,9 @@ fun SharedMobileEpubReaderScreen(
         val epub = loadedBook ?: return@LaunchedEffect
         if (paginatedSettings.readingMode != ReaderReadingMode.PAGINATED) return@LaunchedEffect
         if (!paginatedContentViewport.isSpecified) return@LaunchedEffect
+        // Android parity (PaginatedReader 400ms debounce): see estimateSession
+        // above. Without this, dragging a format slider repaginates every tick.
+        if (measuredPagesApplied) delay(400)
         val paginateMark = sharedEpubOpenTraceMark()
         sharedEpubOpenTrace { "readerScreen measuredPaginate start viewport=${paginatedContentViewport.widthPx}x${paginatedContentViewport.heightPx}" }
         val measuredPages = withContext(Dispatchers.Default) {
@@ -2093,7 +2101,19 @@ fun SharedMobileEpubReaderScreen(
                                             currentPageIndex = (position.pageIndex ?: currentPageIndex).coerceIn(0, pageCount - 1)
                                             position.chapterIndex?.let { currentChapterIndex = it }
                                             refreshSelectedTocIndex(position)
-                                            commandScript = null
+                                            // Android parity (direct evaluateJavascript on speed
+                                            // change): the start script is one-shot via
+                                            // navigationRequestId. Clearing it here can win
+                                            // the race against a pending speed-change
+                                            // composition (speed sets script+ID, position
+                                            // clears script before compose runs) so the
+                                            // evaluated navigation lacks the new interval
+                                            // and the old timer keeps running. Preserve it
+                                            // while autoscroll is playing; the coordinator
+                                            // dedups by ID so keeping it never restarts.
+                                            if (!(autoScroll && !autoScrollTemporarilyPaused)) {
+                                                commandScript = null
+                                            }
                                         }
                                     }
                                     "readerChapterBoundary" -> when (payload.sharedMobileEpubDirectionOrNull()) {
@@ -2379,6 +2399,8 @@ fun SharedMobileEpubReaderScreen(
                             onVisualOptions = { showVisualOptionsSheet = true },
                         onOpenSlider = ::togglePageSlider,
                             onDictionary = onOpenDictionarySettings,
+                            onBrightness = { showBrightnessSheet = true },
+                            onScreenOrientation = { showScreenOrientationSheet = true },
                             onOpenAiHub = { showAiHub = true; onOpenAiHub() },
                             aiAvailable = readerAiAvailable,
                             localTtsState = localTts.state,
@@ -2574,12 +2596,24 @@ fun SharedMobileEpubReaderScreen(
                         modifier = Modifier.align(if (pullDirection == "previous") Alignment.TopCenter else Alignment.BottomCenter).padding(8.dp)
                     )
                 }
-                // Android parity (EpubReaderSearch results panel): slides from the
-                // top + fades with the shared 200ms spec instead of popping.
+                // Android parity (EpubReaderScreen effectiveTopPadding): the search
+                // bar replaces the top toolbar below the status bar, never under
+                // it. The normal top bar above pads for safeDrawing Top when
+                // system bars are visible; the full-screen search overlay is a
+                // direct child of the outer box so it needs the same inset.
                 AnimatedVisibility(
                     visible = showSearch && loadedBook != null,
                     enter = slideInVertically(animationSpec = tween(motionPolicy.durationMillis(200))) { -it } + fadeIn(animationSpec = tween(motionPolicy.durationMillis(200))),
                     exit = slideOutVertically(animationSpec = tween(motionPolicy.durationMillis(200))) { -it } + fadeOut(animationSpec = tween(motionPolicy.durationMillis(200))),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(
+                            if (!systemUiHidden) {
+                                Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                            } else {
+                                Modifier
+                            }
+                        )
                 ) {
                     if (showSearch && loadedBook != null) {
                         SharedMobileEpubSearchOverlay(
@@ -2613,12 +2647,21 @@ fun SharedMobileEpubReaderScreen(
                     }
                 }
                 // Android parity (collapsed search navigator): fades with the
-                // shared 200ms spec instead of popping.
+                // shared 200ms spec instead of popping. Padded below the status
+                // bar like the top toolbar so it never draws under it.
                 AnimatedVisibility(
                     visible = (!showSearch || !showSearchResultsPanel) && searchResultIndex >= 0 && searchResults.isNotEmpty(),
                     enter = fadeIn(animationSpec = tween(motionPolicy.durationMillis(200))),
                     exit = fadeOut(animationSpec = tween(motionPolicy.durationMillis(200))),
-                    modifier = Modifier.align(Alignment.TopCenter)
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .then(
+                            if (!systemUiHidden) {
+                                Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                            } else {
+                                Modifier
+                            }
+                        )
                 ) {
                     if ((!showSearch || !showSearchResultsPanel) && searchResultIndex >= 0 && searchResults.isNotEmpty()) {
                         SharedMobileEpubSearchNavigation(

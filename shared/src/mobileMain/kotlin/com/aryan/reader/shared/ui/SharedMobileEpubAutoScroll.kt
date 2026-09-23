@@ -341,12 +341,23 @@ internal fun sharedMobileEpubTextureBitmap(textureId: String?): ImageBitmap? {
 
 internal fun sharedMobileEpubAutoScrollStartScript(speed: Float): String {
     val effectiveSpeed = readerAutoScrollPixelsPerSecond(speed)
-    val intervalMillis = (1000f / effectiveSpeed).roundToInt().coerceAtLeast(6)
+    // Android parity (epub_reader.js autoScroll loop): Android accumulates
+    // speed*0.5px per animation frame with no timer floor, so top speeds stay
+    // distinct. The old 1px-tick interval (1000/speed, 6ms floor) capped iOS at
+    // ~166px/s, making 5.5x-10x look dead. Use a fixed 50ms tick with a pixel
+    // accumulator instead: fractional speeds stay smooth and the full 0.1-10x
+    // range maps to distinct px/s with no clamp.
     return """
     (function () {
       if (window.readerIosAutoScrollTimer) window.clearInterval(window.readerIosAutoScrollTimer);
+      window.readerIosAutoScrollAccumulator = 0;
       window.readerIosAutoScrollTimer = window.setInterval(function () {
-        window.scrollBy(0, 1);
+        window.readerIosAutoScrollAccumulator += $effectiveSpeed * 0.05;
+        var pixels = Math.floor(window.readerIosAutoScrollAccumulator);
+        if (pixels >= 1) {
+          window.readerIosAutoScrollAccumulator -= pixels;
+          window.scrollBy(0, pixels);
+        }
         var root = document.documentElement;
         if (window.scrollY + window.innerHeight >= root.scrollHeight - 2) {
           window.clearInterval(window.readerIosAutoScrollTimer);
@@ -355,7 +366,7 @@ internal fun sharedMobileEpubAutoScrollStartScript(speed: Float): String {
             window.kmpJsBridge.callNative('readerAutoScrollChapterEnd', '{}');
           }
         }
-      }, $intervalMillis);
+      }, 50);
     })();
 """.trimIndent()
 }

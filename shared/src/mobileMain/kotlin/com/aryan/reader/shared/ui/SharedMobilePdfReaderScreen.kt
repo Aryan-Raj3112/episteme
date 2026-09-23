@@ -2978,6 +2978,10 @@ fun SharedMobilePdfReaderHost(
                 AnimatedVisibility(
                     // Android parity: the panel shows for blank queries too
                     // (it renders its own "Enter a search term" prompt).
+                    // Android parity (PdfViewerScreen topOverlayInset): the panel
+                    // sits below the top toolbar (64.dp) plus the status bar when
+                    // visible, never under it. Matches SharedMobilePdfReaderTopBar
+                    // applySystemBarInsets so the two never overlap.
                     visible = readerState.isSearchActive && readerState.showSearchResultsPanel
                 ) {
                     SharedMobilePdfSearchResultsPanel(
@@ -2991,6 +2995,17 @@ fun SharedMobilePdfReaderHost(
                         },
                         modifier = Modifier
                             .align(Alignment.TopCenter)
+                            .then(
+                                if (!isSplitPane && mobilePdfSystemBarsVisibility(
+                                        systemUiMode.toReaderSystemUiMode(),
+                                        showChrome,
+                                    ).statusBarsVisible
+                                ) {
+                                    Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                                } else {
+                                    Modifier
+                                }
+                            )
                             .padding(top = 64.dp)
                     )
                 }

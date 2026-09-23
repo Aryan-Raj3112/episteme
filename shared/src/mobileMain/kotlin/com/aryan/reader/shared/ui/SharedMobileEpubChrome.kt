@@ -708,6 +708,8 @@ internal fun SharedMobileEpubBottomBar(
     onVisualOptions: () -> Unit,
     onOpenSlider: () -> Unit,
     onDictionary: () -> Unit,
+    onBrightness: () -> Unit = {},
+    onScreenOrientation: () -> Unit = {},
     onOpenAiHub: () -> Unit = {},
     aiAvailable: Boolean = false,
     localTtsState: SharedMobileEpubLocalTtsState,
@@ -808,6 +810,14 @@ internal fun SharedMobileEpubBottomBar(
                             onClick = onDictionary,
                             modifier = Modifier.testTag("EpubBottomDictionary").semantics { contentDescription = "Dictionary" }
                         ) { Icon(SharedReaderIcons.Dictionary, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
+                        ReaderTool.BRIGHTNESS -> IconButton(
+                            onClick = onBrightness,
+                            modifier = Modifier.testTag("EpubBottomBrightness").semantics { contentDescription = "Brightness" }
+                        ) { Icon(SharedReaderIcons.Contrast, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
+                        ReaderTool.SCREEN_ORIENTATION -> IconButton(
+                            onClick = onScreenOrientation,
+                            modifier = Modifier.testTag("EpubBottomOrientation").semantics { contentDescription = "Screen orientation" }
+                        ) { Icon(SharedReaderIcons.ScreenRotation, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
                         ReaderTool.AI_FEATURES -> if (aiAvailable) IconButton(
                             onClick = onOpenAiHub,
                             modifier = Modifier.testTag("EpubBottomAi").semantics { contentDescription = "AI features" }

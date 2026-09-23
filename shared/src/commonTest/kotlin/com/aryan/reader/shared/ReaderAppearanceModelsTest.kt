@@ -11,6 +11,7 @@ import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.readerFontFamilyCss
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -81,6 +82,29 @@ class ReaderAppearanceModelsTest {
         assertEquals(FontFamily.SansSerif, ReaderSettings(fontFamily = "Lexend").toSharedReaderFontFamily())
         assertEquals(FontFamily.Monospace, ReaderSettings(fontFamily = "Roboto Mono").toSharedReaderFontFamily())
         assertEquals(FontFamily.Default, ReaderSettings(fontFamily = "Original").toSharedReaderFontFamily())
+    }
+
+    @Test
+    fun `webview font css matches native mapping for concrete family names`() {
+        // Regression: the sheet stores "Lora"/"Merriweather"/... while
+        // FormatSettings maps to "Serif"/"Sans"/"Mono". readerFontFamilyCss
+        // only matched the canonical names, so Original->Lora stayed on
+        // system-ui in the WebView while the native preview changed.
+        val serif = ReaderSettings(fontFamily = "Serif").readerFontFamilyCss()
+        assertEquals(serif, ReaderSettings(fontFamily = "Merriweather").readerFontFamilyCss())
+        assertEquals(serif, ReaderSettings(fontFamily = "Lora").readerFontFamilyCss())
+        val sans = ReaderSettings(fontFamily = "Sans").readerFontFamilyCss()
+        assertEquals(sans, ReaderSettings(fontFamily = "Lato").readerFontFamilyCss())
+        assertEquals(sans, ReaderSettings(fontFamily = "Lexend").readerFontFamilyCss())
+        val mono = ReaderSettings(fontFamily = "Mono").readerFontFamilyCss()
+        assertEquals(mono, ReaderSettings(fontFamily = "Roboto Mono").readerFontFamilyCss())
+        val default = ReaderSettings(fontFamily = "Default").readerFontFamilyCss()
+        assertEquals(default, ReaderSettings(fontFamily = "Original").readerFontFamilyCss())
+        assertTrue(serif.contains("Georgia"))
+        assertTrue(sans.contains("Inter"))
+        assertTrue(mono.contains("Roboto Mono"))
+        assertTrue(default.contains("system-ui"))
+        assertTrue(serif != default)
     }
 
     @Test
