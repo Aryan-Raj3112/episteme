@@ -197,10 +197,15 @@ internal object IosReaderAiKeychain {
         }
     }
 
-    fun write(account: String, value: String) {
+    /**
+     * Returns true when the value is stored (or updated). False means the Security
+     * framework rejected the write (e.g. errSecMissingEntitlement on an unsigned
+     * test host) — callers must not assume the previous secret was replaced.
+     */
+    fun write(account: String, value: String): Boolean {
         if (value.isBlank()) {
             delete(account)
-            return
+            return true
         }
         val data = value.toNSData()
         val query = baseQuery(account)
@@ -210,11 +215,13 @@ internal object IosReaderAiKeychain {
         )
         val addDictionary = (query + attributes).toNSDictionary()
         val addStatus = SecItemAdd(addDictionary.toCFDictionary(), null)
+        if (addStatus == errSecSuccess) return true
         if (addStatus == errSecDuplicateItem) {
             val queryDictionary = query.toNSDictionary()
             val attributesDictionary = attributes.toNSDictionary()
-            SecItemUpdate(queryDictionary.toCFDictionary(), attributesDictionary.toCFDictionary())
+            return SecItemUpdate(queryDictionary.toCFDictionary(), attributesDictionary.toCFDictionary()) == errSecSuccess
         }
+        return false
     }
 
     fun delete(account: String) {

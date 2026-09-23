@@ -58,13 +58,32 @@ import kotlinx.coroutines.withContext
 import platform.posix.FILE
 import platform.posix.fclose
 import platform.posix.fopen
+import platform.posix.free
 import platform.posix.fwrite
+import platform.posix.malloc
+import platform.posix.memcpy
 import kotlin.math.max
 import kotlin.math.min
 
 private const val IOS_PDF_ANNOTATION_FLAG_PRINT = 4
 private const val IOS_PDF_HIGHLIGHT_ALPHA = 102u
 private const val IOS_PDF_MARKUP_ALPHA = 235u
+
+/**
+ * Raster overlay pixel buffers must outlive `FPDF_SaveAsCopy`. PDFium's
+ * external `FPDFBitmap_CreateEx` buffer is not copied on `FPDFImageObj_SetBitmap`,
+ * so releasing the pin/bitmap before save embeds freed memory (gibberish glyphs).
+ * Mirrors Android `rasterBitmapsToDestroy` and Desktop `DesktopPdfRasterResource`.
+ */
+private class IosPdfRasterResource(
+    val bitmap: com.aryan.reader.shared.pdfium.c.FPDF_BITMAP,
+    val nativePixels: CPointer<*>,
+) {
+    fun release() {
+        FPDFBitmap_Destroy(bitmap)
+        free(nativePixels)
+    }
+}
 
 internal suspend fun exportIosPdfAnnotations(
     sourcePath: String,
@@ -79,6 +98,7 @@ internal suspend fun exportIosPdfAnnotations(
         IosPdfiumRuntime.ensureInitialized()
         val sourceDocument = FPDF_LoadDocument(sourcePath, password) ?: return@withLock false
         var destinationDocument: com.aryan.reader.shared.pdfium.c.FPDF_DOCUMENT? = null
+        val retainedRasters = mutableListOf<IosPdfRasterResource>()
         try {
             val pageCount = FPDF_GetPageCount(sourceDocument).coerceAtLeast(0)
             val virtualLayout = buildSharedPdfVirtualPageLayout(
@@ -160,9 +180,12 @@ internal suspend fun exportIosPdfAnnotations(
                         snapshot.state.annotations,
                         snapshot.richTextPageLayouts,
                         fontRegistry = textFontRegistry,
+                        richTextExportScale = snapshot.richTextExportScale,
                     )
                     rasterization.overlays.forEach { overlay ->
-                        annotationsWritten = addIosPdfRasterOverlay(document, page, overlay, width, height) && annotationsWritten
+                        addIosPdfRasterOverlay(
+                            document, page, overlay, width, height, retainedRasters,
+                        ).let { ok -> annotationsWritten = ok && annotationsWritten }
                     }
                     if (rasterization.overlays.isNotEmpty()) {
                         annotationsWritten = FPDFPage_GenerateContent(page) != 0 && annotationsWritten
@@ -172,10 +195,18 @@ internal suspend fun exportIosPdfAnnotations(
                     FPDF_ClosePage(page)
                 }
             }
-            annotationsWritten && saveIosPdfDocument(document, destinationPath)
+            // Android benchmark (pdfium_bridge.cpp): save whenever the document is writable;
+            // partial annotation failures are logged there but do not block the save.
+            // Returning false only for a failed write keeps "Unable to export" for real I/O errors.
+            val saved = saveIosPdfDocument(document, destinationPath)
+            if (!annotationsWritten) {
+                SharedPdfRichTextLog.d("exportIosPdfAnnotations partial failures; saved=$saved")
+            }
+            saved
         } finally {
             destinationDocument?.let { FPDF_CloseDocument(it) } ?: FPDF_CloseDocument(sourceDocument)
             if (destinationDocument != null) FPDF_CloseDocument(sourceDocument)
+            retainedRasters.forEach { it.release() }
         }
         }
     } catch (_: Throwable) {
@@ -189,36 +220,60 @@ private fun addIosPdfRasterOverlay(
     overlay: IosPdfRasterOverlay,
     pageWidth: Float,
     pageHeight: Float,
-): Boolean = overlay.bgraPixels.usePinned { pixels ->
+    retainedRasters: MutableList<IosPdfRasterResource>,
+): Boolean {
+    val left = overlay.bounds.left.coerceIn(0f, 1f) * pageWidth
+    val top = (1f - overlay.bounds.top.coerceIn(0f, 1f)) * pageHeight
+    val right = overlay.bounds.right.coerceIn(0f, 1f) * pageWidth
+    val bottom = (1f - overlay.bounds.bottom.coerceIn(0f, 1f)) * pageHeight
+    val rectWidth = max(left, right) - min(left, right)
+    val rectHeight = max(top, bottom) - min(top, bottom)
+    // Android benchmark (pdfium_bridge.cpp raster path): clamp normalized bounds and reject
+    // degenerate rects so a malformed overlay never inserts a zero-size image object.
+    if (rectWidth <= 0.5f || rectHeight <= 0.5f) return false
+
+    val pixelBytes = overlay.bgraPixels
+    val byteCount = pixelBytes.size
+    if (overlay.width <= 0 || overlay.height <= 0 || byteCount < overlay.width * overlay.height * 4) {
+        return false
+    }
+    // Native copy so pdfium keeps a stable buffer until release() after save; Kotlin
+    // usePinned only guarantees the pin for the duration of the block.
+    val nativePixels = malloc(byteCount.toULong()) ?: return false
+    pixelBytes.usePinned { pinned ->
+        memcpy(nativePixels, pinned.addressOf(0), byteCount.toULong())
+    }
     val bitmap = FPDFBitmap_CreateEx(
         overlay.width,
         overlay.height,
         FPDFBitmap_BGRA,
-        pixels.addressOf(0),
+        nativePixels,
         overlay.width * 4,
-    ) ?: return@usePinned false
-    try {
-        val image = FPDFPageObj_NewImageObj(document) ?: return@usePinned false
-        if (FPDFImageObj_SetBitmap(null, 0, image, bitmap) == 0) return@usePinned false
-        // Android benchmark (pdfium_bridge.cpp raster path): clamp normalized bounds and reject
-        // degenerate rects so a malformed overlay never inserts a zero-size image object.
-        val left = overlay.bounds.left.coerceIn(0f, 1f) * pageWidth
-        val top = (1f - overlay.bounds.top.coerceIn(0f, 1f)) * pageHeight
-        val right = overlay.bounds.right.coerceIn(0f, 1f) * pageWidth
-        val bottom = (1f - overlay.bounds.bottom.coerceIn(0f, 1f)) * pageHeight
-        val rectWidth = max(left, right) - min(left, right)
-        val rectHeight = max(top, bottom) - min(top, bottom)
-        if (rectWidth <= 0.5f || rectHeight <= 0.5f) return@usePinned false
-        val rectLeft = min(left, right)
-        val rectBottom = min(top, bottom)
-        if (FPDFImageObj_SetMatrix(image, rectWidth.toDouble(), 0.0, 0.0, rectHeight.toDouble(), rectLeft.toDouble(), rectBottom.toDouble()) == 0) {
-            return@usePinned false
-        }
-        FPDFPage_InsertObject(page, image)
-        true
-    } finally {
-        FPDFBitmap_Destroy(bitmap)
+    )
+    if (bitmap == null) {
+        free(nativePixels)
+        return false
     }
+    val image = FPDFPageObj_NewImageObj(document)
+    if (image == null ||
+        FPDFImageObj_SetBitmap(null, 0, image, bitmap) == 0 ||
+        FPDFImageObj_SetMatrix(
+            image,
+            rectWidth.toDouble(),
+            0.0,
+            0.0,
+            rectHeight.toDouble(),
+            min(left, right).toDouble(),
+            min(top, bottom).toDouble(),
+        ) == 0
+    ) {
+        FPDFBitmap_Destroy(bitmap)
+        free(nativePixels)
+        return false
+    }
+    FPDFPage_InsertObject(page, image)
+    retainedRasters += IosPdfRasterResource(bitmap, nativePixels)
+    return true
 }
 
 private fun addIosPdfInkAnnotation(

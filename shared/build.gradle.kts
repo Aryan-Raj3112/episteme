@@ -143,13 +143,44 @@ kotlin {
             }
         }
 
+        // libpdfium.dylib's LC_ID_DYLIB is "./libpdfium.dylib" (CWD-relative), so a plain
+        // -L/-lpdfium records a dependency the simulator test runner cannot resolve
+        // (dyld looks under RuntimeRoot). Stage a copy with id "@rpath/libpdfium.dylib"
+        // and link with -rpath so the staged dir is searched. An absolute install name
+        // is too long for install_name_tool (no headerpad in the shipped dylib).
+        val stagedPdfiumDir = layout.buildDirectory.dir("native/pdfium/$name")
+        val stagePdfiumTask = tasks.register("stagePdfium${name.replaceFirstChar(Char::uppercaseChar)}") {
+            inputs.file(pdfiumRoot.file("lib/libpdfium.dylib"))
+            outputs.file(stagedPdfiumDir.map { it.file("libpdfium.dylib") })
+            doLast {
+                val dest = stagedPdfiumDir.get().asFile.resolve("libpdfium.dylib")
+                dest.parentFile.mkdirs()
+                pdfiumRoot.file("lib/libpdfium.dylib").asFile.copyTo(dest, overwrite = true)
+                val process = ProcessBuilder(
+                    "install_name_tool",
+                    "-id", "@rpath/libpdfium.dylib",
+                    dest.absolutePath,
+                ).redirectErrorStream(true).start()
+                val output = process.inputStream.bufferedReader().readText()
+                if (process.waitFor() != 0) {
+                    throw GradleException("install_name_tool failed for $dest:\n$output")
+                }
+            }
+        }
+        binaries.configureEach {
+            // Test executables also need pdfium; previously only the framework
+            // was linked, so wiring iosTest made linkDebugTest* fail on FPDF_*.
+            linkTaskProvider.configure { dependsOn(stagePdfiumTask) }
+            val stagedLibDir = stagedPdfiumDir.get().asFile.absolutePath
+            linkerOpts(
+                "-L$stagedLibDir",
+                "-lpdfium",
+                "-Wl,-rpath,$stagedLibDir"
+            )
+        }
         binaries.framework {
             baseName = "ReaderShared"
             binaryOption("bundleId", "com.aryan.reader.shared")
-            linkerOpts(
-                "-L${pdfiumRoot.dir("lib").asFile.absolutePath}",
-                "-lpdfium"
-            )
             isStatic = true
         }
     }
@@ -195,6 +226,17 @@ kotlin {
             }
             val iosSimulatorArm64Main by getting {
                 dependsOn(iosMain)
+            }
+            // Manual iosMain intermediates above skip the default hierarchy's iosTest
+            // wiring; without this, src/iosTest is never compiled or run.
+            val iosTest by creating {
+                dependsOn(commonTest.get())
+            }
+            val iosArm64Test by getting {
+                dependsOn(iosTest)
+            }
+            val iosSimulatorArm64Test by getting {
+                dependsOn(iosTest)
             }
         }
         desktopMain.dependsOn(readerJvmMain)

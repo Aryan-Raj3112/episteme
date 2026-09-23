@@ -85,7 +85,7 @@ class IosPdfSaveCopyTest {
     @Test
     fun preparationNeverThrowsAndSurfacesUnavailable() = runTest {
         val result = prepareIosPdfSaveCopy(
-            book(source = "/nonexistent/missing.pdf"),
+            book(path = "/nonexistent/missing.pdf"),
             password = null,
             snapshot = SharedPdfExportSnapshot(SharedPdfReaderState()),
             exporter = { _, _, _, _ -> error("Exporter must not run without a source") },

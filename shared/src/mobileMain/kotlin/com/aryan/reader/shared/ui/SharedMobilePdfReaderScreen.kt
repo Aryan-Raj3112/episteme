@@ -1131,6 +1131,14 @@ fun SharedMobilePdfReaderHost(
         if (ownsNativeAction) onNativePdfAction(book, action, pdfPassword, snapshot)
     }
 
+    fun annotatedPdfExportSnapshot(): SharedPdfExportSnapshot =
+        SharedPdfExportSnapshot(
+            state = readerState.copy(richTextDocumentJson = richTextDocumentJson),
+            richTextPageLayouts = richTextController.pageLayouts,
+            exportDensity = density.density,
+            exportFontScale = density.fontScale,
+        )
+
     fun normalizedPdfHistoryPage(pageIndex: Int): Int {
         if (readerState.displayMode != PdfDisplayMode.PAGINATION) return pageIndex
         return PdfSpreadLayout.normalizePageIndex(
@@ -2112,7 +2120,7 @@ fun SharedMobilePdfReaderHost(
                                         // the format dialog is skipped when there is nothing to choose.
                                         dispatchNativePdfAction(action, sharedPdfOriginalExportSnapshot(readerState))
                                     } else {
-                                        dispatchNativePdfAction(action, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
+                                        dispatchNativePdfAction(action, annotatedPdfExportSnapshot())
                                     }
                                 }
                             },
@@ -3842,7 +3850,7 @@ fun SharedMobilePdfReaderHost(
             cancelLabel = readerString("action_cancel", "Cancel"),
             onAnnotated = {
                 showShareFormatChoice = false
-                dispatchNativePdfAction(SharedMobilePdfNativeAction.SHARE_ANNOTATED, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
+                dispatchNativePdfAction(SharedMobilePdfNativeAction.SHARE_ANNOTATED, annotatedPdfExportSnapshot())
             },
             onOriginal = {
                 showShareFormatChoice = false
@@ -3869,7 +3877,7 @@ fun SharedMobilePdfReaderHost(
                 showSaveFormatChoice = false
                 dispatchNativePdfAction(
                     SharedMobilePdfNativeAction.SAVE_COPY,
-                    SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts)
+                    annotatedPdfExportSnapshot(),
                 )
             },
             onOriginal = {

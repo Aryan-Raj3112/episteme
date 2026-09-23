@@ -54,15 +54,19 @@ class IosOpdsStreamPageLoaderTest {
             assertEquals("image/jpeg", first?.mimeType)
             assertContentEquals(payload, second?.bytes)
             assertEquals(1, client.calls.size)
+            // Feeds advertise absolute page URLs (possibly on a CDN host);
+            // never rewrite the host — only attach catalog credentials.
             assertEquals(
-                "https://catalog.example/pse/1?width=1600",
+                "https://cdn.example/pse/1?width=1600",
                 client.calls.single().url,
             )
             assertEquals("reader", client.calls.single().username)
             assertEquals("secret", client.calls.single().password)
-            // The generated WebView resource URI contains no catalog credentials.
-            assertEquals(false, resourceUrl.contains("reader"))
-            assertEquals(false, resourceUrl.contains("secret"))
+            // Credentials never enter the WebView resource URI. The scheme itself is
+            // "reader-opds-page", so only inspect the opaque part after "://".
+            val opaque = resourceUrl.substringAfter("://")
+            assertEquals(false, opaque.contains("reader"))
+            assertEquals(false, opaque.contains("secret"))
         } finally {
             if (previousCatalogs == null) {
                 defaults.removeObjectForKey(key)

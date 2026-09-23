@@ -99,4 +99,20 @@ class SharedPdfExportPolicyTest {
         // Source state is left untouched for the annotated path.
         assertEquals(listOf(ink), state.annotations)
     }
+
+    @Test
+    fun richTextExportScaleMultipliesDensityAndFontScaleLikeAndroidSpToPx() {
+        assertEquals(1f, SharedPdfExportSnapshot(SharedPdfReaderState()).richTextExportScale)
+        assertEquals(3f, SharedPdfExportSnapshot(SharedPdfReaderState(), exportDensity = 3f).richTextExportScale)
+        assertEquals(
+            4.5f,
+            SharedPdfExportSnapshot(
+                SharedPdfReaderState(),
+                exportDensity = 3f,
+                exportFontScale = 1.5f,
+            ).richTextExportScale,
+            1e-6f,
+        )
+        assertEquals(0f, SharedPdfExportSnapshot(SharedPdfReaderState(), exportDensity = 0f).richTextExportScale)
+    }
 }

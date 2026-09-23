@@ -172,6 +172,14 @@ internal class IosOpdsRepository(
         return runCatching {
             val fileUrl = documentsDirectoryUrl()
                 ?: error("Could not access iOS Documents directory")
+            // Bare test hosts and fresh installs may resolve NSDocumentDirectory
+            // without the folder existing yet; moveItemAtPath fails if missing.
+            NSFileManager.defaultManager.createDirectoryAtPath(
+                fileUrl.path ?: error("Could not locate Documents directory path"),
+                withIntermediateDirectories = true,
+                attributes = null,
+                error = null,
+            )
             val temporaryDirectoryUrl = NSURL.fileURLWithPath(
                 NSTemporaryDirectory().trimEnd('/'),
                 isDirectory = true,

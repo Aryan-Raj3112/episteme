@@ -10,10 +10,12 @@ import androidx.compose.ui.text.font.FontWeight as ComposeFontWeight
 import androidx.compose.ui.text.style.TextAlign as ComposeTextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.isSpecified
+import com.aryan.reader.shared.generated.resources.Res
 import kotlin.math.ceil
 import org.jetbrains.skia.Bitmap
 import org.jetbrains.skia.ColorAlphaType
 import org.jetbrains.skia.ColorType
+import org.jetbrains.skia.Data
 import org.jetbrains.skia.FontMgr
 import org.jetbrains.skia.FontSlant
 import org.jetbrains.skia.FontStyle
@@ -23,6 +25,7 @@ import org.jetbrains.skia.FontMgrWithFallback
 import org.jetbrains.skia.ImageInfo
 import org.jetbrains.skia.Paint
 import org.jetbrains.skia.Surface
+import org.jetbrains.skia.Typeface
 import org.jetbrains.skia.paragraph.Alignment as SkiaAlignment
 import org.jetbrains.skia.paragraph.DecorationLineStyle
 import org.jetbrains.skia.paragraph.DecorationStyle
@@ -67,13 +70,14 @@ internal data class IosPdfRasterizationResult(
     val complete: Boolean,
 )
 
-internal fun buildIosPdfTextRasterOverlays(
+internal suspend fun buildIosPdfTextRasterOverlays(
     pageIndex: Int,
     pageWidth: Float,
     pageHeight: Float,
     annotations: List<SharedPdfAnnotation>,
     richTextLayouts: List<SharedPdfRichPageLayout>,
-    fontRegistry: IosPdfTextFontRegistry = buildIosPdfTextFontRegistry(annotations, richTextLayouts),
+    fontRegistry: IosPdfTextFontRegistry,
+    richTextExportScale: Float = 1f,
 ): IosPdfRasterizationResult {
     val overlays = mutableListOf<IosPdfRasterOverlay>()
     var complete = true
@@ -84,7 +88,7 @@ internal fun buildIosPdfTextRasterOverlays(
         }
     richTextLayouts.filter { it.pageIndex == pageIndex && it.visibleText.any { char -> !char.isWhitespace() } }
         .forEach { layout ->
-            val overlay = layout.toIosPdfRichTextOverlay(pageWidth, pageHeight, fontRegistry)
+            val overlay = layout.toIosPdfRichTextOverlay(pageWidth, pageHeight, fontRegistry, richTextExportScale)
             if (overlay == null) complete = false else overlays += overlay
         }
     return IosPdfRasterizationResult(overlays, complete)
@@ -136,20 +140,27 @@ private fun SharedPdfRichPageLayout.toIosPdfRichTextOverlay(
     pageWidth: Float,
     pageHeight: Float,
     fontRegistry: IosPdfTextFontRegistry,
+    richTextExportScale: Float,
 ): IosPdfRasterOverlay? {
     val text = visibleText.withoutTrailingIosPdfPageBreak().sanitizeIosPdfRasterTextPreservingLength()
     if (text.text.isBlank()) return null
     val bounds = PdfPageBounds(0.1f, 0.08f, 0.9f, 0.92f)
-    val exportHeight = iosPdfExportHeight(pageHeight)
-    val exportWidth = exportHeight * (pageWidth / pageHeight.coerceAtLeast(1f))
-    val width = ceil((bounds.right - bounds.left) * exportWidth).toInt().coerceAtLeast(1)
-    val height = ceil((bounds.bottom - bounds.top) * exportHeight).toInt().coerceAtLeast(1)
+    // Android/Desktop size the rich-text bitmap from the same pageHeightPx that baked the
+    // span font sizes into the AnnotatedString. Mixing exportHeight here with layout-based
+    // font sizes scales glyphs against the wrong canvas (tiny/huge text vs Android).
+    val layoutHeight = pageHeightPx.takeIf { it > 0f } ?: iosPdfExportHeight(pageHeight)
+    val layoutWidth = layoutHeight * (pageWidth / pageHeight.coerceAtLeast(1f))
+    val width = ceil((bounds.right - bounds.left) * layoutWidth).toInt().coerceAtLeast(1)
+    val height = ceil((bounds.bottom - bounds.top) * layoutHeight).toInt().coerceAtLeast(1)
     val pixels = renderIosPdfParagraph(
         text,
         width,
         height,
         padding = 0f,
         fontRegistry = fontRegistry,
+        // Android benchmark (applySpanStyle): baked .sp sizes go through sp→px
+        // (density × fontScale). Text boxes skip this and stay page-relative.
+        fontScale = richTextExportScale,
     ) ?: return null
     return cropIosPdfRasterOverlay(pageIndex, bounds, width, height, pixels)
 }
@@ -234,6 +245,7 @@ private fun renderIosPdfParagraph(
     padding: Float,
     fallbackFontName: String? = null,
     fontRegistry: IosPdfTextFontRegistry,
+    fontScale: Float = 1f,
 ): ByteArray? = runCatching {
     // One Skia paragraph per '\n'-paragraph: alignment is builder-wide in
     // Skia, so segments stack vertically with their own alignment (list
@@ -266,7 +278,7 @@ private fun renderIosPdfParagraph(
             this.alignment = alignment
             this.textStyle = TextStyle().apply {
                 color = 0xFF000000.toInt()
-                fontSize = 16f
+                fontSize = 16f * fontScale
                 fontFamilies = arrayOf(fallbackFontName?.takeIf(String::isNotBlank) ?: "Arial")
             }
         }
@@ -292,6 +304,7 @@ private fun renderIosPdfParagraph(
             builder.pushStyle(
                 merged.toIosSkiaTextStyle(
                     fallbackFontName = fontRegistry.familyName(spanFontPath, null) ?: fallbackFontName,
+                    fontScale = fontScale,
                 )
             )
             builder.addText(segment.text.substring(start, end))
@@ -304,13 +317,16 @@ private fun renderIosPdfParagraph(
     }
     val image = surface.makeImageSnapshot()
     val bitmap = Bitmap.makeFromImage(image)
+    // FPDFBitmap_BGRA expects unpremultiplied components (fpdfview.h: "Pixel components
+    // are independent of alpha"). Reading PREMUL and feeding BGRA corrupts antialiased
+    // glyph edges into dark/garbled pixels on export.
     bitmap.readPixels(
-        ImageInfo(width, height, ColorType.BGRA_8888, ColorAlphaType.PREMUL),
+        ImageInfo(width, height, ColorType.BGRA_8888, ColorAlphaType.UNPREMUL),
         width * 4,
     )
 }.getOrNull()
 
-internal fun buildIosPdfTextFontRegistry(
+internal suspend fun buildIosPdfTextFontRegistry(
     annotations: List<SharedPdfAnnotation>,
     richTextLayouts: List<SharedPdfRichPageLayout> = emptyList(),
 ): IosPdfTextFontRegistry {
@@ -331,8 +347,18 @@ internal fun buildIosPdfTextFontRegistry(
         .plus(richFontPaths)
         .distinct()
         .forEachIndexed { index, path ->
-            val typeface = runCatching { FontMgr.default.makeFromFile(path) }.getOrNull()
-                ?: return@forEachIndexed
+            val typeface = loadIosPdfExportTypeface(path) ?: run {
+                // Preset family still resolves to the same serif/sans/mono class as
+                // on-screen rendering when the TTF itself cannot be decoded.
+                sharedPdfFallbackExportFontFamily(path)?.let { family ->
+                    aliasesByPath[path] = family
+                    annotations.asSequence()
+                        .filter { it.fontPath == path }
+                        .mapNotNull { it.fontName?.takeIf(String::isNotBlank) }
+                        .forEach { aliasesByName[it] = family }
+                }
+                return@forEachIndexed
+            }
             val alias = "ReaderPdfImportedFont$index"
             provider.registerTypeface(typeface, alias)
             aliasesByPath[path] = alias
@@ -348,14 +374,37 @@ internal fun buildIosPdfTextFontRegistry(
     return IosPdfTextFontRegistry(fontCollection, aliasesByPath, aliasesByName)
 }
 
-private fun SpanStyle.toIosSkiaTextStyle(fallbackFontName: String?): TextStyle {
+/**
+ * Loads a font path for export. Preset `asset:fonts/` paths live in shared compose
+ * resources (Android still uses TypeFace.createFromAsset for the same basenames).
+ * Absolute filesystem paths (imported user fonts) go through Skia's file loader.
+ */
+private suspend fun loadIosPdfExportTypeface(path: String): Typeface? {
+    val bundledPath = sharedPdfBundledFontResourcePath(path)
+    if (bundledPath != null) {
+        val bytes = runCatching { Res.readBytes(bundledPath) }.getOrNull()
+            ?.takeIf { it.isNotEmpty() }
+            ?: return null
+        val data = Data.makeFromBytes(bytes)
+        return try {
+            FontMgr.default.makeFromData(data)
+        } finally {
+            data.close()
+        }
+    }
+    if (path.startsWith("asset:")) return null
+    return runCatching { FontMgr.default.makeFromFile(path) }.getOrNull()
+}
+
+private fun SpanStyle.toIosSkiaTextStyle(fallbackFontName: String?, fontScale: Float = 1f): TextStyle {
     val foreground = color.takeIf { it.isSpecified }?.toArgb() ?: 0xFF000000.toInt()
     val backgroundArgb = background.takeIf { it.isSpecified && it.alpha > 0f }?.toArgb()
     val decoration = textDecoration ?: TextDecoration.None
+    val baseFontSize = this@toIosSkiaTextStyle.fontSize.takeIf { it.isSpecified }?.value ?: 16f
     return TextStyle().apply {
         color = foreground
         backgroundArgb?.let { background = Paint().apply { color = it } }
-        fontSize = this@toIosSkiaTextStyle.fontSize.takeIf { it.isSpecified }?.value?.coerceAtLeast(1f) ?: 16f
+        fontSize = (baseFontSize * fontScale).coerceAtLeast(1f)
         fontFamilies = arrayOf(fallbackFontName?.takeIf(String::isNotBlank) ?: "Arial")
         fontStyle = FontStyle(
             if ((fontWeight ?: ComposeFontWeight.Normal).weight >= ComposeFontWeight.Bold.weight) FontWeight.BOLD else FontWeight.NORMAL,

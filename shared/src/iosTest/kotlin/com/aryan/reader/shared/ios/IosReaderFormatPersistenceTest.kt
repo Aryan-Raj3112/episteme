@@ -85,12 +85,16 @@ class IosReaderFormatPersistenceTest {
             assertEquals(SharedReaderTextAlign.JUSTIFY, restoredDefault.textAlign)
 
             val restoredBook = restored.books.first { it.id == "epub-book" }
-            assertEquals(9, restoredBook.readerSettings?.fontSize)
-            assertEquals(4.35f, restoredBook.readerSettings?.lineSpacing)
+            // Book-level readerSettings start as legacy (out-of-range) values and
+            // migrate to the Android format bounds (same as readerDefaultSettings).
+            assertEquals(54, restoredBook.readerSettings?.fontSize)
+            assertEquals(1.45f, restoredBook.readerSettings?.lineSpacing)
             assertEquals(0, restoredBook.readerSettings?.resolvedHorizontalMargin)
             assertEquals(48, restoredBook.readerSettings?.resolvedVerticalMargin)
+            // Local per-book format starts as tiny/huge sliders and clamps independently.
             assertEquals(9, restoredBook.readerLocalFormatSettings?.fontSize)
-            assertEquals(4.35f, restoredBook.readerLocalFormatSettings?.lineSpacing)
+            // 1.45f * 3f is not exactly 4.35 in float32.
+            assertEquals(4.35f, restoredBook.readerLocalFormatSettings?.lineSpacing!!, 1e-4f)
             assertEquals(48, restoredBook.readerLocalFormatSettings?.margin)
 
             // PDF settings are intentionally outside the EPUB migration boundary.
