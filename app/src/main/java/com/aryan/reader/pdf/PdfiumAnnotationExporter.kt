@@ -61,6 +61,12 @@ import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 internal object PdfiumAnnotationExporter {
+    /**
+     * Shared geometry diagnosis tag for rich-text / raster export (Kotlin + native).
+     * Filter with: adb logcat -s PdfExportGeom
+     */
+    internal const val EXPORT_GEOM_TAG = "PdfExportGeom"
+
     internal const val TEXT_FLAG_BOLD = 1
     internal const val TEXT_FLAG_ITALIC = 1 shl 1
     internal const val TEXT_FLAG_UNDERLINE = 1 shl 2
@@ -114,14 +120,26 @@ internal object PdfiumAnnotationExporter {
                 } ?: throw IOException("Unable to open source PDF for PDFium export.")
 
                 val pageSizes = runCatching { readPdfPageSizes(sourceFile) }
-                    .onFailure { Timber.tag("PdfExportDebug").w(it, "Unable to read page sizes for text raster export.") }
+                    .onFailure { Timber.tag(EXPORT_GEOM_TAG).w(it, "Unable to read page sizes for text raster export.") }
                     .getOrDefault(emptyList())
+                Timber.tag(EXPORT_GEOM_TAG).d(
+                    "export.start pages=${pageSizes.size} sizes=${
+                        pageSizes.take(8).joinToString { "${it.width}x${it.height}" }
+                    } richLayouts=${richTextPageLayouts.orEmpty().size} textBoxes=${textBoxes.orEmpty().size}",
+                )
                 val rasterOverlays = buildTextRasterOverlays(
                     context = context,
                     textBoxes = textBoxes.orEmpty(),
                     richTextPageLayouts = richTextPageLayouts.orEmpty(),
                     pageSizes = pageSizes
                 )
+                rasterOverlays.forEachIndexed { index, overlay ->
+                    Timber.tag(EXPORT_GEOM_TAG).d(
+                        "overlay[$index] page=${overlay.pageIndex} " +
+                            "bounds=l${overlay.left} t${overlay.top} r${overlay.right} b${overlay.bottom} " +
+                            "px=${overlay.width}x${overlay.height}",
+                    )
+                }
                 val payload = buildPayload(
                     inkAnnotations = inkAnnotations,
                     textBoxes = emptyList(),
@@ -190,12 +208,18 @@ internal object PdfiumAnnotationExporter {
                 }
 
                 if (!exported) {
-                    Timber.tag("PdfExportDebug").w("Native PDF bridge unavailable; exporting original PDF without annotation flattening.")
+                    Timber.tag(EXPORT_GEOM_TAG).w("Native PDF bridge unavailable; exporting original PDF without annotation flattening.")
                     FileInputStream(sourceFile).use { input -> input.copyTo(destStream) }
                     return@withContext
                 }
 
                 FileInputStream(destFile).use { input -> input.copyTo(destStream) }
+                Timber.tag(EXPORT_GEOM_TAG).i(
+                    "export.done ink=${payload.inkPageIndices.size} " +
+                        "highlight=${payload.highlightPageIndices.size} " +
+                        "raster=${payload.rasterPageIndices.size} " +
+                        "rasterBounds=${payload.rasterBounds.toList()}",
+                )
                 Timber.tag("PdfExportDebug").i(
                     "PDFium export saved ${payload.inkPageIndices.size} ink, " +
                         "${payload.highlightPageIndices.size} highlight, " +
@@ -519,8 +543,23 @@ internal object PdfiumAnnotationExporter {
         textBoxes.mapNotNullTo(overlays) { box ->
             renderTextBoxOverlay(context, box, pageSizeFor(pageSizes, box.pageIndex))
         }
-        richTextPageLayouts.mapNotNullTo(overlays) { layout ->
-            renderRichTextOverlay(context, layout, pageSizeFor(pageSizes, layout.pageIndex))
+        richTextPageLayouts.forEach { layout ->
+            val overlay = renderRichTextOverlay(context, layout, pageSizeFor(pageSizes, layout.pageIndex))
+            if (overlay != null) {
+                overlays += overlay
+            } else {
+                val raw = layout.visibleText.text
+                val edgeStripped = layout.visibleText.withoutEdgePdfiumPageBreaks().text
+                val head = raw.take(48).map { ch ->
+                    if (ch.code < 32 || ch == PAGE_BREAK_CHAR) "\\u%04X".format(ch.code)
+                    else ch.toString()
+                }.joinToString("")
+                Timber.tag(EXPORT_GEOM_TAG).d(
+                    "rich.skip page=${layout.pageIndex} rawLen=${raw.length} " +
+                        "edgeLen=${edgeStripped.length} blank=${edgeStripped.isBlank()} " +
+                        "head=$head",
+                )
+            }
         }
         return overlays
     }
@@ -588,7 +627,7 @@ internal object PdfiumAnnotationExporter {
         layout: PageTextLayout,
         pageSize: PdfiumPageSize
     ): PdfiumRasterOverlay? {
-        val visibleText = layout.visibleText.withoutTrailingPdfiumPageBreak()
+        val visibleText = layout.visibleText.withoutEdgePdfiumPageBreaks()
         if (layout.pageIndex < 0 || visibleText.text.isBlank()) return null
 
         val pageHeightPx = layout.pageHeightPx.takeIf { it > 0f } ?: pageSize.exportHeightPx()
@@ -784,7 +823,12 @@ internal object PdfiumAnnotationExporter {
             }
         }
 
-        if (maxX < minX || maxY < minY) return null
+        if (maxX < minX || maxY < minY) {
+            Timber.tag(EXPORT_GEOM_TAG).d(
+                "crop.empty page=$pageIndex bounds=l$boundsLeft t$boundsTop r$boundsRight b$boundsBottom src=${width}x$height",
+            )
+            return null
+        }
 
         val cropWidth = maxX - minX + 1
         val cropHeight = maxY - minY + 1
@@ -801,7 +845,7 @@ internal object PdfiumAnnotationExporter {
 
         val boundsWidth = boundsRight - boundsLeft
         val boundsHeight = boundsBottom - boundsTop
-        return PdfiumRasterOverlay(
+        val overlay = PdfiumRasterOverlay(
             pageIndex = pageIndex,
             left = boundsLeft + boundsWidth * (minX.toFloat() / width),
             top = boundsTop + boundsHeight * (minY.toFloat() / height),
@@ -811,6 +855,12 @@ internal object PdfiumAnnotationExporter {
             height = cropHeight,
             pixels = cropped
         )
+        Timber.tag(EXPORT_GEOM_TAG).d(
+            "crop.page=$pageIndex src=${width}x$height crop=($minX,$minY)-($maxX,$maxY) " +
+                "in=l$boundsLeft t$boundsTop r$boundsRight b$boundsBottom " +
+                "out=l${overlay.left} t${overlay.top} r${overlay.right} b${overlay.bottom}",
+        )
+        return overlay
     }
 
     private fun readPdfPageSizes(sourceFile: File): List<PdfiumPageSize> {
@@ -819,7 +869,10 @@ internal object PdfiumAnnotationExporter {
                 List(renderer.pageCount) { index ->
                     val page = renderer.openPage(index)
                     try {
-                        PdfiumPageSize(page.width, page.height)
+                        // PdfRenderer applies page /Rotate; width/height are display-space.
+                        val size = PdfiumPageSize(page.width, page.height)
+                        Timber.tag(EXPORT_GEOM_TAG).d("pageSize page=$index ${size.width}x${size.height}")
+                        size
                     } finally {
                         page.close()
                     }
@@ -895,8 +948,19 @@ internal object PdfiumAnnotationExporter {
     private fun spToPx(context: Context, value: Float): Float =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, value, context.resources.displayMetrics)
 
-    private fun AnnotatedString.withoutTrailingPdfiumPageBreak(): AnnotatedString =
-        if (text.lastOrNull() == PAGE_BREAK_CHAR) subSequence(0, length - 1) else this
+    /**
+     * Leading/trailing form-feed page breaks become newlines in the raster layout and
+     * push glyphs down (or leave empty rows), so export placement drifts from the
+     * on-screen editor. Strip all edge breaks before drawing; internal breaks still
+     * sanitize to newlines.
+     */
+    internal fun AnnotatedString.withoutEdgePdfiumPageBreaks(): AnnotatedString {
+        var start = 0
+        var end = length
+        while (start < end && text[start] == PAGE_BREAK_CHAR) start++
+        while (end > start && text[end - 1] == PAGE_BREAK_CHAR) end--
+        return if (start == 0 && end == length) this else subSequence(start, end)
+    }
 
     private fun String.sanitizeRasterText(): String =
         replace(PAGE_BREAK_CHAR, '\n')

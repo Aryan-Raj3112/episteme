@@ -20,6 +20,7 @@ import com.aryan.reader.shared.pdfium.c.FPDFPage_CreateAnnot
 import com.aryan.reader.shared.pdfium.c.FPDFPage_GenerateContent
 import com.aryan.reader.shared.pdfium.c.FPDFPage_InsertObject
 import com.aryan.reader.shared.pdfium.c.FPDFPageObj_NewImageObj
+import com.aryan.reader.shared.pdfium.c.FPDFPage_GetRotation
 import com.aryan.reader.shared.pdfium.c.FPDFImageObj_SetBitmap
 import com.aryan.reader.shared.pdfium.c.FPDFImageObj_SetMatrix
 import com.aryan.reader.shared.pdfium.c.FPDF_ANNOT_HIGHLIGHT
@@ -66,6 +67,10 @@ import platform.posix.malloc
 import platform.posix.memcpy
 import kotlin.math.max
 import kotlin.math.min
+import com.aryan.reader.shared.pdf.sharedPdfDisplayPointToMediabox
+import com.aryan.reader.shared.pdf.sharedPdfDisplayRectToMediabox
+import com.aryan.reader.shared.pdf.sharedPdfRasterImageMatrix
+import com.aryan.reader.shared.pdf.sharedPdfRotationDegreesFromPdfiumCode
 
 private const val IOS_PDF_ANNOTATION_FLAG_PRINT = 4
 private const val IOS_PDF_HIGHLIGHT_ALPHA = 102u
@@ -224,15 +229,16 @@ private fun addIosPdfRasterOverlay(
     pageHeight: Float,
     retainedRasters: MutableList<IosPdfRasterResource>,
 ): Boolean {
-    val left = overlay.bounds.left.coerceIn(0f, 1f) * pageWidth
-    val top = (1f - overlay.bounds.top.coerceIn(0f, 1f)) * pageHeight
-    val right = overlay.bounds.right.coerceIn(0f, 1f) * pageWidth
-    val bottom = (1f - overlay.bounds.bottom.coerceIn(0f, 1f)) * pageHeight
-    val rectWidth = max(left, right) - min(left, right)
-    val rectHeight = max(top, bottom) - min(top, bottom)
-    // Android benchmark (pdfium_bridge.cpp raster path): clamp normalized bounds and reject
-    // degenerate rects so a malformed overlay never inserts a zero-size image object.
-    if (rectWidth <= 0.5f || rectHeight <= 0.5f) return false
+    val rotationDegrees = sharedPdfRotationDegreesFromPdfiumCode(FPDFPage_GetRotation(page))
+    val matrix = sharedPdfRasterImageMatrix(
+        left = overlay.bounds.left,
+        top = overlay.bounds.top,
+        right = overlay.bounds.right,
+        bottom = overlay.bounds.bottom,
+        displayWidth = pageWidth,
+        displayHeight = pageHeight,
+        rotationDegrees = rotationDegrees,
+    ) ?: return false
 
     val pixelBytes = overlay.bgraPixels
     val byteCount = pixelBytes.size
@@ -261,12 +267,12 @@ private fun addIosPdfRasterOverlay(
         FPDFImageObj_SetBitmap(null, 0, image, bitmap) == 0 ||
         FPDFImageObj_SetMatrix(
             image,
-            rectWidth.toDouble(),
-            0.0,
-            0.0,
-            rectHeight.toDouble(),
-            min(left, right).toDouble(),
-            min(top, bottom).toDouble(),
+            matrix.a,
+            matrix.b,
+            matrix.c,
+            matrix.d,
+            matrix.e,
+            matrix.f,
         ) == 0
     ) {
         FPDFBitmap_Destroy(bitmap)
@@ -286,29 +292,40 @@ private fun addIosPdfInkAnnotation(
 ): Boolean {
     val points = ink.pdfInkAppearancePoints(pageWidth, pageHeight)
     if (points.isEmpty()) return false
+    val rotationDegrees = sharedPdfRotationDegreesFromPdfiumCode(FPDFPage_GetRotation(page))
+    val pagePoints = points.mapNotNull { point ->
+        sharedPdfDisplayPointToMediabox(
+            xNorm = point.x,
+            yNorm = point.y,
+            displayWidth = pageWidth,
+            displayHeight = pageHeight,
+            rotationDegrees = rotationDegrees,
+        )?.let { (x, y) -> PdfPagePoint(x = x, y = y) }
+    }
+    if (pagePoints.size != points.size || pagePoints.isEmpty()) return false
     val annotation = FPDFPage_CreateAnnot(page, FPDF_ANNOT_INK) ?: return false
     return try {
         memScoped {
-            val nativePoints = allocArray<FS_POINTF>(points.size)
-            points.forEachIndexed { index, point ->
-                nativePoints[index].x = point.x.coerceIn(0f, 1f) * pageWidth
-                nativePoints[index].y = (1f - point.y.coerceIn(0f, 1f)) * pageHeight
+            val nativePoints = allocArray<FS_POINTF>(pagePoints.size)
+            pagePoints.forEachIndexed { index, point ->
+                nativePoints[index].x = point.x
+                nativePoints[index].y = point.y
             }
-            if (FPDFAnnot_AddInkStroke(annotation, nativePoints, points.size.toULong()) < 0) return@memScoped false
+            if (FPDFAnnot_AddInkStroke(annotation, nativePoints, pagePoints.size.toULong()) < 0) return@memScoped false
             // Android benchmark (pdfium_bridge.cpp ink path + DesktopPdfium): stroke width has a
             // 0.25pt floor, the annot rect pads by 1.5x stroke, and opaque highlighters burn at
             // alpha 102 to match the on-screen chisel rendering.
             val strokeWidth = max(0.25f, ink.strokeWidth * pageWidth)
             val padding = strokeWidth * 1.5f
-            val minX = points.minOf { it.x.coerceIn(0f, 1f) } * pageWidth
-            val maxX = points.maxOf { it.x.coerceIn(0f, 1f) } * pageWidth
-            val minPdfY = (1f - points.maxOf { it.y.coerceIn(0f, 1f) }) * pageHeight
-            val maxPdfY = (1f - points.minOf { it.y.coerceIn(0f, 1f) }) * pageHeight
+            val minX = pagePoints.minOf { it.x }
+            val maxX = pagePoints.maxOf { it.x }
+            val minY = pagePoints.minOf { it.y }
+            val maxY = pagePoints.maxOf { it.y }
             val bounds = alloc<FS_RECTF> {
-                left = min(minX, maxX) - padding
-                right = max(minX, maxX) + padding
-                top = max(minPdfY, maxPdfY) + padding
-                bottom = min(minPdfY, maxPdfY) - padding
+                left = minX - padding
+                right = maxX + padding
+                top = maxY + padding
+                bottom = minY - padding
             }
             FPDFAnnot_SetRect(annotation, bounds.ptr)
             FPDFAnnot_SetBorder(annotation, 0f, 0f, strokeWidth)
@@ -319,12 +336,7 @@ private fun addIosPdfInkAnnotation(
             // and does not rebuild the path from /InkList. SetBorder clears any
             // existing appearance, so install the stroke stream after the border.
             val appearance = sharedPdfInkAppearanceContent(
-                pagePoints = points.mapIndexed { index, point ->
-                    PdfPagePoint(
-                        x = point.x.coerceIn(0f, 1f) * pageWidth,
-                        y = (1f - point.y.coerceIn(0f, 1f)) * pageHeight,
-                    )
-                },
+                pagePoints = pagePoints,
                 strokeWidthPdfUnits = strokeWidth,
                 colorArgb = iosPdfInkColorArgb(ink),
             )
@@ -377,34 +389,38 @@ private fun addIosPdfHighlightAnnotation(
         com.aryan.reader.shared.HighlightStyle.STRIKETHROUGH -> FPDF_ANNOT_STRIKEOUT
     }
     if (highlight.boundsList.isEmpty()) return false
+    val rotationDegrees = sharedPdfRotationDegreesFromPdfiumCode(FPDFPage_GetRotation(page))
     val annotation = FPDFPage_CreateAnnot(page, subtype) ?: return false
     return try {
         memScoped {
             var attachmentPointsWritten = true
-            var unionLeft = 0f
-            var unionRight = 0f
-            var unionTop = 0f
-            var unionBottom = 0f
+            var unionLeft = Float.MAX_VALUE
+            var unionRight = -Float.MAX_VALUE
+            var unionTop = -Float.MAX_VALUE
+            var unionBottom = Float.MAX_VALUE
             var quadCount = 0
             highlight.boundsList.forEach { bounds ->
-                // Android benchmark: clamp normalized bounds, skip degenerate quads, union the rest.
-                val left = min(bounds.left, bounds.right).coerceIn(0f, 1f) * pageWidth
-                val right = max(bounds.left, bounds.right).coerceIn(0f, 1f) * pageWidth
-                val top = (1f - min(bounds.top, bounds.bottom).coerceIn(0f, 1f)) * pageHeight
-                val bottom = (1f - max(bounds.top, bounds.bottom).coerceIn(0f, 1f)) * pageHeight
-                if (right <= left || top <= bottom) return@forEach
+                val rect = sharedPdfDisplayRectToMediabox(
+                    left = bounds.left,
+                    top = bounds.top,
+                    right = bounds.right,
+                    bottom = bounds.bottom,
+                    displayWidth = pageWidth,
+                    displayHeight = pageHeight,
+                    rotationDegrees = rotationDegrees,
+                ) ?: return@forEach
                 val quad = alloc<FS_QUADPOINTSF> {
-                    x1 = left; y1 = top; x2 = right; y2 = top
-                    x3 = left; y3 = bottom; x4 = right; y4 = bottom
+                    x1 = rect.left; y1 = rect.top; x2 = rect.right; y2 = rect.top
+                    x3 = rect.left; y3 = rect.bottom; x4 = rect.right; y4 = rect.bottom
                 }
                 attachmentPointsWritten = FPDFAnnot_AppendAttachmentPoints(annotation, quad.ptr) != 0 && attachmentPointsWritten
                 if (quadCount == 0) {
-                    unionLeft = left; unionRight = right; unionTop = top; unionBottom = bottom
+                    unionLeft = rect.left; unionRight = rect.right; unionTop = rect.top; unionBottom = rect.bottom
                 } else {
-                    unionLeft = min(unionLeft, left)
-                    unionRight = max(unionRight, right)
-                    unionTop = max(unionTop, top)
-                    unionBottom = min(unionBottom, bottom)
+                    unionLeft = min(unionLeft, rect.left)
+                    unionRight = max(unionRight, rect.right)
+                    unionTop = max(unionTop, rect.top)
+                    unionBottom = min(unionBottom, rect.bottom)
                 }
                 quadCount++
             }

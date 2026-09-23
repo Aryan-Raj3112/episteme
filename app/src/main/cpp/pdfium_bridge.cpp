@@ -15,6 +15,8 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+// Shared with Kotlin PdfiumAnnotationExporter.EXPORT_GEOM_TAG — filter: adb logcat -s PdfExportGeom
+#define LOGG(...) __android_log_print(ANDROID_LOG_DEBUG, "PdfExportGeom", __VA_ARGS__)
 
 struct FS_RECTF_BRIDGE {
     float left;
@@ -99,7 +101,15 @@ typedef int (*FPDFAnnot_AppendAttachmentPoints_t)(void* annot, const FS_QUADPOIN
 typedef void (*FPDFPage_InsertObject_t)(void* page, void* page_object);
 typedef void* (*FPDFPageObj_NewImageObj_t)(void* document);
 typedef int (*FPDFImageObj_SetMatrix_t)(void* image_object, double a, double b, double c, double d, double e, double f);
+typedef int (*FPDFImageObj_GetMatrix_t)(void* image_object, double* a, double* b, double* c, double* d, double* e, double* f);
 typedef int (*FPDFImageObj_SetBitmap_t)(void** pages, int nCount, void* image_object, void* bitmap);
+typedef int (*FPDFPage_GetMediaBox_t)(void* page, float* left, float* bottom, float* right, float* top);
+typedef int (*FPDFPage_GetCropBox_t)(void* page, float* left, float* bottom, float* right, float* top);
+
+struct FsMatrixBridge {
+    float a, b, c, d, e, f;
+};
+typedef int (*FPDFPageObj_GetMatrix_t)(void* page_object, FsMatrixBridge* matrix);
 typedef void* (*FPDFPageObj_NewTextObj_t)(void* document, const char* font, float font_size);
 typedef void* (*FPDFPageObj_CreateTextObj_t)(void* document, void* font, float font_size);
 typedef void* (*FPDFText_LoadFont_t)(void* document, const unsigned char* data, unsigned int size, int font_type, int cid);
@@ -116,6 +126,7 @@ typedef int (*FPDFPath_SetDrawMode_t)(void* path, int fillmode, int stroke);
 typedef void (*FPDFPageObj_Destroy_t)(void* page_object);
 typedef int (*FPDFPage_GenerateContent_t)(void* page);
 typedef int (*FPDF_SaveAsCopy_t)(void* document, FPDF_FILEWRITE_BRIDGE* file_write, unsigned long flags);
+typedef int (*FPDFPage_GetRotation_t)(void* page);
 
 static FPDFLink_GetLinkAtPoint_t get_link_at_point_func = nullptr;
 static FPDFAction_GetURIPath_t get_uri_path_func = nullptr;
@@ -182,7 +193,11 @@ static FPDFAnnot_AppendAttachmentPoints_t append_attachment_points_func = nullpt
 static FPDFPage_InsertObject_t insert_page_object_func = nullptr;
 static FPDFPageObj_NewImageObj_t new_image_object_func = nullptr;
 static FPDFImageObj_SetMatrix_t set_image_matrix_func = nullptr;
+static FPDFImageObj_GetMatrix_t get_image_matrix_func = nullptr;
+static FPDFPageObj_GetMatrix_t get_page_obj_matrix_func = nullptr;
 static FPDFImageObj_SetBitmap_t set_image_bitmap_func = nullptr;
+static FPDFPage_GetMediaBox_t get_page_mediabox_func = nullptr;
+static FPDFPage_GetCropBox_t get_page_cropbox_func = nullptr;
 static FPDFPageObj_NewTextObj_t new_text_object_func = nullptr;
 static FPDFPageObj_CreateTextObj_t create_text_object_func = nullptr;
 static FPDFText_LoadFont_t load_font_func = nullptr;
@@ -199,6 +214,7 @@ static FPDFPath_SetDrawMode_t path_set_draw_mode_func = nullptr;
 static FPDFPageObj_Destroy_t destroy_page_object_func = nullptr;
 static FPDFPage_GenerateContent_t generate_content_func = nullptr;
 static FPDF_SaveAsCopy_t save_as_copy_func = nullptr;
+static FPDFPage_GetRotation_t get_page_rotation_func = nullptr;
 
 static bool init_pdfium() {
     if (pdfium_handle) return true;
@@ -236,6 +252,7 @@ static bool init_pdfium() {
     get_page_height_func   = (FPDF_GetPageHeightF_t)      dlsym(pdfium_handle, "FPDF_GetPageHeightF");
     get_page_width_double_func = (FPDF_GetPageWidth_t)    dlsym(pdfium_handle, "FPDF_GetPageWidth");
     get_page_height_double_func = (FPDF_GetPageHeight_t)  dlsym(pdfium_handle, "FPDF_GetPageHeight");
+    get_page_rotation_func = (FPDFPage_GetRotation_t) dlsym(pdfium_handle, "FPDFPage_GetRotation");
     create_annot_func      = (FPDFPage_CreateAnnot_t)     dlsym(pdfium_handle, "FPDFPage_CreateAnnot");
     set_annot_rect_func    = (FPDFAnnot_SetRect_t)        dlsym(pdfium_handle, "FPDFAnnot_SetRect");
     set_annot_color_func   = (FPDFAnnot_SetColor_t)       dlsym(pdfium_handle, "FPDFAnnot_SetColor");
@@ -247,7 +264,19 @@ static bool init_pdfium() {
     insert_page_object_func = (FPDFPage_InsertObject_t)   dlsym(pdfium_handle, "FPDFPage_InsertObject");
     new_image_object_func = (FPDFPageObj_NewImageObj_t)   dlsym(pdfium_handle, "FPDFPageObj_NewImageObj");
     set_image_matrix_func = (FPDFImageObj_SetMatrix_t)    dlsym(pdfium_handle, "FPDFImageObj_SetMatrix");
+    get_image_matrix_func = (FPDFImageObj_GetMatrix_t)    dlsym(pdfium_handle, "FPDFImageObj_GetMatrix");
+    get_page_obj_matrix_func = (FPDFPageObj_GetMatrix_t) dlsym(pdfium_handle, "FPDFPageObj_GetMatrix");
     set_image_bitmap_func = (FPDFImageObj_SetBitmap_t)    dlsym(pdfium_handle, "FPDFImageObj_SetBitmap");
+    get_page_mediabox_func = (FPDFPage_GetMediaBox_t) dlsym(pdfium_handle, "FPDFPage_GetMediaBox");
+    get_page_cropbox_func = (FPDFPage_GetCropBox_t) dlsym(pdfium_handle, "FPDFPage_GetCropBox");
+    LOGG(
+        "pdfium.symbols SetMatrix=%p GetMatrix=%p PageObjGetMatrix=%p GetMediaBox=%p GetCropBox=%p GetRotation=%p",
+        (void*) set_image_matrix_func,
+        (void*) get_image_matrix_func,
+        (void*) get_page_obj_matrix_func,
+        (void*) get_page_mediabox_func,
+        (void*) get_page_cropbox_func,
+        (void*) get_page_rotation_func);
     new_text_object_func   = (FPDFPageObj_NewTextObj_t)   dlsym(pdfium_handle, "FPDFPageObj_NewTextObj");
     create_text_object_func = (FPDFPageObj_CreateTextObj_t) dlsym(pdfium_handle, "FPDFPageObj_CreateTextObj");
     load_font_func         = (FPDFText_LoadFont_t)        dlsym(pdfium_handle, "FPDFText_LoadFont");
@@ -784,6 +813,117 @@ static float clamp_unit(float value) {
     return value;
 }
 
+// Mirrors sharedPdfExportGeometry.kt: FPDFPage_GetRotation returns quarter-turns CW.
+static int page_rotation_code(void* page) {
+    if (!get_page_rotation_func) return -1;
+    return get_page_rotation_func(page);
+}
+
+static int page_rotation_degrees(void* page) {
+    switch (page_rotation_code(page)) {
+        case 1: return 90;
+        case 2: return 180;
+        case 3: return 270;
+        default: return 0;
+    }
+}
+
+static bool normalize_rotation_degrees(int rotation_degrees, int* out) {
+    int normalized = rotation_degrees % 360;
+    if (normalized < 0) normalized += 360;
+    if (normalized != 0 && normalized != 90 && normalized != 180 && normalized != 270) {
+        return false;
+    }
+    *out = normalized;
+    return true;
+}
+
+// display → mediabox (y-up). display sizes already include page rotation.
+static bool display_point_to_mediabox(
+        float x_norm,
+        float y_norm,
+        float display_width,
+        float display_height,
+        int rotation_degrees,
+        float* out_x,
+        float* out_y) {
+    if (display_width <= 0.0f || display_height <= 0.0f || !out_x || !out_y) return false;
+    int rotation = 0;
+    if (!normalize_rotation_degrees(rotation_degrees, &rotation)) return false;
+    const float dx = clamp_unit(x_norm) * display_width;
+    const float dy = clamp_unit(y_norm) * display_height;
+    const bool swap = rotation == 90 || rotation == 270;
+    const float mediabox_width = swap ? display_height : display_width;
+    const float mediabox_height = swap ? display_width : display_height;
+    switch (rotation) {
+        case 0:
+            *out_x = dx;
+            *out_y = display_height - dy;
+            return true;
+        case 90:
+            *out_x = dy;
+            *out_y = dx;
+            return true;
+        case 180:
+            *out_x = display_width - dx;
+            *out_y = dy;
+            return true;
+        default:
+            *out_x = mediabox_width - dy;
+            *out_y = mediabox_height - dx;
+            return true;
+    }
+}
+
+struct ImageMatrixBridge {
+    double a, b, c, d, e, f;
+};
+
+// Mirrors sharedPdfRasterImageMatrix.
+static bool display_rect_to_image_matrix(
+        float left,
+        float top,
+        float right,
+        float bottom,
+        float display_width,
+        float display_height,
+        int rotation_degrees,
+        ImageMatrixBridge* out) {
+    if (!out || display_width <= 0.0f || display_height <= 0.0f) return false;
+    int rotation = 0;
+    if (!normalize_rotation_degrees(rotation_degrees, &rotation)) return false;
+    const float dx0 = std::min(clamp_unit(left), clamp_unit(right)) * display_width;
+    const float dx1 = std::max(clamp_unit(left), clamp_unit(right)) * display_width;
+    const float dy0 = std::min(clamp_unit(top), clamp_unit(bottom)) * display_height;
+    const float dy1 = std::max(clamp_unit(top), clamp_unit(bottom)) * display_height;
+    const float width = dx1 - dx0;
+    const float height = dy1 - dy0;
+    if (width <= 0.0f || height <= 0.0f) return false;
+    const bool swap = rotation == 90 || rotation == 270;
+    const float mediabox_width = swap ? display_height : display_width;
+    const float mediabox_height = swap ? display_width : display_height;
+    const float display_left = dx0;
+    const float display_bottom = display_height - dy1;
+    switch (rotation) {
+        case 0:
+            *out = ImageMatrixBridge{width, 0.0, 0.0, height, display_left, display_bottom};
+            return true;
+        case 90:
+            *out = ImageMatrixBridge{
+                    0.0, width, -height, 0.0, mediabox_width - display_bottom, display_left};
+            return true;
+        case 180:
+            *out = ImageMatrixBridge{
+                    -width, 0.0, 0.0, -height, mediabox_width - display_left,
+                    display_height - display_bottom};
+            return true;
+        default:
+            *out = ImageMatrixBridge{
+                    0.0, -width, height, 0.0, display_bottom, mediabox_height - display_left};
+            return true;
+    }
+}
+
 static FS_RECTF_BRIDGE make_pdf_rect(float left, float top, float right, float bottom, float padding) {
     float l = std::min(left, right) - padding;
     float r = std::max(left, right) + padding;
@@ -1316,6 +1456,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
             hadFailure = true;
             continue;
         }
+        const int rotationDegrees = page_rotation_degrees(page);
 
         void* annot = create_annot_func(page, kPdfAnnotInk);
         if (!annot) {
@@ -1326,20 +1467,42 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
 
         std::vector<FS_POINTF_BRIDGE> points;
         points.reserve(static_cast<size_t>(pointCount));
-        float minX = pageWidth;
+        float minX = 0.0f;
         float maxX = 0.0f;
-        float minY = pageHeight;
+        float minY = 0.0f;
         float maxY = 0.0f;
 
         for (int j = 0; j < pointCount; j++) {
             int sourceIndex = (pointOffset + j) * 2;
-            float x = clamp_unit(inkPoints[sourceIndex]) * pageWidth;
-            float y = (1.0f - clamp_unit(inkPoints[sourceIndex + 1])) * pageHeight;
+            float x = 0.0f;
+            float y = 0.0f;
+            if (!display_point_to_mediabox(
+                    inkPoints[sourceIndex],
+                    inkPoints[sourceIndex + 1],
+                    pageWidth,
+                    pageHeight,
+                    rotationDegrees,
+                    &x,
+                    &y)) {
+                hadFailure = true;
+                break;
+            }
             points.push_back(FS_POINTF_BRIDGE{x, y});
-            minX = std::min(minX, x);
-            maxX = std::max(maxX, x);
-            minY = std::min(minY, y);
-            maxY = std::max(maxY, y);
+            if (j == 0) {
+                minX = maxX = x;
+                minY = maxY = y;
+            } else {
+                minX = std::min(minX, x);
+                maxX = std::max(maxX, x);
+                minY = std::min(minY, y);
+                maxY = std::max(maxY, y);
+            }
+        }
+        if (points.size() != static_cast<size_t>(pointCount)) {
+            close_annot_func(annot);
+            close_page_func(page);
+            hadFailure = true;
+            continue;
         }
 
         float strokeWidth = std::max(0.25f, inkStrokeWidths[i] * pageWidth);
@@ -1398,6 +1561,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
             hadFailure = true;
             continue;
         }
+        const int rotationDegrees = page_rotation_degrees(page);
 
         std::vector<FS_QUADPOINTSF_BRIDGE> quads;
         quads.reserve(static_cast<size_t>(rectCount));
@@ -1414,10 +1578,36 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
             float bottom = std::max(highlightRects[sourceIndex + 1], highlightRects[sourceIndex + 3]);
             if (right <= left || bottom <= top) continue;
 
-            float pdfLeft = clamp_unit(left) * pageWidth;
-            float pdfRight = clamp_unit(right) * pageWidth;
-            float pdfTop = (1.0f - clamp_unit(top)) * pageHeight;
-            float pdfBottom = (1.0f - clamp_unit(bottom)) * pageHeight;
+            float cornersX[4];
+            float cornersY[4];
+            const float xs[2] = {left, right};
+            const float ys[2] = {top, bottom};
+            bool mappedAll = true;
+            int corner = 0;
+            for (float xNorm : xs) {
+                for (float yNorm : ys) {
+                    if (!display_point_to_mediabox(
+                            xNorm, yNorm, pageWidth, pageHeight, rotationDegrees,
+                            &cornersX[corner], &cornersY[corner])) {
+                        mappedAll = false;
+                        break;
+                    }
+                    corner++;
+                }
+                if (!mappedAll) break;
+            }
+            if (!mappedAll) continue;
+
+            float pdfLeft = cornersX[0];
+            float pdfRight = cornersX[0];
+            float pdfTop = cornersY[0];
+            float pdfBottom = cornersY[0];
+            for (int k = 1; k < 4; k++) {
+                pdfLeft = std::min(pdfLeft, cornersX[k]);
+                pdfRight = std::max(pdfRight, cornersX[k]);
+                pdfTop = std::max(pdfTop, cornersY[k]);
+                pdfBottom = std::min(pdfBottom, cornersY[k]);
+            }
             if (pdfRight <= pdfLeft || pdfTop <= pdfBottom) continue;
 
             quads.push_back(FS_QUADPOINTSF_BRIDGE{pdfLeft, pdfTop, pdfRight, pdfTop, pdfLeft, pdfBottom, pdfRight, pdfBottom});
@@ -1556,19 +1746,76 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
         float pageWidth = get_page_width_bridge(page);
         float pageHeight = get_page_height_bridge(page);
         if (pageWidth <= 0.0f || pageHeight <= 0.0f) {
+            LOGG("raster.page=%d invalid display size %.2fx%.2f", pageIndex, pageWidth, pageHeight);
             close_page_func(page);
             hadFailure = true;
             continue;
         }
+        const int rotationCode = page_rotation_code(page);
+        const int rotationDegrees = page_rotation_degrees(page);
+        float mediaLeft = 0.f, mediaBottom = 0.f, mediaRight = 0.f, mediaTop = 0.f;
+        float cropLeft = 0.f, cropBottom = 0.f, cropRight = 0.f, cropTop = 0.f;
+        const int haveMedia = get_page_mediabox_func
+                ? get_page_mediabox_func(page, &mediaLeft, &mediaBottom, &mediaRight, &mediaTop) : 0;
+        const int haveCrop = get_page_cropbox_func
+                ? get_page_cropbox_func(page, &cropLeft, &cropBottom, &cropRight, &cropTop) : 0;
+        LOGG(
+            "raster.page=%d boxes media=[%.2f %.2f %.2f %.2f](%d) crop=[%.2f %.2f %.2f %.2f](%d) "
+            "rotCode=%d rotDeg=%d display=%.2fx%.2f",
+            pageIndex,
+            mediaLeft, mediaBottom, mediaRight, mediaTop, haveMedia,
+            cropLeft, cropBottom, cropRight, cropTop, haveCrop,
+            rotationCode, rotationDegrees, pageWidth, pageHeight);
 
-        float left = clamp_unit(rasterBounds[i * 4]) * pageWidth;
-        float top = (1.0f - clamp_unit(rasterBounds[i * 4 + 1])) * pageHeight;
-        float right = clamp_unit(rasterBounds[i * 4 + 2]) * pageWidth;
-        float bottom = (1.0f - clamp_unit(rasterBounds[i * 4 + 3])) * pageHeight;
-        FS_RECTF_BRIDGE rect = make_pdf_rect(left, top, right, bottom, 0.0f);
-        float rectWidth = rect.right - rect.left;
-        float rectHeight = rect.top - rect.bottom;
+        ImageMatrixBridge matrix{};
+        const float boundLeft = rasterBounds[i * 4];
+        const float boundTop = rasterBounds[i * 4 + 1];
+        const float boundRight = rasterBounds[i * 4 + 2];
+        const float boundBottom = rasterBounds[i * 4 + 3];
+        if (!display_rect_to_image_matrix(
+                boundLeft,
+                boundTop,
+                boundRight,
+                boundBottom,
+                pageWidth,
+                pageHeight,
+                rotationDegrees,
+                &matrix)) {
+            LOGG(
+                "raster.page=%d matrix.fail display=%.2fx%.2f rotCode=%d rotDeg=%d "
+                "bounds=l%.4f t%.4f r%.4f b%.4f img=%dx%d",
+                pageIndex, pageWidth, pageHeight, rotationCode, rotationDegrees,
+                boundLeft, boundTop, boundRight, boundBottom, imageWidth, imageHeight);
+            close_page_func(page);
+            hadFailure = true;
+            continue;
+        }
+        // Unit-square corners → mediabox: (0,0) bottom-left of image, (0,1) top-left of image.
+        const double corner00X = matrix.e;
+        const double corner00Y = matrix.f;
+        const double corner10X = matrix.e + matrix.a;
+        const double corner10Y = matrix.f + matrix.b;
+        const double corner01X = matrix.e + matrix.c;
+        const double corner01Y = matrix.f + matrix.d;
+        const double corner11X = matrix.e + matrix.a + matrix.c;
+        const double corner11Y = matrix.f + matrix.b + matrix.d;
+        LOGG(
+            "raster.page=%d display=%.2fx%.2f rotCode=%d rotDeg=%d "
+            "bounds=l%.4f t%.4f r%.4f b%.4f img=%dx%d "
+            "matrix=[a=%.3f b=%.3f c=%.3f d=%.3f e=%.3f f=%.3f] "
+            "corners 00=(%.2f,%.2f) 10=(%.2f,%.2f) 01=(%.2f,%.2f) 11=(%.2f,%.2f)",
+            pageIndex, pageWidth, pageHeight, rotationCode, rotationDegrees,
+            boundLeft, boundTop, boundRight, boundBottom, imageWidth, imageHeight,
+            matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f,
+            corner00X, corner00Y, corner10X, corner10Y, corner01X, corner01Y, corner11X, corner11Y);
+        float rectWidth = std::fabs(static_cast<float>(matrix.a)) > 0.0f
+                ? std::fabs(static_cast<float>(matrix.a))
+                : std::fabs(static_cast<float>(matrix.c));
+        float rectHeight = std::fabs(static_cast<float>(matrix.d)) > 0.0f
+                ? std::fabs(static_cast<float>(matrix.d))
+                : std::fabs(static_cast<float>(matrix.b));
         if (rectWidth <= 0.5f || rectHeight <= 0.5f) {
+            LOGG("raster.page=%d degenerate matrix size %.3fx%.3f", pageIndex, rectWidth, rectHeight);
             close_page_func(page);
             hadFailure = true;
             continue;
@@ -1581,6 +1828,19 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
             continue;
         }
 
+        // Android PDFium samples this external BGRA buffer bottom-up relative to the
+        // Desktop/iOS builds (confirmed: upright matrix + matching objBounds still
+        // export vertically flipped). Flip rows in the JNI copy before CreateEx.
+        for (int y = 0; y < imageHeight / 2; y++) {
+            jint* rowTop = rasterPixels + pixelOffset + y * imageWidth;
+            jint* rowBottom = rasterPixels + pixelOffset + (imageHeight - 1 - y) * imageWidth;
+            for (int x = 0; x < imageWidth; x++) {
+                const jint tmp = rowTop[x];
+                rowTop[x] = rowBottom[x];
+                rowBottom[x] = tmp;
+            }
+        }
+
         void* bitmap = bitmap_create_ex_func(
                 imageWidth,
                 imageHeight,
@@ -1588,6 +1848,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
                 reinterpret_cast<void*>(rasterPixels + pixelOffset),
                 imageWidth * 4
         );
+        LOGG("raster.page=%d embed.flipY rows=%d (Android sample-order compensation)", pageIndex, imageHeight);
         if (!bitmap) {
             if (destroy_page_object_func) destroy_page_object_func(imageObject);
             close_page_func(page);
@@ -1605,10 +1866,18 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
         }
 
         bool positioned = true;
+        const char* positionMode = "SetMatrix";
         if (set_image_matrix_func) {
-            positioned = set_image_matrix_func(imageObject, rectWidth, 0.0, 0.0, rectHeight, rect.left, rect.bottom) != 0;
+            positioned = set_image_matrix_func(
+                    imageObject, matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f) != 0;
+            if (!positioned) {
+                LOGG("raster.page=%d FPDFImageObj_SetMatrix failed", pageIndex);
+            }
         } else {
-            transform_page_object_func(imageObject, rectWidth, 0.0, 0.0, rectHeight, rect.left, rect.bottom);
+            positionMode = "Transform";
+            transform_page_object_func(
+                    imageObject, matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
+            LOGG("raster.page=%d used FPDFPageObj_Transform (SetMatrix unavailable)", pageIndex);
         }
         if (!positioned) {
             bitmap_destroy_func(bitmap);
@@ -1618,7 +1887,38 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
             continue;
         }
 
+        if (get_image_matrix_func) {
+            double ra = 0, rb = 0, rc = 0, rd = 0, re = 0, rf = 0;
+            if (get_image_matrix_func(imageObject, &ra, &rb, &rc, &rd, &re, &rf)) {
+                LOGG(
+                    "raster.page=%d storedMatrix mode=%s [a=%.3f b=%.3f c=%.3f d=%.3f e=%.3f f=%.3f]",
+                    pageIndex, positionMode, ra, rb, rc, rd, re, rf);
+            } else {
+                LOGG("raster.page=%d GetMatrix failed mode=%s", pageIndex, positionMode);
+            }
+        } else if (get_page_obj_matrix_func) {
+            FsMatrixBridge stored{};
+            if (get_page_obj_matrix_func(imageObject, &stored)) {
+                LOGG(
+                    "raster.page=%d storedMatrix mode=%s PageObj [a=%.3f b=%.3f c=%.3f d=%.3f e=%.3f f=%.3f]",
+                    pageIndex, positionMode, stored.a, stored.b, stored.c, stored.d, stored.e, stored.f);
+            } else {
+                LOGG("raster.page=%d PageObjGetMatrix failed mode=%s", pageIndex, positionMode);
+            }
+        } else {
+            LOGG("raster.page=%d GetMatrix symbol missing mode=%s", pageIndex, positionMode);
+        }
+        if (get_object_bounds_func) {
+            float bl = 0, bb = 0, br = 0, bt = 0;
+            if (get_object_bounds_func(imageObject, &bl, &bb, &br, &bt)) {
+                LOGG(
+                    "raster.page=%d objBounds l=%.2f b=%.2f r=%.2f t=%.2f (mediabox y-up)",
+                    pageIndex, bl, bb, br, bt);
+            }
+        }
+
         if (!insert_page_object_or_destroy(page, imageObject)) {
+            LOGG("raster.page=%d insert object failed", pageIndex);
             bitmap_destroy_func(bitmap);
             close_page_func(page);
             hadFailure = true;
@@ -1627,8 +1927,10 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
 
         rasterBitmapsToDestroy.push_back(bitmap);
         if (!generate_content_func(page)) {
+            LOGG("raster.page=%d FPDFPage_GenerateContent failed", pageIndex);
             hadFailure = true;
         }
+        LOGG("raster.page=%d inserted ok mode=%s", pageIndex, positionMode);
         close_page_func(page);
     }
 
@@ -1659,12 +1961,42 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
             hadFailure = true;
             continue;
         }
+        const int rotationDegrees = page_rotation_degrees(page);
 
-        float left = clamp_unit(textBounds[i * 4]) * pageWidth;
-        float top = (1.0f - clamp_unit(textBounds[i * 4 + 1])) * pageHeight;
-        float right = clamp_unit(textBounds[i * 4 + 2]) * pageWidth;
-        float bottom = (1.0f - clamp_unit(textBounds[i * 4 + 3])) * pageHeight;
-        FS_RECTF_BRIDGE rect = make_pdf_rect(left, top, right, bottom, 0.0f);
+        float cornersX[4];
+        float cornersY[4];
+        const float xs[2] = {clamp_unit(textBounds[i * 4]), clamp_unit(textBounds[i * 4 + 2])};
+        const float ys[2] = {clamp_unit(textBounds[i * 4 + 1]), clamp_unit(textBounds[i * 4 + 3])};
+        bool mappedAll = true;
+        int corner = 0;
+        for (float xNorm : xs) {
+            for (float yNorm : ys) {
+                if (!display_point_to_mediabox(
+                        xNorm, yNorm, pageWidth, pageHeight, rotationDegrees,
+                        &cornersX[corner], &cornersY[corner])) {
+                    mappedAll = false;
+                    break;
+                }
+                corner++;
+            }
+            if (!mappedAll) break;
+        }
+        if (!mappedAll) {
+            close_page_func(page);
+            hadFailure = true;
+            continue;
+        }
+        float pdfLeft = cornersX[0];
+        float pdfRight = cornersX[0];
+        float pdfTop = cornersY[0];
+        float pdfBottom = cornersY[0];
+        for (int k = 1; k < 4; k++) {
+            pdfLeft = std::min(pdfLeft, cornersX[k]);
+            pdfRight = std::max(pdfRight, cornersX[k]);
+            pdfTop = std::max(pdfTop, cornersY[k]);
+            pdfBottom = std::min(pdfBottom, cornersY[k]);
+        }
+        FS_RECTF_BRIDGE rect = make_pdf_rect(pdfLeft, pdfTop, pdfRight, pdfBottom, 0.0f);
         if (rect.right - rect.left <= 1.0f || rect.top - rect.bottom <= 1.0f) {
             close_page_func(page);
             hadFailure = true;
@@ -1691,7 +2023,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
                         preserveLines
                 );
                 float lineHeight = std::max(fontSize * 1.18f, fontSize + 2.0f);
-                float baseline = preserveLines ? top : rect.top - (fontSize * 0.85f);
+                float baseline = preserveLines ? rect.top : rect.top - (fontSize * 0.85f);
                 float textX = preserveLines ? rect.left : rect.left + 2.0f;
                 bool insertedAnyText = false;
                 float decorationStroke = std::max(0.35f, fontSize * 0.035f);

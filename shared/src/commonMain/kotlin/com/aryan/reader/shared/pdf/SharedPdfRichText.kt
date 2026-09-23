@@ -100,6 +100,31 @@ object SharedPdfRichTextLog {
     }
 }
 
+/**
+ * Dedicated diagnostics for exit-edit page collapse and post-alignment
+ * line-height regressions. Android wires [forwarder] to logcat tag
+ * PdfRichLayoutDiag so both bugs share one filterable tag.
+ */
+object SharedPdfRichLayoutDiag {
+    var enabled: Boolean = true
+    var forwarder: ((String) -> Unit)? = null
+
+    /** Bumped whenever pageLayouts is replaced or layout config is accepted. */
+    var epoch: Int = 0
+        private set
+
+    fun nextEpoch(): Int {
+        epoch += 1
+        return epoch
+    }
+
+    fun d(message: String) {
+        if (enabled) {
+            forwarder?.invoke("e=$epoch $message")
+        }
+    }
+}
+
 data class SharedPdfRichSpan(
     val start: Int,
     val end: Int,
@@ -338,8 +363,13 @@ object SharedPdfRichTextMapper {
         val safeGlobalEnd = rangeEnd.coerceIn(safeGlobalStart, document.text.length)
         if (safeGlobalStart == safeGlobalEnd) return AnnotatedString("")
 
+        var minNorm = Float.MAX_VALUE
+        var maxNorm = Float.MIN_VALUE
+        var pxSamples = 0
+        var minPx = Float.MAX_VALUE
+        var maxPx = Float.MIN_VALUE
         val textSubstring = document.text.substring(safeGlobalStart, safeGlobalEnd)
-        return buildAnnotatedString {
+        val built = buildAnnotatedString {
             append(textSubstring)
             for (span in document.spans) {
                 if (span.start >= safeGlobalEnd) break
@@ -353,6 +383,11 @@ object SharedPdfRichTextMapper {
                 val localEnd = intersectionEnd - safeGlobalStart
                 val fontSizeNorm = SharedPdfTextAnnotationDefaults.sanitizePageRelativeFontSize(span.fontSizeNorm)
                 val fontSizePx = if (pageHeightPx > 0) fontSizeNorm * pageHeightPx else 16f
+                minNorm = minOf(minNorm, fontSizeNorm)
+                maxNorm = maxOf(maxNorm, fontSizeNorm)
+                minPx = minOf(minPx, fontSizePx)
+                maxPx = maxOf(maxPx, fontSizePx)
+                pxSamples++
                 addStyle(
                     style = SpanStyle(
                         color = Color(span.color),
@@ -379,11 +414,23 @@ object SharedPdfRichTextMapper {
                 }
             }
             // Paragraph attributes (alignment + list tags), clipped to range.
+            // Alignment uses merged runs (Approach A): one ParagraphStyle per
+            // same-align run so Compose does not invent a line per range.
+            richParagraphAlignRuns(document.text, document.paragraphs).forEach { run ->
+                val localStart = (maxOf(run.start, safeGlobalStart) - safeGlobalStart)
+                    .coerceIn(0, textSubstring.length)
+                val localEnd = (minOf(run.end, safeGlobalEnd) - safeGlobalStart)
+                    .coerceIn(0, textSubstring.length)
+                if (localStart >= localEnd) return@forEach
+                addStyle(
+                    style = ParagraphStyle(textAlign = run.alignment.toComposeTextAlign()),
+                    start = localStart,
+                    end = localEnd
+                )
+            }
             richParagraphBounds(document.text).forEachIndexed { index, bound ->
                 val attrs = document.paragraphs.getOrElse(index) { SharedPdfRichParagraph() }
-                if (attrs.alignment == SharedPdfRichTextAlign.LEFT &&
-                    attrs.listType == SharedPdfRichListType.NONE
-                ) {
+                if (attrs.listType == SharedPdfRichListType.NONE) {
                     return@forEachIndexed
                 }
                 val localStart = (maxOf(bound.start, safeGlobalStart) - safeGlobalStart)
@@ -391,13 +438,6 @@ object SharedPdfRichTextMapper {
                 val localEnd = (minOf(bound.end, safeGlobalEnd) - safeGlobalStart)
                     .coerceIn(0, textSubstring.length)
                 if (localStart >= localEnd) return@forEachIndexed
-                if (attrs.alignment != SharedPdfRichTextAlign.LEFT) {
-                    addStyle(
-                        style = ParagraphStyle(textAlign = attrs.alignment.toComposeTextAlign()),
-                        start = localStart,
-                        end = localEnd
-                    )
-                }
                 attrs.listType.toListTag()?.let { tag ->
                     addStringAnnotation(
                         tag = SHARED_PDF_RICH_LIST_TAG,
@@ -408,6 +448,25 @@ object SharedPdfRichTextMapper {
                 }
             }
         }
+        if (pxSamples > 0) {
+            SharedPdfRichLayoutDiag.d(
+                "bake.out range=$safeGlobalStart..$safeGlobalEnd pageH=${pageHeightPx.richLogFloat()} " +
+                    "spans=$pxSamples normMin=${minNorm.richLogFloat()} normMax=${maxNorm.richLogFloat()} " +
+                    "pxMin=${minPx.richLogFloat()} pxMax=${maxPx.richLogFloat()} " +
+                    "paraStyles=${built.paragraphStyles.size}"
+            )
+        }
+        // Full-document bake (edit/measure buffer): re-attach Rule 3 EOF anchor
+        // when the persisted document carries a non-LEFT trailing empty line.
+        return if (safeGlobalStart == 0 && safeGlobalEnd == document.text.length) {
+            built.withTrailingRichAlignAnchorIfNeeded(
+                document.paragraphs + List(
+                    (richParagraphBounds(document.text).size - document.paragraphs.size).coerceAtLeast(0),
+                ) { SharedPdfRichParagraph() },
+            )
+        } else {
+            built
+        }
     }
 
     fun fromAnnotatedString(
@@ -417,14 +476,24 @@ object SharedPdfRichTextMapper {
     ): SharedPdfRichDocument {
         if (text.text.isEmpty()) return SharedPdfRichDocument()
 
+        // Rule 3: read alignment (incl. EOF anchor style) before stripping the
+        // anchor so a non-LEFT trailing empty line survives into document.paragraphs.
+        val paragraphs = readRichParagraphs(text).trimmedRichParagraphs()
+        val strippedText = text.text.withoutRichAlignAnchors()
+        val stripped = if (strippedText.length != text.text.length) {
+            text.subSequence(0, strippedText.length)
+        } else {
+            text
+        }
+
         val spans = mutableListOf<SharedPdfRichSpan>()
-        val fontPathAnnotations = text.getStringAnnotations(
+        val fontPathAnnotations = stripped.getStringAnnotations(
             tag = SHARED_PDF_RICH_FONT_PATH_TAG,
             start = 0,
-            end = text.length
+            end = stripped.length
         )
-        val changePoints = mutableSetOf(0, text.length)
-        text.spanStyles.forEach {
+        val changePoints = mutableSetOf(0, stripped.length)
+        stripped.spanStyles.forEach {
             changePoints.add(it.start)
             changePoints.add(it.end)
         }
@@ -439,7 +508,7 @@ object SharedPdfRichTextMapper {
             val end = sortedPoints[i + 1]
             if (start >= end) continue
 
-            val activeStyles = text.spanStyles.filter { it.start <= start && it.end >= end }
+            val activeStyles = stripped.spanStyles.filter { it.start <= start && it.end >= end }
             val activeFontPath = fontPathAnnotations
                 .lastOrNull { it.start <= start && it.end >= end }
                 ?.item
@@ -477,10 +546,18 @@ object SharedPdfRichTextMapper {
                 spans += newSpan
             }
         }
+        val normMin = spans.minOfOrNull { it.fontSizeNorm }
+        val normMax = spans.maxOfOrNull { it.fontSizeNorm }
+        SharedPdfRichLayoutDiag.d(
+            "bake.in len=${stripped.length} pageH=${pageHeightPx.richLogFloat()} spans=${spans.size} " +
+                "paraStyles=${stripped.paragraphStyles.size} " +
+                "strippedAnchor=${strippedText.length != text.text.length} " +
+                "normMin=${normMin?.richLogFloat() ?: "-"} normMax=${normMax?.richLogFloat() ?: "-"}"
+        )
         return SharedPdfRichDocument(
-            text = text.text,
+            text = stripped.text,
             spans = spans,
-            paragraphs = readRichParagraphs(text).trimmedRichParagraphs()
+            paragraphs = paragraphs,
         )
     }
 
@@ -566,6 +643,11 @@ class SharedPdfRichTextPaginationEngine {
             pageHeightPx = pageHeightPx
         )
         SharedPdfRichTextLog.d("paginate done -> ${result.richLayoutSummary()}")
+        SharedPdfRichLayoutDiag.d(
+            "paginate textLen=$totalLen pageH=${pageHeightPx.richLogFloat()} " +
+                "pageBreaks=${rawText.count { it == SHARED_PDF_PAGE_BREAK_CHAR }} " +
+                "pages=${result.size} ${result.richLayoutSummary()}"
+        )
         return result
     }
 }
@@ -860,10 +942,24 @@ class SharedPdfRichTextController(
 
     private data class PendingContinuationMarker(val text: String, val start: Int, val end: Int)
 
+    private fun setGlobalText(value: TextFieldValue, reason: String) {
+        val oldLen = globalTextFieldValue.text.length
+        val newLen = value.text.length
+        if (oldLen != newLen) {
+            SharedPdfRichLayoutDiag.d(
+                "global.set reason=$reason oldLen=$oldLen newLen=$newLen active=$activePageIndex"
+            )
+        }
+        globalTextFieldValue = value
+    }
+
     fun loadDocumentIfEmpty(document: SharedPdfRichDocument) {
         if (globalTextFieldValue.text.isEmpty()) {
-            globalTextFieldValue = TextFieldValue(
-                documentToAnnotatedString(document, lastPageHeight)
+            setGlobalText(
+                TextFieldValue(
+                    documentToAnnotatedString(document, lastPageHeight)
+                ),
+                "loadIfEmpty"
             )
             repaginate(dirtyStartIndex = 0)
         }
@@ -874,6 +970,10 @@ class SharedPdfRichTextController(
             "controller.replaceDocument textLen=${document.text.length} spans=${document.spans.size} " +
                 "oldLayouts=${pageLayouts.size} activePage=$activePageIndex"
         )
+        SharedPdfRichLayoutDiag.d(
+            "replaceDocument inLen=${document.text.length} oldGlobalLen=${globalTextFieldValue.text.length} " +
+                "oldLayouts=${pageLayouts.size} active=$activePageIndex"
+        )
         saveJob?.cancel()
         syncJob?.cancel()
         activePageIndex = -1
@@ -881,8 +981,11 @@ class SharedPdfRichTextController(
         cursorRectInPage = null
         isCursorVisible = false
         localTextFieldValue = TextFieldValue("")
-        globalTextFieldValue = TextFieldValue(
-            documentToAnnotatedString(document, lastPageHeight)
+        setGlobalText(
+            TextFieldValue(
+                documentToAnnotatedString(document, lastPageHeight)
+            ),
+            "replaceDocument"
         )
         repaginate(dirtyStartIndex = 0)
     }
@@ -901,10 +1004,19 @@ class SharedPdfRichTextController(
                 "controller.layoutConfig width=${width.richLogFloat()} height=${height.richLogFloat()} " +
                     "density=${density.density.richLogFloat()} old=${lastPageWidth.richLogFloat()}x${lastPageHeight.richLogFloat()}"
             )
+            val oldW = lastPageWidth
+            val oldH = lastPageHeight
             lastPageWidth = width
             lastPageHeight = height
             lastDensity = density
             lastTextMeasurer = measurer
+            SharedPdfRichLayoutDiag.nextEpoch()
+            SharedPdfRichLayoutDiag.d(
+                "layout.config old=${oldW.richLogFloat()}x${oldH.richLogFloat()} " +
+                    "new=${width.richLogFloat()}x${height.richLogFloat()} " +
+                    "density=${density.density.richLogFloat()} active=$activePageIndex " +
+                    "layouts=${pageLayouts.richLayoutSummary()}"
+            )
             repaginate(dirtyStartIndex = 0)
         }
     }
@@ -914,17 +1026,32 @@ class SharedPdfRichTextController(
             "controller.clearSelection activePage=$activePageIndex globalLen=${globalTextFieldValue.text.length} " +
                 "localLen=${localTextFieldValue.text.length}"
         )
+        SharedPdfRichLayoutDiag.d(
+            "clear.entry active=$activePageIndex globalLen=${globalTextFieldValue.text.length} " +
+                "localLen=${localTextFieldValue.text.length} layouts=${pageLayouts.richLayoutSummary()} " +
+                "syncJobActive=${syncJob?.isActive == true} saveJobActive=${saveJob?.isActive == true} " +
+                "isSaving=$isSaving"
+        )
         isCursorVisible = false
         val pageToSync = activePageIndex
         if (pageToSync != -1) {
             scope.launch {
                 performSync(pageToSync)
-                if (activePageIndex == pageToSync) activePageIndex = -1
+                if (activePageIndex == pageToSync) {
+                    activePageIndex = -1
+                    SharedPdfRichLayoutDiag.d(
+                        "clear.activePageNegated page=$pageToSync " +
+                            "globalLen=${globalTextFieldValue.text.length} layouts=${pageLayouts.richLayoutSummary()}"
+                    )
+                }
             }
         }
         if (globalTextFieldValue.text.isNotEmpty()) {
-            globalTextFieldValue = globalTextFieldValue.copy(
-                selection = TextRange(globalTextFieldValue.text.length)
+            setGlobalText(
+                globalTextFieldValue.copy(
+                    selection = TextRange(globalTextFieldValue.text.length)
+                ),
+                "clearSelection"
             )
         }
         cursorPageIndex = -1
@@ -935,6 +1062,14 @@ class SharedPdfRichTextController(
         if (isSaving) {
             SharedPdfRichTextLog.d("controller.onValueChanged ignored because saveImmediate is running")
             return
+        }
+
+        if (activePageIndex == -1 && newValue.text.length != globalTextFieldValue.text.length) {
+            SharedPdfRichLayoutDiag.d(
+                "onValue.globalMismatch newLen=${newValue.text.length} " +
+                    "globalLen=${globalTextFieldValue.text.length} localLen=${localTextFieldValue.text.length} " +
+                    "newHead=${newValue.text.richPreview(12)} globalHead=${globalTextFieldValue.text.richPreview(12)}"
+            )
         }
 
         if (activePageIndex != -1 && !newValue.text.startsWith(SHARED_PDF_ZWSP)) {
@@ -972,7 +1107,10 @@ class SharedPdfRichTextController(
                     globalTextFieldValue.selection != newValue.selection ||
                     globalTextFieldValue.composition != newValue.composition
                 ) {
-                    globalTextFieldValue = newValue.copy(annotatedString = globalTextFieldValue.annotatedString)
+                    setGlobalText(
+                        newValue.copy(annotatedString = globalTextFieldValue.annotatedString),
+                        "onValue.selectionOnly"
+                    )
                     updateGlobalCursor()
                 }
             }
@@ -1010,7 +1148,10 @@ class SharedPdfRichTextController(
                         performSync(activePageIndex, checkCursorMove = true)
                     }
                 } else {
-                    globalTextFieldValue = oldValue.copy(selection = TextRange(guard.end))
+                    setGlobalText(
+                        oldValue.copy(selection = TextRange(guard.end)),
+                        "onValue.echoGuard"
+                    )
                     debouncedSave(globalTextFieldValue)
                 }
                 return
@@ -1118,8 +1259,23 @@ class SharedPdfRichTextController(
             builder.addStringAnnotation(annotation.tag, annotation.item, annotation.start, annotation.end)
         }
         applyRichParagraphsToBuilder(builder, norm.text, norm.paragraphs)
-
-        val finalValue = newValue.copy(annotatedString = builder.toAnnotatedString(), selection = norm.selection)
+        // Rule 3 EOF anchor is global-only: local buffers keep their leading
+        // ZWSP and must never grow a trailing anchor (would splice mid-document).
+        val rebuilt = if (activePageIndex == -1) {
+            builder.toAnnotatedString().withTrailingRichAlignAnchorIfNeeded(norm.paragraphs)
+        } else {
+            builder.toAnnotatedString()
+        }
+        SharedPdfRichLayoutDiag.d(
+            "rebuild.paras active=$activePageIndex textLen=${norm.text.length} " +
+                "paraCount=${norm.paragraphs.size} " +
+                "aligned=${norm.paragraphs.count { it.alignment != SharedPdfRichTextAlign.LEFT }} " +
+                "emitStyles=${rebuilt.paragraphStyles.size} " +
+                "ranges=${rebuilt.paragraphStyles.joinToString(";") { r -> "${r.start}..${r.end}:${r.item.textAlign}" }} " +
+                "anchor=${rebuilt.text.endsWith(SHARED_PDF_RICH_ALIGN_ANCHOR)} " +
+                "newlines=${norm.text.count { it == '\n' }}"
+        )
+        val finalValue = newValue.copy(annotatedString = rebuilt, selection = norm.selection)
         // Arm the echo guard when the engine grew the text around a typed
         // newline with a fresh marker (Enter continuation): the adjacent
         // marker span is ours, recorded verbatim for exact-match restore.
@@ -1153,7 +1309,7 @@ class SharedPdfRichTextController(
                 performSync(activePageIndex, checkCursorMove = true)
             }
         } else {
-            globalTextFieldValue = finalValue
+            setGlobalText(finalValue, "onValue.textChanged")
             debouncedSave(globalTextFieldValue)
             repaginate(dirtyStartIndex = 0)
             SharedPdfRichTextLog.d("controller.textChanged updated global directly")
@@ -1187,12 +1343,15 @@ class SharedPdfRichTextController(
                 }
             }
         } else if (!globalTextFieldValue.selection.collapsed) {
-            globalTextFieldValue = globalTextFieldValue.copy(
-                annotatedString = globalTextFieldValue.annotatedString.withAppliedRichStyle(
-                    style = effectiveStyle,
-                    fontPath = fontPath,
-                    selection = globalTextFieldValue.selection
-                )
+            setGlobalText(
+                globalTextFieldValue.copy(
+                    annotatedString = globalTextFieldValue.annotatedString.withAppliedRichStyle(
+                        style = effectiveStyle,
+                        fontPath = fontPath,
+                        selection = globalTextFieldValue.selection
+                    )
+                ),
+                "updateStyle"
             )
             debouncedSave(globalTextFieldValue)
             repaginate(dirtyStartIndex = globalTextFieldValue.selection.min)
@@ -1251,17 +1410,33 @@ class SharedPdfRichTextController(
      * local edits first for the same reason).
      */
     fun setRichParagraphAlignment(align: SharedPdfRichTextAlign) {
+        SharedPdfRichLayoutDiag.d(
+            "align.before align=$align active=$activePageIndex " +
+                "layouts=${pageLayouts.richLayoutSummary()} " +
+                "globalLen=${globalTextFieldValue.text.length} " +
+                "localLen=${localTextFieldValue.text.length}"
+        )
         if (activePageIndex != -1) {
             mergeLocalIntoGlobal(activePageIndex)
             repaginateSync(dirtyStartIndex = 0)
+            SharedPdfRichLayoutDiag.d(
+                "align.afterMerge active=$activePageIndex layouts=${pageLayouts.richLayoutSummary()}"
+            )
         }
         val global = globalTextFieldValue.annotatedString
         val selection = globalSelectionForParagraphOp()
         val next = setRichParagraphAlignment(global, selection, align)
         SharedPdfRichTextLog.d("controller.setAlignment align=$align sel=$selection")
-        globalTextFieldValue = TextFieldValue(next, selection)
+        SharedPdfRichLayoutDiag.d(
+            "align.apply align=$align sel=$selection paraStylesBefore=${global.paragraphStyles.size} " +
+                "paraStylesAfter=${next.paragraphStyles.size}"
+        )
+        setGlobalText(TextFieldValue(next, selection), "align.style")
         debouncedSave(globalTextFieldValue)
         repaginate(dirtyStartIndex = selection.min)
+        SharedPdfRichLayoutDiag.d(
+            "align.afterRepaginate align=$align layouts=${pageLayouts.richLayoutSummary()}"
+        )
         refreshLocalFromGlobal(selection.min)
         requestFocus()
     }
@@ -1326,7 +1501,13 @@ class SharedPdfRichTextController(
             builder.addStringAnnotation(annotation.tag, annotation.item, annotation.start, annotation.end)
         }
         applyRichParagraphsToBuilder(builder, norm.text, norm.paragraphs)
-        globalTextFieldValue = TextFieldValue(builder.toAnnotatedString(), norm.selection)
+        setGlobalText(
+            TextFieldValue(
+                builder.toAnnotatedString().withTrailingRichAlignAnchorIfNeeded(norm.paragraphs),
+                norm.selection,
+            ),
+            "applyGlobalParagraphEdit",
+        )
         debouncedSave(globalTextFieldValue)
         scope.launch {
             repaginateSync(dirtyStartIndex = norm.selection.min)
@@ -1386,7 +1567,8 @@ class SharedPdfRichTextController(
             builder.addStringAnnotation(annotation.tag, annotation.item, annotation.start, annotation.end)
         }
         applyRichParagraphsToBuilder(builder, norm.text, norm.paragraphs)
-        return builder.toAnnotatedString() to norm.shifts
+        return builder.toAnnotatedString()
+            .withTrailingRichAlignAnchorIfNeeded(norm.paragraphs) to norm.shifts
     }
 
     private fun firstLocalParagraphStartsAtBoundary(): Boolean {
@@ -1426,7 +1608,7 @@ class SharedPdfRichTextController(
                 repeat(breaksNeeded) {
                     builder.append(SHARED_PDF_PAGE_BREAK_CHAR.toString())
                 }
-                globalTextFieldValue = TextFieldValue(builder.toAnnotatedString())
+                setGlobalText(TextFieldValue(builder.toAnnotatedString()), "tapPadPageBreaks")
                 repaginateSync(0)
                 layout = pageLayouts.find { it.pageIndex == pageIndex }
             }
@@ -1520,7 +1702,7 @@ class SharedPdfRichTextController(
         if (remapped == original) {
             return@withContext
         }
-        globalTextFieldValue = TextFieldValue(remapped, TextRange(remapped.length))
+        setGlobalText(TextFieldValue(remapped, TextRange(remapped.length)), "layoutChangeRemap")
         repaginateSync(0)
         saveCurrentGlobalTextImmediately()
     }
@@ -1536,7 +1718,10 @@ class SharedPdfRichTextController(
         builder.append(original.subSequence(0, safeIndex))
         repeat(safeCount) { builder.append(SHARED_PDF_PAGE_BREAK_CHAR.toString()) }
         builder.append(original.subSequence(safeIndex, original.length))
-        globalTextFieldValue = TextFieldValue(builder.toAnnotatedString(), TextRange(safeIndex + safeCount))
+        setGlobalText(
+            TextFieldValue(builder.toAnnotatedString(), TextRange(safeIndex + safeCount)),
+            "insertPageBreaks"
+        )
         debouncedSave(globalTextFieldValue)
         repaginate(dirtyStartIndex = safeIndex)
     }
@@ -1569,7 +1754,7 @@ class SharedPdfRichTextController(
                 withNormalizedSyncedParagraphs(builder.toAnnotatedString())
             val newCursor = adjustRichOffset(start, paragraphShifts)
                 .coerceIn(0, normalizedDeleted.length)
-            globalTextFieldValue = TextFieldValue(normalizedDeleted, TextRange(newCursor))
+            setGlobalText(TextFieldValue(normalizedDeleted, TextRange(newCursor)), "deleteTextOnPage")
             debouncedSave(globalTextFieldValue)
             repaginate(dirtyStartIndex = start)
             SharedPdfRichTextLog.d(
@@ -1624,11 +1809,17 @@ class SharedPdfRichTextController(
     suspend fun saveImmediate() {
         if (isSaving) {
             SharedPdfRichTextLog.d("controller.saveImmediate ignored already saving")
+            SharedPdfRichLayoutDiag.d("save.ignored alreadySaving active=$activePageIndex")
             return
         }
         SharedPdfRichTextLog.d(
             "controller.saveImmediate start activePage=$activePageIndex globalLen=${globalTextFieldValue.text.length} " +
                 "localLen=${localTextFieldValue.text.length}"
+        )
+        SharedPdfRichLayoutDiag.d(
+            "save.start active=$activePageIndex globalLen=${globalTextFieldValue.text.length} " +
+                "layouts=${pageLayouts.richLayoutSummary()} " +
+                "cfg=${lastPageWidth.richLogFloat()}x${lastPageHeight.richLogFloat()}"
         )
         isSaving = true
         try {
@@ -1637,15 +1828,26 @@ class SharedPdfRichTextController(
             val pageToSync = activePageIndex
             if (pageToSync != -1) {
                 performSync(pageToSync)
+                SharedPdfRichLayoutDiag.d(
+                    "save.afterSync active=$activePageIndex layouts=${pageLayouts.richLayoutSummary()}"
+                )
                 delay(50)
                 activePageIndex = -1
                 cursorPageIndex = -1
                 cursorRectInPage = null
+                SharedPdfRichLayoutDiag.d(
+                    "save.activePageNegated page=$pageToSync globalLen=${globalTextFieldValue.text.length}"
+                )
             }
             withContext(Dispatchers.Default) {
                 val document = annotatedStringToDocument(globalTextFieldValue.annotatedString, lastPageHeight)
                 SharedPdfRichTextLog.d(
                     "controller.saveImmediate writing textLen=${document.text.length} spans=${document.spans.size}"
+                )
+                SharedPdfRichLayoutDiag.d(
+                    "save.bake pageH=${lastPageHeight.richLogFloat()} textLen=${document.text.length} " +
+                        "spans=${document.spans.size} paras=${document.paragraphs.size} " +
+                        "layouts=${pageLayouts.richLayoutSummary()}"
                 )
                 onDocumentChange(document)
             }
@@ -1653,6 +1855,9 @@ class SharedPdfRichTextController(
             delay(100)
             isSaving = false
             SharedPdfRichTextLog.d("controller.saveImmediate done")
+            SharedPdfRichLayoutDiag.d(
+                "save.done active=$activePageIndex layouts=${pageLayouts.richLayoutSummary()}"
+            )
         }
     }
 
@@ -1681,6 +1886,10 @@ class SharedPdfRichTextController(
         }
         pageLayouts = newLayouts
         SharedPdfRichTextLog.d("controller.syncLocalToGlobal layouts=${newLayouts.richLayoutSummary()}")
+        SharedPdfRichLayoutDiag.nextEpoch()
+        SharedPdfRichLayoutDiag.d(
+            "sync.localToGlobal layouts=${newLayouts.richLayoutSummary()} cursor=$newGlobalCursorPos"
+        )
         val newActiveLayout = selectRichPageLayoutForCursor(newLayouts, newGlobalCursorPos)
         if (newActiveLayout != null) {
             activePageIndex = newActiveLayout.pageIndex
@@ -1741,7 +1950,15 @@ class SharedPdfRichTextController(
                 "localEditableLen=${localEditableAnnotated.length} restoredBreak=$shouldPreservePageBreak " +
                 "localLen=${localAnnotated.length} newLen=${normalized.length} cursor=$newGlobalCursorPos"
         )
-        globalTextFieldValue = TextFieldValue(normalized, TextRange(newGlobalCursorPos))
+        SharedPdfRichLayoutDiag.d(
+            "merge.in page=$pageIdx globalStart=$globalStart globalEnd=$globalEnd " +
+                "oldGlobalLen=${currentGlobal.length} localLen=${localAnnotatedRaw.length} " +
+                "localEditableLen=${localEditableAnnotated.length}"
+        )
+        setGlobalText(TextFieldValue(normalized, TextRange(newGlobalCursorPos)), "mergeLocal")
+        SharedPdfRichLayoutDiag.d(
+            "merge.out page=$pageIdx newLen=${normalized.length} cursor=$newGlobalCursorPos"
+        )
         debouncedSave(globalTextFieldValue)
         return newGlobalCursorPos
     }
@@ -1771,6 +1988,11 @@ class SharedPdfRichTextController(
         }
         pageLayouts = newLayouts
         SharedPdfRichTextLog.d("controller.performSync layouts=${newLayouts.richLayoutSummary()}")
+        SharedPdfRichLayoutDiag.nextEpoch()
+        SharedPdfRichLayoutDiag.d(
+            "sync.perform page=$pageIdx cursor=$newGlobalCursorPos layouts=${newLayouts.richLayoutSummary()} " +
+                "cfg=${lastPageWidth.richLogFloat()}x${lastPageHeight.richLogFloat()}"
+        )
 
         if (checkCursorMove) {
             val newActiveLayout = newLayouts.find {
@@ -1811,6 +2033,11 @@ class SharedPdfRichTextController(
         SharedPdfRichTextLog.d(
             "controller.injectNewlines gap=${gapPixels.richLogFloat()} lineHeight=${lineHeightPx.richLogFloat()} " +
                 "lines=$linesNeeded endsWithBreak=$endsWithBreak originalLen=${original.length}"
+        )
+        SharedPdfRichLayoutDiag.d(
+            "injectNewlines gap=${gapPixels.richLogFloat()} fontSp=${fontSizeSp.richLogFloat()} " +
+                "density=${densityValue.richLogFloat()} lineHeight=${lineHeightPx.richLogFloat()} " +
+                "lines=$linesNeeded endsWithBreak=$endsWithBreak"
         )
         val builder = AnnotatedString.Builder()
         if (endsWithBreak) {
@@ -1886,6 +2113,12 @@ class SharedPdfRichTextController(
             }
             pageLayouts = newLayouts
             SharedPdfRichTextLog.d("controller.repaginate done layouts=${newLayouts.richLayoutSummary()}")
+            SharedPdfRichLayoutDiag.nextEpoch()
+            SharedPdfRichLayoutDiag.d(
+                "repaginate.done dirty=$dirtyStartIndex textLen=${currentText.length} " +
+                    "cfg=${lastPageWidth.richLogFloat()}x${lastPageHeight.richLogFloat()} " +
+                    "layouts=${newLayouts.richLayoutSummary()}"
+            )
         }
     }
 
@@ -1913,6 +2146,12 @@ class SharedPdfRichTextController(
             dirtyGlobalIndex = dirtyStartIndex
         )
         SharedPdfRichTextLog.d("controller.repaginateSync done layouts=${pageLayouts.richLayoutSummary()}")
+        SharedPdfRichLayoutDiag.nextEpoch()
+        SharedPdfRichLayoutDiag.d(
+            "repaginateSync.done dirty=$dirtyStartIndex " +
+                "cfg=${lastPageWidth.richLogFloat()}x${lastPageHeight.richLogFloat()} " +
+                "layouts=${pageLayouts.richLayoutSummary()}"
+        )
     }
 
     private fun updateLocalCursor() {
@@ -1985,11 +2224,18 @@ class SharedPdfRichTextController(
 
     private suspend fun forceSyncAndClear() {
         if (activePageIndex != -1) {
+            SharedPdfRichLayoutDiag.d(
+                "forceSyncAndClear.enter active=$activePageIndex globalLen=${globalTextFieldValue.text.length} " +
+                    "localLen=${localTextFieldValue.text.length}"
+            )
             performSync(activePageIndex)
             activePageIndex = -1
             cursorPageIndex = -1
             cursorRectInPage = null
             localTextFieldValue = TextFieldValue("")
+            SharedPdfRichLayoutDiag.d(
+                "forceSyncAndClear.done globalLen=${globalTextFieldValue.text.length}"
+            )
         }
     }
 
@@ -2043,7 +2289,7 @@ class SharedPdfRichTextController(
             }
         }
 
-        globalTextFieldValue = TextFieldValue(intermediateGlobal, TextRange(newCursorPos))
+        setGlobalText(TextFieldValue(intermediateGlobal, TextRange(newCursorPos)), "backspaceExplicitBreak")
         debouncedSave(globalTextFieldValue)
         val finalLayouts = withContext(Dispatchers.Default) {
             engine.paginate(intermediateGlobal, lastPageWidth, lastPageHeight, measurer, density, marginX(), marginY())
@@ -2075,7 +2321,7 @@ class SharedPdfRichTextController(
         builder.append(globalText.subSequence(currentGlobalStart, globalText.length))
         val newGlobalText = builder.toAnnotatedString()
         val newCursorPos = (currentGlobalStart - 1).coerceAtLeast(0)
-        globalTextFieldValue = TextFieldValue(newGlobalText, TextRange(newCursorPos))
+        setGlobalText(TextFieldValue(newGlobalText, TextRange(newCursorPos)), "backspaceOverflow")
         debouncedSave(globalTextFieldValue)
 
         val measurer = lastTextMeasurer ?: return
@@ -2186,17 +2432,44 @@ internal fun AnnotatedString.withSanitizedSharedPdfRichFontSizes(pageHeightPx: F
     val safePageHeight = pageHeightPx.takeIf { it.isFinite() && it > 0f } ?: 1_000f
     val minFontSize = SharedPdfTextAnnotationDefaults.MinPageRelativeFontSize * safePageHeight
     val maxFontSize = SharedPdfTextAnnotationDefaults.MaxPageRelativeFontSize * safePageHeight
+    var clamped = 0
+    var sampleInMin = Float.MAX_VALUE
+    var sampleInMax = Float.MIN_VALUE
+    var sampleOutMin = Float.MAX_VALUE
+    var sampleOutMax = Float.MIN_VALUE
     val builder = AnnotatedString.Builder(text)
     spanStyles.forEach { range ->
         val style = range.item
+        if (style.fontSize.isSp) {
+            val inSize = style.fontSize.value
+            if (inSize.isFinite() && inSize > 0f) {
+                sampleInMin = minOf(sampleInMin, inSize)
+                sampleInMax = maxOf(sampleInMax, inSize)
+            }
+        }
         val safeFontSize = style.fontSize.value
             .takeIf { it.isFinite() && it > 0f }
             ?.coerceIn(minFontSize, maxFontSize)
             ?: (16f.coerceIn(minFontSize, maxFontSize))
+        if (style.fontSize.isSp && style.fontSize.value.isFinite() && style.fontSize.value > 0f &&
+            safeFontSize != style.fontSize.value
+        ) {
+            clamped++
+            sampleOutMin = minOf(sampleOutMin, safeFontSize)
+            sampleOutMax = maxOf(sampleOutMax, safeFontSize)
+        }
         builder.addStyle(
             style = if (style.fontSize.isSp) style.copy(fontSize = safeFontSize.sp) else style,
             start = range.start,
             end = range.end
+        )
+    }
+    if (clamped > 0) {
+        SharedPdfRichLayoutDiag.d(
+            "fontSanitize.clamp pageH=${safePageHeight.richLogFloat()} spans=$clamped " +
+                "inMin=${sampleInMin.richLogFloat()} inMax=${sampleInMax.richLogFloat()} " +
+                "outMin=${sampleOutMin.richLogFloat()} outMax=${sampleOutMax.richLogFloat()} " +
+                "allowed=${minFontSize.richLogFloat()}..${maxFontSize.richLogFloat()}"
         )
     }
     paragraphStyles.forEach { range ->

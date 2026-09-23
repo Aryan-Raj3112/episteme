@@ -11,8 +11,19 @@ import timber.log.Timber
  */
 internal const val PDF_RICH_CURSOR_TRACE_TAG = "PdfRichCursor"
 
+/**
+ * Dedicated tag for exit-edit page collapse + post-alignment line-height
+ * diagnosis (SharedPdfRichLayoutDiag.forwarder + Android-only sites).
+ * adb logcat -s PdfRichLayoutDiag:D
+ */
+internal const val PDF_RICH_LAYOUT_DIAG_TAG = "PdfRichLayoutDiag"
+
 internal fun pdfRichCursorTrace(message: String) {
     Timber.tag(PDF_RICH_CURSOR_TRACE_TAG).d(message)
+}
+
+internal fun pdfRichLayoutDiag(message: String) {
+    Timber.tag(PDF_RICH_LAYOUT_DIAG_TAG).d(message)
 }
 
 internal fun Rect.pdfRichCursorSummary(): String {
