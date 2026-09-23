@@ -86,7 +86,20 @@
       "expected": [
         "PDF, EPUB, and PPTX open through the iOS importer and reach a usable first page/slide/chapter; external-open fallback is labeled separately.",
         "Close and reopen preserve the same Android-benchmark reading position contract.",
-        "Unsupported/corrupt/import-cancelled cases report an actionable state and do not strand the app in loading."
+        "Unsupported/corrupt/import-cancelled cases report an actionable state and do not strand the app in loading.",
+        "Opening a supported book from another app (Files share sheet / Open With) reaches the reader even when the file was never imported into the library first, on both a warm and a cold launch, and the staged copy survives the startup orphan sweep (`tmp/ExternalOpen/<requestId>/` must keep a fresh modification date).",
+        "Episteme is listed as a handler for the formats it reads (PDF, EPUB, MOBI/AZW3, FB2, TXT, MD, HTML, DOCX, ODT, PPTX, CBZ/CBR/CB7/CBT) in the iOS Open With list, matching the Android VIEW intent filters.",
+        "When the native copy of an external file fails, the reader shows the localized \"Unable to open this file.\" banner (Android `error_external_open_failed`) instead of failing silently."
+      ]
+    },
+    {
+      "id": "tts-session",
+      "surface": "reader-and-listening",
+      "expected": [
+        "Starting reader read-aloud or book listening, letting chunks auto-advance, and letting a book finish never freezes the UI or crashes the app: the synthesizer's next utterance is scheduled off its own delegate callback and the audio session is torn down off the main thread.",
+        "Pause/resume/stop, chapter and chunk skipping, and the speak/stop control in the reader chrome stay responsive while a session is active, including right after an utterance starts.",
+        "Ending a session hands audio back to other apps (the session is deactivated) without blocking the main thread, and interruption resume still restores playback.",
+        "Reader TTS voice settings, the read-aloud chrome labels, and the book replacement sheet are translated in the selected app language (Arabic checked), matching the Android screens."
       ]
     },
     {

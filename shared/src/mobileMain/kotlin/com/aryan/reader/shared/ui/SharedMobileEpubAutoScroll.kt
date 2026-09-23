@@ -190,7 +190,10 @@ internal fun SharedMobileEpubAutoScrollControls(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 IconButton(onClick = { onCollapseChange(false) }, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Expand Auto Scroll")
+                    Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = readerString("auto_scroll_expand", "Expand Auto Scroll"),
+                )
                 }
                 Box(contentAlignment = Alignment.Center) {
                     IconButton(onClick = onPlayPause, modifier = Modifier.size(36.dp)) {
@@ -228,16 +231,25 @@ internal fun SharedMobileEpubAutoScrollControls(
                 Box {
                     TextButton(onClick = { showModeMenu = true }) {
                         Text(if (isLocalMode) "Local Speed" else "Global Speed")
-                        Icon(Icons.Default.ArrowDropDown, contentDescription = "Select auto-scroll mode")
+                        Icon(
+                        Icons.Default.ArrowDropDown,
+                        contentDescription = readerString("auto_scroll_select_mode", "Select auto-scroll mode"),
+                    )
                     }
                     DropdownMenu(expanded = showModeMenu, onDismissRequest = { showModeMenu = false }) {
                         DropdownMenuItem(
-                            text = { Column { Text("Global Speed", fontWeight = FontWeight.Bold); Text("Applies to all files", style = MaterialTheme.typography.bodySmall) } },
+                            text = { Column { Text(readerString("auto_scroll_global_label", "Global Speed"), fontWeight = FontWeight.Bold); Text(
+                                        readerString("auto_scroll_desc_global", "Applies to all files"),
+                                        style = MaterialTheme.typography.bodySmall,
+                                    ) } },
                             trailingIcon = { if (!isLocalMode) Text("✓") },
                             onClick = { onLocalModeChange(false); showModeMenu = false }
                         )
                         DropdownMenuItem(
-                            text = { Column { Text("Local Speed", fontWeight = FontWeight.Bold); Text("Saved for this file", style = MaterialTheme.typography.bodySmall) } },
+                            text = { Column { Text(readerString("auto_scroll_local_label", "Local Speed"), fontWeight = FontWeight.Bold); Text(
+                                        readerString("auto_scroll_desc_local", "Saved for this file only"),
+                                        style = MaterialTheme.typography.bodySmall,
+                                    ) } },
                             trailingIcon = { if (isLocalMode) Text("✓") },
                             onClick = { onLocalModeChange(true); showModeMenu = false }
                         )
@@ -246,7 +258,10 @@ internal fun SharedMobileEpubAutoScrollControls(
                 Spacer(Modifier.weight(1f))
                 Text("${sharedMobileAutoScrollSpeedLabel(profile.speed)}x", style = MaterialTheme.typography.labelLarge)
                 IconButton(onClick = onScrollToTop) {
-                    Icon(Icons.Default.ArrowUpward, contentDescription = "Scroll to top")
+                    Icon(
+                        Icons.Default.ArrowUpward,
+                        contentDescription = readerString("auto_scroll_scroll_to_top", "Scroll to top"),
+                    )
                 }
                 IconButton(onClick = onMusicianModeToggle) {
                     Icon(
@@ -256,12 +271,23 @@ internal fun SharedMobileEpubAutoScrollControls(
                     )
                 }
                 IconButton(onClick = onInputModeToggle) {
-                    Icon(Icons.Default.SwapHoriz, contentDescription = "Swap speed controls")
+                    Icon(
+                        Icons.Default.SwapHoriz,
+                        contentDescription = readerString("auto_scroll_swap_controls", "Swap speed controls"),
+                    )
                 }
                 IconButton(onClick = { onCollapseChange(true) }) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Collapse Auto Scroll")
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = readerString("auto_scroll_collapse", "Collapse Auto Scroll"),
+                    )
                 }
-                IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Stop auto scroll") }
+                IconButton(onClick = onClose) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = readerString("desktop_stop_auto_scroll", "Stop auto scroll"),
+                    )
+                }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 SharedMobileEpubSpeedMenu("Min", profile.minSpeed, speedOptions, onMinSpeedChange)
@@ -281,11 +307,11 @@ internal fun SharedMobileEpubAutoScrollControls(
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     IconButton(onClick = { onSpeedChange((profile.speed - 0.1f).coerceAtLeast(profile.minSpeed)) }) {
-                        Icon(Icons.Default.Remove, contentDescription = "Slower")
+                        Icon(Icons.Default.Remove, contentDescription = readerString("content_desc_slower", "Slower"))
                     }
                     Text("${sharedMobileAutoScrollSpeedLabel(profile.speed)}x", style = MaterialTheme.typography.titleMedium)
                     IconButton(onClick = { onSpeedChange((profile.speed + 0.1f).coerceAtMost(profile.maxSpeed)) }) {
-                        Icon(Icons.Default.Add, contentDescription = "Faster")
+                        Icon(Icons.Default.Add, contentDescription = readerString("content_desc_faster", "Faster"))
                     }
                 }
             }

@@ -68,14 +68,14 @@ internal fun SharedMobileEpubFootnoteSheet(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "Note",
+                    text = readerString("label_note", "Note"),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold,
                 )
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = { onCopyText(footnote.plainText) }) {
-                    Text("Copy")
+                    Text(readerString("action_copy", "Copy"))
                 }
             }
             Surface(

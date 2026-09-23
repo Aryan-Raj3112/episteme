@@ -373,7 +373,9 @@ struct ContentView: View {
             ? copyImportedFileToAppSupport(url, directoryName: "Imports")
             : copyExternalFileToTemporaryStorage(url, requestId: requestId)
         guard let imported else {
-            bridge.recordNativeEvent(message: "Could not open the external file")
+            // Android reports this through a toast (error_external_open_failed);
+            // surface the same banner in Compose instead of failing silently.
+            bridge.reportExternalOpenFailure(fileName: url.lastPathComponent)
             return
         }
         bridge.openExternalFile(
@@ -1039,11 +1041,23 @@ private func copyExternalFileToTemporaryStorage(_ sourceURL: URL, requestId: Str
         requestDirectory = directory
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         let destination = directory.appendingPathComponent(uniqueImportedFileName(sourceURL.lastPathComponent))
+        let sourceModifiedAt = (try? sourceURL.resourceValues(forKeys: [.contentModificationDateKey]))?
+            .contentModificationDate ?? Date()
         try fileManager.copyItem(at: sourceURL, to: destination)
+        // `copyItem` keeps the source's modification date, so a book opened from
+        // another app landed here with its original (possibly years old) date and
+        // the startup orphan sweep (`sweepStaleTemporaryFiles`, 1h threshold)
+        // deleted the freshly staged copy. That is why external opens of books
+        // that were already imported worked (they resolve to the Application
+        // Support copy, which is never swept) while fresh opens failed with a
+        // missing-file error once the sweep ran. Android always stages a newly
+        // written copy, so stamp the staged file's date and keep the source's
+        // date only in the metadata we report.
+        try? fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: destination.path)
         guard let contentId = sha256FileId(destination) else {
             return nil
         }
-        let values = try destination.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let values = try destination.resourceValues(forKeys: [.fileSizeKey])
         keepRequestDirectory = true
         return ImportedReaderFile(
             name: sourceURL.lastPathComponent,
@@ -1051,9 +1065,7 @@ private func copyExternalFileToTemporaryStorage(_ sourceURL: URL, requestId: Str
             contentId: contentId,
             relativePath: sourceURL.lastPathComponent,
             fileSize: Int64(values.fileSize ?? 0),
-            lastModifiedTimestamp: Int64(
-                (values.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000
-            )
+            lastModifiedTimestamp: Int64(sourceModifiedAt.timeIntervalSince1970 * 1000)
         )
     } catch {
         return nil

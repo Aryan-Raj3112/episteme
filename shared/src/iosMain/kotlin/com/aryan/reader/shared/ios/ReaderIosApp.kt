@@ -522,6 +522,23 @@ class ReaderIosBridge internal constructor(
     internal var latestNativeEvent by mutableStateOf<String?>(null)
         private set
 
+    /**
+     * Name of an externally opened file the native side could not copy into the
+     * app, or null. Compose turns it into the same banner Android shows from
+     * ExternalFileOpenRouter instead of failing silently.
+     */
+    internal var externalOpenFailureFileName by mutableStateOf<String?>(null)
+        private set
+
+    fun reportExternalOpenFailure(fileName: String) {
+        externalOpenFailureFileName = fileName.ifBlank { "file" }
+        latestNativeEvent = "Could not open the external file: $fileName"
+    }
+
+    internal fun consumeExternalOpenFailure() {
+        externalOpenFailureFileName = null
+    }
+
     private fun persistHandoff(request: MobileHandoffRequest) {
         handoffEnvelope = MobileHandoffReducer.enqueue(handoffEnvelope, request)
         IosMobileHandoffStore.save(handoffEnvelope)
@@ -4267,6 +4284,13 @@ private fun ReaderIosApp(
             )
         )
         bridge.consumeCloudSnapshot()
+    }
+
+    val externalOpenFailureMessage = readerString("error_external_open_failed", "Unable to open this file.")
+    LaunchedEffect(bridge.externalOpenFailureFileName, externalOpenFailureMessage) {
+        if (bridge.externalOpenFailureFileName == null) return@LaunchedEffect
+        showMessage(externalOpenFailureMessage)
+        bridge.consumeExternalOpenFailure()
     }
 
     LaunchedEffect(bridge.pendingExternalOpen) {

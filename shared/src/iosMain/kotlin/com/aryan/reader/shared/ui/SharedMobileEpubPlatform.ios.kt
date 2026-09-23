@@ -34,6 +34,7 @@ import com.aryan.reader.shared.ios.loadIosEpubBook
 import com.aryan.reader.shared.ios.IosEpubResourceStore
 import com.aryan.reader.shared.ios.IosTtsAudioInterruption
 import com.aryan.reader.shared.ios.IosTtsAudioInterruptionMonitor
+import com.aryan.reader.shared.ios.IosTtsAudioSessionTeardown
 import com.aryan.reader.shared.opds.SharedOpdsStreamRequest
 import com.aryan.reader.shared.reader.SharedEpubResourceScheme
 import com.aryan.reader.shared.reader.parseSharedEpubResourceUrl
@@ -393,8 +394,15 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     private var activeUtteranceBaseOffset = 0
     private var wantsPlayback = true
     private var audioSessionActive = false
+    private var audioSessionGeneration = 0
     private var interruptionState = LocalTtsInterruptionState()
     private val interruptionMonitor = IosTtsAudioInterruptionMonitor(::handleAudioInterruption)
+
+    // AVSpeechSynthesizer runs its delegate callbacks while it is still
+    // finishing the utterance, so follow-up synthesis is posted to the next
+    // main-loop turn. Speaking inline from didFinish/speechStart deadlocks the
+    // synthesizer and freezes the reader UI.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     init {
         synthesizer.delegate = delegate
@@ -513,10 +521,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         progress = ReaderTtsProgress()
         state = SharedMobileEpubLocalTtsState.IDLE
         clearNowPlaying()
-        if (audioSessionActive) {
-            configureAudioSession(active = false)
-            audioSessionActive = false
-        }
+        deactivateAudioSession()
     }
 
     private fun handleAudioInterruption(interruption: IosTtsAudioInterruption) {
@@ -537,7 +542,9 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         when (transition.action) {
             LocalTtsInterruptionAction.NONE -> Unit
             LocalTtsInterruptionAction.PAUSE -> pauseInternal()
-            LocalTtsInterruptionAction.RESUME -> {
+            LocalTtsInterruptionAction.RESUME -> scope.launch {
+                // Activating the audio session blocks while the interrupting app
+                // releases the route, so keep it off the notification callback.
                 configureAudioSession(active = true)
                 resume()
             }
@@ -572,7 +579,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
             state = SharedMobileEpubLocalTtsState.IDLE
             completionCount += 1
             clearNowPlaying()
-            configureAudioSession(active = false)
+            deactivateAudioSession()
             return
         }
         // Keep the reader controls responsive even when a system voice starts slowly.
@@ -622,7 +629,13 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         if (wantsPlayback) {
             state = SharedMobileEpubLocalTtsState.SPEAKING
         } else {
-            synthesizer.pauseSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+            // Pausing from inside the delegate callback is what made pausing
+            // right after a start unreliable; post it instead.
+            scope.launch {
+                if (isActive(utterance)) {
+                    synthesizer.pauseSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+                }
+            }
             state = SharedMobileEpubLocalTtsState.PAUSED
         }
         updateNowPlaying()
@@ -643,7 +656,11 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     private fun utteranceFinished(utterance: AVSpeechUtterance) {
         if (!isActive(utterance)) return
         activeUtterance = null
-        advance()
+        val expectedSession = sessionId
+        scope.launch {
+            if (expectedSession != sessionId) return@launch
+            advance()
+        }
     }
 
     private fun utteranceCancelled(utterance: AVSpeechUtterance) {
@@ -664,9 +681,26 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     private fun configureAudioSession(active: Boolean) {
         val audioSession = AVAudioSession.sharedInstance()
         if (active) {
+            audioSessionGeneration += 1
             audioSession.setCategory(AVAudioSessionCategoryPlayback, error = null)
         }
         audioSession.setActive(active = active, error = null)
+    }
+
+    /**
+     * Deactivating an audio session blocks until the system finishes tearing the
+     * route down (or fails after a timeout), so it must not run on the main
+     * thread; a listening session that ended in a delegate callback used to lock
+     * the UI. Skip the teardown when a newer session already re-activated the
+     * session meanwhile.
+     */
+    private fun deactivateAudioSession() {
+        if (!audioSessionActive) return
+        audioSessionActive = false
+        val generation = ++audioSessionGeneration
+        IosTtsAudioSessionTeardown.deactivateIfStillOwner {
+            !audioSessionActive && generation == audioSessionGeneration
+        }
     }
 
     private fun installRemoteCommands() {
@@ -698,6 +732,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         interruptionMonitor.close()
         previewSynthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         synthesizer.delegate = null
+        scope.cancel()
         val commands = MPRemoteCommandCenter.sharedCommandCenter()
         commands.playCommand.removeTarget(null)
         commands.pauseCommand.removeTarget(null)

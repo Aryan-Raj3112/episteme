@@ -1220,8 +1220,16 @@ fun SharedMobileEpubReaderScreen(
     pendingExternalLink?.let { url ->
         AlertDialog(
             onDismissRequest = { pendingExternalLink = null },
-            title = { Text("External Link") },
-            text = { Text("You clicked on an external link:\n\n$url\n\nWhat would you like to do?") },
+            title = { Text(readerString("dialog_external_link_title", "External Link")) },
+            text = {
+                Text(
+                    readerString(
+                        "dialog_external_link_message",
+                        "You clicked on an external link:\n\n%1\$s\n\nWhat would you like to do?",
+                        url,
+                    )
+                )
+            },
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.End) {
                     TextButton(
@@ -1230,7 +1238,7 @@ fun SharedMobileEpubReaderScreen(
                             pendingExternalLink = null
                         }
                     ) {
-                        Text("Open")
+                        Text(readerString("action_open", "Open"))
                     }
                     TextButton(
                         onClick = {
@@ -1238,13 +1246,13 @@ fun SharedMobileEpubReaderScreen(
                             pendingExternalLink = null
                         }
                     ) {
-                        Text("Copy")
+                        Text(readerString("action_copy", "Copy"))
                     }
                 }
             },
             dismissButton = {
                 TextButton(onClick = { pendingExternalLink = null }) {
-                    Text("Cancel")
+                    Text(readerString("action_cancel", "Cancel"))
                 }
             }
         )

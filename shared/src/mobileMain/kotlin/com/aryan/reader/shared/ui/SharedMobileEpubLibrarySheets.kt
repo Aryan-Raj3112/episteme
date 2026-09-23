@@ -249,7 +249,9 @@ internal fun SharedMobileEpubToc(
 ) {
     val entries = epub?.effectiveReaderTocEntries().orEmpty()
     if (entries.isEmpty()) {
-        Box(modifier, contentAlignment = Alignment.Center) { Text("No table of contents") }
+        Box(modifier, contentAlignment = Alignment.Center) {
+            Text(readerString("desktop_no_table_of_contents", "No table of contents"))
+        }
         return
     }
     var query by remember(epub?.id) { mutableStateOf("") }
@@ -277,7 +279,7 @@ internal fun SharedMobileEpubToc(
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
-            placeholder = { Text("Search chapters") },
+            placeholder = { Text(readerString("search_chapters_placeholder", "Search chapters")) },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
             singleLine = true,
             modifier = Modifier
@@ -304,9 +306,11 @@ internal fun SharedMobileEpubToc(
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             TextButton(onClick = { expandedEntryIndices = readerTocParentIndices(entries) { it.depth } }) {
-                Text("Expand All")
+                Text(readerString("action_expand_all", "Expand All"))
             }
-            TextButton(onClick = { expandedEntryIndices = emptySet() }) { Text("Collapse All") }
+            TextButton(onClick = { expandedEntryIndices = emptySet() }) {
+                Text(readerString("action_collapse_all", "Collapse All"))
+            }
             TextButton(
                 onClick = {
                     query = ""
@@ -325,7 +329,7 @@ internal fun SharedMobileEpubToc(
                         plan.visibleIndex?.let { listState.animateScrollToItem(it) }
                     }
                 }
-            ) { Text("Locate") }
+            ) { Text(readerString("action_locate", "Locate")) }
         }
         HorizontalDivider()
         LazyColumn(Modifier.fillMaxSize(), state = listState) {
@@ -390,7 +394,9 @@ internal fun SharedMobileEpubBookmarks(
     var renameBookmark by remember { mutableStateOf<ReaderBookmark?>(null) }
     var deleteBookmark by remember { mutableStateOf<ReaderBookmark?>(null) }
     if (bookmarks.isEmpty()) {
-        Box(modifier, contentAlignment = Alignment.Center) { Text("No bookmarks yet") }
+        Box(modifier, contentAlignment = Alignment.Center) {
+            Text(readerString("desktop_no_bookmarks_yet", "No bookmarks yet"))
+        }
         return
     }
     LazyColumn(modifier) {
@@ -416,10 +422,21 @@ internal fun SharedMobileEpubBookmarks(
                 icon = { Icon(Icons.Default.Bookmark, contentDescription = null) },
                 badge = {
                     Box {
-                        IconButton(onClick = { menuBookmark = bookmark }) { Icon(Icons.Default.MoreVert, contentDescription = "Bookmark options") }
+                        IconButton(onClick = { menuBookmark = bookmark }) {
+                            Icon(
+                                Icons.Default.MoreVert,
+                                contentDescription = readerString("desktop_bookmark_options", "Bookmark options"),
+                            )
+                        }
                         DropdownMenu(expanded = menuBookmark?.id == bookmark.id, onDismissRequest = { menuBookmark = null }) {
-                            DropdownMenuItem(text = { Text("Rename") }, onClick = { renameBookmark = bookmark; menuBookmark = null })
-                            DropdownMenuItem(text = { Text("Delete") }, onClick = { deleteBookmark = bookmark; menuBookmark = null })
+                            DropdownMenuItem(
+                                text = { Text(readerString("action_rename", "Rename")) },
+                                onClick = { renameBookmark = bookmark; menuBookmark = null },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(readerString("action_delete", "Delete")) },
+                                onClick = { deleteBookmark = bookmark; menuBookmark = null },
+                            )
                         }
                     }
                 }
@@ -430,19 +447,49 @@ internal fun SharedMobileEpubBookmarks(
         var label by remember(bookmark.id) { mutableStateOf(bookmark.label ?: bookmark.preview) }
         AlertDialog(
             onDismissRequest = { renameBookmark = null },
-            title = { Text("Rename Bookmark") },
-            text = { OutlinedTextField(value = label, onValueChange = { label = it }, label = { Text("New name") }, singleLine = true) },
-            confirmButton = { TextButton(onClick = { onBookmarkRename(bookmark, label); renameBookmark = null }) { Text("Rename") } },
-            dismissButton = { TextButton(onClick = { renameBookmark = null }) { Text("Cancel") } }
+            title = { Text(readerString("dialog_rename_bookmark", "Rename Bookmark")) },
+            text = {
+                OutlinedTextField(
+                    value = label,
+                    onValueChange = { label = it },
+                    label = { Text(readerString("dialog_bookmark_new_name", "New name")) },
+                    singleLine = true,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { onBookmarkRename(bookmark, label); renameBookmark = null }) {
+                    Text(readerString("action_rename", "Rename"))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameBookmark = null }) {
+                    Text(readerString("action_cancel", "Cancel"))
+                }
+            }
         )
     }
     deleteBookmark?.let { bookmark ->
         AlertDialog(
             onDismissRequest = { deleteBookmark = null },
-            title = { Text("Delete Bookmark?") },
-            text = { Text("This bookmark will be removed from the book.") },
-            confirmButton = { TextButton(onClick = { onBookmarkDelete(bookmark); deleteBookmark = null }) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
-            dismissButton = { TextButton(onClick = { deleteBookmark = null }) { Text("Cancel") } }
+            title = { Text(readerString("dialog_delete_bookmark", "Delete Bookmark?")) },
+            text = {
+                Text(
+                    readerString(
+                        "dialog_delete_bookmark_message",
+                        "This bookmark will be removed from the book.",
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { onBookmarkDelete(bookmark); deleteBookmark = null }) {
+                    Text(readerString("action_delete", "Delete"), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteBookmark = null }) {
+                    Text(readerString("action_cancel", "Cancel"))
+                }
+            }
         )
     }
 }
@@ -463,7 +510,9 @@ internal fun SharedMobileEpubHighlights(
     var menuHighlight by remember { mutableStateOf<UserHighlight?>(null) }
     var deleteHighlight by remember { mutableStateOf<UserHighlight?>(null) }
     if (highlights.isEmpty()) {
-        Box(modifier, contentAlignment = Alignment.Center) { Text("No annotations yet") }
+        Box(modifier, contentAlignment = Alignment.Center) {
+            Text(readerString("desktop_no_annotations_yet", "No annotations yet"))
+        }
         return
     }
     val filteredHighlights = if (notesOnly) highlights.filter { !it.note.isNullOrBlank() } else highlights
@@ -472,11 +521,21 @@ internal fun SharedMobileEpubHighlights(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            FilterChip(selected = !notesOnly, onClick = { notesOnly = false }, label = { Text("All") })
-            FilterChip(selected = notesOnly, onClick = { notesOnly = true }, label = { Text("With Notes") })
+            FilterChip(
+                selected = !notesOnly,
+                onClick = { notesOnly = false },
+                label = { Text(readerString("filter_all", "All")) },
+            )
+            FilterChip(
+                selected = notesOnly,
+                onClick = { notesOnly = true },
+                label = { Text(readerString("filter_with_notes", "With Notes")) },
+            )
         }
         if (filteredHighlights.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No annotations with notes") }
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(readerString("desktop_no_annotations_with_notes", "No annotations with notes"))
+            }
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
                 items(filteredHighlights.sortedBy { it.chapterIndex }, key = { it.id }) { highlight ->
@@ -491,7 +550,7 @@ internal fun SharedMobileEpubHighlights(
                         ) {
                             Column(Modifier.weight(1f)) {
                                 Text(
-                                    text = highlight.text.ifBlank { "Highlight" },
+                                    text = highlight.text.ifBlank { readerString("desktop_highlight", "Highlight") },
                                     maxLines = 3,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -522,7 +581,13 @@ internal fun SharedMobileEpubHighlights(
                             }
                             Box {
                                 IconButton(onClick = { menuHighlight = highlight }) {
-                                    Icon(Icons.Default.MoreVert, contentDescription = "Annotation options")
+                                    Icon(
+                                        Icons.Default.MoreVert,
+                                        contentDescription = readerString(
+                                            "desktop_annotation_options",
+                                            "Annotation options",
+                                        ),
+                                    )
                                 }
                                 DropdownMenu(
                                     expanded = menuHighlight?.id == highlight.id,
@@ -554,7 +619,15 @@ internal fun SharedMobileEpubHighlights(
                                             }
                                             ReaderHighlightListAction.EDIT_NOTE -> {
                                                 DropdownMenuItem(
-                                                    text = { Text(if (highlight.note.isNullOrBlank()) "Add note" else "Edit note") },
+                                                    text = {
+                                                        Text(
+                                                            if (highlight.note.isNullOrBlank()) {
+                                                                readerString("menu_add_note", "Add note")
+                                                            } else {
+                                                                readerString("menu_edit_note", "Edit note")
+                                                            }
+                                                        )
+                                                    },
                                                     onClick = {
                                                         onHighlightEdit(highlight)
                                                         menuHighlight = null
@@ -563,7 +636,7 @@ internal fun SharedMobileEpubHighlights(
                                             }
                                             ReaderHighlightListAction.DELETE -> {
                                                 DropdownMenuItem(
-                                                    text = { Text("Delete") },
+                                                    text = { Text(readerString("action_delete", "Delete")) },
                                                     onClick = {
                                                         deleteHighlight = highlight
                                                         menuHighlight = null
@@ -583,16 +656,27 @@ internal fun SharedMobileEpubHighlights(
     deleteHighlight?.let { highlight ->
         AlertDialog(
             onDismissRequest = { deleteHighlight = null },
-            title = { Text("Delete annotation?") },
-            text = { Text("This removes the highlight and its comment.") },
+            title = { Text(readerString("desktop_delete_annotation_title", "Delete annotation?")) },
+            text = {
+                Text(
+                    readerString(
+                        "desktop_delete_annotation_message",
+                        "This removes the highlight and its comment.",
+                    )
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     onDeleteHighlight(highlight)
                     deleteHighlight = null
-                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                }) {
+                    Text(readerString("action_delete", "Delete"), color = MaterialTheme.colorScheme.error)
+                }
             },
             dismissButton = {
-                TextButton(onClick = { deleteHighlight = null }) { Text("Cancel") }
+                TextButton(onClick = { deleteHighlight = null }) {
+                    Text(readerString("action_cancel", "Cancel"))
+                }
             }
         )
     }
@@ -631,7 +715,7 @@ private fun SharedMobileEpubHighlightColorRow(
                 if (selected) {
                     Icon(
                         imageVector = Icons.Default.Check,
-                        contentDescription = "Selected color",
+                        contentDescription = readerString("content_desc_selected_color", "Selected color"),
                         tint = if (color == HighlightColor.WHITE) Color.Black else Color.White,
                         modifier = Modifier.size(16.dp),
                     )
@@ -676,13 +760,17 @@ internal fun SharedMobileEpubHighlightSheet(
                 .padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Text("Annotation", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(
+                readerString("desktop_annotation", "Annotation"),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
             Surface(
                 color = highlight.effectiveColor.copy(alpha = 0.14f),
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Text(
-                    text = highlight.text.ifBlank { "Highlight" },
+                    text = highlight.text.ifBlank { readerString("desktop_highlight", "Highlight") },
                     modifier = Modifier.padding(14.dp),
                     maxLines = 5,
                     overflow = TextOverflow.Ellipsis
@@ -695,13 +783,19 @@ internal fun SharedMobileEpubHighlightSheet(
                 TextButton(onClick = {
                     val result = writeSharedClipboard(copiedTextLabel, highlight.text)
                     if (!result.success) onClipboardError?.invoke(clipboardErrorMessage)
-                }) { Text("Copy") }
-                TextButton(onClick = onSpeak) { Text("Speak") }
-                TextButton(onClick = { onLookup(ReaderExternalLookupAction.DICTIONARY) }) { Text("Dictionary") }
-                TextButton(onClick = { onLookup(ReaderExternalLookupAction.TRANSLATE) }) { Text("Translate") }
-                TextButton(onClick = { onLookup(ReaderExternalLookupAction.SEARCH) }) { Text("Search") }
+                }) { Text(readerString("action_copy", "Copy")) }
+                TextButton(onClick = onSpeak) { Text(readerString("label_speak", "Speak")) }
+                TextButton(onClick = { onLookup(ReaderExternalLookupAction.DICTIONARY) }) {
+                    Text(readerString("tooltip_dictionary", "Dictionary"))
+                }
+                TextButton(onClick = { onLookup(ReaderExternalLookupAction.TRANSLATE) }) {
+                    Text(readerString("dict_translate", "Translate"))
+                }
+                TextButton(onClick = { onLookup(ReaderExternalLookupAction.SEARCH) }) {
+                    Text(readerString("action_search", "Search"))
+                }
             }
-            Text("Color", style = MaterialTheme.typography.titleSmall)
+            Text(readerString("desktop_color", "Color"), style = MaterialTheme.typography.titleSmall)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -721,17 +815,20 @@ internal fun SharedMobileEpubHighlightSheet(
                     )
                 }
             }
-            Text("Style", style = MaterialTheme.typography.titleSmall)
+            Text(
+                readerString("desktop_label_style", "Style"),
+                style = MaterialTheme.typography.titleSmall,
+            )
             Row(
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 HighlightStyle.entries.forEach { style ->
                     val label = when (style) {
-                        HighlightStyle.BACKGROUND -> "Background"
-                        HighlightStyle.UNDERLINE -> "Underline"
-                        HighlightStyle.WAVY_UNDERLINE -> "Wavy"
-                        HighlightStyle.STRIKETHROUGH -> "Strike"
+                        HighlightStyle.BACKGROUND -> readerString("desktop_style_background", "Background")
+                        HighlightStyle.UNDERLINE -> readerString("desktop_style_underline", "Underline")
+                        HighlightStyle.WAVY_UNDERLINE -> readerString("desktop_style_wavy", "Wavy")
+                        HighlightStyle.STRIKETHROUGH -> readerString("desktop_style_strike", "Strike")
                     }
                     FilterChip(
                         selected = highlight.style == style,
@@ -743,7 +840,7 @@ internal fun SharedMobileEpubHighlightSheet(
             OutlinedTextField(
                 value = note,
                 onValueChange = { note = it },
-                label = { Text("Comment") },
+                label = { Text(readerString("desktop_label_comment", "Comment")) },
                 minLines = 3,
                 maxLines = 6,
                 modifier = Modifier.fillMaxWidth()
@@ -753,24 +850,37 @@ internal fun SharedMobileEpubHighlightSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(onClick = { confirmDelete = true }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                TextButton(onClick = { confirmDelete = true }) {
+                    Text(readerString("action_delete", "Delete"), color = MaterialTheme.colorScheme.error)
+                }
                 TextButton(onClick = {
                     onUpdate(highlight.copy(note = note.trim().takeIf { it.isNotBlank() }))
                     onDismiss()
-                }) { Text("Save comment") }
+                }) { Text(readerString("desktop_save_comment", "Save comment")) }
             }
         }
     }
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete annotation?") },
-            text = { Text("This removes the highlight and its comment.") },
+            title = { Text(readerString("desktop_delete_annotation_title", "Delete annotation?")) },
+            text = {
+                Text(
+                    readerString(
+                        "desktop_delete_annotation_message",
+                        "This removes the highlight and its comment.",
+                    )
+                )
+            },
             confirmButton = {
-                TextButton(onClick = onDelete) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                TextButton(onClick = onDelete) {
+                    Text(readerString("action_delete", "Delete"), color = MaterialTheme.colorScheme.error)
+                }
             },
             dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
+                TextButton(onClick = { confirmDelete = false }) {
+                    Text(readerString("action_cancel", "Cancel"))
+                }
             }
         )
     }
@@ -783,7 +893,9 @@ internal fun SharedMobileEpubImages(
     modifier: Modifier = Modifier
 ) {
     if (images.isEmpty()) {
-        Box(modifier, contentAlignment = Alignment.Center) { Text("No images in this book") }
+        Box(modifier, contentAlignment = Alignment.Center) {
+            Text(readerString("desktop_no_images", "No images in this book"))
+        }
         return
     }
     LazyColumn(modifier) {
@@ -818,7 +930,13 @@ internal fun SharedMobileEpubImages(
                             },
                             enabled = downloadableBytes != null
                         ) {
-                            Icon(Icons.Default.Download, contentDescription = "Save or share image")
+                            Icon(
+                                Icons.Default.Download,
+                                contentDescription = readerString(
+                                    "content_desc_save_or_share_image",
+                                    "Save or share image",
+                                ),
+                            )
                         }
                     }
                 },

@@ -42,24 +42,36 @@ internal fun SharedMobileDictionarySettingsSheet(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            Text("Dictionary Settings", style = MaterialTheme.typography.titleLarge)
+            Text(
+                readerString("content_desc_dictionary_settings", "Dictionary Settings"),
+                style = MaterialTheme.typography.titleLarge,
+            )
             SharedMobileDictionarySettingsSection(
-                title = "Dictionary app",
-                subtitle = "Used when you select text and choose Dictionary",
+                title = readerString("dictionary_settings_app_title", "Dictionary app"),
+                subtitle = readerString(
+                    "dictionary_settings_app_desc",
+                    "Used when you select text and choose Dictionary",
+                ),
                 options = ReaderDictionaryServiceOptions,
                 selected = dictionaryService,
                 onSelected = onDictionaryServiceChange
             )
             SharedMobileDictionarySettingsSection(
-                title = "Translate app",
-                subtitle = "Used when you select text and choose Translate",
+                title = readerString("dictionary_settings_translate_title", "Translate app"),
+                subtitle = readerString(
+                    "dictionary_settings_translate_desc",
+                    "Used when you select text and choose Translate",
+                ),
                 options = ReaderTranslateServiceOptions,
                 selected = translateService,
                 onSelected = onTranslateServiceChange
             )
             SharedMobileDictionarySettingsSection(
-                title = "Search app",
-                subtitle = "Used when you select text and choose Search",
+                title = readerString("dictionary_settings_search_title", "Search app"),
+                subtitle = readerString(
+                    "dictionary_settings_search_desc",
+                    "Used when you select text and choose Search",
+                ),
                 options = ReaderSearchServiceOptions,
                 selected = searchService,
                 onSelected = onSearchServiceChange
@@ -101,7 +113,7 @@ private fun SharedMobileDictionarySettingsSection(
                         if (option == selected) {
                             Icon(
                                 Icons.Default.Check,
-                                contentDescription = "Selected",
+                                contentDescription = readerString("content_desc_selected", "Selected"),
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }

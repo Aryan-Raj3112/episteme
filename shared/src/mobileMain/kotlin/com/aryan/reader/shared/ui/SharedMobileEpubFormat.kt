@@ -191,12 +191,18 @@ internal fun SharedMobileEpubFormatSheet(
                 Box {
                     Row(Modifier.clickable { showModeMenu = true }.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(if (isLocalMode) "Local Format" else "Global Format", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                        Icon(Icons.Default.ArrowDropDown, contentDescription = "Select format mode", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = readerString("format_select_mode", "Select format mode"), tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                     }
                     DropdownMenu(expanded = showModeMenu, onDismissRequest = { showModeMenu = false }) {
-                        DropdownMenuItem(text = { Column { Text("Global Format", fontWeight = FontWeight.Bold); Text("Applies to all files", style = MaterialTheme.typography.bodySmall) } }, onClick = { onLocalModeChange(false); showModeMenu = false })
+                        DropdownMenuItem(text = { Column { Text(readerString("format_global", "Global Format"), fontWeight = FontWeight.Bold); Text(
+                                    readerString("auto_scroll_desc_global", "Applies to all files"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                ) } }, onClick = { onLocalModeChange(false); showModeMenu = false })
                         HorizontalDivider()
-                        DropdownMenuItem(text = { Column { Text("Local Format", fontWeight = FontWeight.Bold); Text("Saved for this file", style = MaterialTheme.typography.bodySmall) } }, onClick = { onLocalModeChange(true); showModeMenu = false })
+                        DropdownMenuItem(text = { Column { Text(readerString("format_local", "Local Format"), fontWeight = FontWeight.Bold); Text(
+                                    readerString("format_saved_for_this_file", "Saved for this file"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                ) } }, onClick = { onLocalModeChange(true); showModeMenu = false })
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -216,12 +222,17 @@ internal fun SharedMobileEpubFormatSheet(
                             textAlign = defaults.textAlign
                         ))
                         alignmentChoice = "Default"
-                    }) { Text("Reset") }
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp)) }
+                    }) { Text(readerString("action_reset", "Reset")) }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) { Icon(
+                            Icons.Default.Close,
+                            contentDescription = readerString("action_close", "Close"),
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(18.dp),
+                        ) }
                 }
             }
             Spacer(Modifier.height(16.dp))
-            Text("FONT & ALIGNMENT", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
+            Text(readerString("section_font_alignment", "FONT & ALIGNMENT"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
             Surface(onClick = { showFontSheet = true }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth().height(52.dp)) {
                 Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -268,14 +279,14 @@ internal fun SharedMobileEpubFormatSheet(
             Spacer(Modifier.height(16.dp))
             SharedMobileEpubFormatPreview(settings)
             Spacer(Modifier.height(24.dp))
-            Text("TYPOGRAPHY", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp, bottom = 12.dp))
+            Text(readerString("section_typography", "TYPOGRAPHY"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp, bottom = 12.dp))
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SharedMobileEpubFormatStepperRow("Font Size", sharedMobileFormatMultiplier(sliderValues.fontSize), { adjust(AndroidEpubFormatSlider.FONT_SIZE, -1) }, { adjust(AndroidEpubFormatSlider.FONT_SIZE, 1) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.FONT_SIZE })
                 SharedMobileEpubFormatStepperRow("Font Weight", sharedMobileFormatWeight(settings.fontWeight), { onSettingsChange(settings.copy(fontWeight = sharedMobilePreviousWeight(settings.fontWeight))) }, { onSettingsChange(settings.copy(fontWeight = sharedMobileNextWeight(settings.fontWeight))) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.FONT_WEIGHT })
                 SharedMobileEpubFormatStepperRow("Letter Spacing", sharedMobileFormatLetterSpacing(settings.letterSpacing), { onSettingsChange(settings.copy(letterSpacing = sharedMobileStep(settings.letterSpacing, -0.01f, -0.10f, 0.50f, 100f))) }, { onSettingsChange(settings.copy(letterSpacing = sharedMobileStep(settings.letterSpacing, 0.01f, -0.10f, 0.50f, 100f))) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.LETTER_SPACING })
             }
             Spacer(Modifier.height(24.dp))
-            Text("LAYOUT & SPACING", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp, bottom = 12.dp))
+            Text(readerString("section_layout_spacing", "LAYOUT & SPACING"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp, bottom = 12.dp))
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SharedMobileEpubFormatStepperRow("Line Height", sharedMobileFormatMultiplier(sliderValues.lineHeight), { adjust(AndroidEpubFormatSlider.LINE_HEIGHT, -1) }, { adjust(AndroidEpubFormatSlider.LINE_HEIGHT, 1) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.LINE_HEIGHT })
                 SharedMobileEpubFormatStepperRow("Paragraph Gap", sharedMobileFormatMultiplier(sliderValues.paragraphGap), { adjust(AndroidEpubFormatSlider.PARAGRAPH_GAP, -1) }, { adjust(AndroidEpubFormatSlider.PARAGRAPH_GAP, 1) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.PARAGRAPH_GAP })
@@ -298,8 +309,10 @@ internal fun SharedMobileEpubFormatSheet(
         ModalBottomSheet(onDismissRequest = { showFontSheet = false }) {
             Column(Modifier.fillMaxWidth().heightIn(max = 480.dp).padding(bottom = 24.dp)) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("Select Font", style = MaterialTheme.typography.titleMedium)
-                    IconButton(onClick = { showFontSheet = false }) { Icon(Icons.Default.Close, contentDescription = "Close") }
+                    Text(readerString("select_font", "Select Font"), style = MaterialTheme.typography.titleMedium)
+                    IconButton(onClick = { showFontSheet = false }) {
+                        Icon(Icons.Default.Close, contentDescription = readerString("action_close", "Close"))
+                    }
                 }
                 LazyColumn {
                     items(ReaderFont.entries) { font ->
@@ -333,7 +346,7 @@ internal fun SharedMobileEpubFormatSheet(
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Import Font")
+                            Text(readerString("import_font", "Import Font"))
                         }
                     }
                 }
@@ -419,10 +432,16 @@ internal fun SharedMobileEpubFormatStepperRow(
                 Text(valueLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             }
             IconButton(onClick = onDecrease, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Default.Remove, contentDescription = "Decrease $label")
+                Icon(
+                    Icons.Default.Remove,
+                    contentDescription = "${readerString("content_desc_decrease", "Decrease")} $label",
+                )
             }
             IconButton(onClick = onIncrease, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Default.Add, contentDescription = "Increase $label")
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = "${readerString("content_desc_increase", "Increase")} $label",
+                )
             }
         }
     }
@@ -512,11 +531,18 @@ internal fun SharedMobileEpubFormatAdjustmentDialog(
                 Spacer(Modifier.height(12.dp))
                 Slider(value = value.coerceIn(range), onValueChange = ::update, valueRange = range)
                 if (adjustment == SharedMobileReaderFormatAdjustment.FONT_WEIGHT && settings.fontWeight == 0) {
-                    Text("Original uses the weight supplied by the book or selected font.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                    readerString(
+                        "format_original_weight_note",
+                        "Original uses the weight supplied by the book or selected font.",
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(readerString("action_done", "Done")) } },
         dismissButton = {
             TextButton(onClick = {
                 onSettingsChange(
@@ -553,7 +579,7 @@ internal fun SharedMobileEpubFormatAdjustmentDialog(
                         )
                     }
                 )
-            }) { Text("Reset") }
+            }) { Text(readerString("action_reset", "Reset")) }
         }
     )
 }
@@ -588,9 +614,9 @@ internal fun SharedMobileEpubFormatSlider(label: String, value: Float, range: Cl
             Text(valueLabel, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            IconButton(onClick = { onValueChange(((current - 0.1f).coerceAtLeast(range.start) * 10).roundToInt() / 10f) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Remove, contentDescription = "Decrease", tint = MaterialTheme.colorScheme.primary) }
+            IconButton(onClick = { onValueChange(((current - 0.1f).coerceAtLeast(range.start) * 10).roundToInt() / 10f) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Remove, contentDescription = readerString("content_desc_decrease", "Decrease"), tint = MaterialTheme.colorScheme.primary) }
             SharedMobileEpubCustomCanvasSlider(value = current, onValueChange = onValueChange, valueRange = range, modifier = Modifier.weight(1f))
-            IconButton(onClick = { onValueChange(((current + 0.1f).coerceAtMost(range.endInclusive) * 10).roundToInt() / 10f) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Add, contentDescription = "Increase", tint = MaterialTheme.colorScheme.primary) }
+            IconButton(onClick = { onValueChange(((current + 0.1f).coerceAtMost(range.endInclusive) * 10).roundToInt() / 10f) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Add, contentDescription = readerString("content_desc_increase", "Increase"), tint = MaterialTheme.colorScheme.primary) }
         }
     }
 }
@@ -672,16 +698,19 @@ internal fun SharedMobileEpubThemeSheet(
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(horizontal = 16.dp)) {
-            Text("Reading Themes", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp, bottom = 16.dp))
+            Text(readerString("reading_themes", "Reading Themes"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp, bottom = 16.dp))
             TabRow(selectedTabIndex = selectedTab, containerColor = Color.Transparent, divider = {}) {
-                Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }) { Text("Solid Colors", modifier = Modifier.padding(12.dp)) }
-                Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }) { Text("Textured", modifier = Modifier.padding(12.dp)) }
+                Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }) { Text(readerString("theme_solid_colors", "Solid Colors"), modifier = Modifier.padding(12.dp)) }
+                Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }) { Text(readerString("theme_textured", "Textured"), modifier = Modifier.padding(12.dp)) }
             }
             Spacer(Modifier.height(16.dp))
             if (selectedTab == 1) {
                 val transparency = 1f - settings.textureAlpha.coerceIn(0f, 1f)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Texture Transparency", style = MaterialTheme.typography.labelMedium)
+                    Text(
+                    readerString("theme_texture_transparency", "Texture Transparency"),
+                    style = MaterialTheme.typography.labelMedium,
+                )
                     Text("${(transparency * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 }
                 Slider(value = transparency, onValueChange = { onSettingsChange(settings.copy(textureAlpha = 1f - it)) })
@@ -693,7 +722,11 @@ internal fun SharedMobileEpubThemeSheet(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
-                    Text("Presets", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    Text(
+                        readerString("tab_presets", "Presets"),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
                 }
                 gridItems(builtIns, key = { it.id }) { theme ->
                     SharedMobileEpubThemeGridItem(
@@ -705,13 +738,25 @@ internal fun SharedMobileEpubThemeSheet(
                 }
                 item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                     Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("My Themes", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                        IconButton(onClick = { editingTheme = null; showBuilder = true }) { Icon(Icons.Default.Add, contentDescription = "New", tint = MaterialTheme.colorScheme.primary) }
+                        Text(
+                            readerString("theme_my_themes", "My Themes"),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        IconButton(onClick = { editingTheme = null; showBuilder = true }) { Icon(
+                                Icons.Default.Add,
+                                contentDescription = readerString("theme_new", "New"),
+                                tint = MaterialTheme.colorScheme.primary,
+                            ) }
                     }
                 }
                 if (customThemes.isEmpty()) {
                     item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
-                        Text("No custom themes yet. Tap '+' to create one.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            readerString("theme_no_custom", "No custom themes yet. Tap '+' to create one."),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 } else {
                     gridItems(customThemes, key = { it.id }) { theme ->
@@ -777,9 +822,19 @@ internal fun SharedMobileEpubThemeGridItem(
             Spacer(Modifier.height(6.dp))
             Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
                 Row(Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
-                    Icon(Icons.Default.Edit, "Edit", Modifier.size(28.dp).clickable(onClick = onEdit).padding(6.dp), tint = MaterialTheme.colorScheme.primary)
+                    Icon(
+                        Icons.Default.Edit,
+                        readerString("action_edit", "Edit"),
+                        Modifier.size(28.dp).clickable(onClick = onEdit).padding(6.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
                     Spacer(Modifier.width(4.dp))
-                    Icon(Icons.Default.Delete, "Delete", Modifier.size(28.dp).clickable(onClick = onDelete).padding(6.dp), tint = MaterialTheme.colorScheme.error)
+                    Icon(
+                        Icons.Default.Delete,
+                        readerString("action_delete", "Delete"),
+                        Modifier.size(28.dp).clickable(onClick = onDelete).padding(6.dp),
+                        tint = MaterialTheme.colorScheme.error,
+                    )
                 }
             }
         }
@@ -1074,12 +1129,12 @@ internal fun SharedMobileEpubVisualOptionsSheet(
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.72f).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Visual Options", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(readerString("menu_visual_options", "Visual Options"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = "Close")
+                    Icon(Icons.Default.Close, contentDescription = readerString("action_close", "Close"))
                 }
             }
-            Text("System UI", style = MaterialTheme.typography.titleMedium)
+            Text(readerString("visual_options_system_ui", "System UI"), style = MaterialTheme.typography.titleMedium)
             Text(
                 "Choose when the status and navigation bars are visible.",
                 style = MaterialTheme.typography.bodySmall,
@@ -1087,18 +1142,21 @@ internal fun SharedMobileEpubVisualOptionsSheet(
             )
             SharedMobileEpubEnumChoices(SystemUiMode.entries, settings.systemUiMode, { it.title }) { onSettingsChange(settings.copy(systemUiMode = it)) }
             Spacer(Modifier.height(8.dp))
-            Text("Progress Bar", style = MaterialTheme.typography.titleMedium)
+            Text(readerString("visual_options_progress_bar", "Progress Bar"), style = MaterialTheme.typography.titleMedium)
             Text(
                 "Show the current chapter page and reading percentage.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             SharedMobileEpubEnumChoices(PageInfoMode.entries, settings.pageInfoMode, { it.title }) { onSettingsChange(settings.copy(pageInfoMode = it)) }
-            Text("Progress Bar Position", style = MaterialTheme.typography.titleSmall)
+            Text(
+                readerString("visual_options_progress_bar_position", "Progress Bar Position"),
+                style = MaterialTheme.typography.titleSmall,
+            )
             SharedMobileEpubEnumChoices(PageInfoPosition.entries, settings.pageInfoPosition, { it.title }) { onSettingsChange(settings.copy(pageInfoPosition = it)) }
             if (settings.readingMode == ReaderReadingMode.PAGINATED) {
                 Spacer(Modifier.height(8.dp))
-                Text("Page Spread", style = MaterialTheme.typography.titleMedium)
+                Text(readerString("visual_options_epub_page_spread", "Page Spread"), style = MaterialTheme.typography.titleMedium)
                 Text(
                     "Show one page or two pages side by side.",
                     style = MaterialTheme.typography.bodySmall,
@@ -1129,7 +1187,10 @@ internal fun SharedMobileEpubVisualOptionsSheet(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("Seamless Chapter Transition", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                            readerString("visual_options_seamless_chapter", "Seamless Chapter Transition"),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
                             Text(
                                 "Turn this off to pull past the edge before changing chapters.",
                                 style = MaterialTheme.typography.bodySmall,
@@ -1182,7 +1243,7 @@ private fun SharedMobileEpubReaderImagesToggle(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Hide Images", style = MaterialTheme.typography.titleMedium)
+                    Text(readerString("visual_options_hide_images", "Hide Images"), style = MaterialTheme.typography.titleMedium)
                     Text(
                         "Turn this on to read with all images in the book hidden.",
                         style = MaterialTheme.typography.bodySmall,
