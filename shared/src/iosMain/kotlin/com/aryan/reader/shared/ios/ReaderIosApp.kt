@@ -168,6 +168,7 @@ import com.aryan.reader.shared.ReaderTtsOverlaySize
 import com.aryan.reader.shared.resolveReaderTtsOverlaySize
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiFeature
+import com.aryan.reader.shared.readerAiModelById
 import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.AiDefinitionResult
 import com.aryan.reader.shared.RecapResult
@@ -278,6 +279,7 @@ import com.aryan.reader.shared.SharedReaderTtsMiniBarState
 import com.aryan.reader.shared.shouldShowSharedReaderTtsMiniBar
 import com.aryan.reader.shared.sharedReaderTtsMiniBarBottomPaddingDp
 import com.aryan.reader.shared.ui.SharedMobileDictionarySettingsSheet
+import com.aryan.reader.shared.ui.SharedMobileInfoConfirmationDialog
 import com.aryan.reader.shared.ui.SharedAiSettingsScreen
 import com.aryan.reader.shared.ui.SharedAiSettingsStrings
 import com.aryan.reader.shared.ui.IosSharedMobileCloudTts
@@ -3124,6 +3126,11 @@ private fun ReaderIosApp(
     var showIosTtsBookPicker by remember { mutableStateOf(false) }
     val settingsTts = rememberSharedMobileEpubLocalTts()
     var showDictionarySettingsSheet by remember { mutableStateOf(false) }
+    // Android parity (PdfViewerScreen.showDictionaryUpsellDialog /
+    // EpubReaderScreen.showDictionaryUpsellDialog): multi-word smart
+    // dictionary is Pro-only, so the upsell popup appears instead of the
+    // AI result sheet when a phrase is defined without Pro.
+    var showDictionaryUpsellDialog by remember { mutableStateOf(false) }
     val initialLookupServices = remember {
         loadIosReaderLookupServices().also { (dictionary, translate, search) ->
             IosReaderLookupServices.dictionary = dictionary
@@ -3274,10 +3281,28 @@ private fun ReaderIosApp(
             )
             return
         }
+        // Android parity (PdfViewerScreen.onDictionaryLookup /
+        // EpubReaderScreen.onDictionaryLookup): defining more than one word
+        // without Pro shows the smart-dictionary upsell popup instead of
+        // fetching. BYOK bypasses the worker gate exactly like Android OSS.
+        if (feature == ReaderAiFeature.DEFINE && iosCountWords(input) > 1 && !state.isProUser) {
+            val sanitizedSettings = effectiveReaderAiSettings.sanitized()
+            val byokModelId = sanitizedSettings.modelIdFor(ReaderAiFeature.DEFINE)
+            val hasByokDefine = readerAiModelById(byokModelId)?.let {
+                sanitizedSettings.apiKeyFor(it.provider).isNotBlank()
+            } == true
+            if (!hasByokDefine) {
+                showDictionaryUpsellDialog = true
+                return
+            }
+        }
         readerExtrasState = readerExtrasState.copy(
             aiResult = com.aryan.reader.shared.ReaderAiResultState(
                 title = feature.displayName,
                 isLoading = true,
+                // Android parity (AiDefinitionPopup word headline): the
+                // selected text shows immediately, even while loading.
+                queryText = if (feature == ReaderAiFeature.DEFINE) input else null,
             )
         )
         readerAiJob = scope.launch {
@@ -3314,11 +3339,25 @@ private fun ReaderIosApp(
                 is RecapResult -> result.error
                 else -> "AI request failed."
             }
+            // Android parity (AiResultContentView usage badge): surface the
+            // worker-reported cost balance on summary/recap results.
+            val cost = when (result) {
+                is SummarizationResult -> result.cost
+                is RecapResult -> result.cost
+                else -> null
+            }
+            val freeRemaining = when (result) {
+                is SummarizationResult -> result.freeRemaining
+                is RecapResult -> result.freeRemaining
+                else -> null
+            }
             readerExtrasState = readerExtrasState.copy(
                 aiResult = readerExtrasState.aiResult.copy(
                     text = if (readerExtrasState.aiResult.text.isNotBlank()) readerExtrasState.aiResult.text else textResult,
                     isLoading = false,
                     errorMessage = error,
+                    cost = cost,
+                    freeRemaining = freeRemaining,
                 )
             )
         }
@@ -5287,6 +5326,29 @@ private fun ReaderIosApp(
                             persistIosLookupService(IosLookupSearchServiceKey, service)
                         },
                         onDismiss = { showDictionarySettingsSheet = false },
+                    )
+                }
+                // Android parity (PdfViewerScreen/EpubReaderScreen dictionary
+                // upsell): phrases and paragraphs need Pro; Learn More opens
+                // the Pro screen, Not Now just dismisses.
+                if (showDictionaryUpsellDialog) {
+                    SharedMobileInfoConfirmationDialog(
+                        title = readerString(
+                            "ai_unlock_smart_dict",
+                            "Unlock Smart Dictionary",
+                        ),
+                        body = readerString(
+                            "ai_unlock_smart_dict_desc",
+                            "Defining entire phrases and paragraphs up to 2000 characters is a Pro feature. Upgrade to get instant definitions for any selected text.",
+                        ),
+                        confirmLabel = readerString("action_learn_more", "Learn more"),
+                        dismissLabel = readerString("action_not_now", "Not now"),
+                        icon = { Icon(Icons.Default.Ai, contentDescription = null) },
+                        onConfirm = {
+                            showDictionaryUpsellDialog = false
+                            utilityScreen = IosUtilityScreen.PRO
+                        },
+                        onDismiss = { showDictionaryUpsellDialog = false },
                     )
                 }
                 pdfSplitPickerTarget?.let { target ->

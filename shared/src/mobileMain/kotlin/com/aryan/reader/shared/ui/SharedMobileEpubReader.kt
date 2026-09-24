@@ -2966,11 +2966,31 @@ fun SharedMobileEpubReaderScreen(
             }
         }
     }
-    if (readerExtrasState.aiResult.hasContent) {
-        SharedReaderAiResultSheet(
-            result = readerExtrasState.aiResult,
-            onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
-        )
+    // Android parity (AiDefinitionPopup vs AiHubBottomSheet): define
+    // results get the word-headline sheet with TTS/Copy/external lookup;
+    // summary/recap render inline in the hub while it is open, with this
+    // generic sheet only as the hub-dismissed fallback.
+    if (readerExtrasState.aiResult.hasContent && !showAiHub) {
+        val aiResult = readerExtrasState.aiResult
+        if (aiResult.title == ReaderAiFeature.DEFINE.displayName) {
+            SharedMobileAiDefinitionSheet(
+                word = aiResult.queryText,
+                result = aiResult,
+                isMainTtsActive = localTts.isSessionActive,
+                onOpenExternalDictionary = { word ->
+                    openSharedMobileEpubLookup(ReaderExternalLookupAction.DICTIONARY, word)
+                },
+                onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
+            )
+        } else {
+            SharedMobileAiTextResultSheet(
+                result = aiResult,
+                isMainTtsActive = localTts.isSessionActive,
+                ttsBookTitle = book.displayName,
+                onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
+                showUsageBadge = aiCredits != null,
+            )
+        }
     }
     if (showAiHub) {
         val hubBook = loadedBook
@@ -2983,12 +3003,14 @@ fun SharedMobileEpubReaderScreen(
         }
         SharedMobileAiHubSheet(
             sectionTitle = hubChapterTitle,
+            bookTitle = hubBookTitle,
             cachedSummary = hubCacheEntries.firstOrNull { it.sectionIndex == hubChapterIndex },
             cacheEntries = hubCacheEntries,
             showCacheTab = summaryCache != null,
             credits = aiCredits,
+            aiResult = readerExtrasState.aiResult,
+            isMainTtsActive = localTts.isSessionActive,
             onGenerateSummary = {
-                showAiHub = false
                 hubBook?.chapters?.getOrNull(hubChapterIndex)?.plainText
                     ?.takeIf { it.isNotBlank() }
                     ?.let {
@@ -2997,7 +3019,6 @@ fun SharedMobileEpubReaderScreen(
                     }
             },
             onGenerateRecap = {
-                showAiHub = false
                 hubBook?.let { epub ->
                     val recapText = epub.chapters.take(hubChapterIndex + 1)
                         .joinToString("\n\n") { chapter -> chapter.plainText }
@@ -3005,6 +3026,7 @@ fun SharedMobileEpubReaderScreen(
                     if (recapText.isNotBlank()) onAiAction(ReaderAiFeature.RECAP, recapText)
                 }
             },
+            onClearAiResult = { pendingSummarySave = null; onAiResultDismiss() },
             onDeleteCached = { entry ->
                 summaryCache?.deleteSummary(entry.bookTitle, entry.sectionIndex)
                 aiCacheRevision++

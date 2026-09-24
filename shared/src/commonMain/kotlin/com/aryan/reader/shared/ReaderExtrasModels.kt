@@ -1087,7 +1087,20 @@ data class ReaderAiResultState(
     val title: String? = null,
     val text: String = "",
     val isLoading: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    /**
+     * Android parity (AiDefinitionPopup word / AiHubBottomSheet chapter title):
+     * the selected word (DEFINE) or section title the result was generated
+     * for. Shown as the headline; [title] stays the feature display name.
+     */
+    val queryText: String? = null,
+    /**
+     * Android parity (AiResultContentView usage badge): worker-reported cost
+     * and free-remaining balance, plus whether the text came from cache.
+     */
+    val cost: Double? = null,
+    val freeRemaining: Int? = null,
+    val isCacheHit: Boolean = false
 ) {
     val hasContent: Boolean get() = text.isNotBlank() || errorMessage != null || isLoading
 }

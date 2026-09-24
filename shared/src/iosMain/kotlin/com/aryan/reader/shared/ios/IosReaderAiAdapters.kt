@@ -264,8 +264,12 @@ internal class IosReaderAiAdapter(
     override val isAvailable: Boolean
         get() {
             val settings = settingsProvider().sanitized()
+            // Android parity (areReaderAiFeaturesEnabled): the managed worker
+            // path is enabled for non-OSS builds regardless of sign-in, so
+            // single-word AI define works signed-out just like Android. Only
+            // the hidden toggle (and offline) hides the entry points.
             return networkAccess() && !settings.hideReaderAiFeatures &&
-                (settings.hasAnyAiKey || (accountStateProvider().isSignedIn && workerUrlProvider().isNotBlank()))
+                (workerUrlProvider().isNotBlank() || settings.hasAnyAiKey)
         }
 
     override suspend fun define(text: String, context: String?): AiDefinitionResult {
@@ -279,13 +283,14 @@ internal class IosReaderAiAdapter(
     ): AiDefinitionResult {
         val trimmed = text.trim()
         if (trimmed.isBlank()) return AiDefinitionResult(error = "There is no text to define.")
+        // Android parity (PdfViewerScreen.onDictionaryLookup + worker
+        // handleDefine): multi-word smart dictionary is Pro-only. BYOK
+        // bypasses the worker gate exactly like Android OSS, so a configured
+        // define model allows phrases without Pro. No sign-in or credits
+        // check here — single-word works signed-out via the worker.
         val account = accountStateProvider()
-        val multiWord = trimmed.count { it.isWhitespace() } > 0
-        if (multiWord && !account.isSignedIn && !settingsProvider().sanitized().hasAnyAiKey) {
-            return AiDefinitionResult(error = "Sign in to use multi-word smart dictionary.")
-        }
-        if (multiWord && account.isSignedIn && !account.isProUser && account.credits <= 0 && !hasByokModel(ReaderAiFeature.DEFINE)) {
-            return AiDefinitionResult(error = "Multi-word smart dictionary requires Pro or credits.")
+        if (iosCountWords(trimmed) > 1 && !account.isProUser && !hasByokModel(ReaderAiFeature.DEFINE)) {
+            return AiDefinitionResult(error = "Multi-word smart dictionary requires Pro.")
         }
         return textRequest(ReaderAiFeature.DEFINE, trimmed.take(2400), context, onUpdate).let { result ->
             AiDefinitionResult(definition = result.text, error = result.error)
@@ -612,6 +617,24 @@ private data class IosReaderAiTextResult(
     val cost: Double? = null,
     val freeRemaining: Int? = null,
 )
+
+/**
+ * Android parity (countWords): whitespace-transition count so the
+ * multi-word Pro gate matches PdfViewerScreen/EpubReaderScreen exactly.
+ */
+internal fun iosCountWords(text: String): Int {
+    var count = 0
+    var inWord = false
+    for (char in text) {
+        if (char.isWhitespace()) {
+            inWord = false
+        } else if (!inWord) {
+            count++
+            inWord = true
+        }
+    }
+    return count
+}
 
 private val IosReaderAiJson = Json { ignoreUnknownKeys = true; isLenient = true }
 

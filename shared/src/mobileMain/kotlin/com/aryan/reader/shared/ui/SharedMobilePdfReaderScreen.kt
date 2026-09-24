@@ -191,6 +191,7 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.DockLocation
 import com.aryan.reader.shared.ReaderAiFeature
+import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.SharedSummaryCache
 import com.aryan.reader.shared.ReaderAiResultState
 import com.aryan.reader.shared.ReaderExtrasState
@@ -3774,11 +3775,31 @@ fun SharedMobilePdfReaderHost(
                 onDismiss = { showReaderOptions = false }
             )
         }
-        if (readerExtrasState.aiResult.hasContent) {
-            SharedReaderAiResultSheet(
-                result = readerExtrasState.aiResult,
-                onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
-            )
+        // Android parity (AiDefinitionPopup vs AiHubBottomSheet): define
+        // results get the word-headline sheet with TTS/Copy/external lookup;
+        // summary/recap render inline in the hub while it is open, with this
+        // generic sheet only as the hub-dismissed fallback.
+        if (readerExtrasState.aiResult.hasContent && !showAiHub) {
+            val aiResult = readerExtrasState.aiResult
+            if (aiResult.title == ReaderAiFeature.DEFINE.displayName) {
+                SharedMobileAiDefinitionSheet(
+                    word = aiResult.queryText,
+                    result = aiResult,
+                    isMainTtsActive = isPdfTtsPlayingOrLoading,
+                    onOpenExternalDictionary = { word ->
+                        openSharedMobileEpubLookup(ReaderExternalLookupAction.DICTIONARY, word)
+                    },
+                    onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
+                )
+            } else {
+                SharedMobileAiTextResultSheet(
+                    result = aiResult,
+                    isMainTtsActive = isPdfTtsPlayingOrLoading,
+                    ttsBookTitle = book.title?.takeIf { it.isNotBlank() } ?: book.displayName,
+                    onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
+                    showUsageBadge = aiCredits != null,
+                )
+            }
         }
     }
 
@@ -3853,12 +3874,14 @@ fun SharedMobilePdfReaderHost(
         }
         SharedMobileAiHubSheet(
             sectionTitle = hubPageTitle,
+            bookTitle = hubBookTitle,
             cachedSummary = hubCacheEntries.firstOrNull { it.sectionIndex == hubBasePage },
             cacheEntries = hubCacheEntries,
             showCacheTab = summaryCache != null,
             credits = aiCredits,
+            aiResult = readerExtrasState.aiResult,
+            isMainTtsActive = isPdfTtsPlayingOrLoading,
             onGenerateSummary = {
-                showAiHub = false
                 hubPageSessions.firstOrNull()?.let { session ->
                     session.textForRange(0, session.pageCharCount)
                         ?.takeIf(String::isNotBlank)
@@ -3869,12 +3892,12 @@ fun SharedMobilePdfReaderHost(
                 }
             },
             onGenerateRecap = {
-                showAiHub = false
                 val pages = hubPageSessions.map { session ->
                     session?.let { it.textForRange(0, it.pageCharCount) }
                 }
                 buildPdfAiHubRecapText(pages)?.let { onAiAction(ReaderAiFeature.RECAP, it) }
             },
+            onClearAiResult = { pendingSummarySave = null; onAiResultDismiss() },
             onDeleteCached = { entry ->
                 summaryCache?.deleteSummary(entry.bookTitle, entry.sectionIndex)
                 aiCacheRevision++
