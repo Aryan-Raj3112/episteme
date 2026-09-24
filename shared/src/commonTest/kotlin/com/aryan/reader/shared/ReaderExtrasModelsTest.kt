@@ -668,22 +668,114 @@ class ReaderExtrasModelsTest {
         assertEquals(ReaderExternalLookupService.GOOGLE_TRANSLATE, ReaderExternalLookupService.fromId("google_translate"))
         assertEquals(ReaderExternalLookupService.DUCKDUCKGO, ReaderExternalLookupService.fromId("DUCKDUCKGO"))
         assertEquals(ReaderExternalLookupService.BING, ReaderExternalLookupService.fromId("bing"))
+        assertEquals(ReaderExternalLookupService.SAFARI, ReaderExternalLookupService.fromId("safari"))
+        assertEquals(ReaderExternalLookupService.GOOGLE_TRANSLATE_APP, ReaderExternalLookupService.fromId("google_translate_app"))
+        assertEquals(ReaderExternalLookupService.ITRANSLATE_APP, ReaderExternalLookupService.fromId("itranslate_app"))
         assertEquals(ReaderExternalLookupService.SYSTEM, ReaderExternalLookupService.fromId(null))
         assertEquals(ReaderExternalLookupService.SYSTEM, ReaderExternalLookupService.fromId("unknown"))
     }
 
     @Test
     fun `dictionary service options exclude system for translate and search`() {
-        assertEquals(3, ReaderDictionaryServiceOptions.size)
-        assertEquals(3, ReaderTranslateServiceOptions.size)
-        assertEquals(4, ReaderSearchServiceOptions.size)
-        assertEquals(false, ReaderTranslateServiceOptions.contains(ReaderExternalLookupService.SYSTEM))
-        assertEquals(false, ReaderSearchServiceOptions.contains(ReaderExternalLookupService.SYSTEM))
+        // Temporary (external apps undecided): browser only; define keeps AI first.
+        assertEquals(2, ReaderDictionaryServiceOptions.size)
+        assertEquals(1, ReaderTranslateServiceOptions.size)
+        assertEquals(1, ReaderSearchServiceOptions.size)
         // Android parity: every action can hand off to the user's installed apps,
         // and the dictionary keeps the Smart AI route first.
         assertEquals(ReaderExternalLookupService.AI, ReaderDictionaryServiceOptions.first())
-        assertTrue(ReaderTranslateServiceOptions.contains(ReaderExternalLookupService.ANY_APP))
-        assertTrue(ReaderSearchServiceOptions.contains(ReaderExternalLookupService.ANY_APP))
+        assertEquals(ReaderExternalLookupService.SAFARI, ReaderTranslateServiceOptions.first())
+        assertEquals(ReaderExternalLookupService.SAFARI, ReaderSearchServiceOptions.first())
+        assertTrue(ReaderDictionaryServiceOptions.contains(ReaderExternalLookupService.SAFARI))
+    }
+
+    @Test
+    fun `safari urls match the default engine per action`() {
+        assertEquals(
+            "https://www.google.com/search?q=define+hello",
+            externalLookupUrl(ReaderExternalLookupAction.DICTIONARY, "hello", ReaderExternalLookupService.SAFARI)
+        )
+        assertEquals(
+            "https://translate.google.com/?sl=auto&tl=en&text=hello&op=translate",
+            externalLookupUrl(ReaderExternalLookupAction.TRANSLATE, "hello", ReaderExternalLookupService.SAFARI)
+        )
+        assertEquals(
+            "https://www.google.com/search?q=hello",
+            externalLookupUrl(ReaderExternalLookupAction.SEARCH, "hello", ReaderExternalLookupService.SAFARI)
+        )
+    }
+
+    @Test
+    fun `installed app urls deep link with encoded text`() {
+        assertEquals(
+            "googletranslate://?sl=auto&tl=en&text=hello+world",
+            readerExternalLookupAppUrl(
+                ReaderExternalLookupService.GOOGLE_TRANSLATE_APP,
+                ReaderExternalLookupAction.TRANSLATE,
+                "hello world"
+            )
+        )
+        assertEquals(
+            "itranslate://translate?from=auto&to=en&text=bonjour",
+            readerExternalLookupAppUrl(
+                ReaderExternalLookupService.ITRANSLATE_APP,
+                ReaderExternalLookupAction.TRANSLATE,
+                "bonjour"
+            )
+        )
+        // No app mapping for search/define actions or plain web services.
+        assertNull(
+            readerExternalLookupAppUrl(
+                ReaderExternalLookupService.GOOGLE_TRANSLATE_APP,
+                ReaderExternalLookupAction.SEARCH,
+                "hello"
+            )
+        )
+        assertNull(
+            readerExternalLookupAppUrl(
+                ReaderExternalLookupService.GOOGLE,
+                ReaderExternalLookupAction.TRANSLATE,
+                "hello"
+            )
+        )
+        assertEquals("", externalLookupUrl(ReaderExternalLookupAction.TRANSLATE, "hello", ReaderExternalLookupService.GOOGLE_TRANSLATE_APP))
+    }
+
+    @Test
+    fun `visible lookup options gate installed apps but keep selection`() {
+        val options = listOf(
+            ReaderExternalLookupService.SAFARI,
+            ReaderExternalLookupService.GOOGLE_TRANSLATE,
+            ReaderExternalLookupService.GOOGLE_TRANSLATE_APP,
+            ReaderExternalLookupService.ITRANSLATE_APP,
+            ReaderExternalLookupService.ANY_APP,
+        )
+        // Nothing installed: scheme-gated apps hidden, web/share stay.
+        val bare = visibleReaderLookupOptions(
+            options,
+            ReaderExternalLookupService.SAFARI,
+            emptySet()
+        )
+        assertTrue(bare.contains(ReaderExternalLookupService.SAFARI))
+        assertTrue(bare.contains(ReaderExternalLookupService.GOOGLE_TRANSLATE))
+        assertTrue(bare.contains(ReaderExternalLookupService.ANY_APP))
+        assertEquals(false, bare.contains(ReaderExternalLookupService.GOOGLE_TRANSLATE_APP))
+        assertEquals(false, bare.contains(ReaderExternalLookupService.ITRANSLATE_APP))
+        // Installed: gated entries appear.
+        val installed = visibleReaderLookupOptions(
+            options,
+            ReaderExternalLookupService.SAFARI,
+            setOf("googletranslate")
+        )
+        assertTrue(installed.contains(ReaderExternalLookupService.GOOGLE_TRANSLATE_APP))
+        assertEquals(false, installed.contains(ReaderExternalLookupService.ITRANSLATE_APP))
+        // Stale pick (app since uninstalled) stays selectable so it can be changed.
+        val stale = visibleReaderLookupOptions(
+            options,
+            ReaderExternalLookupService.ITRANSLATE_APP,
+            emptySet()
+        )
+        assertTrue(stale.contains(ReaderExternalLookupService.ITRANSLATE_APP))
     }
 
     @Test

@@ -174,6 +174,7 @@ import com.aryan.reader.shared.AiDefinitionResult
 import com.aryan.reader.shared.RecapResult
 import com.aryan.reader.shared.ReaderExternalLookupService
 import com.aryan.reader.shared.ui.IosReaderLookupServices
+import com.aryan.reader.shared.ui.iosInstalledLookupAppSchemes
 import com.aryan.reader.shared.migrateLegacyIosReaderAutoScrollSpeed
 import com.aryan.reader.shared.migrateAndroidEpubFormatSettings
 import com.aryan.reader.shared.currentTimestamp
@@ -2084,11 +2085,12 @@ private fun loadIosReaderLookupServices():
     Triple<ReaderExternalLookupService, ReaderExternalLookupService, ReaderExternalLookupService> {
     // Android parity (PdfPreferences): the dictionary engine defaults to the
     // in-app Smart AI (use_online_dictionary = true); translate/search fall
-    // back to the app chooser / Google when nothing is persisted.
+    // back to in-app Safari when nothing is persisted. Only fresh installs
+    // (nothing stored) see these; explicit user picks are never migrated.
     return Triple(
         loadIosLookupService(IosLookupDictionaryServiceKey, ReaderExternalLookupService.AI),
-        loadIosLookupService(IosLookupTranslateServiceKey, ReaderExternalLookupService.ANY_APP),
-        loadIosLookupService(IosLookupSearchServiceKey, ReaderExternalLookupService.GOOGLE),
+        loadIosLookupService(IosLookupTranslateServiceKey, ReaderExternalLookupService.SAFARI),
+        loadIosLookupService(IosLookupSearchServiceKey, ReaderExternalLookupService.SAFARI),
     )
 }
 
@@ -3141,6 +3143,9 @@ private fun ReaderIosApp(
     var lookupDictionaryService by remember { mutableStateOf(initialLookupServices.first) }
     var lookupTranslateService by remember { mutableStateOf(initialLookupServices.second) }
     var lookupSearchService by remember { mutableStateOf(initialLookupServices.third) }
+    // Probe once per launch: scheme-gated apps (Google Translate, iTranslate)
+    // appear in Dictionary Settings only when actually installed.
+    val installedLookupAppSchemes = remember { iosInstalledLookupAppSchemes() }
     var pdfReflowProgress by remember { mutableStateOf<Float?>(null) }
     var activeReaderBook by remember { mutableStateOf(initialReaderBook) }
     // App-level read-aloud engine + mini-bar state (Android `MainViewModel.ttsController`
@@ -5326,6 +5331,7 @@ private fun ReaderIosApp(
                             persistIosLookupService(IosLookupSearchServiceKey, service)
                         },
                         onDismiss = { showDictionarySettingsSheet = false },
+                        installedAppSchemes = installedLookupAppSchemes,
                     )
                 }
                 // Android parity (PdfViewerScreen/EpubReaderScreen dictionary

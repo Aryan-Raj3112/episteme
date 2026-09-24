@@ -828,9 +828,10 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("""data-action="palette""""))
         assertTrue(html.contains("""aria-label="Search""""))
         assertTrue(html.contains("""<svg viewBox="0 0 960 960""""))
-        assertTrue(html.contains("""data-action="dictionary""""))
+        // Temporary: single Define entry only, no separate Dictionary button.
+        assertFalse(html.contains("""data-action="dictionary""""))
         assertTrue(html.contains("""data-action="translate""""))
-        assertTrue(html.contains("sendSelectionAction('dictionary', text)"))
+        assertFalse(html.contains("sendSelectionAction('dictionary', text)"))
         assertTrue(html.contains("sendSelectionAction('translate', text)"))
         assertTrue(html.contains("""data-action="note""""))
         assertTrue(html.contains("sendSelectionAction('note', text)"))

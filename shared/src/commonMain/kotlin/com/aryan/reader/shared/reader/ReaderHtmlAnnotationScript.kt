@@ -1456,7 +1456,6 @@ internal fun readerHtmlAnnotationScript(): String = """
                 if (action === 'palette') sendSelectionAction('palette', text);
                 if (action === 'define') sendSelectionAction('define', text);
                 if (action === 'speak') sendSelectionAction('speak', text);
-                if (action === 'dictionary') sendSelectionAction('dictionary', text);
                 if (action === 'translate') sendSelectionAction('translate', text);
                 if (action === 'web-search') sendSelectionAction('web-search', text);
                 if (action === 'note') sendSelectionAction('note', text);

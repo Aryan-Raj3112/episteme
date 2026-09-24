@@ -212,8 +212,24 @@ enum class ReaderExternalLookupAction(val title: String) {
 
 enum class ReaderExternalLookupService(val id: String, val title: String) {
     SYSTEM("system", "System Dictionary"),
+    /**
+     * In-app Safari (SFSafariViewController on iOS): renders the same web URL
+     * as the matching engine but stays inside the reader with a Done button
+     * instead of leaving the app to the default browser. Always available, so
+     * it is the default where a web page is the answer (translate/search).
+     * Shown to users as plain "Browser".
+     */
+    SAFARI("safari", "Browser"),
     GOOGLE("google", "Google"),
     GOOGLE_TRANSLATE("google_translate", "Google Translate"),
+    /**
+     * Installed-app targets, probed by URL scheme. iOS cannot enumerate
+     * installed apps (sandbox), so each entry carries the scheme used to
+     * detect it; entries whose scheme is absent never appear in settings.
+     * Android keeps its own installed-app dropdowns and ignores these.
+     */
+    GOOGLE_TRANSLATE_APP("google_translate_app", "Google Translate App"),
+    ITRANSLATE_APP("itranslate_app", "iTranslate"),
     DUCKDUCKGO("duckduckgo", "DuckDuckGo"),
     BING("bing", "Bing"),
 
@@ -238,10 +254,11 @@ enum class ReaderExternalLookupService(val id: String, val title: String) {
     }
 }
 
+// Temporary (external apps undecided): each action offers just the browser —
+// define keeps Smart AI first with the browser second.
 val ReaderDictionaryServiceOptions = listOf(
     ReaderExternalLookupService.AI,
-    ReaderExternalLookupService.ANY_APP,
-    ReaderExternalLookupService.GOOGLE,
+    ReaderExternalLookupService.SAFARI,
 )
 
 /**
@@ -252,17 +269,65 @@ val ReaderDictionaryServiceOptions = listOf(
 expect var readerLookupUsesAiDictionary: Boolean
 
 val ReaderTranslateServiceOptions = listOf(
-    ReaderExternalLookupService.ANY_APP,
-    ReaderExternalLookupService.GOOGLE_TRANSLATE,
-    ReaderExternalLookupService.BING,
+    ReaderExternalLookupService.SAFARI,
 )
 
 val ReaderSearchServiceOptions = listOf(
-    ReaderExternalLookupService.ANY_APP,
-    ReaderExternalLookupService.GOOGLE,
-    ReaderExternalLookupService.DUCKDUCKGO,
-    ReaderExternalLookupService.BING,
+    ReaderExternalLookupService.SAFARI,
 )
+
+/**
+ * URL scheme used to detect an installed-app service (`googletranslate`,
+ * `itranslate`). Null for services that need no app (web, system, AI,
+ * share sheet) — those are always listed.
+ */
+val ReaderExternalLookupService.appScheme: String?
+    get() = when (this) {
+        ReaderExternalLookupService.GOOGLE_TRANSLATE_APP -> "googletranslate"
+        ReaderExternalLookupService.ITRANSLATE_APP -> "itranslate"
+        else -> null
+    }
+
+/**
+ * Deep link into the installed app for [action] (`googletranslate://…`,
+ * `itranslate://…`). Null when the service is not an installed app or the
+ * action has no app mapping — callers fall back to the web URL / chooser.
+ */
+fun readerExternalLookupAppUrl(
+    service: ReaderExternalLookupService,
+    action: ReaderExternalLookupAction,
+    text: String,
+): String? {
+    val encoded = text.trim().urlEncoded()
+    if (encoded.isEmpty()) return null
+    return when (service) {
+        ReaderExternalLookupService.GOOGLE_TRANSLATE_APP -> when (action) {
+            // Community-documented scheme (sl=auto detects the source).
+            ReaderExternalLookupAction.TRANSLATE -> "googletranslate://?sl=auto&tl=en&text=$encoded"
+            else -> null
+        }
+        ReaderExternalLookupService.ITRANSLATE_APP ->
+            "itranslate://translate?from=auto&to=en&text=$encoded"
+        else -> null
+    }
+}
+
+/**
+ * Settings-visible subset of [options]: scheme-gated apps appear only when
+ * their scheme was probed in [installedSchemes]. The current [selected]
+ * service always stays visible so a stale pick (app since uninstalled) can
+ * still be changed away instead of vanishing.
+ */
+fun visibleReaderLookupOptions(
+    options: List<ReaderExternalLookupService>,
+    selected: ReaderExternalLookupService,
+    installedSchemes: Set<String>,
+): List<ReaderExternalLookupService> {
+    return options.filter { option ->
+        option == selected || option.appScheme == null ||
+            installedSchemes.any { it.equals(option.appScheme, ignoreCase = true) }
+    }
+}
 
 const val ReaderExternalLookupSelectionLimit = 2_000
 
@@ -298,12 +363,23 @@ fun externalLookupUrl(
             ReaderExternalLookupAction.TRANSLATE -> "https://translate.google.com/?sl=auto&tl=en&text=$encoded&op=translate"
             ReaderExternalLookupAction.SEARCH -> "https://www.google.com/search?q=$encoded"
         }
+        // Safari renders the same page as the default engine for the action,
+        // only the presenter differs (in-app Safari vs default browser).
+        ReaderExternalLookupService.SAFARI -> when (action) {
+            ReaderExternalLookupAction.DICTIONARY -> "https://www.google.com/search?q=define+$encoded"
+            ReaderExternalLookupAction.TRANSLATE -> "https://translate.google.com/?sl=auto&tl=en&text=$encoded&op=translate"
+            ReaderExternalLookupAction.SEARCH -> "https://www.google.com/search?q=$encoded"
+        }
         // Android parity (ExternalDictionaryHelper "Any App"): the text is handed
         // to the user's installed apps via the platform chooser/share sheet, so
-        // there is no web URL to open. The caller (openSharedMobileEpubLookup)
-        // handles ANY_APP before reaching this URL builder.
+        // there is no web URL to open. Installed-app entries are opened from
+        // their deep link (readerExternalLookupAppUrl) before reaching here.
+        // The caller (openSharedMobileEpubLookup) handles ANY_APP before
+        // reaching this URL builder.
         ReaderExternalLookupService.ANY_APP,
-        ReaderExternalLookupService.AI -> ""
+        ReaderExternalLookupService.AI,
+        ReaderExternalLookupService.GOOGLE_TRANSLATE_APP,
+        ReaderExternalLookupService.ITRANSLATE_APP -> ""
     }
 }
 

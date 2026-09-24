@@ -2227,6 +2227,10 @@ fun SharedMobileEpubReaderScreen(
                                             // shared palette manager without touching the selection.
                                             selection.action == "palette" -> showHighlightPaletteManager = true
                                             selection.action == "define" && sharedDictActionUsesAi(readerAiAvailable) -> onAiAction(ReaderAiFeature.DEFINE, selection.text)
+                                            // Temporary: no separate Dictionary menu entry — Define
+                                            // without AI falls back to the external/browser define
+                                            // lookup instead of doing nothing.
+                                            selection.action == "define" -> openSharedMobileEpubLookup(ReaderExternalLookupAction.DICTIONARY, selection.text)
                                             lookupAction != null -> openSharedMobileEpubLookup(lookupAction, selection.text)
                                             selection.action == "speak" -> {
                                                 val locator = selection.locator ?: currentLocator ?: return@let

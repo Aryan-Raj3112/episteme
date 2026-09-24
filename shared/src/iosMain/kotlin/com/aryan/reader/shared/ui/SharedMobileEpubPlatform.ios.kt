@@ -29,7 +29,9 @@ import com.aryan.reader.shared.normalizeReaderHref
 import com.aryan.reader.shared.LocalTtsInterruptionAction
 import com.aryan.reader.shared.LocalTtsInterruptionEvent
 import com.aryan.reader.shared.LocalTtsInterruptionState
+import com.aryan.reader.shared.appScheme
 import com.aryan.reader.shared.externalLookupUrl
+import com.aryan.reader.shared.readerExternalLookupAppUrl
 import com.aryan.reader.shared.ios.loadIosEpubBook
 import com.aryan.reader.shared.ios.IosEpubResourceStore
 import com.aryan.reader.shared.ios.IosTtsAudioInterruption
@@ -85,10 +87,12 @@ import platform.UIKit.UIActivityViewController
 import platform.UIKit.UIModalPresentationFullScreen
 import platform.UIKit.UIModalPresentationPageSheet
 import platform.UIKit.UIReferenceLibraryViewController
+import platform.SafariServices.SFSafariViewController
 import platform.UIKit.UIWindow
 import platform.UIKit.UIWindowLevelNormal
 import platform.UIKit.UIWindowScene
 import platform.UIKit.UIViewController
+import platform.UIKit.popoverPresentationController
 import platform.WebKit.WKScriptMessage
 import platform.WebKit.WKScriptMessageHandlerProtocol
 import platform.WebKit.WKNavigation
@@ -233,10 +237,11 @@ internal actual val sharedMobileEpubPageInfoMatchesReaderBackground: Boolean = t
 internal object IosReaderLookupServices {
     // Startup defaults; the host overrides these from NSUserDefaults in
     // loadIosReaderLookupServices. Android parity: dictionary defaults to the
-    // in-app Smart AI, translate/search to the app chooser / Google.
+    // in-app Smart AI; translate/search default to in-app Safari, which always
+    // works, instead of the app chooser / an external browser.
     var dictionary: ReaderExternalLookupService = ReaderExternalLookupService.AI
-    var translate: ReaderExternalLookupService = ReaderExternalLookupService.ANY_APP
-    var search: ReaderExternalLookupService = ReaderExternalLookupService.ANY_APP
+    var translate: ReaderExternalLookupService = ReaderExternalLookupService.SAFARI
+    var search: ReaderExternalLookupService = ReaderExternalLookupService.SAFARI
 }
 
 /**
@@ -292,13 +297,40 @@ internal actual fun openSharedMobileEpubLookup(
     when (service) {
         ReaderExternalLookupService.ANY_APP -> return openSharedMobileEpubLookupViaAppChooser(action, query)
         ReaderExternalLookupService.SYSTEM -> {
-            val presenter = iosLookupPresenter() ?: return false
-            presenter.presentViewController(
-                UIReferenceLibraryViewController(term = query),
-                animated = true,
-                completion = null
+            // Apple's dictionary panel only defines single words from
+            // downloaded dictionaries (Settings > General > Dictionary).
+            // Phrases and missing dictionaries used to show a dead panel;
+            // route those to the Safari define search instead so Define
+            // always lands somewhere useful.
+            val singleWord = query.split(Regex("\\s+")).filter { it.isNotBlank() }.size == 1
+            val hasDefinition = singleWord && runCatching {
+                UIReferenceLibraryViewController.dictionaryHasDefinitionForTerm(query)
+            }.getOrDefault(false)
+            if (hasDefinition) {
+                val presenter = iosLookupPresenter() ?: return false
+                presenter.presentViewController(
+                    UIReferenceLibraryViewController(term = query),
+                    animated = true,
+                    completion = null
+                )
+                return true
+            }
+            return openSharedMobileEpubLookupInSafari(
+                externalLookupUrl(action, query, ReaderExternalLookupService.SAFARI)
             )
-            return true
+        }
+        ReaderExternalLookupService.SAFARI -> return openSharedMobileEpubLookupInSafari(
+            externalLookupUrl(action, query, ReaderExternalLookupService.SAFARI)
+        )
+        ReaderExternalLookupService.GOOGLE_TRANSLATE_APP,
+        ReaderExternalLookupService.ITRANSLATE_APP -> {
+            val appUrl = readerExternalLookupAppUrl(service, action, query)
+            if (appUrl != null && openSharedMobileExternalUrl(appUrl)) return true
+            // App went missing between the settings probe and the tap:
+            // fall back to the web page in Safari, never a dead end.
+            return openSharedMobileEpubLookupInSafari(
+                externalLookupUrl(action, query, ReaderExternalLookupService.SAFARI)
+            )
         }
         // Android parity (PdfViewerScreen.onDictionaryLookup): when the Smart AI
         // engine is selected but AI is unavailable (no key/sign-in or offline),
@@ -319,6 +351,42 @@ internal actual fun openSharedMobileEpubLookup(
 }
 
 /**
+ * Renders a lookup web page in an in-app Safari view (Safari engine, content
+ * blockers, Reader Mode) with a Done button back to the book. Unlike the
+ * default-browser opener this never leaves the reader, which is why Safari
+ * is a first-class lookup service instead of an invisible default.
+ */
+internal fun openSharedMobileEpubLookupInSafari(url: String): Boolean {
+    val target = url.trim().takeIf { it.isNotBlank() } ?: return false
+    val nsUrl = NSURL.URLWithString(normalizeReaderHref(target)) ?: return false
+    val presenter = iosLookupPresenter() ?: return false
+    presenter.presentViewController(
+        SFSafariViewController(uRL = nsUrl, entersReaderIfAvailable = false),
+        animated = true,
+        completion = null
+    )
+    return true
+}
+
+/**
+ * Probes the URL schemes of the installed-app lookup services. iOS cannot
+ * enumerate installed apps, so settings only lists scheme-gated apps whose
+ * scheme answers canOpenURL (each scheme must also be declared in
+ * LSApplicationQueriesSchemes or the probe always returns false).
+ */
+internal fun iosInstalledLookupAppSchemes(): Set<String> {
+    val application = UIApplication.sharedApplication
+    return ReaderExternalLookupService.entries
+        .mapNotNull { it.appScheme }
+        .toSet()
+        .filter { scheme ->
+            val probe = NSURL.URLWithString("$scheme://") ?: return@filter false
+            runCatching { application.canOpenURL(probe) }.getOrDefault(false)
+        }
+        .toSet()
+}
+
+/**
  * Android parity (ExternalDictionaryHelper): hand the selection to the user's
  * installed apps. The system share sheet is the closest iOS equivalent of
  * Android's PROCESS_TEXT chooser.
@@ -334,6 +402,17 @@ internal fun openSharedMobileEpubLookupViaAppChooser(
     )
     // iPad requires an anchor; phones present full screen.
     controller.modalPresentationStyle = UIModalPresentationPageSheet
+    // UIActivityViewController on iPad presents as a popover and crashes
+    // without a sourceView/sourceRect ("non-nil sourceView required"), so
+    // anchor it to the presenting view's center. Harmless on iPhone, where
+    // the popover controller is unused.
+    controller.popoverPresentationController?.let { popover ->
+        val bounds = presenter.view.bounds
+        popover.sourceView = presenter.view
+        popover.sourceRect = bounds.useContents {
+            CGRectMake(size.width / 2.0, size.height / 2.0, 1.0, 1.0)
+        }
+    }
     presenter.presentViewController(controller, animated = true, completion = null)
     return true
 }
