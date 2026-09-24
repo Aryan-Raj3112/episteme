@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -35,8 +34,9 @@ import com.aryan.reader.shared.sharedAppLanguageSearchMatches
  * Android's `LanguageSelectionDialog` body (HomeScreen.kt): a search field that
  * filters the language list, radio rows for the localized labels and a
  * "no results" state. Android keeps the list inside an AlertDialog; iOS renders
- * the same content as the utility page body so the two platforms show the same
- * control, the same strings and the same filtering rules
+ * the same content as a full utility page, so the list fills the remaining
+ * page height and scrolls instead of using the dialog's fixed height cap.
+ * Filtering rules are shared
  * ([com.aryan.reader.shared.sharedAppLanguageSearchMatches]).
  */
 @Composable
@@ -93,7 +93,7 @@ internal fun SharedMobileLanguageSelectionList(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 360.dp)
+                    .weight(1f)
             ) {
                 items(rows, key = { it.tag ?: "system" }) { option ->
                     Row(
