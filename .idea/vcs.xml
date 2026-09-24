@@ -6,39 +6,5 @@
     <mapping directory="$PROJECT_DIR$/app/src/main/cpp/woff2/brotli" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/app/src/main/cpp/woff2/brotli/research/esaxx" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/app/src/main/cpp/woff2/brotli/research/libdivsufsort" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/episteme-bin" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/episteme-oss-bin" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD/SourcePackages/checkouts/AppAuth-iOS" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD/SourcePackages/checkouts/GTMAppAuth" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD/SourcePackages/checkouts/GoogleAppMeasurement" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD/SourcePackages/checkouts/GoogleDataTransport" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD/SourcePackages/checkouts/GoogleSignIn-iOS" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD/SourcePackages/checkouts/GoogleUtilities" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD/SourcePackages/checkouts/abseil-cpp-binary" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD/SourcePackages/checkouts/app-check" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD/SourcePackages/checkouts/firebase-ios-sdk" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD/SourcePackages/checkouts/google-ads-on-device-conversion-ios-sdk" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD/SourcePackages/checkouts/grpc-binary" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD/SourcePackages/checkouts/gtm-session-fetcher" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD/SourcePackages/checkouts/interop-ios-for-google-sdks" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD/SourcePackages/checkouts/leveldb" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD/SourcePackages/checkouts/nanopb" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD/SourcePackages/checkouts/promises" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD2/SourcePackages/checkouts/AppAuth-iOS" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD2/SourcePackages/checkouts/GTMAppAuth" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD2/SourcePackages/checkouts/GoogleAppMeasurement" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD2/SourcePackages/checkouts/GoogleDataTransport" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD2/SourcePackages/checkouts/GoogleSignIn-iOS" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD2/SourcePackages/checkouts/GoogleUtilities" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD2/SourcePackages/checkouts/abseil-cpp-binary" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD2/SourcePackages/checkouts/app-check" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD2/SourcePackages/checkouts/firebase-ios-sdk" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD2/SourcePackages/checkouts/google-ads-on-device-conversion-ios-sdk" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD2/SourcePackages/checkouts/grpc-binary" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD2/SourcePackages/checkouts/gtm-session-fetcher" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD2/SourcePackages/checkouts/interop-ios-for-google-sdks" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD2/SourcePackages/checkouts/leveldb" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD2/SourcePackages/checkouts/nanopb" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/iosApp/build/DD2/SourcePackages/checkouts/promises" vcs="Git" />
   </component>
 </project>
