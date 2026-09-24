@@ -1577,7 +1577,26 @@ private val IosEpubBridgeBootstrapScript = """
           var dx = touch.clientX - start.x;
           var dy = touch.clientY - start.y;
           var elapsed = Date.now() - start.at;
+          var startX = start.x;
+          var startY = start.y;
           start = null;
+          // SEL_SHIFT diagnosis (explicit-Justify selection displacement):
+          // snapshot the live range at release with the touch point that
+          // produced it, so device logs show whether the RANGE is displaced
+          // as opposed to only its painting. Gated on a non-empty selection
+          // to keep plain taps out of the log.
+          try {
+            var endSel = window.getSelection && window.getSelection();
+            var endText = endSel ? endSel.toString() : '';
+            if (endText && endText.trim() && window.readerSelectionShiftLog && window.readerSelectionShiftSummary) {
+              window.readerSelectionShiftLog('touchend',
+                'touch=' + Math.round(startX) + ',' + Math.round(startY) +
+                ' dx=' + Math.round(dx) + ' dy=' + Math.round(dy) +
+                ' elapsed=' + elapsed +
+                ' nativeHandles=' + (window.readerIosNativeSelectionHandles === true) +
+                ' ' + window.readerSelectionShiftSummary());
+            }
+          } catch (_) {}
           // The reset posts before every early return: selection, links, and
           // the tap/drag classifiers below must never leave a stale
           // progress behind (stuck indicator that never changes chapter).

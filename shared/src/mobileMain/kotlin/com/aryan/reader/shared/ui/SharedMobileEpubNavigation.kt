@@ -358,6 +358,21 @@ internal fun String.sharedMobileEpubHighlightShiftMessageOrNull(): String? {
         ?.takeIf(String::isNotBlank)
 }
 
+/** Common tag for selection-shift diagnostics across WebView JS and native. */
+internal const val SharedMobileEpubSelectionShiftTag = "SEL_SHIFT"
+
+/** Bridge method posted by readerSelectionShiftLog in the shared document. */
+internal const val SharedMobileEpubSelectionShiftBridgeMethod = "readerSelectionShiftLog"
+
+internal fun String.sharedMobileEpubSelectionShiftMessageOrNull(): String? {
+    return runCatching { SharedMobileEpubJson.parseToJsonElement(this).jsonObject }
+        .getOrNull()
+        ?.get("message")
+        ?.jsonPrimitive
+        ?.contentOrNull
+        ?.takeIf(String::isNotBlank)
+}
+
 /**
  * Android parity (ChapterWebView restoreHighlights): the authoritative highlight list
  * is pushed into the WebView via window.readerApplyHighlights instead of reloading the

@@ -377,6 +377,19 @@ internal fun readerDocumentStyles(
               max-width: 100%;
               contain: inline-size;
             }
+            /*
+             * Android parity (epub_reader.js injects hyphens:auto with
+             * justify): unhyphenated justification stretches spaces into gaps
+             * that selection/highlight backgrounds then span, which reads as
+             * misaligned highlighting. Only for explicit Justify — the default
+             * renders left and never reaches this.
+             */
+            ${if (align == "justify") """
+            .reader-content {
+              hyphens: auto !important;
+              -webkit-hyphens: auto !important;
+            }
+            """.trimIndent() else ""}
             .reader-content :where(*) {
               box-sizing: border-box;
               min-width: 0 !important;

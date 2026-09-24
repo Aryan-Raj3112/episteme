@@ -663,7 +663,11 @@ internal fun ReaderSettings.toDocumentAppearanceCss(textureDataUri: String?): Re
 
 internal fun ReaderSettings.readerTextAlignCss(): String {
     return when (textAlign) {
-        SharedReaderTextAlign.START -> ""
+        // Default renders left, not the publisher's alignment: book CSS with
+        // text-align:justify would otherwise justify every book by default,
+        // while only an explicit Justify choice opts into it (same rule as
+        // the native justify-to-left downgrade).
+        SharedReaderTextAlign.START -> "left"
         SharedReaderTextAlign.LEFT -> "left"
         SharedReaderTextAlign.RIGHT -> "right"
         SharedReaderTextAlign.JUSTIFY -> "justify"

@@ -63,6 +63,23 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `default alignment renders left and only explicit justify hyphenates`() {
+        val defaultHtml = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(),
+        )
+        assertTrue(defaultHtml.contains("--reader-align: left;"))
+        assertFalse(defaultHtml.contains("-webkit-hyphens: auto !important;"))
+
+        val justifiedHtml = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(textAlign = SharedReaderTextAlign.JUSTIFY),
+        )
+        assertTrue(justifiedHtml.contains("--reader-align: justify;"))
+        assertTrue(justifiedHtml.contains("-webkit-hyphens: auto !important;"))
+    }
+
+    @Test
     fun `reader documents neutralize publication root height rules in both reading modes`() {
         val verticalHtml = ReaderHtmlDocumentBuilder.verticalDocument(
             book = repeatedWordBook("alpha beta"),
@@ -1775,6 +1792,25 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(navigation.contains("readerHighlightShiftRangeRects"))
         assertTrue(navigation.contains("parts="))
         assertTrue(navigation.contains("text-align-last"))
+    }
+
+    @Test
+    fun `selection shift diagnostics share one tag and bridge method`() {
+        val navigation = readerHtmlNavigationScript("[]")
+        assertTrue(navigation.contains("SEL_SHIFT"))
+        assertTrue(navigation.contains("readerSelectionShiftLog"))
+        assertTrue(navigation.contains("readerSelectionShiftSummary"))
+        assertTrue(navigation.contains("vvScale"))
+        assertTrue(navigation.contains("readerSelectionShiftDuplicates"))
+        assertTrue(navigation.contains("readerSelectionShiftHitTest"))
+        assertTrue(navigation.contains("readerSelectionShiftComputed"))
+        assertTrue(navigation.contains("letter-spacing"))
+        val selection = readerHtmlSelectionScript()
+        assertTrue(selection.contains("readerSelectionShiftLog('menu'"))
+        assertTrue(selection.contains("readerSelectionShiftLog('restore'"))
+        assertTrue(selection.contains("readerSelectionShiftLog('handledrag'"))
+        assertTrue(selection.contains("readerSelectionShiftLog('handles'"))
+        assertTrue(selection.contains("nativeHandles="))
     }
 
     @Test

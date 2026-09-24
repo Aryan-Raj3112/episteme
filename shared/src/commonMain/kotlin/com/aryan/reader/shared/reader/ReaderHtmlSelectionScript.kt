@@ -398,9 +398,36 @@ internal fun readerHtmlSelectionScript(): String = """
                   hideMenu();
                   return;
                 }
+                if (window.readerSelectionShiftLog && window.readerSelectionShiftSummary) {
+                  try { window.readerSelectionShiftLog('menu', window.readerSelectionShiftSummary()); } catch (error) {}
+                }
                 var rect = event ? null : selectionAnchorRect(selection);
                 positionMenu(event ? event.clientX : 0, event ? event.clientY : 0, rect);
                 positionSelectionHandles(selection);
+                // SEL_SHIFT round 3: rule out doubled handles — our custom
+                // teardrops must stay hidden on iOS (native handles). Logs
+                // their computed visibility plus the rects they were given, so
+                // a visible custom handle (wrongly positioned under justify)
+                // is distinguishable from a displaced native one.
+                if (window.readerSelectionShiftLog) {
+                  try {
+                    var liveRange = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+                    var firstR = liveRange ? rangeBoundaryRect(liveRange.startContainer, liveRange.startOffset, false) : null;
+                    var lastR = liveRange ? rangeBoundaryRect(liveRange.endContainer, liveRange.endOffset, true) : null;
+                    function handleState(handle) {
+                      if (!handle) return 'missing';
+                      var cs = null;
+                      try { cs = window.getComputedStyle(handle); } catch (error) {}
+                      return 'hidden=' + (!!handle.hidden) + ' display=' + (cs ? cs.display : '?');
+                    }
+                    window.readerSelectionShiftLog('handles',
+                      'nativeHandles=' + (window.readerIosNativeSelectionHandles === true) +
+                      ' startHandle={' + handleState(typeof startHandle !== 'undefined' ? startHandle : null) + '}' +
+                      ' endHandle={' + handleState(typeof endHandle !== 'undefined' ? endHandle : null) + '}' +
+                      ' first=' + (firstR ? (Math.round(firstR.left) + ',' + Math.round(firstR.top) + ',' + Math.round(firstR.right) + ',' + Math.round(firstR.bottom)) : 'none') +
+                      ' last=' + (lastR ? (Math.round(lastR.left) + ',' + Math.round(lastR.top) + ',' + Math.round(lastR.right) + ',' + Math.round(lastR.bottom)) : 'none'));
+                  } catch (error) {}
+                }
               }
               function scheduleMenuFromSelection() {
                 if (selectionMenuTimer !== null) window.clearTimeout(selectionMenuTimer);
@@ -414,8 +441,15 @@ internal fun readerHtmlSelectionScript(): String = """
               function restoreRange() {
                 if (!savedRange) return false;
                 var selection = window.getSelection();
+                var before = '';
+                if (window.readerSelectionShiftSummary) {
+                  try { before = window.readerSelectionShiftSummary(); } catch (error) {}
+                }
                 selection.removeAllRanges();
                 selection.addRange(savedRange);
+                if (window.readerSelectionShiftLog && window.readerSelectionShiftSummary) {
+                  try { window.readerSelectionShiftLog('restore', 'before={' + before + '} after={' + window.readerSelectionShiftSummary() + '}'); } catch (error) {}
+                }
                 return true;
               }
               function selectionChromeElement(node) {
@@ -524,6 +558,9 @@ internal fun readerHtmlSelectionScript(): String = """
                 savedRange = nextRange.cloneRange();
                 selection.removeAllRanges();
                 selection.addRange(savedRange);
+                if (window.readerSelectionShiftLog && window.readerSelectionShiftSummary) {
+                  try { window.readerSelectionShiftLog('handledrag', 'handle=' + activeSelectionHandle + ' ' + window.readerSelectionShiftSummary()); } catch (error) {}
+                }
                 positionSelectionHandles(selection);
               }
               function requestSelectionHandleUpdate(event) {

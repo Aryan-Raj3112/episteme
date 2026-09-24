@@ -2217,6 +2217,9 @@ fun SharedMobileEpubReaderScreen(
                                     SharedMobileEpubHighlightShiftBridgeMethod -> payload.sharedMobileEpubHighlightShiftMessageOrNull()?.let { message ->
                                         writeSharedReaderDiagnostic(SharedMobileEpubHighlightShiftTag, message)
                                     }
+                                    SharedMobileEpubSelectionShiftBridgeMethod -> payload.sharedMobileEpubSelectionShiftMessageOrNull()?.let { message ->
+                                        writeSharedReaderDiagnostic(SharedMobileEpubSelectionShiftTag, message)
+                                    }
                                     "readerHighlightClicked" -> payload.sharedMobileEpubHighlightIdOrNull()?.let { id ->
                                         editingHighlight = highlights.firstOrNull { it.id == id }
                                     }
