@@ -15,8 +15,9 @@ import CloudKit
 ///   written only when `fileContentModifiedTimestamp` wins (shared
 ///   `CloudSyncDecisions`), so unchanged bytes never pay asset cost.
 /// - PDF sidecars are inline record fields (small JSON), not assets.
-/// - Reads are delta-based (`CKFetchRecordZoneChangesOperation` + persisted
-///   server change token); assets download lazily by hash miss.
+/// - Reads are a full authoritative snapshot per pass with no queryable-index
+///   requirement (mirrors the Firestore benchmark's `getDocuments()`);
+///   `CKAsset` bytes download lazily only for books/fonts actually stale.
 /// - Push uses `CKDatabaseSubscription`; no FCM, no polling loop.
 ///
 /// Android is the benchmark and is NOT changed. Drive/Firestore stays dormant.
@@ -30,8 +31,13 @@ final class CloudKitLibraryTransport {
     }
 
     static let zoneName = "LibraryZone"
-    private static let changeTokenKey = "reader.ios.cloudkit.libraryZoneToken.v1"
     private static let lastUserKey = "reader.ios.cloudkit.lastUserRecord.v1"
+    /// Per-page cap for the full-zone snapshot. CloudKit caps `resultsLimit`
+    /// at 500; anything smaller means more pages.
+    private static let snapshotPageSize = 500
+    /// Bounded loop so a broken `moreComing` flag can never spin the fetch.
+    /// 400 pages × 500 records = 200k records, far beyond any library.
+    private static let maxSnapshotPages = 400
 
     private let container: CKContainer
     private let database: CKDatabase
@@ -67,8 +73,9 @@ final class CloudKitLibraryTransport {
         logger.info("cloudkit_sync.account_ok")
     }
 
-    /// Detect Apple-ID rotation: a new silo must wipe tokens/outbox, mirroring
-    /// the Firebase uid-switch behavior.
+    /// Detect Apple-ID rotation: a new silo must wipe the outbox, mirroring the
+    /// Firebase uid-switch behavior. Reads are now full-zone queries (no
+    /// persisted change token), so only the outbox gate remains.
     @MainActor
     func checkUserRotation() async throws -> Bool {
         let recordID = try await container.userRecordID()
@@ -81,7 +88,6 @@ final class CloudKitLibraryTransport {
         }
         if previous != current {
             UserDefaults.standard.set(current, forKey: Self.lastUserKey)
-            UserDefaults.standard.removeObject(forKey: Self.changeTokenKey)
             logger.info("cloudkit_sync.user_rotated")
             return true
         }
@@ -167,39 +173,74 @@ final class CloudKitLibraryTransport {
         }
     }
 
-    // MARK: - reads (delta)
+    // MARK: - reads (full authoritative snapshot, assets fetched lazily)
 
-    struct ZoneChanges {
-        var changed: [CKRecord]
-        var deletedRecordNames: Set<String>
-        var moreComing: Bool
+    /// All live records in the library zone. Implemented as a
+    /// `recordZoneChanges(since: nil)` full fetch: unlike `CKQuery` it needs
+    /// no queryable field indexes (an auto-generated dev schema has none, and
+    /// `CKQuery` fails there with code 12 "Field 'recordName' is not marked
+    /// queryable"), and the transient page token is never persisted, so a
+    /// second fetch in the same pass can never see an emptied delta. CloudKit
+    /// query results never carry asset bytes anyway, so `CKAsset.fileURL` is
+    /// nil on these records; content/fonts download lazily via
+    /// `fetchContentAsset`/`fetchFontAsset` only when a book/font is actually
+    /// missing or stale. `deletions` are ignored: a full fetch enumerates the
+    /// live state, and deletes are tombstone records (or vanish from
+    /// enumeration) rather than history deltas.
+    func fetchAllRecords() async throws -> [CKRecord] {
+        var all: [CKRecord] = []
+        var token: CKServerChangeToken?
+        var page = 0
+        var moreComing = true
+        while moreComing && page < Self.maxSnapshotPages {
+            page += 1
+            do {
+                let (modifications, deletions, nextPageToken, zoneMoreComing) = try await database.recordZoneChanges(
+                    inZoneWith: zoneID,
+                    since: token,
+                    desiredKeys: nil,
+                    resultsLimit: Self.snapshotPageSize
+                )
+                _ = deletions
+                for (_, result) in modifications {
+                    if case .success(let modification) = result {
+                        all.append(modification.record)
+                    }
+                }
+                token = nextPageToken
+                moreComing = zoneMoreComing
+            } catch {
+                throw mapCKError(error)
+            }
+        }
+        logger.info("cloudkit_sync.fetch_all total=\(all.count) pages=\(page)")
+        return all
     }
 
-    func fetchChanges() async throws -> ZoneChanges {
-        let token: CKServerChangeToken? = loadToken()
-        var changed: [CKRecord] = []
-        var deleted: Set<String> = []
-        var moreComing = false
+    /// Download one `BookContent` asset (book bytes). Returns the temp file
+    /// URL CloudKit materialises, or nil when no such record exists.
+    func fetchContentAsset(bookId: String) async throws -> URL? {
+        let name = CloudKitLibrarySyncKt.cloudKitBookContentRecordName(bookId: bookId)
+        return try await fetchAsset(recordName: name, key: "contentAsset")
+    }
+
+    /// Download one `FontContent` asset (font bytes).
+    func fetchFontAsset(fontId: String) async throws -> URL? {
+        let name = CloudKitLibrarySyncKt.cloudKitLibraryRecordName(
+            recordType: CloudKitLibrarySyncKt.CLOUDKIT_RECORD_FONT_CONTENT, id: fontId
+        )
+        return try await fetchAsset(recordName: name, key: "contentAsset")
+    }
+
+    private func fetchAsset(recordName: String, key: String) async throws -> URL? {
         do {
-            let (modifications, deletions, changeToken, zoneMoreComing) = try await database.recordZoneChanges(
-                inZoneWith: zoneID,
-                since: token
-            )
-            for (_, result) in modifications {
-                if case .success(let modification) = result {
-                    changed.append(modification.record)
-                }
-            }
-            for deletion in deletions {
-                deleted.insert(deletion.recordID.recordName)
-            }
-            saveToken(changeToken)
-            moreComing = zoneMoreComing
-            logger.info("cloudkit_sync.fetch_changes changed=\(changed.count) deleted=\(deleted.count) moreComing=\(moreComing) hadToken=\(token != nil)")
+            let record = try await database.record(for: CKRecord.ID(recordName: recordName, zoneID: zoneID))
+            return (record[key] as? CKAsset)?.fileURL
+        } catch let error as CKError where error.code == .unknownItem {
+            return nil
         } catch {
             throw mapCKError(error)
         }
-        return ZoneChanges(changed: changed, deletedRecordNames: deleted, moreComing: moreComing)
     }
 
     // MARK: - subscriptions (push, no FCM)
@@ -275,26 +316,6 @@ final class CloudKitLibraryTransport {
         return out
     }
 
-    // MARK: - tokens
-
-    private func loadToken() -> CKServerChangeToken? {
-        guard let data = UserDefaults.standard.data(forKey: Self.changeTokenKey),
-              let token = try? NSKeyedUnarchiver.unarchivedObject(ofClass: CKServerChangeToken.self, from: data) else {
-            return nil
-        }
-        return token
-    }
-
-    private func saveToken(_ token: CKServerChangeToken) {
-        if let data = try? NSKeyedArchiver.archivedData(withRootObject: token, requiringSecureCoding: true) {
-            UserDefaults.standard.set(data, forKey: Self.changeTokenKey)
-        }
-    }
-
-    func resetToken() {
-        UserDefaults.standard.removeObject(forKey: Self.changeTokenKey)
-    }
-
     // MARK: - errors
 
     func mapCKError(_ error: Error) -> TransportError {
@@ -318,16 +339,13 @@ final class CloudKitLibraryTransport {
             return .retryAfter(retryAfter)
         }
         switch ckError.code {
-        case .changeTokenExpired:
-            // The persisted zone token is stale. Drop it so the next pass does
-            // a full re-fetch instead of looping on a doomed delta request.
-            resetToken()
-            return .transient("CloudKit change token expired; full refetch scheduled.")
-        case .partialFailure, .networkUnavailable, .networkFailure, .serviceUnavailable,
+        case .changeTokenExpired, .partialFailure, .networkUnavailable, .networkFailure, .serviceUnavailable,
              .requestRateLimited, .zoneBusy, .operationCancelled, .serverResponseLost,
              .batchRequestFailed, .limitExceeded, .assetFileModified, .assetNotAvailable,
              .accountTemporarilyUnavailable:
-            // Retryable: the shared outbox backoff covers these.
+            // Retryable: the shared outbox backoff covers these. Reads are now
+            // full-zone queries (no persisted change token), so a stale token
+            // can never strand a pass.
             return .transient(ckError.localizedDescription)
         case .internalError, .badContainer, .missingEntitlement, .notAuthenticated,
              .permissionFailure, .quotaExceeded, .unknownItem, .invalidArguments,

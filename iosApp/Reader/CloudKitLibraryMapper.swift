@@ -51,13 +51,16 @@ enum CloudKitLibraryMapper {
 
     /// Hot-vs-cold classification. Metadata uses the shared LWW winner
     /// (sidecar clock folded in); content uses the shared content comparator
-    /// so unchanged bytes never trigger an asset save.
+    /// so unchanged bytes never trigger an asset save. The caller supplies
+    /// real local file mtimes because the snapshot's
+    /// `fileContentModifiedTimestamp` is 0 for iOS imports.
     static func classifyDirty(
         localBooks: [[String: Any]],
         remoteStateById: [String: [String: Any]],
         remoteContentModifiedById: [String: Int64],
         localSidecarTimestampById: [String: Int64],
-        localFileAvailableById: [String: Bool]
+        localFileAvailableById: [String: Bool],
+        localContentTimestampById: [String: Int64]
     ) -> DirtySets {
         var sets = DirtySets()
         for book in localBooks {
@@ -70,7 +73,7 @@ enum CloudKitLibraryMapper {
             )
             let sidecarModified = localSidecarTimestampById[bookId]
                 ?? numeric(book["annotationModifiedTimestamp"])
-            let fileContentModified = numeric(book["fileContentModifiedTimestamp"])
+            let fileContentModified = localContentTimestampById[bookId] ?? 0
             let remote = remoteStateById[bookId]
             let remoteModified = numeric(remote?["lastModifiedTimestamp"])
             let remoteContentModified = remoteContentModifiedById[bookId]
@@ -99,10 +102,14 @@ enum CloudKitLibraryMapper {
         return sets
     }
 
-    /// Small `BookState` fields. Assets never ride on this record.
+/// Small `BookState` fields. Assets never ride on this record.
+    /// `fileContentTimestamp` is the real local file mtime (Drive-path parity);
+    /// the snapshot's `fileContentModifiedTimestamp` is 0 for iOS imports so
+    /// it is never the source of truth for the upload decision.
     static func bookStateFields(
         book: [String: Any],
         sidecarTimestamp: Int64,
+        fileContentTimestamp: Int64,
         deviceId: String
     ) -> [String: Any] {
         let position = book["readerPosition"] as? [String: Any]
@@ -134,7 +141,7 @@ enum CloudKitLibraryMapper {
             "bookmarksJson": jsonString(book["readerBookmarks"] ?? []),
             "highlightsJson": jsonString(book["readerHighlights"] ?? []),
             "hasAnnotations": book["hasAnnotations"] as? Bool ?? false,
-            "fileContentModifiedTimestamp": numeric(book["fileContentModifiedTimestamp"]),
+            "fileContentModifiedTimestamp": fileContentTimestamp,
             "originDeviceId": deviceId,
         ]
     }
