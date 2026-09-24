@@ -11,6 +11,7 @@ import com.aryan.reader.shared.opds.OpdsCatalog
 import com.aryan.reader.shared.opds.OpdsStreamReference
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfPageBounds
+import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.PdfZoomSpec
 import com.aryan.reader.shared.pdf.PdfiumAnnotationSubtype
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
@@ -30,6 +31,11 @@ import com.aryan.reader.shared.pdf.SharedPdfRichPageLayout
 import com.aryan.reader.shared.pdf.SharedPdfSearchIndex
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
 import com.aryan.reader.shared.pdf.pdfInkAppearancePoints
+import com.aryan.reader.shared.pdf.sharedPdfDisplayPointToMediabox
+import com.aryan.reader.shared.pdf.sharedPdfDisplayRectToMediabox
+import com.aryan.reader.shared.pdf.sharedPdfInkAppearanceContent
+import com.aryan.reader.shared.pdf.sharedPdfRasterImageMatrix
+import com.aryan.reader.shared.pdf.sharedPdfRotationDegreesFromPdfiumCode
 import com.sun.jna.Callback
 import com.sun.jna.Library
 import com.sun.jna.Memory
@@ -1631,23 +1637,29 @@ object DesktopPdfium {
         annotation: SharedPdfInkAnnotationExport
     ): Boolean {
         if (annotation.pageIndex !in 0 until pageCount ||
-            annotation.points.size < 2
+            annotation.points.isEmpty()
         ) return false
 
         return runCatching {
             loadPage(document, annotation.pageIndex).usePointer { page ->
                 val pageWidth = api.FPDF_GetPageWidthF(page).takeIf { it > 0f } ?: return@usePointer false
                 val pageHeight = api.FPDF_GetPageHeightF(page).takeIf { it > 0f } ?: return@usePointer false
+                val rotationDegrees = sharedPdfRotationDegreesFromPdfiumCode(api.FPDFPage_GetRotation(page))
                 val exportPoints = annotation.pdfInkAppearancePoints(pageWidth, pageHeight)
-                if (exportPoints.size < 2) return@usePointer false
+                if (exportPoints.isEmpty()) return@usePointer false
                 val nativePoints = FsPointF().toArray(exportPoints.size) as Array<FsPointF>
-                var minX = pageWidth
-                var maxX = 0f
-                var minY = pageHeight
-                var maxY = 0f
+                var minX = Float.MAX_VALUE
+                var maxX = -Float.MAX_VALUE
+                var minY = Float.MAX_VALUE
+                var maxY = -Float.MAX_VALUE
                 exportPoints.forEachIndexed { index, point ->
-                    val x = point.x.coerceIn(0f, 1f) * pageWidth
-                    val y = (1f - point.y.coerceIn(0f, 1f)) * pageHeight
+                    val (x, y) = sharedPdfDisplayPointToMediabox(
+                        xNorm = point.x,
+                        yNorm = point.y,
+                        displayWidth = pageWidth,
+                        displayHeight = pageHeight,
+                        rotationDegrees = rotationDegrees,
+                    ) ?: return@usePointer false
                     nativePoints[index].x = x
                     nativePoints[index].y = y
                     nativePoints[index].write()
@@ -1679,6 +1691,26 @@ object DesktopPdfium {
                         nativePoints.first(),
                         NativeLong(exportPoints.size.toLong())
                     ) >= 0
+                    // Preview.app draws the annotation border rectangle when /AP is missing
+                    // and does not rebuild the path from /InkList. SetBorder clears any
+                    // existing appearance, so install the stroke stream after the border.
+                    val appearance = sharedPdfInkAppearanceContent(
+                        pagePoints = exportPoints.map { point ->
+                            val (x, y) = sharedPdfDisplayPointToMediabox(
+                                xNorm = point.x,
+                                yNorm = point.y,
+                                displayWidth = pageWidth,
+                                displayHeight = pageHeight,
+                                rotationDegrees = rotationDegrees,
+                            ) ?: return@usePointer false
+                            PdfPagePoint(x = x, y = y)
+                        },
+                        strokeWidthPdfUnits = strokeWidth,
+                        colorArgb = annotation.colorArgb,
+                    )
+                    if (appearance.isNotEmpty()) {
+                        setPdfiumAnnotationAppearance(annot, appearance)
+                    }
                     runCatching { api.FPDFPage_GenerateContent(page) }
                     added
                 } finally {
@@ -1701,16 +1733,23 @@ object DesktopPdfium {
             loadPage(document, annotation.pageIndex).usePointer { page ->
                 val pageWidth = api.FPDF_GetPageWidthF(page).takeIf { it > 0f } ?: return@usePointer false
                 val pageHeight = api.FPDF_GetPageHeightF(page).takeIf { it > 0f } ?: return@usePointer false
+                val rotationDegrees = sharedPdfRotationDegreesFromPdfiumCode(api.FPDFPage_GetRotation(page))
                 val quads = bounds.mapNotNull { bound ->
-                    val left = minOf(bound.left, bound.right).coerceIn(0f, 1f) * pageWidth
-                    val right = maxOf(bound.left, bound.right).coerceIn(0f, 1f) * pageWidth
-                    val top = (1f - minOf(bound.top, bound.bottom).coerceIn(0f, 1f)) * pageHeight
-                    val bottom = (1f - maxOf(bound.top, bound.bottom).coerceIn(0f, 1f)) * pageHeight
-                    if (right <= left || top <= bottom) {
-                        null
-                    } else {
-                        FsQuadPointsF(left, top, right, top, left, bottom, right, bottom)
-                    }
+                    val rect = sharedPdfDisplayRectToMediabox(
+                        left = bound.left,
+                        top = bound.top,
+                        right = bound.right,
+                        bottom = bound.bottom,
+                        displayWidth = pageWidth,
+                        displayHeight = pageHeight,
+                        rotationDegrees = rotationDegrees,
+                    ) ?: return@mapNotNull null
+                    FsQuadPointsF(
+                        rect.left, rect.top,
+                        rect.right, rect.top,
+                        rect.left, rect.bottom,
+                        rect.right, rect.bottom,
+                    )
                 }
                 if (quads.isEmpty()) return@usePointer false
 
@@ -1829,14 +1868,16 @@ object DesktopPdfium {
             loadPage(document, overlay.pageIndex).usePointer { page ->
                 val pageWidth = api.FPDF_GetPageWidthF(page).takeIf { it > 0f } ?: return@usePointer false
                 val pageHeight = api.FPDF_GetPageHeightF(page).takeIf { it > 0f } ?: return@usePointer false
-                val left = overlay.left.coerceIn(0f, 1f) * pageWidth
-                val top = (1f - overlay.top.coerceIn(0f, 1f)) * pageHeight
-                val right = overlay.right.coerceIn(0f, 1f) * pageWidth
-                val bottom = (1f - overlay.bottom.coerceIn(0f, 1f)) * pageHeight
-                val rect = pdfRect(left, top, right, bottom, 0f)
-                val rectWidth = rect.right - rect.left
-                val rectHeight = rect.top - rect.bottom
-                if (rectWidth <= 0.5f || rectHeight <= 0.5f) return@usePointer false
+                val rotationDegrees = sharedPdfRotationDegreesFromPdfiumCode(api.FPDFPage_GetRotation(page))
+                val matrix = sharedPdfRasterImageMatrix(
+                    left = overlay.left,
+                    top = overlay.top,
+                    right = overlay.right,
+                    bottom = overlay.bottom,
+                    displayWidth = pageWidth,
+                    displayHeight = pageHeight,
+                    rotationDegrees = rotationDegrees,
+                ) ?: return@usePointer false
 
                 val pixelMemory = Memory(overlay.pixels.size * 4L)
                 pixelMemory.write(0, overlay.pixels, 0, overlay.pixels.size)
@@ -1855,10 +1896,7 @@ object DesktopPdfium {
                 val assigned = api.FPDFImageObj_SetBitmap(pages, 1, imageObject, bitmap) != 0
                 val positioned = assigned && positionRasterImageObject(
                     imageObject = imageObject,
-                    width = rectWidth.toDouble(),
-                    height = rectHeight.toDouble(),
-                    left = rect.left.toDouble(),
-                    bottom = rect.bottom.toDouble()
+                    matrix = matrix
                 )
                 if (!positioned) {
                     api.FPDFBitmap_Destroy(bitmap)
@@ -1873,16 +1911,29 @@ object DesktopPdfium {
 
     private fun positionRasterImageObject(
         imageObject: Pointer,
-        width: Double,
-        height: Double,
-        left: Double,
-        bottom: Double
+        matrix: com.aryan.reader.shared.pdf.SharedPdfImageMatrix
     ): Boolean {
         return runCatching {
-            api.FPDFImageObj_SetMatrix(imageObject, width, 0.0, 0.0, height, left, bottom) != 0
+            api.FPDFImageObj_SetMatrix(
+                imageObject,
+                matrix.a,
+                matrix.b,
+                matrix.c,
+                matrix.d,
+                matrix.e,
+                matrix.f,
+            ) != 0
         }.getOrElse {
             runCatching {
-                api.FPDFPageObj_Transform(imageObject, width, 0.0, 0.0, height, left, bottom)
+                api.FPDFPageObj_Transform(
+                    imageObject,
+                    matrix.a,
+                    matrix.b,
+                    matrix.c,
+                    matrix.d,
+                    matrix.e,
+                    matrix.f,
+                )
                 true
             }.getOrDefault(false)
         }
@@ -1919,6 +1970,14 @@ object DesktopPdfium {
         val memory = Memory(bytes.size.toLong())
         memory.write(0, bytes, 0, bytes.size)
         api.FPDFAnnot_SetStringValue(annotation, key, memory)
+    }
+
+    private fun setPdfiumAnnotationAppearance(annotation: Pointer, content: String) {
+        // FPDFAnnot_SetAP expects UTF-16LE (NUL-terminated wide string); mode 0 = Normal.
+        val bytes = (content + "\u0000").toByteArray(Charsets.UTF_16LE)
+        val memory = Memory(bytes.size.toLong())
+        memory.write(0, bytes, 0, bytes.size)
+        runCatching { api.FPDFAnnot_SetAP(annotation, 0, memory) }
     }
 
     private fun pdfRect(left: Float, top: Float, right: Float, bottom: Float, padding: Float): FsRectF {
@@ -2389,6 +2448,7 @@ object DesktopPdfium {
         fun FPDFAnnot_AddInkStroke(annotation: Pointer, points: FsPointF, pointCount: NativeLong): Int
         fun FPDFAnnot_AppendAttachmentPoints(annotation: Pointer, quadPoints: FsQuadPointsF): Int
         fun FPDFAnnot_SetFlags(annotation: Pointer, flags: Int): Int
+        fun FPDFAnnot_SetAP(annotation: Pointer, appearanceMode: Int, value: Pointer): Int
         fun FPDFPage_InsertObject(page: Pointer, pageObject: Pointer)
         fun FPDFPageObj_NewImageObj(document: Pointer): Pointer?
         fun FPDFImageObj_SetMatrix(
@@ -2409,6 +2469,7 @@ object DesktopPdfium {
             e: Double,
             f: Double
         )
+        fun FPDFPage_GetRotation(page: Pointer): Int
         fun FPDFImageObj_SetBitmap(pages: PointerByReference, pageCount: Int, imageObject: Pointer, bitmap: Pointer): Int
         fun FPDFPage_GenerateContent(page: Pointer): Int
         fun FPDF_SaveAsCopy(document: Pointer, writer: FpdfFileWrite, flags: NativeLong): Int

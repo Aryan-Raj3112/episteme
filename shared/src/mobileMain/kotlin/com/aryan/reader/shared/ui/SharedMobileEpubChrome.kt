@@ -140,7 +140,7 @@ internal fun SharedMobileEpubError(message: String) {
             modifier = Modifier.padding(28.dp)
         ) {
             Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(48.dp))
-            Text("Could not open EPUB", style = MaterialTheme.typography.titleMedium)
+            Text(readerString("epub_open_failed", "Could not open EPUB"), style = MaterialTheme.typography.titleMedium)
             Text(message, color = MaterialTheme.colorScheme.error)
         }
     }
@@ -200,6 +200,20 @@ internal fun SharedMobileEpubTopBar(
     var showHiddenToolsExpanded by remember { mutableStateOf(false) }
     var showTtsSettingsExpanded by remember { mutableStateOf(false) }
     val formatContentDescription = readerString("tooltip_format", "Text formatting")
+    // `Modifier.semantics { }` is not a composable scope, so the accessibility
+    // labels are resolved here and reused inside the semantics blocks.
+    val backContentDescription = readerString("tooltip_back", "Back")
+    val themeContentDescription = readerString("tooltip_theme", "Theme")
+    val tocContentDescription = readerString("menu_contents", "Contents")
+    val searchContentDescription = readerString("action_search", "Search")
+    val sliderContentDescription = readerString("tool_navigation_slider", "Navigation slider")
+    val brightnessContentDescription = readerString("tool_brightness", "Brightness")
+    val orientationContentDescription =
+        readerString("visual_options_screen_orientation", "Screen orientation")
+    val dictionaryContentDescription = readerString("tooltip_dictionary", "Dictionary")
+    val aiContentDescription = readerString("tooltip_ai", "AI features")
+    val visualOptionsContentDescription = readerString("menu_visual_options", "Visual options")
+    val moreOptionsContentDescription = readerString("menu_more_options", "More options")
     val ttsBusy = localTtsState != SharedMobileEpubLocalTtsState.IDLE ||
         cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
     val onReadAloudToggle = if (cloudTtsAvailable) onCloudTtsToggle else onLocalTtsToggle
@@ -238,7 +252,8 @@ internal fun SharedMobileEpubTopBar(
         ) {
             IconButton(
                 onClick = onBack,
-                modifier = Modifier.testTag(SharedMobileEpubAxTags.BACK).semantics { contentDescription = "Back" }
+                modifier = Modifier.testTag(SharedMobileEpubAxTags.BACK)
+                    .semantics { contentDescription = backContentDescription }
             ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
             Text(
                 chromeTitle,
@@ -257,13 +272,13 @@ internal fun SharedMobileEpubTopBar(
                 when (tool) {
                     ReaderTool.THEME -> IconButton(
                         onClick = onTheme,
-                        modifier = Modifier.testTag("EpubTopTheme").semantics { contentDescription = "Theme" }
+                        modifier = Modifier.testTag("EpubTopTheme").semantics { contentDescription = themeContentDescription }
                     ) {
                         Icon(Icons.Default.Palette, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
                     ReaderTool.TOC -> IconButton(
                         onClick = onOpenToc,
-                        modifier = Modifier.testTag("EpubTopToc").semantics { contentDescription = "Contents" }
+                        modifier = Modifier.testTag("EpubTopToc").semantics { contentDescription = tocContentDescription }
                     ) {
                         Icon(Icons.Default.Menu, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
@@ -275,13 +290,13 @@ internal fun SharedMobileEpubTopBar(
                     }
                     ReaderTool.SEARCH -> IconButton(
                         onClick = onSearch,
-                        modifier = Modifier.testTag("EpubTopSearch").semantics { contentDescription = "Search" }
+                        modifier = Modifier.testTag("EpubTopSearch").semantics { contentDescription = searchContentDescription }
                     ) {
                         Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
                     ReaderTool.SLIDER -> IconButton(
                         onClick = onOpenSlider,
-                        modifier = Modifier.testTag("EpubTopSlider").semantics { contentDescription = "Navigation slider" }
+                        modifier = Modifier.testTag("EpubTopSlider").semantics { contentDescription = sliderContentDescription }
                     ) {
                         Icon(SharedReaderIcons.Slider, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
@@ -297,25 +312,25 @@ internal fun SharedMobileEpubTopBar(
                     }
                     ReaderTool.BRIGHTNESS -> IconButton(
                         onClick = onBrightness,
-                        modifier = Modifier.testTag("EpubTopBrightness").semantics { contentDescription = "Brightness" }
+                        modifier = Modifier.testTag("EpubTopBrightness").semantics { contentDescription = brightnessContentDescription }
                     ) {
                         Icon(SharedReaderIcons.Contrast, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
                     ReaderTool.SCREEN_ORIENTATION -> IconButton(
                         onClick = onScreenOrientation,
-                        modifier = Modifier.testTag("EpubTopOrientation").semantics { contentDescription = "Screen orientation" }
+                        modifier = Modifier.testTag("EpubTopOrientation").semantics { contentDescription = orientationContentDescription }
                     ) {
                         Icon(SharedReaderIcons.ScreenRotation, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
                     ReaderTool.DICTIONARY -> IconButton(
                         onClick = onOpenDictionarySettings,
-                        modifier = Modifier.testTag("EpubTopDictionary").semantics { contentDescription = "Dictionary" }
+                        modifier = Modifier.testTag("EpubTopDictionary").semantics { contentDescription = dictionaryContentDescription }
                     ) {
                         Icon(SharedReaderIcons.Dictionary, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
                     ReaderTool.AI_FEATURES -> if (aiAvailable) IconButton(
                         onClick = onOpenAiHub,
-                        modifier = Modifier.testTag("EpubTopAi").semantics { contentDescription = "AI features" }
+                        modifier = Modifier.testTag("EpubTopAi").semantics { contentDescription = aiContentDescription }
                     ) {
                         Icon(Icons.Default.Ai, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
@@ -325,11 +340,11 @@ internal fun SharedMobileEpubTopBar(
             Box {
                 IconButton(
                     onClick = { onShowMoreChange(true) },
-                    modifier = Modifier.testTag(SharedMobileEpubAxTags.MORE).semantics { contentDescription = "More options" }
+                    modifier = Modifier.testTag(SharedMobileEpubAxTags.MORE).semantics { contentDescription = moreOptionsContentDescription }
                 ) { Icon(Icons.Default.MoreVert, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
                 DropdownMenu(expanded = showMore, onDismissRequest = { onShowMoreChange(false) }) {
                     DropdownMenuItem(
-                        text = { Text("Customize Toolbar") },
+                        text = { Text(readerString("title_customize_toolbar", "Customize Toolbar")) },
                         onClick = { onShowMoreChange(false); onCustomizeTools() },
                         leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) }
                     )
@@ -340,7 +355,7 @@ internal fun SharedMobileEpubTopBar(
                     if (hiddenToolbarTools.isNotEmpty()) {
                         HorizontalDivider()
                         DropdownMenuItem(
-                            text = { Text("Hidden tools") },
+                            text = { Text(readerString("toolbar_hidden_tools_menu", "Hidden tools")) },
                             onClick = { showHiddenToolsExpanded = !showHiddenToolsExpanded },
                             trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) }
                         )
@@ -374,13 +389,13 @@ internal fun SharedMobileEpubTopBar(
                         when (tool) {
                             ReaderTool.READING_MODE -> {
                                 DropdownMenuItem(
-                                    text = { Text("Change Reading Mode") },
+                                    text = { Text(readerString("menu_change_reading_mode", "Change Reading Mode")) },
                                     onClick = { showReadingModeExpanded = !showReadingModeExpanded },
                                     trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) }
                                 )
                                 if (showReadingModeExpanded) {
                                     DropdownMenuItem(
-                                        text = { Text("Vertical (WebView)") },
+                                        text = { Text(readerString("menu_reading_mode_vertical_webview", "Vertical (WebView)")) },
                                         enabled = !ttsBusy,
                                         onClick = {
                                             onUseNativeVerticalRendererChange(false)
@@ -393,7 +408,7 @@ internal fun SharedMobileEpubTopBar(
                                         }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Vertical (Native Beta)") },
+                                        text = { Text(readerString("menu_reading_mode_vertical_native", "Vertical (Native Beta)")) },
                                         enabled = !ttsBusy,
                                         onClick = {
                                             onUseNativeVerticalRendererChange(true)
@@ -406,7 +421,7 @@ internal fun SharedMobileEpubTopBar(
                                         }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Paginated (left-to-right)") },
+                                        text = { Text(readerString("menu_reading_mode_paginated", "Paginated (left-to-right)")) },
                                         enabled = !ttsBusy,
                                         onClick = {
                                             onRightToLeftPaginationChange(false)
@@ -417,7 +432,7 @@ internal fun SharedMobileEpubTopBar(
                                         trailingIcon = { if (readingMode == ReaderReadingMode.PAGINATED && !rightToLeftPagination) Text("✓") }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Right-to-left pagination") },
+                                        text = { Text(readerString("menu_right_to_left_pagination", "Paginated (right-to-left)")) },
                                         enabled = !ttsBusy,
                                         onClick = {
                                             onRightToLeftPaginationChange(true)
@@ -430,39 +445,46 @@ internal fun SharedMobileEpubTopBar(
                                 }
                             }
                             ReaderTool.TAP_TO_TURN -> SharedMobileEpubSwitchMenuItem(
-                                "Tap to Turn Pages",
+                                readerString("menu_tap_to_turn_pages", "Tap to Turn Pages"),
                                 tapToNavigateEnabled,
                                 onTapToNavigateChange,
                                 enabled = readingMode == ReaderReadingMode.PAGINATED
                             )
                             ReaderTool.PAGE_TURN_ANIM -> SharedMobileEpubSwitchMenuItem(
-                                "Realistic Page Turns",
+                                readerString("menu_realistic_page_turns", "Realistic Page Turns"),
                                 pageTurnAnimationEnabled,
                                 onPageTurnAnimationChange,
                                 enabled = readingMode == ReaderReadingMode.PAGINATED
                             )
                             ReaderTool.BOOKMARK -> DropdownMenuItem(
-                                text = { Text(if (isBookmarked) "Remove Bookmark" else "Bookmark this page") },
+                                text = {
+                                    Text(
+                                        readerString(
+                                            if (isBookmarked) "menu_remove_bookmark" else "menu_bookmark_this_page",
+                                            if (isBookmarked) "Remove bookmark" else "Bookmark this page"
+                                        )
+                                    )
+                                },
                                 onClick = { onBookmark(); onShowMoreChange(false) },
                                 leadingIcon = { Icon(if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, contentDescription = null) }
                             )
                             ReaderTool.VISUAL_OPTIONS -> DropdownMenuItem(
-                                text = { Text("Visual Options") }, onClick = { onVisualOptions(); onShowMoreChange(false) },
+                                text = { Text(readerString("menu_visual_options", "Visual Options")) }, onClick = { onVisualOptions(); onShowMoreChange(false) },
                                 leadingIcon = { Icon(Icons.Default.Visibility, contentDescription = null) }
                             )
                             ReaderTool.TOC -> DropdownMenuItem(
-                                text = { Text("Contents") }, onClick = { onOpenToc(); onShowMoreChange(false) },
+                                text = { Text(readerString("menu_contents", "Contents")) }, onClick = { onOpenToc(); onShowMoreChange(false) },
                                 leadingIcon = { Icon(Icons.Default.Menu, contentDescription = null) }
                             )
                             ReaderTool.FORMAT -> DropdownMenuItem(
-                                text = { Text("Text formatting") }, onClick = { onFormat(); onShowMoreChange(false) }
+                                text = { Text(readerString("content_desc_text_formatting", "Text formatting")) }, onClick = { onFormat(); onShowMoreChange(false) }
                             )
                             ReaderTool.SEARCH -> DropdownMenuItem(
-                                text = { Text("Search") }, onClick = { onSearch(); onShowMoreChange(false) },
+                                text = { Text(readerString("action_search", "Search")) }, onClick = { onSearch(); onShowMoreChange(false) },
                                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) }
                             )
                             ReaderTool.SLIDER -> DropdownMenuItem(
-                                text = { Text("Navigation slider") }, onClick = { onShowMoreChange(false); onOpenSlider() },
+                                text = { Text(readerString("tool_navigation_slider", "Navigation slider")) }, onClick = { onShowMoreChange(false); onOpenSlider() },
                                 leadingIcon = { Icon(SharedReaderIcons.Slider, contentDescription = null) }
                             )
                             ReaderTool.TTS_CONTROLS -> DropdownMenuItem(
@@ -472,7 +494,7 @@ internal fun SharedMobileEpubTopBar(
                                 // Covered by the TTS_SETTINGS expander when both are present.
                                 if (ReaderTool.TTS_SETTINGS !in overflowTools) {
                                     DropdownMenuItem(
-                                        text = { Text("TTS Word Replacements") },
+                                        text = { Text(readerString("menu_tts_word_replacements", "TTS Word Replacements")) },
                                         onClick = { onShowMoreChange(false); onTtsReplacements() },
                                         leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) }
                                     )
@@ -481,27 +503,27 @@ internal fun SharedMobileEpubTopBar(
                             ReaderTool.TTS_SETTINGS -> {
                                 if (ReaderTool.TTS_REPLACEMENTS in overflowTools) {
                                     DropdownMenuItem(
-                                        text = { Text("TTS Settings") },
+                                        text = { Text(readerString("menu_tts_settings", "TTS Settings")) },
                                         onClick = { showTtsSettingsExpanded = !showTtsSettingsExpanded },
                                         leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) },
                                         trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) }
                                     )
                                     if (showTtsSettingsExpanded) {
                                         DropdownMenuItem(
-                                            text = { Text("TTS Voice Settings") },
+                                            text = { Text(readerString("menu_tts_voice_settings", "TTS Voice Settings")) },
                                             enabled = !ttsBusy,
                                             onClick = { onShowMoreChange(false); onTtsSettings() },
                                             leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) }
                                         )
                                         DropdownMenuItem(
-                                            text = { Text("TTS Word Replacements") },
+                                            text = { Text(readerString("menu_tts_word_replacements", "TTS Word Replacements")) },
                                             onClick = { onShowMoreChange(false); onTtsReplacements() },
                                             leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) }
                                         )
                                     }
                                 } else {
                                     DropdownMenuItem(
-                                        text = { Text("TTS Voice Settings") },
+                                        text = { Text(readerString("menu_tts_voice_settings", "TTS Voice Settings")) },
                                         enabled = !ttsBusy,
                                         onClick = { onShowMoreChange(false); onTtsSettings() },
                                         leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) }
@@ -509,31 +531,35 @@ internal fun SharedMobileEpubTopBar(
                                 }
                             }
                             ReaderTool.BOOK_REPLACEMENTS -> DropdownMenuItem(
-                                text = { Text("Book Word Replacements") },
+                                text = { Text(readerString("menu_book_word_replacements", "Book Word Replacements")) },
                                 onClick = { onShowMoreChange(false); onBookReplacements() },
                                 leadingIcon = { Icon(Icons.Default.TextFields, contentDescription = null) }
                             )
                             ReaderTool.KEEP_SCREEN_ON -> SharedMobileEpubSwitchMenuItem("Keep Screen On", keepScreenOn, onKeepScreenOnChange)
                             ReaderTool.AUTO_SCROLL -> DropdownMenuItem(
-                                text = { Text(if (autoScroll) "Stop Auto Scroll" else "Auto Scroll") },
+                                // Android parity (EpubReaderControls
+                                // EpubOverflowMenuSection.AUTO_SCROLL): the item
+                                // always reads "Auto Scroll" and is only enabled
+                                // for vertical reading while TTS is idle.
+                                text = { Text(readerString("menu_auto_scroll", "Auto Scroll")) },
                                 enabled = readingMode == ReaderReadingMode.VERTICAL &&
                                     !ttsBusy,
                                 onClick = { onAutoScrollChange(!autoScroll); onShowMoreChange(false) }
                             )
                             ReaderTool.BRIGHTNESS -> DropdownMenuItem(
-                                text = { Text("Brightness") }, onClick = { onBrightness(); onShowMoreChange(false) }
+                                text = { Text(readerString("tool_brightness", "Brightness")) }, onClick = { onBrightness(); onShowMoreChange(false) }
                             )
                             ReaderTool.SCREEN_ORIENTATION -> DropdownMenuItem(
-                                text = { Text("Screen Orientation") }, onClick = { onScreenOrientation(); onShowMoreChange(false) },
+                                text = { Text(readerString("visual_options_screen_orientation", "Screen Orientation")) }, onClick = { onScreenOrientation(); onShowMoreChange(false) },
                                 leadingIcon = { Icon(SharedReaderIcons.ScreenRotation, contentDescription = null) }
                             )
                             ReaderTool.AI_FEATURES -> if (aiAvailable) DropdownMenuItem(
-                                text = { Text("AI features") },
+                                text = { Text(readerString("tooltip_ai", "AI features")) },
                                 onClick = { onOpenAiHub(); onShowMoreChange(false) },
                                 leadingIcon = { Icon(Icons.Default.Ai, contentDescription = null) }
                             )
                             ReaderTool.FILE_INFO -> DropdownMenuItem(
-                                text = { Text("File Information") }, onClick = { onFileInfo(); onShowMoreChange(false) },
+                                text = { Text(readerString("file_information", "File Information")) }, onClick = { onFileInfo(); onShowMoreChange(false) },
                                 leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) }
                             )
                             ReaderTool.THEME -> Unit
@@ -542,7 +568,7 @@ internal fun SharedMobileEpubTopBar(
                     }
                     if (ReaderTool.TTS_CONTROLS in overflowTools && ttsBusy) {
                         DropdownMenuItem(
-                            text = { Text("Stop reading") },
+                            text = { Text(readerString("menu_stop_reading", "Stop reading")) },
                             onClick = { onReadAloudStop(); onShowMoreChange(false) }
                         )
                     }
@@ -630,7 +656,7 @@ internal fun SharedMobileEpubToolbarCustomizationSheet(
             modifier = Modifier.fillMaxWidth().heightIn(max = 720.dp),
         ) {
             SharedToolbarCustomizationHeader(
-                title = "Customize Toolbar",
+                title = readerString("title_customize_toolbar", "Customize Toolbar"),
                 onReset = resetToDefault,
                 onDismiss = onDismiss,
             )
@@ -708,6 +734,8 @@ internal fun SharedMobileEpubBottomBar(
     onVisualOptions: () -> Unit,
     onOpenSlider: () -> Unit,
     onDictionary: () -> Unit,
+    onBrightness: () -> Unit = {},
+    onScreenOrientation: () -> Unit = {},
     onOpenAiHub: () -> Unit = {},
     aiAvailable: Boolean = false,
     localTtsState: SharedMobileEpubLocalTtsState,
@@ -726,6 +754,23 @@ internal fun SharedMobileEpubBottomBar(
     modifier: Modifier = Modifier
 ) {
     val formatContentDescription = readerString("tooltip_format", "Text formatting")
+    // `Modifier.semantics { }` is not a composable scope, so the accessibility
+    // labels are resolved here and reused inside the semantics blocks.
+    val themeContentDescription = readerString("tooltip_theme", "Theme")
+    val tocContentDescription = readerString("menu_contents", "Contents")
+    val searchContentDescription = readerString("action_search", "Search")
+    val sliderContentDescription = readerString("tool_navigation_slider", "Navigation slider")
+    val brightnessContentDescription = readerString("tool_brightness", "Brightness")
+    val orientationContentDescription =
+        readerString("visual_options_screen_orientation", "Screen orientation")
+    val dictionaryContentDescription = readerString("tooltip_dictionary", "Dictionary")
+    val aiContentDescription = readerString("tooltip_ai", "AI features")
+    val visualOptionsContentDescription = readerString("menu_visual_options", "Visual options")
+    val bookmarkContentDescription = if (isBookmarked) {
+        readerString("menu_remove_bookmark", "Remove bookmark")
+    } else {
+        readerString("menu_bookmark_this_page", "Bookmark this page")
+    }
     val onReadAloudToggle = if (cloudTtsAvailable) onCloudTtsToggle else onLocalTtsToggle
     val onReadAloudStop = if (cloudTtsAvailable) onCloudTtsStop else onLocalTtsStop
     // Android benchmark (EpubReaderControls.kt:359-369): chrome TTS tap stops
@@ -767,7 +812,7 @@ internal fun SharedMobileEpubBottomBar(
                     when (tool) {
                         ReaderTool.TOC -> IconButton(
                             onClick = onToc,
-                            modifier = Modifier.testTag("EpubBottomToc").semantics { contentDescription = "Contents" }
+                            modifier = Modifier.testTag("EpubBottomToc").semantics { contentDescription = tocContentDescription }
                         ) { Icon(Icons.Default.Menu, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
                         ReaderTool.FORMAT -> IconButton(
                             onClick = onFormat,
@@ -777,17 +822,17 @@ internal fun SharedMobileEpubBottomBar(
                         }
                         ReaderTool.SEARCH -> IconButton(
                             onClick = onSearch,
-                            modifier = Modifier.testTag("EpubBottomSearch").semantics { contentDescription = "Search" }
+                            modifier = Modifier.testTag("EpubBottomSearch").semantics { contentDescription = searchContentDescription }
                         ) { Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
                         ReaderTool.THEME -> IconButton(
                             onClick = onTheme,
-                            modifier = Modifier.testTag("EpubBottomTheme").semantics { contentDescription = "Theme" }
+                            modifier = Modifier.testTag("EpubBottomTheme").semantics { contentDescription = themeContentDescription }
                         ) { Icon(Icons.Default.Palette, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
                         ReaderTool.BOOKMARK -> {
-                            val bookmarkLabel = if (isBookmarked) "Remove bookmark" else "Bookmark this page"
                             IconButton(
                                 onClick = onBookmark,
-                                modifier = Modifier.testTag("EpubBottomBookmark").semantics { contentDescription = bookmarkLabel }
+                                modifier = Modifier.testTag("EpubBottomBookmark")
+                                    .semantics { contentDescription = bookmarkContentDescription }
                             ) {
                                 Icon(
                                     if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
@@ -798,19 +843,27 @@ internal fun SharedMobileEpubBottomBar(
                         }
                         ReaderTool.VISUAL_OPTIONS -> IconButton(
                             onClick = onVisualOptions,
-                            modifier = Modifier.testTag("EpubBottomVisual").semantics { contentDescription = "Visual options" }
+                            modifier = Modifier.testTag("EpubBottomVisual").semantics { contentDescription = visualOptionsContentDescription }
                         ) { Icon(Icons.Default.Visibility, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
                         ReaderTool.SLIDER -> IconButton(
                             onClick = onOpenSlider,
-                            modifier = Modifier.testTag("EpubBottomSlider").semantics { contentDescription = "Navigation slider" }
+                            modifier = Modifier.testTag("EpubBottomSlider").semantics { contentDescription = sliderContentDescription }
                         ) { Icon(SharedReaderIcons.Slider, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
                         ReaderTool.DICTIONARY -> IconButton(
                             onClick = onDictionary,
-                            modifier = Modifier.testTag("EpubBottomDictionary").semantics { contentDescription = "Dictionary" }
+                            modifier = Modifier.testTag("EpubBottomDictionary").semantics { contentDescription = dictionaryContentDescription }
                         ) { Icon(SharedReaderIcons.Dictionary, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
+                        ReaderTool.BRIGHTNESS -> IconButton(
+                            onClick = onBrightness,
+                            modifier = Modifier.testTag("EpubBottomBrightness").semantics { contentDescription = brightnessContentDescription }
+                        ) { Icon(SharedReaderIcons.Contrast, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
+                        ReaderTool.SCREEN_ORIENTATION -> IconButton(
+                            onClick = onScreenOrientation,
+                            modifier = Modifier.testTag("EpubBottomOrientation").semantics { contentDescription = orientationContentDescription }
+                        ) { Icon(SharedReaderIcons.ScreenRotation, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
                         ReaderTool.AI_FEATURES -> if (aiAvailable) IconButton(
                             onClick = onOpenAiHub,
-                            modifier = Modifier.testTag("EpubBottomAi").semantics { contentDescription = "AI features" }
+                            modifier = Modifier.testTag("EpubBottomAi").semantics { contentDescription = aiContentDescription }
                         ) { Icon(Icons.Default.Ai, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
                         ReaderTool.TTS_CONTROLS -> IconButton(
                             onClick = { if (readAloudActive) onReadAloudStop() else onReadAloudToggle() },
@@ -833,10 +886,11 @@ internal fun SharedMobileEpubBottomBar(
     }
 }
 
+@Composable
 internal fun SharedMobileEpubLocalTtsState.menuLabel(): String = when (this) {
-    SharedMobileEpubLocalTtsState.IDLE -> "Read aloud"
-    SharedMobileEpubLocalTtsState.SPEAKING -> "Pause reading"
-    SharedMobileEpubLocalTtsState.PAUSED -> "Resume reading"
+    SharedMobileEpubLocalTtsState.IDLE -> readerString("action_read_aloud", "Read aloud")
+    SharedMobileEpubLocalTtsState.SPEAKING -> readerString("tts_pause_reading", "Pause reading")
+    SharedMobileEpubLocalTtsState.PAUSED -> readerString("tts_resume_reading", "Resume reading")
 }
 
 internal fun SharedMobileEpubLocalTtsState.icon() = when (this) {
@@ -845,11 +899,12 @@ internal fun SharedMobileEpubLocalTtsState.icon() = when (this) {
     SharedMobileEpubLocalTtsState.PAUSED -> Icons.Default.PlayArrow
 }
 
+@Composable
 internal fun ReaderCloudTtsState.menuLabel(): String = when {
-    isLoading -> "Preparing cloud reading"
-    isPlaying -> "Pause cloud reading"
-    isPaused -> "Resume cloud reading"
-    else -> "Read aloud with Cloud AI"
+    isLoading -> readerString("tts_preparing_cloud_reading", "Preparing cloud reading")
+    isPlaying -> readerString("tts_pause_cloud_reading", "Pause cloud reading")
+    isPaused -> readerString("tts_resume_cloud_reading", "Resume cloud reading")
+    else -> readerString("tts_read_aloud_cloud", "Read aloud with Cloud AI")
 }
 
 internal fun ReaderCloudTtsState.icon() = when {
@@ -911,7 +966,7 @@ internal fun SharedMobileEpubTtsControls(
                 }
                 if (size != ReaderTtsOverlaySize.SMALL) {
                     IconButton(onClick = tts::skipPrevious, enabled = progress.currentChunkIndex > 0) {
-                        Icon(Icons.Default.SkipPrevious, contentDescription = "Previous reading part")
+                        Icon(Icons.Default.SkipPrevious, contentDescription = readerString("tts_previous_part", "Previous reading part"))
                     }
                 }
                 IconButton(
@@ -929,22 +984,22 @@ internal fun SharedMobileEpubTtsControls(
                         onClick = tts::skipNext,
                         enabled = progress.currentChunkIndex in 0 until progress.chunks.lastIndex
                     ) {
-                        Icon(Icons.Default.SkipNext, contentDescription = "Next reading part")
+                        Icon(Icons.Default.SkipNext, contentDescription = readerString("tts_next_part", "Next reading part"))
                     }
                 }
                 if (size == ReaderTtsOverlaySize.LARGE) {
                     IconButton(onClick = onLocate, enabled = progress.currentChunk != null) {
-                        Icon(SharedReaderIcons.PinDrop, contentDescription = "Locate current reading part")
+                        Icon(SharedReaderIcons.PinDrop, contentDescription = readerString("tts_locate_part", "Locate current reading part"))
                     }
                 }
                 if (size == ReaderTtsOverlaySize.LARGE) {
                     IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "TTS voice settings")
+                        Icon(Icons.Default.Settings, contentDescription = readerString("menu_tts_voice_settings", "TTS voice settings"))
                     }
                 }
                 SharedMobileEpubTtsOverlaySizeControls(size, onOverlaySizeChange)
                 IconButton(onClick = tts::stop) {
-                    Icon(Icons.Default.Close, contentDescription = "Stop reading", tint = MaterialTheme.colorScheme.error)
+                    Icon(Icons.Default.Close, contentDescription = readerString("menu_stop_reading", "Stop reading"), tint = MaterialTheme.colorScheme.error)
                 }
             }
         }
@@ -1005,7 +1060,7 @@ internal fun SharedMobileEpubCloudTtsControls(
                 }
                 if (size != ReaderTtsOverlaySize.SMALL) {
                     IconButton(onClick = tts::skipPrevious, enabled = progress.currentChunkIndex > 0 && !cloudState.isLoading) {
-                        Icon(Icons.Default.SkipPrevious, contentDescription = "Previous cloud reading part")
+                        Icon(Icons.Default.SkipPrevious, contentDescription = readerString("tts_cloud_previous_part", "Previous cloud reading part"))
                     }
                 }
                 IconButton(
@@ -1019,17 +1074,17 @@ internal fun SharedMobileEpubCloudTtsControls(
                 }
                 if (size != ReaderTtsOverlaySize.SMALL) {
                     IconButton(onClick = tts::skipNext, enabled = progress.currentChunkIndex in 0 until progress.chunks.lastIndex && !cloudState.isLoading) {
-                        Icon(Icons.Default.SkipNext, contentDescription = "Next cloud reading part")
+                        Icon(Icons.Default.SkipNext, contentDescription = readerString("tts_cloud_next_part", "Next cloud reading part"))
                     }
                 }
                 if (size == ReaderTtsOverlaySize.LARGE) {
                     IconButton(onClick = onLocate, enabled = progress.currentChunk != null) {
-                        Icon(SharedReaderIcons.PinDrop, contentDescription = "Locate cloud reading part")
+                        Icon(SharedReaderIcons.PinDrop, contentDescription = readerString("tts_cloud_locate_part", "Locate cloud reading part"))
                     }
                 }
                 SharedMobileEpubTtsOverlaySizeControls(size, onOverlaySizeChange)
                 IconButton(onClick = tts::stop) {
-                    Icon(Icons.Default.Close, contentDescription = "Stop cloud reading", tint = MaterialTheme.colorScheme.error)
+                    Icon(Icons.Default.Close, contentDescription = readerString("tts_cloud_stop_reading", "Stop cloud reading"), tint = MaterialTheme.colorScheme.error)
                 }
             }
         }
@@ -1053,13 +1108,13 @@ private fun SharedMobileEpubTtsOverlaySizeControls(
                 onClick = { onSizeChange(ReaderTtsOverlaySize.MEDIUM) },
                 modifier = Modifier.size(34.dp),
             ) {
-                Icon(Icons.Default.KeyboardArrowDown, "Collapse reading controls", modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.KeyboardArrowDown, readerString("content_desc_collapse_reading_controls", "Collapse reading controls"), modifier = Modifier.size(18.dp))
             }
             IconButton(
                 onClick = { onSizeChange(ReaderTtsOverlaySize.SMALL) },
                 modifier = Modifier.size(34.dp),
             ) {
-                Icon(Icons.Default.KeyboardArrowRight, "Collapse reading controls", modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.KeyboardArrowRight, readerString("content_desc_collapse_reading_controls", "Collapse reading controls"), modifier = Modifier.size(18.dp))
             }
         }
         ReaderTtsOverlaySize.MEDIUM -> {
@@ -1067,13 +1122,13 @@ private fun SharedMobileEpubTtsOverlaySizeControls(
                 onClick = { onSizeChange(ReaderTtsOverlaySize.LARGE) },
                 modifier = Modifier.size(34.dp),
             ) {
-                Icon(Icons.Default.KeyboardArrowUp, "Expand reading controls", modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.KeyboardArrowUp, readerString("content_desc_expand_reading_controls", "Expand reading controls"), modifier = Modifier.size(18.dp))
             }
             IconButton(
                 onClick = { onSizeChange(ReaderTtsOverlaySize.SMALL) },
                 modifier = Modifier.size(34.dp),
             ) {
-                Icon(Icons.Default.KeyboardArrowRight, "Collapse reading controls", modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.KeyboardArrowRight, readerString("content_desc_collapse_reading_controls", "Collapse reading controls"), modifier = Modifier.size(18.dp))
             }
         }
         ReaderTtsOverlaySize.SMALL -> {
@@ -1081,13 +1136,13 @@ private fun SharedMobileEpubTtsOverlaySizeControls(
                 onClick = { onSizeChange(ReaderTtsOverlaySize.LARGE) },
                 modifier = Modifier.size(34.dp),
             ) {
-                Icon(Icons.Default.KeyboardArrowUp, "Expand reading controls", modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.KeyboardArrowUp, readerString("content_desc_expand_reading_controls", "Expand reading controls"), modifier = Modifier.size(18.dp))
             }
             IconButton(
                 onClick = { onSizeChange(ReaderTtsOverlaySize.MEDIUM) },
                 modifier = Modifier.size(34.dp),
             ) {
-                Icon(Icons.Default.KeyboardArrowLeft, "Expand reading controls", modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.KeyboardArrowLeft, readerString("content_desc_expand_reading_controls", "Expand reading controls"), modifier = Modifier.size(18.dp))
             }
         }
     }
@@ -1156,7 +1211,11 @@ internal fun SharedMobileReaderTtsSettingsSheet(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            Text("TTS Voice Settings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(
+                readerString("menu_tts_voice_settings", "TTS Voice Settings"),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
             cloudTts?.let { cloud ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1164,10 +1223,17 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Cloud AI reading", fontWeight = FontWeight.SemiBold)
+                        Text(readerString("tts_cloud_ai_reading", "Cloud AI reading"), fontWeight = FontWeight.SemiBold)
                         Text(
-                            if (cloudTtsModeEnabled) "Gemini Live · ${cloud.state.cacheSummary.currentVoiceLabel}"
-                            else "Use device speech",
+                            if (cloudTtsModeEnabled) {
+                                readerString(
+                                    "tts_cloud_mode_summary",
+                                    "Gemini Live · %1\$s",
+                                    cloud.state.cacheSummary.currentVoiceLabel,
+                                )
+                            } else {
+                                readerString("tts_use_device_speech", "Use device speech")
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1195,12 +1261,19 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                                 Column(Modifier.weight(1f)) {
                                     Text(selectedCloudVoice?.name ?: cloudTtsVoiceId, fontWeight = FontWeight.SemiBold)
                                     Text(
-                                        selectedCloudVoice?.description ?: "Gemini Live voice",
+                                        selectedCloudVoice?.description
+                                            ?: readerString("tts_cloud_ai_reading", "Cloud AI reading"),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                                Icon(Icons.Default.ArrowDropDown, contentDescription = "Choose cloud voice")
+                                Icon(
+                                    Icons.Default.ArrowDropDown,
+                                    contentDescription = readerString(
+                                        "tts_choose_cloud_voice",
+                                        "Choose cloud voice",
+                                    ),
+                                )
                             }
                         }
                         DropdownMenu(
@@ -1243,19 +1316,19 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                                                     sampleState.playingVoiceId == voice.id ->
                                                         Icon(
                                                             Icons.Default.Stop,
-                                                            contentDescription = "Stop preview",
+                                                            contentDescription = readerString("tts_stop_preview", "Stop preview"),
                                                             tint = MaterialTheme.colorScheme.primary
                                                         )
                                                     voice.id in sampleState.cachedVoiceIds ->
                                                         Icon(
                                                             Icons.Default.PlayCircle,
-                                                            contentDescription = "Preview ${voice.name}",
+                                                            contentDescription = readerString("tts_preview_voice", "Preview %1\$s", voice.name),
                                                             tint = MaterialTheme.colorScheme.primary
                                                         )
                                                     else ->
                                                         Icon(
                                                             Icons.Default.PlayArrow,
-                                                            contentDescription = "Preview ${voice.name}",
+                                                            contentDescription = readerString("tts_preview_voice", "Preview %1\$s", voice.name),
                                                             tint = MaterialTheme.colorScheme.primary
                                                         )
                                                 }
@@ -1322,7 +1395,10 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                                         selectedCacheVoice.ifBlank { cloudTtsVoiceId },
                                         modifier = Modifier.weight(1f),
                                     )
-                                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Filter cached voice")
+                                    Icon(
+                                        Icons.Default.ArrowDropDown,
+                                        contentDescription = readerString("tts_filter_cached_voice", "Filter cached voice"),
+                                    )
                                 }
                             }
                             DropdownMenu(
@@ -1408,7 +1484,9 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                         }
                     }
                     if (cloud.state.cacheSummary.hasCachedAudio) {
-                        TextButton(onClick = onClearCloudTtsCache) { Text("Clear cached cloud audio") }
+                        TextButton(onClick = onClearCloudTtsCache) {
+                            Text(readerString("tts_clear_cached_cloud_audio", "Clear cached cloud audio"))
+                        }
                     }
                 }
                 HorizontalDivider()
@@ -1423,7 +1501,7 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("Voice preview text", fontWeight = FontWeight.SemiBold)
+                    Text(readerString("tts_preview_text_label", "Voice preview text"), fontWeight = FontWeight.SemiBold)
                     TextButton(
                         onClick = {
                             tts.setPreviewSampleText("")
@@ -1431,7 +1509,7 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                         },
                         enabled = tts.previewSampleText != SHARED_MOBILE_TTS_SAMPLE_DEFAULT ||
                             sampleDraft != SHARED_MOBILE_TTS_SAMPLE_DEFAULT,
-                    ) { Text("Reset") }
+                    ) { Text(readerString("action_reset", "Reset")) }
                 }
                 OutlinedTextField(
                     value = sampleDraft,
@@ -1458,19 +1536,25 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text(selectedVoice?.name ?: "System default", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                selectedVoice?.name ?: readerString("tts_system_default", "System default"),
+                                fontWeight = FontWeight.SemiBold,
+                            )
                             Text(
                                 selectedVoice?.let { voice ->
                                     sharedMobileEpubVoiceSubtitle(
                                         voice,
                                         sharedMobileEpubVoiceQualityLabel(voice.quality),
                                     )
-                                } ?: "Uses the voice selected by iOS",
+                                } ?: readerString("tts_device_voice_summary", "Uses the voice selected in system settings"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        Icon(Icons.Default.ArrowDropDown, contentDescription = "Choose voice")
+                        Icon(
+                            Icons.Default.ArrowDropDown,
+                            contentDescription = readerString("tts_choose_voice", "Choose voice"),
+                        )
                     }
                 }
                 DropdownMenu(
@@ -1481,8 +1565,15 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                     DropdownMenuItem(
                         text = {
                             Text(
-                                if (favoriteIds.isNotEmpty()) "Favorites only (${favoriteIds.size})"
-                                else "Favorites only"
+                                if (favoriteIds.isNotEmpty()) {
+                                    readerString(
+                                        "tts_favorites_only_count",
+                                        "Favorites only (%1\$d)",
+                                        favoriteIds.size,
+                                    )
+                                } else {
+                                    readerString("tts_favorites_only", "Favorites only")
+                                }
                             )
                         },
                         leadingIcon = {
@@ -1572,12 +1663,26 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                         HorizontalDivider()
                     }
                     DropdownMenuItem(
-                        text = { Column { Text("System default"); Text("Uses iOS settings", style = MaterialTheme.typography.bodySmall) } },
+                        text = {
+                            Column {
+                                Text(readerString("tts_system_default", "System default"))
+                                Text(
+                                    readerString("tts_uses_device_settings", "Uses device settings"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        },
                         enabled = !ttsVoiceLocked,
                         onClick = { tts.setVoice(null); showVoices = false },
                         trailingIcon = {
                             IconButton(onClick = { tts.previewVoice(null) }, enabled = !ttsVoiceLocked) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = "Preview system voice")
+                                Icon(
+                                    Icons.Default.PlayArrow,
+                                    contentDescription = readerString(
+                                        "tts_preview_system_voice",
+                                        "Preview system voice",
+                                    ),
+                                )
                             }
                         }
                     )
@@ -1585,8 +1690,17 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                         DropdownMenuItem(
                             text = {
                                 Text(
-                                    if (favoritesOnly) "No favorite voices yet — tap the star on any voice"
-                                    else "No voices match these filters",
+                                    if (favoritesOnly) {
+                                        readerString(
+                                            "tts_no_favorite_voices",
+                                            "No favorite voices yet. Tap the star on any voice to add it here.",
+                                        )
+                                    } else {
+                                        readerString(
+                                            "tts_no_voices_match_filters",
+                                            "No voices match these filters",
+                                        )
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                             },
@@ -1617,16 +1731,31 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                                         Icon(
                                             Icons.Default.Star,
                                             contentDescription = if (isFavorite) {
-                                                "Remove ${voice.name} from favorites"
+                                                readerString(
+                                                    "tts_remove_from_favorites_named",
+                                                    "Remove %1\$s from favorites",
+                                                    voice.name,
+                                                )
                                             } else {
-                                                "Add ${voice.name} to favorites"
+                                                readerString(
+                                                    "tts_add_to_favorites_named",
+                                                    "Add %1\$s to favorites",
+                                                    voice.name,
+                                                )
                                             },
                                             tint = if (isFavorite) MaterialTheme.colorScheme.primary
                                             else MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
                                     IconButton(onClick = { tts.previewVoice(voice.identifier) }, enabled = !ttsVoiceLocked) {
-                                        Icon(Icons.Default.PlayArrow, contentDescription = "Preview ${voice.name}")
+                                        Icon(
+                                            Icons.Default.PlayArrow,
+                                            contentDescription = readerString(
+                                                "tts_preview_voice",
+                                                "Preview %1\$s",
+                                                voice.name,
+                                            ),
+                                        )
                                     }
                                 }
                             }
@@ -1636,7 +1765,7 @@ internal fun SharedMobileReaderTtsSettingsSheet(
             }
             Column {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Speech rate")
+                    Text(readerString("tts_speech_rate", "Speech rate"))
                     Text("${(rate * 100).roundToInt()}%", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Slider(value = rate, onValueChange = {
@@ -1646,7 +1775,7 @@ internal fun SharedMobileReaderTtsSettingsSheet(
             }
             Column {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Pitch")
+                    Text(readerString("tts_pitch", "Pitch"))
                     Text("${(pitch * 100).roundToInt()}%", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Slider(value = pitch, onValueChange = {
@@ -1658,7 +1787,7 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                 rate = 1f
                 pitch = 1f
                 tts.setSpeechParameters(rate, pitch)
-            }) { Text("Reset") }
+            }) { Text(readerString("action_reset", "Reset")) }
         }
     }
 }
@@ -1676,7 +1805,11 @@ internal fun SharedMobileEpubBookReplacementControls(
     val editingRule = editingRuleId?.let { id -> rules.firstOrNull { it.id == id } }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Book Word Replacements", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(
+            readerString("menu_book_word_replacements", "Book Word Replacements"),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+        )
         Text(
             "Replace visible text in this book only. Locations, bookmarks, and the original EPUB remain unchanged.",
             style = MaterialTheme.typography.bodySmall,
@@ -1685,7 +1818,7 @@ internal fun SharedMobileEpubBookReplacementControls(
         TextButton(onClick = { isAdding = true; editingRuleId = null }) {
             Icon(Icons.Default.Add, contentDescription = null)
             Spacer(Modifier.width(6.dp))
-            Text("Add rule")
+            Text(readerString("book_replacements_add_rule", "Add rule"))
         }
         if (isAdding || editingRule != null) {
             SharedMobileEpubBookReplacementEditor(
@@ -1701,13 +1834,23 @@ internal fun SharedMobileEpubBookReplacementControls(
             )
         }
         if (rules.isEmpty()) {
-            Text("No replacements for this book yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    readerString("tts_replacements_empty", "No replacements for this book yet."),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
         } else {
             rules.forEach { rule ->
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text("${rule.from} → ${rule.to.ifBlank { "(remove)" }}", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "${rule.from} → ${
+                                    rule.to.ifBlank {
+                                        readerString("tts_replacements_remove_marker", "(remove)")
+                                    }
+                                }",
+                                fontWeight = FontWeight.SemiBold,
+                            )
                             Text(
                                 buildList {
                                     add(if (rule.isRegex) "Regex" else "Plain text")
@@ -1728,10 +1871,12 @@ internal fun SharedMobileEpubBookReplacementControls(
                         )
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = { editingRuleId = rule.id; isAdding = false }) { Text("Edit") }
+                        TextButton(onClick = { editingRuleId = rule.id; isAdding = false }) {
+                Text(readerString("action_edit", "Edit"))
+            }
                         TextButton(onClick = {
                             onPreferencesChange(preferences.withFileRules(bookId, rules.filterNot { it.id == rule.id }))
-                        }) { Text("Delete") }
+                        }) { Text(readerString("action_delete", "Delete")) }
                     }
                     HorizontalDivider()
                 }
@@ -1760,20 +1905,22 @@ internal fun SharedMobileEpubBookReplacementEditor(
     Surface(shape = RoundedCornerShape(12.dp), tonalElevation = 2.dp) {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(if (seed == null) "New replacement" else "Edit replacement", fontWeight = FontWeight.SemiBold)
-            OutlinedTextField(from, { from = it }, label = { Text("Replace") }, isError = !validation.isValid, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(from, { from = it }, label = { Text(readerString("tts_replacements_label_replace", "Replace")) }, isError = !validation.isValid, modifier = Modifier.fillMaxWidth())
             validation.message?.takeIf { !validation.isValid }?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
-            OutlinedTextField(to, { to = it }, label = { Text("With") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(to, { to = it }, label = { Text(readerString("book_replacements_label_with", "With")) }, modifier = Modifier.fillMaxWidth())
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                FilterChip(enabled, { enabled = !enabled }, label = { Text("Enabled") })
-                FilterChip(isRegex, { isRegex = !isRegex }, label = { Text("Regex") })
-                FilterChip(wholeWord, { wholeWord = !wholeWord }, label = { Text("Whole word") })
-                FilterChip(matchCase, { matchCase = !matchCase }, label = { Text("Match case") })
+                FilterChip(enabled, { enabled = !enabled }, label = { Text(readerString("tts_replacements_chip_enabled", "Enabled")) })
+                FilterChip(isRegex, { isRegex = !isRegex }, label = { Text(readerString("tts_replacements_chip_regex", "Regex")) })
+                FilterChip(wholeWord, { wholeWord = !wholeWord }, label = { Text(readerString("tts_replacements_chip_whole_word", "Whole word")) })
+                FilterChip(matchCase, { matchCase = !matchCase }, label = { Text(readerString("tts_replacements_chip_match_case", "Match case")) })
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onCancel) { Text("Cancel") }
-                TextButton(enabled = validation.isValid, onClick = { onSave(draft) }) { Text("Save") }
+            TextButton(onClick = onCancel) { Text(readerString("action_cancel", "Cancel")) }
+            TextButton(enabled = validation.isValid, onClick = { onSave(draft) }) {
+                Text(readerString("action_save", "Save"))
+            }
             }
         }
     }

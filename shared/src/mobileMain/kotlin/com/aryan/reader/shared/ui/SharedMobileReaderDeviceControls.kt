@@ -53,28 +53,42 @@ internal fun SharedMobileReaderBrightnessSheet(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Brightness", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                TextButton(onClick = onDismiss) { Text("Done") }
+                Text(
+                readerString("tool_brightness", "Brightness"),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
+                TextButton(onClick = onDismiss) { Text(readerString("action_done", "Done")) }
             }
             HorizontalDivider()
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Column(Modifier.weight(1f)) {
-                    Text("Use system brightness", style = MaterialTheme.typography.titleMedium)
-                    Text("Follow your device brightness setting.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(readerString("reader_brightness_system", "Use system brightness"), style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        readerString(
+                            "reader_brightness_follow_system_desc",
+                            "Follow your device brightness setting.",
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 Switch(checked = brightness == null, onCheckedChange = { useSystem ->
                     onBrightnessChange(if (useSystem) null else customBrightness)
                 })
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Custom brightness", style = MaterialTheme.typography.titleMedium)
+                Text(readerString("reader_brightness_custom", "Custom brightness"), style = MaterialTheme.typography.titleMedium)
                 Text("${(customBrightness * 100f).roundToInt()}%", color = MaterialTheme.colorScheme.primary)
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 IconButton(
                     onClick = { onBrightnessChange(stepReaderBrightness(customBrightness, -1)) },
                     enabled = customBrightness > MinimumReaderCustomBrightness,
-                ) { Icon(Icons.Default.Remove, contentDescription = "Decrease brightness") }
+                ) { Icon(
+                    Icons.Default.Remove,
+                    contentDescription = readerString("reader_brightness_decrease", "Decrease brightness"),
+                ) }
                 ReaderMinimalSlider(
                     value = customBrightness,
                     onValueChange = { onBrightnessChange(normalizeReaderBrightness(it)) },
@@ -84,9 +98,19 @@ internal fun SharedMobileReaderBrightnessSheet(
                 IconButton(
                     onClick = { onBrightnessChange(stepReaderBrightness(customBrightness, 1)) },
                     enabled = customBrightness < 1f,
-                ) { Icon(Icons.Default.Add, contentDescription = "Increase brightness") }
+                ) { Icon(
+                    Icons.Default.Add,
+                    contentDescription = readerString("reader_brightness_increase", "Increase brightness"),
+                ) }
             }
-            Text("Changing this value switches from system brightness to a reader-only override.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                    readerString(
+                        "reader_brightness_override_hint",
+                        "Changing this value switches from system brightness to a reader-only override.",
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
         }
     }
 }
@@ -108,8 +132,19 @@ internal fun SharedMobileReaderScreenOrientationSheet(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text("Screen Orientation", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("Choose how the reader responds when you rotate your device.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                readerString("visual_options_screen_orientation", "Screen Orientation"),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                    readerString(
+                        "reader_orientation_hint",
+                        "Choose how the reader responds when you rotate your device.",
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ReaderScreenOrientationMode.entries.forEach { mode ->
                     FilterChip(

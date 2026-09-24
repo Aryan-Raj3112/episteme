@@ -423,6 +423,55 @@ fun ReaderSettings.isTwoPageSpreadEnabled(): Boolean {
     return readingMode == ReaderReadingMode.PAGINATED && pageSpreadMode == ReaderPageSpreadMode.TWO_PAGE
 }
 
+/**
+ * Android-parity spread chapter for the page info bar: the chapter owning the
+ * first book page of the current spread (even-aligned in two-page mode).
+ * Using the normalized spread start — not the drawer-selected TOC row — keeps
+ * the bar in sync when turning spreads, instead of lagging a spread behind.
+ */
+fun sharedPaginatedSpreadChapterIndex(
+    pages: List<ReaderPage>,
+    currentPageIndex: Int,
+    settings: ReaderSettings
+): Int? {
+    if (pages.isEmpty()) return null
+    val start = ReaderSpreadLayout.normalizePageIndex(currentPageIndex, pages.size, settings)
+    return pages.getOrNull(start)?.chapterIndex
+}
+
+/**
+ * Android-parity position label inside the spread's chapter.
+ * Single page returns "3"; a two-page spread with both pages in the same
+ * chapter returns "3-4"; a spread straddling a chapter boundary shows only the
+ * pages in the first page's chapter (e.g. "5/5" tail).
+ */
+fun sharedPaginatedSpreadPositionLabel(
+    pages: List<ReaderPage>,
+    currentPageIndex: Int,
+    settings: ReaderSettings
+): String? {
+    if (pages.isEmpty()) return null
+    val start = ReaderSpreadLayout.normalizePageIndex(currentPageIndex, pages.size, settings)
+    val firstPage = pages.getOrNull(start) ?: return null
+    val chapterIndex = firstPage.chapterIndex
+    val chapterPages = pages.filter { it.chapterIndex == chapterIndex }
+    if (chapterPages.isEmpty()) return null
+    val chapterStartPageIndex = chapterPages.minOf { it.pageIndex }
+    fun positionInChapter(pageIndex: Int): Int? {
+        val pos = pageIndex - chapterStartPageIndex + 1
+        return if (pos in 1..chapterPages.size) pos else null
+    }
+    val visibleInSpread = ReaderSpreadLayout.visiblePageIndices(start, pages.size, settings)
+        .mapNotNull(::positionInChapter)
+    if (visibleInSpread.isEmpty()) {
+        val fallback = positionInChapter(start) ?: return null
+        return "$fallback"
+    }
+    val first = visibleInSpread.first()
+    val last = visibleInSpread.last()
+    return if (visibleInSpread.size > 1 && first != last) "$first-$last" else "$first"
+}
+
 fun ReaderSettings.isRightToLeftPaginationEnabled(): Boolean {
     return readingMode == ReaderReadingMode.PAGINATED && rightToLeftPagination
 }

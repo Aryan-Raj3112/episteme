@@ -4,6 +4,7 @@ import android.graphics.RectF
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.AnnotatedString
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
@@ -65,6 +66,43 @@ class PdfiumAnnotationExporterTest {
         assertArrayEquals(floatArrayOf(0.1f, 0.2f, 0.3f, 0.4f), payload.inkPoints, 0.0001f)
         assertEquals("", payload.inkContents.single())
         assertEquals("ink-1", payload.inkNames.single())
+        val appearance = payload.inkAppearances.single()
+        assertTrue(appearance.startsWith("q\n"))
+        assertTrue(appearance.contains(" m"))
+        assertTrue(appearance.contains(" l"))
+        assertTrue(appearance.contains("S\n"))
+    }
+
+    @Test
+    fun `buildPayload exports single-point ink dots with zero-length appearance`() {
+        val payload = PdfiumAnnotationExporter.buildPayload(
+            inkAnnotations = mapOf(
+                0 to listOf(
+                    PdfAnnotation(
+                        type = AnnotationType.INK,
+                        inkType = InkType.PEN,
+                        pageIndex = 0,
+                        points = listOf(PdfPoint(0.25f, 0.75f)),
+                        color = Color(0xFFFF0000),
+                        strokeWidth = 0.0125f,
+                        id = "dot-1"
+                    )
+                )
+            ),
+            textBoxes = emptyList(),
+            highlights = emptyList()
+        )
+
+        assertArrayEquals(intArrayOf(0), payload.inkPageIndices)
+        assertArrayEquals(intArrayOf(1), payload.inkPointCounts)
+        assertArrayEquals(floatArrayOf(0.25f, 0.75f), payload.inkPoints, 0.0001f)
+        assertEquals("dot-1", payload.inkNames.single())
+        val appearance = payload.inkAppearances.single()
+        assertTrue(appearance.startsWith("q\n"))
+        assertTrue(appearance.contains(" m"))
+        assertTrue(appearance.contains(" l"))
+        assertTrue(appearance.contains("S\n"))
+        assertTrue(appearance.contains("1 J\n1 j\n"))
     }
 
     @Test
@@ -318,5 +356,15 @@ class PdfiumAnnotationExporterTest {
                 listOf(VirtualPage.PdfPage(0), VirtualPage.BlankPage("blank", 300, 400))
             )
         )
+    }
+
+    @Test
+    fun `withoutEdgePdfiumPageBreaks strips only leading and trailing form feeds`() = with(PdfiumAnnotationExporter) {
+        fun stripped(raw: String): String = AnnotatedString(raw).withoutEdgePdfiumPageBreaks().text
+        assertEquals("Body", stripped("Body"))
+        assertEquals("Body", stripped("${PAGE_BREAK_CHAR}Body${PAGE_BREAK_CHAR}"))
+        assertEquals("A${PAGE_BREAK_CHAR}B", stripped("A${PAGE_BREAK_CHAR}B"))
+        assertEquals("", stripped(PAGE_BREAK_CHAR.toString()))
+        assertEquals("", stripped(""))
     }
 }

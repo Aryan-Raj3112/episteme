@@ -23,14 +23,15 @@ class SharedPdfAnnotationExportMapperTest {
         val noneTool = ink.copy(id = "none", tool = PdfInkTool.NONE)
         val eraser = ink.copy(id = "eraser", tool = PdfInkTool.ERASER)
         val textTool = ink.copy(id = "text-tool", tool = PdfInkTool.TEXT)
-        val tooShort = ink.copy(id = "short", points = listOf(PdfPagePoint(0.1f, 0.2f)))
+        val singlePointDot = ink.copy(id = "short", points = listOf(PdfPagePoint(0.1f, 0.2f)))
 
-        val payload = SharedPdfAnnotationExportMapper.build(listOf(ink, noneTool, eraser, textTool, tooShort))
+        val payload = SharedPdfAnnotationExportMapper.build(listOf(ink, noneTool, eraser, textTool, singlePointDot))
 
         assertTrue(payload.hasPdfAnnotations)
-        assertEquals(listOf("ink-1"), payload.inkAnnotations.map { it.id })
-        assertEquals(PdfInkTool.PEN, payload.inkAnnotations.single().tool)
-        assertEquals("Check curve", payload.inkAnnotations.single().contents)
+        assertEquals(listOf("ink-1", "short"), payload.inkAnnotations.map { it.id })
+        assertEquals(PdfInkTool.PEN, payload.inkAnnotations.first().tool)
+        assertEquals("Check curve", payload.inkAnnotations.first().contents)
+        assertEquals(1, payload.inkAnnotations.last().points.size)
     }
 
     @Test

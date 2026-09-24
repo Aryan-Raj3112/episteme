@@ -40,6 +40,7 @@ import com.aryan.reader.shared.pdf.SharedPdfRichTextPaginationEngine
 import com.aryan.reader.shared.pdf.SharedPdfRichTextMapper
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfRichTextLog
+import com.aryan.reader.shared.pdf.SharedPdfRichLayoutDiag
 import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
 import com.aryan.reader.shared.pdf.RichParagraphUiState
 import com.aryan.reader.shared.pdf.SharedPdfRichListType
@@ -269,6 +270,8 @@ class RichTextController(
         // Route shared rich-text controller traces to logcat under the
         // single PdfRichCursor tag (cursor/list/alignment diagnosis).
         SharedPdfRichTextLog.forwarder = { message -> pdfRichCursorTrace("ctrl $message") }
+        // Dedicated tag for exit-edit collapse + alignment line-height bugs.
+        SharedPdfRichLayoutDiag.forwarder = { message -> pdfRichLayoutDiag(message) }
         scope.launch {
             repository.document.collect { document ->
                 document?.let(sharedDelegate::loadDocumentIfEmpty)
@@ -368,12 +371,21 @@ class RichTextController(
             "align set=$align activePage=${delegate.activePageIndex} mapped=$mapped " +
                 "globalAlign=${globalBefore.alignName()} pageLayouts=${delegate.pageLayouts.size}"
         )
+        pdfRichLayoutDiag(
+            "align.ui set=$align active=${delegate.activePageIndex} mapped=$mapped " +
+                "paraAlign=${globalBefore.alignName()} pageLayouts=${delegate.pageLayouts.size}"
+        )
         delegate.setRichParagraphAlignment(align)
         val freshGlobal = delegate.globalTextFieldValue
         val globalAfter = sharedRichParagraphUiState(freshGlobal.annotatedString, freshGlobal.selection)
         pdfRichCursorTrace(
             "align applied=$align activePage=${delegate.activePageIndex} globalSel=${freshGlobal.selection} " +
                 "globalAlign=${globalAfter.alignName()}"
+        )
+        pdfRichLayoutDiag(
+            "align.ui.applied=$align active=${delegate.activePageIndex} " +
+                "paraAlign=${globalAfter.alignName()} sel=${freshGlobal.selection} " +
+                "pageLayouts=${delegate.pageLayouts.size}"
         )
     }
 

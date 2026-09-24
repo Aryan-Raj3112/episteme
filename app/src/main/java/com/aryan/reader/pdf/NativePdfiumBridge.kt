@@ -63,6 +63,7 @@ object NativePdfiumBridge {
         inkPoints: FloatArray,
         inkNames: Array<String>,
         inkContents: Array<String>,
+        inkAppearances: Array<String>,
         textPageIndices: IntArray,
         textBounds: FloatArray,
         textColors: IntArray,

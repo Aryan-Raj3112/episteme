@@ -1846,6 +1846,7 @@ private fun PdfViewerScreenContent(
                 "selectedTextBoxId=${selectedTextBoxId ?: "none"} textLength=${newBox.text.length} " +
                 "textBoxEditMode=$isDrawingActive"
         )
+        pdfRichLayoutDiag("exit.path=textBoxInsertCreated id=${newBox.id}")
         richTextController?.clearSelection()
         showBars = false
     }
@@ -4097,6 +4098,7 @@ private fun PdfViewerScreenContent(
             }
             MobilePdfReaderBackAction.CLOSE_DRAWER -> coroutineScope.launch { drawerState.close() }
             MobilePdfReaderBackAction.STOP_RICH_TEXT_EDITING -> {
+                pdfRichLayoutDiag("exit.path=backGesture source=STOP_RICH_TEXT_EDITING")
                 richTextController?.clearSelection()
                 isEditMode = false
                 showBars = true
@@ -7796,6 +7798,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                             "selectedBefore=${selectedTextBoxId ?: "none"} textBoxEditMode=$isDrawingActive"
                                     )
                                     selectedTextBoxId = id
+                                    pdfRichLayoutDiag("exit.path=textBoxSelect path=vertical id=$id")
                                     richTextController?.clearSelection()
                                 },
                                 bottomContentPaddingPx = bottomScrollLimitPx,
@@ -8516,10 +8519,19 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
             val newEditMode = !isEditMode
             val currentActivePage = richTextController?.activePageIndex ?: -1
             Timber.tag("RichTextMigration").i("Edit Toggle: $isEditMode -> $newEditMode (ActivePage: $currentActivePage)")
+            pdfRichLayoutDiag(
+                "edit.toggle $isEditMode -> $newEditMode active=$currentActivePage " +
+                    "pageLayouts=${richTextController?.pageLayouts?.size ?: 0}"
+            )
 
             if (!newEditMode && richTextController != null) {
                 coroutineScope.launch {
+                    pdfRichLayoutDiag("edit.saveBegin active=$currentActivePage")
                     richTextController.saveImmediate()
+                    pdfRichLayoutDiag(
+                        "edit.saveEnd active=${richTextController.activePageIndex} " +
+                            "pageLayouts=${richTextController.pageLayouts.size}"
+                    )
                     withContext(Dispatchers.Main) {
                         keyboardController?.hide()
                     }
@@ -9143,10 +9155,19 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                 val newEditMode = !isEditMode
                 val currentActivePage = richTextController?.activePageIndex ?: -1
                 Timber.tag("RichTextMigration").i("Edit Toggle: $isEditMode -> $newEditMode (ActivePage: $currentActivePage)")
+                pdfRichLayoutDiag(
+                    "edit.toggle $isEditMode -> $newEditMode active=$currentActivePage " +
+                        "pageLayouts=${richTextController?.pageLayouts?.size ?: 0}"
+                )
 
                 if (!newEditMode && richTextController != null) {
                     coroutineScope.launch {
+                        pdfRichLayoutDiag("edit.saveBegin active=$currentActivePage")
                         richTextController.saveImmediate()
+                        pdfRichLayoutDiag(
+                            "edit.saveEnd active=${richTextController.activePageIndex} " +
+                                "pageLayouts=${richTextController.pageLayouts.size}"
+                        )
                         withContext(Dispatchers.Main) {
                             keyboardController?.hide()
                         }
@@ -9613,6 +9634,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                             }
                         },
                         onClose = {
+                            pdfRichLayoutDiag("exit.path=dockClose source=onClose")
                             richTextController?.clearSelection()
                             inkSelection = PdfInkSelection()
                             isEditMode = false
@@ -11314,6 +11336,7 @@ private fun PdfViewerPaginationPage(
                     "selectedBefore=${selectedTextBoxId ?: "none"} textBoxEditMode=$isDrawingActive"
             )
             selectedTextBoxId = id
+            pdfRichLayoutDiag("exit.path=textBoxSelect path=pagination id=$id")
             richTextController?.clearSelection()
         },
         draggingBoxId = paginationDraggingBoxId,

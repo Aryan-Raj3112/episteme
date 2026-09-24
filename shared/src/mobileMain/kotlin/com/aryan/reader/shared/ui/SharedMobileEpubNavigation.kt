@@ -97,15 +97,23 @@ internal fun SharedMobileEpubSearchOverlay(
     Column(modifier) {
         Surface(tonalElevation = 8.dp) {
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onDismiss) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close search") }
+                IconButton(onClick = onDismiss) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = readerString("content_desc_close_search", "Close search"),
+                    )
+                }
                 OutlinedTextField(
                     value = query,
                     onValueChange = onQueryChange,
-                    placeholder = { Text("Search in book") },
+                    placeholder = { Text(readerString("reader_search_hint", "Search in book")) },
                     leadingIcon = { Icon(Icons.Default.Search, null) },
                     trailingIcon = {
                         if (query.isNotEmpty()) IconButton(onClick = { onQueryChange("") }) {
-                            Icon(Icons.Default.Close, contentDescription = "Clear search")
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = readerString("reader_search_clear", "Clear search"),
+                            )
                         }
                     },
                     singleLine = true,
@@ -139,7 +147,7 @@ internal fun SharedMobileEpubSearchOverlay(
                         CircularProgressIndicator()
                     }
                     results.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No results found", style = MaterialTheme.typography.bodyLarge)
+                        Text(readerString("reader_search_no_results", "No results found"), style = MaterialTheme.typography.bodyLarge)
                     }
                     else -> Column {
                         Text(
@@ -176,9 +184,15 @@ internal fun SharedMobileEpubSearchOverlay(
 internal fun SharedMobileEpubSearchNavigation(current: Int, total: Int, onPrevious: () -> Unit, onNext: () -> Unit, modifier: Modifier = Modifier) {
     Surface(modifier = modifier, shape = RoundedCornerShape(24.dp), tonalElevation = 8.dp) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 6.dp)) {
-            IconButton(onClick = onPrevious, enabled = current > 0) { Icon(Icons.Default.ArrowDropUp, contentDescription = "Previous result") }
+            IconButton(onClick = onPrevious, enabled = current > 0) { Icon(
+                    Icons.Default.ArrowDropUp,
+                    contentDescription = readerString("reader_search_previous_result", "Previous result"),
+                ) }
             Text("${current + 1}/$total", style = MaterialTheme.typography.labelLarge)
-            IconButton(onClick = onNext, enabled = current < total - 1) { Icon(Icons.Default.ArrowDropDown, contentDescription = "Next result") }
+            IconButton(onClick = onNext, enabled = current < total - 1) { Icon(
+                    Icons.Default.ArrowDropDown,
+                    contentDescription = readerString("reader_search_next_result", "Next result"),
+                ) }
         }
     }
 }
@@ -202,19 +216,34 @@ internal fun SharedMobileEpubJumpHistoryBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TextButton(onClick = onBack, enabled = backLabel != null, modifier = Modifier.weight(1f)) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Jump back", modifier = Modifier.size(16.dp))
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = readerString("reader_jump_back", "Jump back"),
+                    modifier = Modifier.size(16.dp),
+                )
                 Spacer(Modifier.width(4.dp))
                 Text(backLabel.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             TextButton(onClick = onClear, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Default.Close, contentDescription = "Clear jump history", modifier = Modifier.size(16.dp))
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = readerString(
+                        "desktop_clear_jump_history",
+                        "Clear jump history",
+                    ),
+                    modifier = Modifier.size(16.dp),
+                )
                 Spacer(Modifier.width(4.dp))
-                Text("Clear", maxLines = 1)
+                Text(readerString("action_clear", "Clear"), maxLines = 1)
             }
             TextButton(onClick = onForward, enabled = forwardLabel != null, modifier = Modifier.weight(1f)) {
                 Text(forwardLabel.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.width(4.dp))
-                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Jump forward", modifier = Modifier.size(16.dp))
+                Icon(
+                        Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = readerString("reader_jump_forward", "Jump forward"),
+                        modifier = Modifier.size(16.dp),
+                    )
             }
         }
     }

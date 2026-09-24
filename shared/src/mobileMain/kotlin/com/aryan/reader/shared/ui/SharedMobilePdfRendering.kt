@@ -95,6 +95,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -165,6 +166,7 @@ import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfInkRenderer
 import com.aryan.reader.pdf.resolveEraserStrokeWidth
+import com.aryan.reader.shared.pdf.sharedPdfInkStrokeConsumesMove
 import com.aryan.reader.shared.pdf.sharedPdfIsInkDownAllowed
 import com.aryan.reader.shared.pdf.sharedPdfIsEraserOverride
 import com.aryan.reader.shared.sharedPdfStylusBarrelPressed
@@ -177,6 +179,7 @@ import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.RealisticPdfPageTurnAnimationSpec
 import com.aryan.reader.shared.pdf.pdfPaginatedPagePaperColor
 import com.aryan.reader.shared.pdf.shouldPlayRealisticPdfPageTurn
+import com.aryan.reader.shared.pdf.pdfPagerTurnStackOrder
 import com.aryan.reader.shared.pdf.sharedPdfSnapHighlighterPoint
 import com.aryan.reader.shared.pdf.pdfPaginationEdgeTarget
 import com.aryan.reader.shared.pdf.centeredPdfPageScrollOffset
@@ -321,6 +324,14 @@ internal fun SharedMobilePdfZoomViewport(
     content: @Composable (PdfZoomCamera) -> Unit
 ) {
     val latestCamera by rememberUpdatedState(camera)
+    // The tap/zoom handlers below are keyed on geometry, not on the callbacks, so
+    // they keep the lambdas captured at launch (Compose only restarts a
+    // pointerInput block when its keys change or the block comes from another call
+    // site). Reading the host's tap action through updated state is what Android
+    // does for every page tap callback (PdfPageComposable) and is what makes a
+    // settings toggle such as "Tap to Turn Pages" take effect on the next tap
+    // instead of only after the page slot is recreated.
+    val latestOnSingleTap by rememberUpdatedState(onSingleTap)
     var viewport by remember { mutableStateOf(IntSize.Zero) }
     val oneHandZoomDistancePx = with(LocalDensity.current) { 240.dp.toPx() }
     val scope = rememberCoroutineScope()
@@ -467,7 +478,7 @@ internal fun SharedMobilePdfZoomViewport(
                             }
                         }
                     } catch (_: PointerEventTimeoutCancellationException) {
-                        if (!firstUp.isConsumed) onSingleTap(firstDown.position)
+                        if (!firstUp.isConsumed) latestOnSingleTap(firstDown.position)
                         return@awaitEachGesture
                     }
                     val pivot = secondDown?.position ?: firstDown.position
@@ -736,6 +747,7 @@ internal fun SharedMobilePdfVerticalPages(
     onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onReadAloud: (Int, Int) -> Unit,
     onAiDefine: ((String) -> Unit)? = null,
+    onOpenPaletteManager: (() -> Unit)? = null,
     onClipboardError: ((String) -> Unit)? = null,
     userScrollEnabled: Boolean,
     isScrollLocked: Boolean,
@@ -811,7 +823,12 @@ internal fun SharedMobilePdfVerticalPages(
             pageHeightPx = pageHeight,
             pageFraction = navigationCenterFraction
         )
-        listState.animateScrollToItem(
+        // Android parity (PdfViewerScreen verticalReaderState.scrollToPage):
+        // vertical-scroll navigation is ALWAYS instant, for every navigation
+        // reason — page turns, TOC, search, slider, TTS and links all snap.
+        // Only pagination animates (see animatesPagination()). The previous
+        // animateScrollToItem made long jumps visibly scroll the whole way.
+        listState.scrollToItem(
             index = target,
             scrollOffset = centeredOffset
         )
@@ -921,6 +938,7 @@ internal fun SharedMobilePdfVerticalPages(
                         onHighlight = onHighlight,
                         onReadAloud = onReadAloud,
                         onAiDefine = onAiDefine,
+                        onOpenPaletteManager = onOpenPaletteManager,
                         onClipboardError = onClipboardError,
                         onCanvasSizeChanged = onCanvasSizeChanged,
                         onFinishInkStroke = onFinishInkStroke,
@@ -1088,6 +1106,7 @@ internal fun SharedMobilePdfPaginatedPages(
     onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onReadAloud: (Int, Int) -> Unit,
     onAiDefine: ((String) -> Unit)? = null,
+    onOpenPaletteManager: (() -> Unit)? = null,
     onClipboardError: ((String) -> Unit)? = null,
     userScrollEnabled: Boolean,
     isScrollLocked: Boolean,
@@ -1281,19 +1300,31 @@ internal fun SharedMobilePdfPaginatedPages(
                     }
                 )
         ) { pagerPage ->
-        val turnPageOffset =
-            if (realisticTurnActive) {
+        // Android reads the continuous pager offset in composition for every frame
+        // of a turn (`zIndex(-turnPageOffset)` plus a graphicsLayer lambda). Doing
+        // the same here re-runs this whole pager slot — page tiles, text layers,
+        // selection surfaces — once per animation frame, which is what makes the
+        // realistic tap turn stutter on iOS. The slot now reads the offset through
+        // a provider inside the layout/draw lambdas (no recomposition) and keeps
+        // only the draw-order bucket in composition; see pdfPagerTurnStackOrder.
+        val pageOffsetProvider = remember(pagerState, pagerPage) {
+            {
                 (pagerPage - pagerState.currentPage) - pagerState.currentPageOffsetFraction
-            } else {
-                0f
             }
+        }
+        val turnStackOrder by remember(pageOffsetProvider, realisticTurnActive) {
+            derivedStateOf {
+                if (realisticTurnActive) pdfPagerTurnStackOrder(pageOffsetProvider()) else 0f
+            }
+        }
         // Pager natural position: the curl's counter-translation cancels the pager's
         // own translation while |offset| < 1, exactly like the Android benchmark, and
         // at |offset| >= 1 the page rests off-screen like a HorizontalPager slot.
         val turnSlotModifier = if (realisticTurnActive) {
             Modifier
-                .zIndex(-turnPageOffset)
+                .zIndex(turnStackOrder)
                 .graphicsLayer {
+                    val turnPageOffset = pageOffsetProvider()
                     if (turnPageOffset <= 1f && turnPageOffset > -1f) {
                         translationX = -turnPageOffset * size.width
                     }
@@ -1304,14 +1335,14 @@ internal fun SharedMobilePdfPaginatedPages(
         val turnSheetModifier = if (realisticTurnActive) {
             Modifier
                 .graphicsLayer {
-                    if (turnPageOffset != 0f) {
+                    if (pageOffsetProvider() != 0f) {
                         shadowElevation = 10f
                         shape = RectangleShape
                         clip = false
                     }
                 }
                 .realisticPageCurl(
-                    pageOffsetProvider = { turnPageOffset },
+                    pageOffsetProvider = pageOffsetProvider,
                     touchYProvider = { pageTurnTouchY },
                     paperColor = pagePaperColor
                 )
@@ -1335,31 +1366,33 @@ internal fun SharedMobilePdfPaginatedPages(
             onSingleTap = { offset ->
                 val viewportWidthForTap = paginationViewportSize.width.toFloat()
                 val edge = viewportWidthForTap * 0.25f
+                // Android parity (PdfViewerScreen.onPaginationPreSingleTap): an edge
+                // tap turns pages only while the page is unzoomed (1.02 tolerance) or
+                // the scroll lock pins the camera, it counts as handled even at the
+                // first/last spread (so the chrome stays put), and single-step turns
+                // snap unless the realistic curl is playing.
+                val canTurnPagesByTap = tapToTurnPages && (zoomCamera.scale <= 1.02f || isScrollLocked)
                 fun turnPager(target: Int) {
+                    if (target == pagerState.currentPage) return
                     onManualPageTurnStarted()
                     scope.launch {
                         if (shouldPlayRealisticPdfPageTurn(latestRealisticTurnActive, pagerState.currentPage, target)) {
                             pagerState.animateScrollToPage(target, animationSpec = RealisticPdfPageTurnAnimationSpec)
                         } else {
-                            pagerState.animateScrollToPage(target)
+                            pagerState.scrollToPage(target)
                         }
                     }
                 }
+                fun edgeTarget(tappedLeftEdge: Boolean): Int? = pdfPaginationEdgeTarget(
+                    currentPage = pagerPage,
+                    lastPage = spreadStarts.lastIndex,
+                    tappedLeftEdge = tappedLeftEdge,
+                    rightToLeft = rightToLeftPagination,
+                )
                 when {
-                    tapToTurnPages && !zoomCamera.isZoomed() && offset.x < edge ->
-                        pdfPaginationEdgeTarget(
-                            currentPage = pagerPage,
-                            lastPage = spreadStarts.lastIndex,
-                            tappedLeftEdge = true,
-                            rightToLeft = rightToLeftPagination,
-                        )?.let(::turnPager)
-                    tapToTurnPages && !zoomCamera.isZoomed() && offset.x > viewportWidthForTap - edge ->
-                        pdfPaginationEdgeTarget(
-                            currentPage = pagerPage,
-                            lastPage = spreadStarts.lastIndex,
-                            tappedLeftEdge = false,
-                            rightToLeft = rightToLeftPagination,
-                        )?.let(::turnPager)
+                    !canTurnPagesByTap -> onToggleChrome()
+                    offset.x < edge -> turnPager(edgeTarget(tappedLeftEdge = true) ?: pagerPage)
+                    offset.x > viewportWidthForTap - edge -> turnPager(edgeTarget(tappedLeftEdge = false) ?: pagerPage)
                     else -> onToggleChrome()
                 }
             },
@@ -1462,6 +1495,7 @@ internal fun SharedMobilePdfPaginatedPages(
                                     onHighlight = onHighlight,
                                     onReadAloud = onReadAloud,
                                     onAiDefine = onAiDefine,
+                                    onOpenPaletteManager = onOpenPaletteManager,
                                     onClipboardError = onClipboardError,
                                     onCanvasSizeChanged = onCanvasSizeChanged,
                                     onFinishInkStroke = onFinishInkStroke,
@@ -1710,171 +1744,6 @@ internal fun SharedMobilePdfJumpHistoryBar(
                 Text(history.forwardPage?.let { "Page ${it + 1}" }.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.width(4.dp))
                 Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next jump", modifier = Modifier.size(16.dp))
-            }
-        }
-    }
-}
-
-@Composable
-internal fun SharedMobilePdfAutoScrollControls(
-    isPlaying: Boolean,
-    isTemporarilyPaused: Boolean,
-    profile: PdfAutoScrollProfile,
-    isLocalMode: Boolean,
-    isMusicianMode: Boolean,
-    useSlider: Boolean,
-    isCollapsed: Boolean,
-    onPlayPause: () -> Unit,
-    onProfileChange: (PdfAutoScrollProfile) -> Unit,
-    onLocalModeChange: (Boolean) -> Unit,
-    onMusicianModeChange: (Boolean) -> Unit,
-    onUseSliderChange: (Boolean) -> Unit,
-    onCollapsedChange: (Boolean) -> Unit,
-    onScrollToTop: () -> Unit,
-    onClose: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val sanitized = profile.sanitized()
-    var showModeMenu by remember { mutableStateOf(false) }
-    var showMinMenu by remember { mutableStateOf(false) }
-    var showMaxMenu by remember { mutableStateOf(false) }
-    val speedOptions = listOf(0.1f, 0.5f, 1f, 1.5f, 2f, 3f, 4f, 5f, 6f, 7f, 8f, 9f, 10f)
-    Surface(
-        modifier = modifier.widthIn(max = 400.dp),
-        shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.6f),
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)),
-    ) {
-        if (isCollapsed) {
-            Row(
-                modifier = Modifier.padding(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                IconButton(onClick = { onCollapsedChange(false) }, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.KeyboardArrowLeft, contentDescription = "Expand auto scroll")
-                }
-                Box(contentAlignment = Alignment.Center) {
-                    FilledIconButton(onClick = onPlayPause, modifier = Modifier.size(36.dp)) {
-                        Icon(
-                            if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (isPlaying) "Pause auto scroll" else "Resume auto scroll",
-                        )
-                    }
-                    if (isPlaying && isTemporarilyPaused) {
-                        CircularProgressIndicator(Modifier.size(34.dp), strokeWidth = 2.dp)
-                    }
-                }
-            }
-        } else {
-            Column(Modifier.padding(16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box {
-                        TextButton(onClick = { showModeMenu = true }) {
-                            Text(if (isLocalMode) "Local speed" else "Global speed")
-                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Select speed profile")
-                        }
-                        DropdownMenu(expanded = showModeMenu, onDismissRequest = { showModeMenu = false }) {
-                            DropdownMenuItem(
-                                text = { Column { Text("Global speed"); Text("Applies to all files", style = MaterialTheme.typography.bodySmall) } },
-                                onClick = { onLocalModeChange(false); showModeMenu = false },
-                                trailingIcon = { if (!isLocalMode) Icon(Icons.Default.Check, null) },
-                            )
-                            HorizontalDivider()
-                            DropdownMenuItem(
-                                text = { Column { Text("Local speed"); Text("Saved for this file", style = MaterialTheme.typography.bodySmall) } },
-                                onClick = { onLocalModeChange(true); showModeMenu = false },
-                                trailingIcon = { if (isLocalMode) Icon(Icons.Default.Check, null) },
-                            )
-                        }
-                    }
-                    Spacer(Modifier.weight(1f))
-                    IconButton(onClick = onScrollToTop, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Default.ArrowUpward, contentDescription = "Scroll to top", modifier = Modifier.size(18.dp))
-                    }
-                    IconButton(onClick = { onMusicianModeChange(!isMusicianMode) }, modifier = Modifier.size(32.dp)) {
-                        Icon(
-                            SharedReaderIcons.MusicNote,
-                            contentDescription = if (isMusicianMode) "Disable musician mode" else "Enable musician mode",
-                            tint = if (isMusicianMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
-                    IconButton(onClick = { onUseSliderChange(!useSlider) }, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Default.SwapHoriz, contentDescription = "Swap speed controls", modifier = Modifier.size(18.dp))
-                    }
-                    IconButton(onClick = { onCollapsedChange(true) }, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Default.KeyboardArrowRight, contentDescription = "Collapse auto scroll", modifier = Modifier.size(18.dp))
-                    }
-                    IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Default.Close, contentDescription = "Stop auto scroll", tint = MaterialTheme.colorScheme.error)
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Box(contentAlignment = Alignment.Center) {
-                        FilledIconButton(onClick = onPlayPause, modifier = Modifier.size(48.dp)) {
-                            Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (isPlaying) "Pause auto scroll" else "Resume auto scroll")
-                        }
-                        if (isPlaying && isTemporarilyPaused) {
-                            CircularProgressIndicator(Modifier.size(48.dp), strokeWidth = 3.dp)
-                        }
-                    }
-                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Box {
-                                TextButton(onClick = { showMinMenu = true }) { Text("Min ${sanitized.minSpeed}×") }
-                                DropdownMenu(expanded = showMinMenu, onDismissRequest = { showMinMenu = false }) {
-                                    speedOptions.forEach { value ->
-                                        DropdownMenuItem(
-                                            text = { Text("${value}×") },
-                                            onClick = { onProfileChange(sanitized.withMinSpeed(value)); showMinMenu = false },
-                                        )
-                                    }
-                                }
-                            }
-                            Box {
-                                TextButton(onClick = { showMaxMenu = true }) { Text("Max ${sanitized.maxSpeed}×") }
-                                DropdownMenu(expanded = showMaxMenu, onDismissRequest = { showMaxMenu = false }) {
-                                    speedOptions.forEach { value ->
-                                        DropdownMenuItem(
-                                            text = { Text("${value}×") },
-                                            onClick = { onProfileChange(sanitized.withMaxSpeed(value)); showMaxMenu = false },
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                        if (useSlider) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("${sanitized.speed}×", modifier = Modifier.width(48.dp))
-                                Slider(
-                                    value = sanitized.speed,
-                                    onValueChange = { onProfileChange(sanitized.copy(speed = (it * 10f).roundToInt() / 10f).sanitized()) },
-                                    valueRange = sanitized.minSpeed..sanitized.maxSpeed.coerceAtLeast(sanitized.minSpeed + 0.1f),
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
-                        } else {
-                            Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)) {
-                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                                    IconButton(onClick = {
-                                        onProfileChange(sanitized.copy(speed = (sanitized.speed - 0.1f).coerceAtLeast(sanitized.minSpeed)))
-                                    }) { Icon(Icons.Default.Remove, "Slower") }
-                                    Text("${sanitized.speed}×", style = MaterialTheme.typography.titleMedium)
-                                    IconButton(onClick = {
-                                        onProfileChange(sanitized.copy(speed = (sanitized.speed + 0.1f).coerceAtMost(sanitized.maxSpeed)))
-                                    }) { Icon(Icons.Default.Add, "Faster") }
-                                }
-                            }
-                        }
-                    }
-                }
             }
         }
     }
@@ -2248,6 +2117,7 @@ internal fun SharedMobilePdfPageSurface(
     onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onReadAloud: (Int, Int) -> Unit,
     onAiDefine: ((String) -> Unit)? = null,
+    onOpenPaletteManager: (() -> Unit)? = null,
     onClipboardError: ((String) -> Unit)? = null,
     onCanvasSizeChanged: (IntSize) -> Unit,
     onFinishInkStroke: (Int, Boolean) -> Unit,
@@ -2294,6 +2164,13 @@ internal fun SharedMobilePdfPageSurface(
     val latestIsActiveStrokeOwner by rememberUpdatedState(isActiveStrokeOwner)
     val latestOnInkStrokeEnd by rememberUpdatedState(onInkStrokeEnd)
     val latestSelectionHost by rememberUpdatedState(selectionHost)
+    // Android parity (PdfVerticalReader globalDrawingModifier): the stroke
+    // gesture is NOT re-keyed when the page's pixel size changes. Android keys
+    // its drawing modifier on the document layout, so a re-measure (tile
+    // re-render, zoom settle, inset change) never cancels an in-flight stroke
+    // and wipes it. Read the current size through updated-state instead of
+    // capturing it, so the geometry always matches the canvas being drawn on.
+    val latestCanvasSize by rememberUpdatedState(localCanvasSize)
     // Android parity (scaledTouchSlop ≈ 8dp): floor the SELECT slop so taps
     // can't degrade into phantom moves on platforms reporting a tiny slop
     // (tap-to-select parity with `detectPdfInkSelectionGestures`).
@@ -2309,6 +2186,16 @@ internal fun SharedMobilePdfPageSurface(
         if (selectionPreviewById.isEmpty()) annotations
         else annotations.map { selectionPreviewById[it.id] ?: it }
     }
+    // Fresh annotation reads for the gesture blocks below. Those
+    // pointerInput blocks are keyed on tool/canvas/page (NOT on data) so an
+    // in-flight gesture survives recompositions — but that also freezes the
+    // lambdas captured at launch. Without updated-state indirection the
+    // SELECT hit-tests keep reading the launch-era list after draws,
+    // deletes, or undos: deleted ids stay hittable (a tap selects a ghost,
+    // snapshots come back empty, no box/bar renders) and new strokes stay
+    // unhittable until something restarts the block.
+    val latestEffectiveAnnotations by rememberUpdatedState(effectiveAnnotations)
+    val latestBaseAnnotations by rememberUpdatedState(annotations)
     var visiblePageBounds by remember(pageIndex) { mutableStateOf<PdfPageBounds?>(null) }
     val textSession = rememberPdfTextPageSession(book, pageIndex, pdfPassword)
     var allTextHighlightBounds by remember(pageIndex) { mutableStateOf<List<PdfPageBounds>>(emptyList()) }
@@ -2410,7 +2297,7 @@ internal fun SharedMobilePdfPageSurface(
                 // SELECT never draws (benchmark: `canDraw` excludes SELECT);
                 // its own gesture block below owns the finger instead.
                 if (selectedTool == PdfInkTool.NONE || selectedTool == PdfInkTool.SELECT) Modifier
-                else Modifier.pointerInput(selectedTool, localCanvasSize, pageIndex, isStylusOnlyMode) {
+                else Modifier.pointerInput(selectedTool, pageIndex, isStylusOnlyMode) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         if (!sharedPdfIsInkDownAllowed(isStylusOnlyMode, down.type)) {
@@ -2428,26 +2315,29 @@ internal fun SharedMobilePdfPageSurface(
                             }
                         }
                         var eraserOverride = sharedPdfIsEraserOverride(down.type, false)
-                        val touchSlop = viewConfiguration.touchSlop
-                        var dragStarted = false
+                        var strokeEraser = eraserOverride || selectedTool == PdfInkTool.ERASER
+                        val isTextTool = selectedTool == PdfInkTool.TEXT
                         var committed = false
-                        var dragSum = Offset.Zero
-                        var lastPoint: Offset? = null
                         var lastEraserPoint: PdfPagePoint? = null
+                        fun hasCanvas(): Boolean =
+                            latestCanvasSize.width > 0 && latestCanvasSize.height > 0
                         // Android parity (PdfViewerScreen onDrawStartStable /
                         // onDrawStable): the eraser deletes ink live during the
                         // drag via segment hit-testing, tracking the previous
                         // point exactly like the benchmark's lastEraserPoint.
                         fun eraseAtFinger(position: Offset, previous: PdfPagePoint?) {
-                            if (localCanvasSize.width <= 0 || localCanvasSize.height <= 0) return
-                            val point = position.toSharedMobilePdfPoint(localCanvasSize)
+                            if (!hasCanvas()) return
+                            val point = position.toSharedMobilePdfPoint(latestCanvasSize)
                             val width = resolveEraserStrokeWidth(eraserOverride, strokeWidth, eraserStrokeWidth)
-                            val hits = annotations.filter { it.pageIndex == pageIndex && it.kind == PdfAnnotationKind.INK }
+                            // Fresh list (same stale-capture trap as the SELECT
+                            // providers above): the eraser must miss deleted
+                            // strokes and hit newly drawn ones.
+                            val hits = latestBaseAnnotations.filter { it.pageIndex == pageIndex && it.kind == PdfAnnotationKind.INK }
                                 .filter {
                                     SharedPdfInkRenderer.isAnnotationHit(
                                         it,
                                         point,
-                                        localCanvasSize.width.toFloat(),
+                                        latestCanvasSize.width.toFloat(),
                                         pageRender.aspectRatio,
                                         width,
                                         previous
@@ -2458,125 +2348,129 @@ internal fun SharedMobilePdfPageSurface(
                             if (hits.isNotEmpty()) latestOnEraseAnnotations(pageIndex, hits)
                             lastEraserPoint = point
                         }
-                        if (eraserOverride && localCanvasSize.width > 0 && localCanvasSize.height > 0) {
-                            eraserOverridePosition = down.position
-                            isEraserOverrideActive = true
+                        // Android parity (PdfVerticalReader globalDrawingModifier):
+                        // the stroke starts on the pointer DOWN. Android runs
+                        // `onDrawStart` immediately and consumes the down; it
+                        // never waits for the touch slop. The old slop gate both
+                        // delayed the first ink and started the stroke from the
+                        // previous event position, which is why iOS strokes could
+                        // land away from the touch and short flicks drew nothing.
+                        if (isTextTool) {
+                            // Android never installs its drawing gesture for the
+                            // text tool (the text layer owns the touch). Keep the
+                            // popup-dismissal parity without drawing or consuming.
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id }
+                                    ?: return@awaitEachGesture
+                                if (change.changedToUp()) {
+                                    if (latestOnInkStrokeStart(pageIndex)) clearOwnedStroke()
+                                    return@awaitEachGesture
+                                }
+                            }
                         }
+                        // Android parity (onDrawStartStable): a stroke that begins
+                        // while the tool-settings popup is open only dismisses the
+                        // popup — the touch draws nothing.
+                        if (latestOnInkStrokeStart(pageIndex)) {
+                            clearOwnedStroke()
+                            return@awaitEachGesture
+                        }
+                        if (strokeEraser) {
+                            if (hasCanvas()) {
+                                eraserOverridePosition = down.position
+                                isEraserOverrideActive = true
+                                eraseAtFinger(down.position, null)
+                            }
+                        } else {
+                            clearOwnedStroke()
+                            if (hasCanvas()) {
+                                (activeStroke as? MutableList<PdfPagePoint>)?.add(
+                                    down.position.toSharedMobilePdfPoint(latestCanvasSize)
+                                )
+                                if (eraserOverride) eraserOverridePosition = down.position
+                            }
+                        }
+                        // Android parity: the down is consumed so no parent
+                        // scroll/pager gesture can steal a stroke that has
+                        // already started drawing.
+                        down.consume()
                         try {
                             while (true) {
                                 val event = awaitPointerEvent()
                                 // Android exposes the stylus barrel button on
                                 // the pointer event, while iOS exposes the
                                 // equivalent Pencil shortcut as shared state.
-                                // Check the first in-scope event without adding
-                                // a second await before the gesture starts.
                                 if (!eraserOverride && down.type == PointerType.Stylus &&
                                     sharedPdfStylusBarrelPressed(event)
                                 ) {
                                     eraserOverride = true
-                                    if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
+                                    strokeEraser = true
+                                    if (hasCanvas()) {
                                         eraserOverridePosition = down.position
                                         isEraserOverrideActive = true
                                     }
                                 }
                                 if (event.changes.size > 1) {
+                                    // Android parity (PdfVerticalReader): a second
+                                    // pointer cancels the stroke (onDrawCancel
+                                    // discards it), so a resting palm or a second
+                                    // finger behaves the same on both platforms.
                                     clearOwnedStroke()
                                     return@awaitEachGesture
                                 }
                                 val change = event.changes.firstOrNull { it.id == down.id } ?: return@awaitEachGesture
                                 if (change.changedToUp()) {
                                     change.consume()
-                                    if (dragStarted) {
-                                        onFinishInkStroke(pageIndex, eraserOverride)
-                                        committed = true
-                                    } else {
-                                        // Android parity (PdfPageComposable tap
-                                        // -> onDrawStart -> onDrawEnd): a tap
-                                        // without drag dismisses the
-                                        // tool-settings popup like the
-                                        // drag-start path does. Taps previously
-                                        // fell through here without notifying,
-                                        // so the popup stayed open on iOS.
-                                        latestOnInkStrokeStart(pageIndex)
-                                        clearOwnedStroke()
-                                    }
+                                    // Android parity (PdfPageComposable tap ->
+                                    // onDrawStart -> onDrawEnd): the stroke list
+                                    // already holds the down point, so a plain tap
+                                    // commits a single-point ink dot here.
+                                    onFinishInkStroke(pageIndex, eraserOverride)
+                                    committed = true
                                     return@awaitEachGesture
                                 }
-                                if (change.isConsumed) continue
-                                if (!dragStarted) {
-                                    if (change.positionChanged()) {
-                                        dragSum += change.positionChange()
-                                        if (dragSum.getDistance() > touchSlop) {
-                                            dragStarted = true
-                                            // Android parity: starting a stroke
-                                            // dismisses the tool-settings popup
-                                            // and that first touch is swallowed
-                                            // (no draw/erase), matching
-                                            // onDrawStartStable's
-                                            // `if (showToolSettings)` branch.
-                                            if (latestOnInkStrokeStart(pageIndex)) {
-                                                clearOwnedStroke()
-                                                return@awaitEachGesture
-                                            }
-                                            val strokeEraser = eraserOverride || selectedTool == PdfInkTool.ERASER
-                                            if (strokeEraser) {
-                                                if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
-                                                    val startPoint = lastPoint ?: change.position
-                                                    eraseAtFinger(startPoint, null)
-                                                    eraserOverridePosition = startPoint
-                                                }
-                                                change.consume()
-                                            } else {
-                                                clearOwnedStroke()
-                                                if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
-                                                    val startPoint = lastPoint ?: change.position
-                                                    (activeStroke as? MutableList<PdfPagePoint>)?.add(startPoint.toSharedMobilePdfPoint(localCanvasSize))
-                                                    if (eraserOverride) eraserOverridePosition = startPoint
-                                                }
-                                                change.consume()
-                                            }
-                                        }
-                                    }
-                                    lastPoint = change.position
-                                } else {
-                                    // Ownership is only lost through an external
-                                    // reset (tool switch, minimized dock, page
-                                    // turn): stop feeding a stroke that no longer
-                                    // previews or commits.
-                                    if (!latestIsActiveStrokeOwner) {
-                                        return@awaitEachGesture
-                                    }
-                                    val strokeEraser = eraserOverride || selectedTool == PdfInkTool.ERASER
-                                    if (strokeEraser) {
-                                        if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
-                                            eraseAtFinger(change.position, lastEraserPoint)
-                                            eraserOverridePosition = change.position
-                                        }
-                                        change.consume()
-                                    } else {
-                                        if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
-                                            val mutableStroke = activeStroke as? MutableList<PdfPagePoint>
-                                            if (mutableStroke != null) {
-                                                val point = change.position.toSharedMobilePdfPoint(localCanvasSize)
-                                                val snapped = if (
-                                                    highlighterSnapEnabled && selectedTool.isDesktopHighlighter &&
-                                                    !eraserOverride
-                                                ) {
-                                                    sharedPdfSnapHighlighterPoint(
-                                                        pageAspectRatio = pageRender.aspectRatio,
-                                                        currentPoint = point,
-                                                        startPoint = mutableStroke.firstOrNull(),
-                                                    )
-                                                } else {
-                                                    point
-                                                }
-                                                mutableStroke.add(snapped)
-                                            }
-                                            if (eraserOverride) eraserOverridePosition = change.position
-                                        }
-                                        change.consume()
-                                    }
+                                if (!sharedPdfInkStrokeConsumesMove(change.pressed, change.positionChanged())) continue
+                                // Android parity (onDrawStable): every movement
+                                // feeds the in-flight stroke. Android never skips
+                                // a change because something upstream consumed it,
+                                // and neither do we — gating on isConsumed was the
+                                // main reason iOS strokes stopped mid-line when a
+                                // parent gesture claimed the pointer.
+                                //
+                                // Ownership is only lost through an external reset
+                                // (tool switch, minimized dock, page turn): stop
+                                // feeding a stroke that no longer previews or
+                                // commits.
+                                if (!latestIsActiveStrokeOwner) {
+                                    return@awaitEachGesture
                                 }
+                                if (strokeEraser) {
+                                    if (hasCanvas()) {
+                                        eraseAtFinger(change.position, lastEraserPoint)
+                                        eraserOverridePosition = change.position
+                                    }
+                                } else if (hasCanvas()) {
+                                    val mutableStroke = activeStroke as? MutableList<PdfPagePoint>
+                                    if (mutableStroke != null) {
+                                        val point = change.position.toSharedMobilePdfPoint(latestCanvasSize)
+                                        val snapped = if (
+                                            highlighterSnapEnabled && selectedTool.isDesktopHighlighter &&
+                                            !eraserOverride
+                                        ) {
+                                            sharedPdfSnapHighlighterPoint(
+                                                pageAspectRatio = pageRender.aspectRatio,
+                                                currentPoint = point,
+                                                startPoint = mutableStroke.firstOrNull(),
+                                            )
+                                        } else {
+                                            point
+                                        }
+                                        mutableStroke.add(snapped)
+                                    }
+                                    if (eraserOverride) eraserOverridePosition = change.position
+                                }
+                                change.consume()
                             }
                         } finally {
                             if (!committed) {
@@ -2633,8 +2527,8 @@ internal fun SharedMobilePdfPageSurface(
                         overlayOwnsPageProvider = { latestSelectionHost?.overlayOwnedPageIndex == pageIndex },
                         annotationsProvider = {                            val host = latestSelectionHost
                             val preview = host?.previewById.orEmpty()
-                            val base = if (preview.isEmpty()) effectiveAnnotations
-                            else annotations.map { preview[it.id] ?: it }
+                            val base = if (preview.isEmpty()) latestEffectiveAnnotations
+                            else latestBaseAnnotations.map { preview[it.id] ?: it }
                             base.filter { it.pageIndex == pageIndex && it.kind == PdfAnnotationKind.INK }
                         },
                         selectionBoundsProvider = {
@@ -2644,8 +2538,8 @@ internal fun SharedMobilePdfPageSurface(
                                 null
                             } else {
                                 val preview = host.previewById
-                                val base = if (preview.isEmpty()) effectiveAnnotations
-                                else annotations.map { preview[it.id] ?: it }
+                                val base = if (preview.isEmpty()) latestEffectiveAnnotations
+                                else latestBaseAnnotations.map { preview[it.id] ?: it }
                                 sharedPdfSelectionUnionBounds(
                                     base.filter { it.pageIndex == pageIndex && it.id in sel.selectedIds }
                                 )

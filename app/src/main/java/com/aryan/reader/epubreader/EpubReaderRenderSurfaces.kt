@@ -723,10 +723,30 @@ internal fun EpubReaderRenderSurfaces(
                                         // class + background/text into the initial HTML; the runtime
                                         // call reuses #readerThemeStyle by id and upgrades it (links,
                                         // texture, contrast) without a repaint flash.
-                                        val initialThemeClass = if (isDarkTheme) "dark-theme" else "light-theme"
-                                        val initialBgHex = String.format("#%06X", (0xFFFFFF and effectiveBg.toArgb()))
-                                        val initialTextHex = String.format("#%06X", (0xFFFFFF and effectiveText.toArgb()))
-                                        val initialHtml = """
+                                        // Chapter-scale string work (template interpolation
+                                        // plus trimIndent copies of the whole chapter) must not
+                                        // rerun on every recomposition: a 60+ KB transient per
+                                        // recompose tips small heaps (see
+                                        // docs/crashlytics-triage.md#37). Memoize on exactly the
+                                        // inputs the template reads; output is identical.
+                                        val initialHtml = remember(
+                                            initialContentToLoad,
+                                            chapterHead,
+                                            isDarkTheme,
+                                            effectiveBg,
+                                            effectiveText,
+                                        ) {
+                                            val initialThemeClass =
+                                                if (isDarkTheme) "dark-theme" else "light-theme"
+                                            val initialBgHex = String.format(
+                                                "#%06X",
+                                                (0xFFFFFF and effectiveBg.toArgb())
+                                            )
+                                            val initialTextHex = String.format(
+                                                "#%06X",
+                                                (0xFFFFFF and effectiveText.toArgb())
+                                            )
+                                            """
                                             <!DOCTYPE html>
                                             <html class="$initialThemeClass">
                                             <head>
@@ -745,6 +765,7 @@ internal fun EpubReaderRenderSurfaces(
                                             </body>
                                             </html>
                                         """.trimIndent()
+                                        }
 
                                         // Same main-thread hazard as the book-level CSS above
                                         // (font-dir stats + stylesheet parse in composition):

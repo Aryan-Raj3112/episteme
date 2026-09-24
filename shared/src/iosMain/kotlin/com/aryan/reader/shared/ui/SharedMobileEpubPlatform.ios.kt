@@ -34,6 +34,7 @@ import com.aryan.reader.shared.ios.loadIosEpubBook
 import com.aryan.reader.shared.ios.IosEpubResourceStore
 import com.aryan.reader.shared.ios.IosTtsAudioInterruption
 import com.aryan.reader.shared.ios.IosTtsAudioInterruptionMonitor
+import com.aryan.reader.shared.ios.IosTtsAudioSessionTeardown
 import com.aryan.reader.shared.opds.SharedOpdsStreamRequest
 import com.aryan.reader.shared.reader.SharedEpubResourceScheme
 import com.aryan.reader.shared.reader.parseSharedEpubResourceUrl
@@ -82,7 +83,12 @@ import platform.UIKit.UIEdgeInsetsMake
 import platform.UIKit.UIScrollViewContentInsetAdjustmentBehavior
 import platform.UIKit.UIActivityViewController
 import platform.UIKit.UIModalPresentationFullScreen
+import platform.UIKit.UIModalPresentationPageSheet
 import platform.UIKit.UIReferenceLibraryViewController
+import platform.UIKit.UIWindow
+import platform.UIKit.UIWindowLevelNormal
+import platform.UIKit.UIWindowScene
+import platform.UIKit.UIViewController
 import platform.WebKit.WKScriptMessage
 import platform.WebKit.WKScriptMessageHandlerProtocol
 import platform.WebKit.WKNavigation
@@ -201,9 +207,11 @@ internal actual fun SharedMobileEpubWebView(
 }
 
 internal actual fun openSharedMobileEpubExternalLink(url: String): Boolean {
-    val normalized = normalizeReaderHref(url)
-    val target = NSURL.URLWithString(normalized) ?: return false
-    return UIApplication.sharedApplication.openURL(target)
+    // Delegate to the hardened opener (canOpenURL guard + modern
+    // openURL(_:options:completionHandler:) API): the deprecated
+    // UIApplication.openURL(Bool) variant silently no-ops on recent iOS,
+    // which made Translate/Search web lookups appear dead.
+    return openSharedMobileExternalUrl(url)
 }
 
 // iPhone corner radii (~13-16pt) curve into the benchmark 16.dp side padding,
@@ -223,11 +231,53 @@ internal actual val sharedMobileEpubPageInfoAlwaysApplyBottomSafeInset: Boolean 
 internal actual val sharedMobileEpubPageInfoMatchesReaderBackground: Boolean = true
 
 internal object IosReaderLookupServices {
-    var dictionary: ReaderExternalLookupService = ReaderExternalLookupService.SYSTEM
-    var translate: ReaderExternalLookupService = ReaderExternalLookupService.GOOGLE_TRANSLATE
-    var search: ReaderExternalLookupService = ReaderExternalLookupService.GOOGLE
+    // Startup defaults; the host overrides these from NSUserDefaults in
+    // loadIosReaderLookupServices. Android parity: dictionary defaults to the
+    // in-app Smart AI, translate/search to the app chooser / Google.
+    var dictionary: ReaderExternalLookupService = ReaderExternalLookupService.AI
+    var translate: ReaderExternalLookupService = ReaderExternalLookupService.ANY_APP
+    var search: ReaderExternalLookupService = ReaderExternalLookupService.ANY_APP
 }
 
+/**
+ * Android benchmark: `UIApplication.keyWindow` is deprecated and nil with scene
+ * delegates, so resolve the top-most presented controller from a connected scene
+ * instead. Without this the Define panel silently no-ops. Mirrors the hardened
+ * window/presenter resolution in ReaderIosApp (topmostIosPresenter): skip hidden
+ * or detached windows, then walk to the topmost presented controller —
+ * presenting on a controller that is already presenting silently does nothing.
+ */
+internal fun iosLookupPresenter(): UIViewController? {
+    val application = UIApplication.sharedApplication
+    val fromScenes = application.connectedScenes
+        .filterIsInstance<UIWindowScene>()
+        .flatMap { scene -> scene.windows.filterIsInstance<UIWindow>() }
+    val windows = if (fromScenes.isNotEmpty()) fromScenes else application.windows.filterIsInstance<UIWindow>()
+    val attachedRoots = windows.filter { window ->
+        window.windowLevel == UIWindowLevelNormal &&
+            !window.isHidden() &&
+            window.rootViewController?.viewIfLoaded?.window != null
+    }
+    val window = attachedRoots.firstOrNull { it.isKeyWindow() }
+        ?: attachedRoots.firstOrNull()
+        ?: windows.firstOrNull { it.isKeyWindow() && it.rootViewController != null }
+        ?: windows.firstOrNull { it.rootViewController != null }
+    var controller = window?.rootViewController ?: return null
+    while (true) {
+        val presented = controller.presentedViewController ?: break
+        if (presented.isBeingDismissed()) break
+        controller = presented
+    }
+    return controller
+}
+
+/**
+ * Android parity (ExternalDictionaryHelper + "select an app first" toast): hand the
+ * selection to the user's installed apps. The system share sheet is the closest iOS
+ * equivalent of Android's PROCESS_TEXT chooser — it lists every app that accepts
+ * text, so Define/Translate/Search can reach any installed dictionary, translator,
+ * or browser instead of only hardcoded web engines.
+ */
 internal actual fun openSharedMobileEpubLookup(
     action: ReaderExternalLookupAction,
     text: String
@@ -239,16 +289,53 @@ internal actual fun openSharedMobileEpubLookup(
         ReaderExternalLookupAction.TRANSLATE -> IosReaderLookupServices.translate
         ReaderExternalLookupAction.SEARCH -> IosReaderLookupServices.search
     }
-    if (action == ReaderExternalLookupAction.DICTIONARY && service == ReaderExternalLookupService.SYSTEM) {
-        val presenter = UIApplication.sharedApplication.keyWindow?.rootViewController ?: return false
-        presenter.presentViewController(
-            UIReferenceLibraryViewController(term = query),
-            animated = true,
-            completion = null
-        )
-        return true
+    when (service) {
+        ReaderExternalLookupService.ANY_APP -> return openSharedMobileEpubLookupViaAppChooser(action, query)
+        ReaderExternalLookupService.SYSTEM -> {
+            val presenter = iosLookupPresenter() ?: return false
+            presenter.presentViewController(
+                UIReferenceLibraryViewController(term = query),
+                animated = true,
+                completion = null
+            )
+            return true
+        }
+        // Android parity (PdfViewerScreen.onDictionaryLookup): when the Smart AI
+        // engine is selected but AI is unavailable (no key/sign-in or offline),
+        // the lookup still works — it falls through to the app chooser instead
+        // of silently doing nothing. The in-app AI popup itself is triggered by
+        // the reader handlers BEFORE this lookup is reached.
+        ReaderExternalLookupService.AI -> Unit
+        ReaderExternalLookupService.GOOGLE,
+        ReaderExternalLookupService.GOOGLE_TRANSLATE,
+        ReaderExternalLookupService.DUCKDUCKGO,
+        ReaderExternalLookupService.BING -> Unit
     }
-    return openSharedMobileEpubExternalLink(externalLookupUrl(action, query, service))
+    val lookupUrl = externalLookupUrl(action, query, service)
+    if (lookupUrl.isBlank()) {
+        return openSharedMobileEpubLookupViaAppChooser(action, query)
+    }
+    return openSharedMobileEpubExternalLink(lookupUrl)
+}
+
+/**
+ * Android parity (ExternalDictionaryHelper): hand the selection to the user's
+ * installed apps. The system share sheet is the closest iOS equivalent of
+ * Android's PROCESS_TEXT chooser.
+ */
+internal fun openSharedMobileEpubLookupViaAppChooser(
+    action: ReaderExternalLookupAction,
+    query: String
+): Boolean {
+    val presenter = iosLookupPresenter() ?: return false
+    val controller = UIActivityViewController(
+        activityItems = listOf(query),
+        applicationActivities = null
+    )
+    // iPad requires an anchor; phones present full screen.
+    controller.modalPresentationStyle = UIModalPresentationPageSheet
+    presenter.presentViewController(controller, animated = true, completion = null)
+    return true
 }
 
 internal actual fun shareSharedMobileEpubImage(bytes: ByteArray, fileName: String): Boolean {
@@ -263,7 +350,7 @@ internal actual fun shareSharedMobileEpubImage(bytes: ByteArray, fileName: Strin
     }
     if (written != bytes.size.toULong()) return false
     val url = NSURL.fileURLWithPath(path)
-    val presenter = UIApplication.sharedApplication.keyWindow?.rootViewController ?: return false
+    val presenter = iosLookupPresenter() ?: return false
     val controller = UIActivityViewController(activityItems = listOf(url), applicationActivities = null)
     controller.modalPresentationStyle = UIModalPresentationFullScreen
     presenter.presentViewController(controller, animated = true, completion = null)
@@ -393,8 +480,15 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     private var activeUtteranceBaseOffset = 0
     private var wantsPlayback = true
     private var audioSessionActive = false
+    private var audioSessionGeneration = 0
     private var interruptionState = LocalTtsInterruptionState()
     private val interruptionMonitor = IosTtsAudioInterruptionMonitor(::handleAudioInterruption)
+
+    // AVSpeechSynthesizer runs its delegate callbacks while it is still
+    // finishing the utterance, so follow-up synthesis is posted to the next
+    // main-loop turn. Speaking inline from didFinish/speechStart deadlocks the
+    // synthesizer and freezes the reader UI.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     init {
         synthesizer.delegate = delegate
@@ -513,10 +607,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         progress = ReaderTtsProgress()
         state = SharedMobileEpubLocalTtsState.IDLE
         clearNowPlaying()
-        if (audioSessionActive) {
-            configureAudioSession(active = false)
-            audioSessionActive = false
-        }
+        deactivateAudioSession()
     }
 
     private fun handleAudioInterruption(interruption: IosTtsAudioInterruption) {
@@ -537,7 +628,9 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         when (transition.action) {
             LocalTtsInterruptionAction.NONE -> Unit
             LocalTtsInterruptionAction.PAUSE -> pauseInternal()
-            LocalTtsInterruptionAction.RESUME -> {
+            LocalTtsInterruptionAction.RESUME -> scope.launch {
+                // Activating the audio session blocks while the interrupting app
+                // releases the route, so keep it off the notification callback.
                 configureAudioSession(active = true)
                 resume()
             }
@@ -572,7 +665,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
             state = SharedMobileEpubLocalTtsState.IDLE
             completionCount += 1
             clearNowPlaying()
-            configureAudioSession(active = false)
+            deactivateAudioSession()
             return
         }
         // Keep the reader controls responsive even when a system voice starts slowly.
@@ -622,7 +715,13 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         if (wantsPlayback) {
             state = SharedMobileEpubLocalTtsState.SPEAKING
         } else {
-            synthesizer.pauseSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+            // Pausing from inside the delegate callback is what made pausing
+            // right after a start unreliable; post it instead.
+            scope.launch {
+                if (isActive(utterance)) {
+                    synthesizer.pauseSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+                }
+            }
             state = SharedMobileEpubLocalTtsState.PAUSED
         }
         updateNowPlaying()
@@ -643,7 +742,11 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     private fun utteranceFinished(utterance: AVSpeechUtterance) {
         if (!isActive(utterance)) return
         activeUtterance = null
-        advance()
+        val expectedSession = sessionId
+        scope.launch {
+            if (expectedSession != sessionId) return@launch
+            advance()
+        }
     }
 
     private fun utteranceCancelled(utterance: AVSpeechUtterance) {
@@ -664,9 +767,26 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     private fun configureAudioSession(active: Boolean) {
         val audioSession = AVAudioSession.sharedInstance()
         if (active) {
+            audioSessionGeneration += 1
             audioSession.setCategory(AVAudioSessionCategoryPlayback, error = null)
         }
         audioSession.setActive(active = active, error = null)
+    }
+
+    /**
+     * Deactivating an audio session blocks until the system finishes tearing the
+     * route down (or fails after a timeout), so it must not run on the main
+     * thread; a listening session that ended in a delegate callback used to lock
+     * the UI. Skip the teardown when a newer session already re-activated the
+     * session meanwhile.
+     */
+    private fun deactivateAudioSession() {
+        if (!audioSessionActive) return
+        audioSessionActive = false
+        val generation = ++audioSessionGeneration
+        IosTtsAudioSessionTeardown.deactivateIfStillOwner {
+            !audioSessionActive && generation == audioSessionGeneration
+        }
     }
 
     private fun installRemoteCommands() {
@@ -698,6 +818,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         interruptionMonitor.close()
         previewSynthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         synthesizer.delegate = null
+        scope.cancel()
         val commands = MPRemoteCommandCenter.sharedCommandCenter()
         commands.playCommand.removeTarget(null)
         commands.pauseCommand.removeTarget(null)

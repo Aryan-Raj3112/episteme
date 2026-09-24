@@ -40,7 +40,9 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
@@ -63,6 +65,8 @@ import com.aryan.reader.paginatedreader.SemanticBlock
 import com.aryan.reader.paginatedreader.SemanticImage
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderLocator
+import com.aryan.reader.shared.readerLookupUsesAiDictionary
+
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -122,9 +126,10 @@ enum class SharedNativeReaderSelectionAction {
 
 internal fun SharedNativeReaderSelectionAction.externalLookupActionOrNull(): ReaderExternalLookupAction? {
     return when (this) {
-        // WebView parity (ReaderHtmlDocumentTemplate): Define opens AI define
-        // when available and falls back to dictionary lookup; Dictionary always
-        // opens the dictionary lookup.
+        // Android parity (PaginatedTextSelectionMenu): the single "Dict" entry
+        // routes through readerLookupUsesAiDictionary — in-app AI define when
+        // the Smart AI engine is selected (and AI is available), else the
+        // external lookup flow (app chooser / web engine).
         SharedNativeReaderSelectionAction.DEFINE,
         SharedNativeReaderSelectionAction.DICTIONARY -> ReaderExternalLookupAction.DICTIONARY
         SharedNativeReaderSelectionAction.TRANSLATE -> ReaderExternalLookupAction.TRANSLATE
@@ -132,6 +137,18 @@ internal fun SharedNativeReaderSelectionAction.externalLookupActionOrNull(): Rea
         SharedNativeReaderSelectionAction.SPEAK,
         SharedNativeReaderSelectionAction.NOTE -> null
     }
+}
+
+/**
+ * Android parity (PdfViewerScreen.onDictionaryLookup): true when the "Dict"
+ * action must open the in-app AI definition — AI available AND the Smart AI
+ * engine is the persisted dictionary choice.
+ */
+internal fun sharedDictActionUsesAi(
+    aiAvailable: Boolean,
+    usesAiDictionary: Boolean = readerLookupUsesAiDictionary,
+): Boolean {
+    return aiAvailable && usesAiDictionary
 }
 
 data class SharedNativeReaderLinkClick(
@@ -309,7 +326,13 @@ fun SharedNativePaginatedReader(
     pageDragController: SharedPaginatedPageDragController? = null,
     // See SharedNativePaginatedPagesContent.background: the host passes
     // Transparent when this reader is the top layer of an active turn.
-    contentBackground: Color = renderPlan.background
+    contentBackground: Color = renderPlan.background,
+    // Two-page spread + realistic turns: soft idle spine in the gutter.
+    spineCreaseEnabled: Boolean = false,
+    // Desktop shows card chrome (rounded corners, border, shadow) on spread
+    // slots narrower than the viewport. Mobile (Android benchmark parity)
+    // renders flat full-bleed pages with only the spine crease in the gutter.
+    pageChromeEnabled: Boolean = true
 ) {
     val visiblePages = renderPlan.visiblePages
     val logicalFirstPage = remember(visiblePages) {
@@ -441,7 +464,9 @@ fun SharedNativePaginatedReader(
             imageContent = imageContent,
             pageTurn = pageTurn,
             magnifierCaptureLayer = magnifierCaptureLayer,
-            background = contentBackground
+            background = contentBackground,
+            spineCreaseEnabled = spineCreaseEnabled,
+            pageChromeEnabled = pageChromeEnabled
         )
         activeSelection?.let { selection ->
             arrayOf(SharedNativeSelectionHandle.START, SharedNativeSelectionHandle.END).forEach { handle ->
@@ -562,11 +587,15 @@ internal fun SharedNativePaginatedPagesContent(
     pageTurn: SharedPaginatedPageTurnSpec?,
     magnifierCaptureLayer: GraphicsLayer?,
     modifier: Modifier = Modifier,
-    // Android benchmark parity: during a realistic turn the two page sets are
-    // stacked (beneath = opaque base fill, top = transparent so the curling
-    // sheet reveals the set beneath with its drop/inner shadows). The overlay
-    // passes Transparent; settled content keeps the default paper fill.
-    background: Color = renderPlan.background
+    // During a realistic turn the two page sets are stacked (beneath = opaque base
+    // fill, top = transparent so the curling sheet reveals the set beneath with its
+    // drop/inner shadows). The overlay passes Transparent; settled content keeps
+    // the default paper fill.
+    background: Color = renderPlan.background,
+    spineCreaseEnabled: Boolean = false,
+    // Android benchmark parity on mobile: flat spread pages, crease only.
+    // Desktop keeps card chrome. See SharedNativePaginatedReader.pageChromeEnabled.
+    pageChromeEnabled: Boolean = true
 ) {
     if (visiblePages.isEmpty()) {
         Box(modifier = modifier, contentAlignment = Alignment.Center) {
@@ -626,29 +655,87 @@ internal fun SharedNativePaginatedPagesContent(
             )
         }
         val paperIsDark = sharedReaderPaperIsDark(renderPlan.background)
+        val isSpreadMode = renderPlan.settings.isTwoPageSpreadEnabled()
+        val gutterWidthPx = with(readerDensity) { pageGap.toPx() }
+        // Spread mode curls the whole Row (both pages + gutter) as one leaf hinged
+        // at the spine — Android HorizontalPager benchmark parity. The crease and
+        // fold shading draw only mid-turn (inside the curl modifier); settled
+        // spreads stay flat. Single-page keeps the per-slot curl.
+        val spreadRowTurnModifier = when {
+            pageTurn != null && isSpreadMode -> {
+                val turnSpec = pageTurn
+                Modifier
+                    .offset {
+                        // Offset reads stay in the layout/draw phases so a turn or
+                        // drag never recomposes the page tree per frame.
+                        IntOffset((turnSpec.offsetForSlot(0) * maxWidth.toPx()).roundToInt(), 0)
+                    }
+                    .then(
+                        // Slide-only (realistic page turns off): the offset above is the
+                        // whole motion, exactly like the Android pager moving its slots.
+                        if (!turnSpec.curlEnabled) {
+                            Modifier
+                        } else {
+                            Modifier
+                                .graphicsLayer {
+                                    val spreadOffset = turnSpec.offsetForSlot(0)
+                                    if (spreadOffset <= 1f && spreadOffset > -1f) {
+                                        translationX = -spreadOffset * size.width
+                                    }
+                                    if (spreadOffset != 0f) {
+                                        shadowElevation = 10f
+                                        shape = RectangleShape
+                                        clip = false
+                                    }
+                                }
+                                .realisticSpreadPageCurl(
+                                    pageOffsetProvider = { turnSpec.offsetForSlot(0) },
+                                    touchYProvider = { turnSpec.touchY },
+                                    paperColor = renderPlan.background,
+                                    spreadGutterPx = gutterWidthPx
+                                )
+                        }
+                    )
+            }
+            else -> Modifier
+        }
+        val rowModifier = if (isSpreadMode) {
+            spreadRowTurnModifier.fillMaxSize()
+        } else {
+            Modifier.fillMaxSize()
+        }
         Row(
-            modifier = Modifier.fillMaxSize(),
+            modifier = rowModifier,
             horizontalArrangement = Arrangement.spacedBy(pageGap, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically
         ) {
             visiblePages.forEachIndexed { slot, page ->
-                val turnModifier = if (pageTurn != null) {
+                val turnModifier = if (pageTurn != null && !isSpreadMode) {
                     // Within a set the relative pager z-order is static (earlier slots stack on
                     // top); cross-layer order is decided by the host Box child order.
+                    val turnSpec = pageTurn
+                    val turnSlot = slot
                     Modifier
-                        .zIndex(-slot.toFloat())
+                        .zIndex(-turnSlot.toFloat())
                         .offset {
                             // Pager natural position: the curl's translationX cancels it while
                             // |offset| < 1, and at |offset| >= 1 the page rests off-screen exactly
-                            // like a HorizontalPager slot.
-                            val pageOffset = pageTurn.offsetForSlot(slot)
+                            // like a HorizontalPager slot. Without the curl the offset itself is
+                            // the slide, matching the Android pager with page turns disabled.
+                            val pageOffset = turnSpec.offsetForSlot(turnSlot)
                             IntOffset((pageOffset * pageOuterWidth.toPx()).roundToInt(), 0)
                         }
-                        .sharedRealisticBookPage(
-                            pageOffsetProvider = { pageTurn.offsetForSlot(slot) },
-                            touchYProvider = { pageTurn.touchY },
-                            paperColor = renderPlan.background,
-                            isDarkPaper = paperIsDark
+                        .then(
+                            if (!turnSpec.curlEnabled) {
+                                Modifier
+                            } else {
+                                Modifier.sharedRealisticBookPage(
+                                    pageOffsetProvider = { turnSpec.offsetForSlot(turnSlot) },
+                                    touchYProvider = { turnSpec.touchY },
+                                    paperColor = renderPlan.background,
+                                    isDarkPaper = paperIsDark
+                                )
+                            }
                         )
                 } else {
                     Modifier
@@ -668,6 +755,7 @@ internal fun SharedNativePaginatedPagesContent(
                     onReaderTap = onReaderTap,
                     selectionLayouts = selectionLayouts,
                     imageContent = imageContent,
+                    pageChromeEnabled = pageChromeEnabled,
                     modifier = turnModifier
                         .width(pageOuterWidth)
                         .fillMaxHeight()
@@ -690,7 +778,9 @@ internal fun SharedNativePaginatedPageTurnOverlay(
     pageTurn: SharedPaginatedPageTurnSpec,
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)? = null,
     modifier: Modifier = Modifier,
-    background: Color = renderPlan.background
+    background: Color = renderPlan.background,
+    spineCreaseEnabled: Boolean = false,
+    pageChromeEnabled: Boolean = true
 ) {
     val selectionLayouts = remember { mutableStateMapOf<String, SharedNativeTextLayoutInfo>() }
     SharedNativePaginatedPagesContent(
@@ -710,7 +800,9 @@ internal fun SharedNativePaginatedPageTurnOverlay(
         pageTurn = pageTurn,
         magnifierCaptureLayer = null,
         modifier = modifier,
-        background = background
+        background = background,
+        spineCreaseEnabled = spineCreaseEnabled,
+        pageChromeEnabled = pageChromeEnabled
     )
 }
 

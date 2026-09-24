@@ -67,7 +67,6 @@ import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
-import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
@@ -83,6 +82,7 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.readerExternalLookupActionsAvailable
+import com.aryan.reader.shared.readerLookupUsesAiDictionary
 import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.PdfInkTool
@@ -141,6 +141,9 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     onHighlight: (PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onReadAloud: (Int) -> Unit,
     onAiDefine: ((String) -> Unit)? = null,
+    // Android parity (PdfSelectionMenuPopup onPaletteClick): opens the palette
+    // manager so the color row can be customized. Null hides the spectrum button.
+    onOpenPaletteManager: (() -> Unit)? = null,
     onClipboardError: ((String) -> Unit)? = null,
     onSelectionDragActiveChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
@@ -369,12 +372,6 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     // Window rect of the drag Box, used only for drag-coordinate diagnostics:
     // it lets us tell which space move positions arrive in.
     var overlayWindowRect by remember { mutableStateOf<Rect?>(null) }
-    // Live layout coordinates of the drag Box. Unlike the snapshot window
-    // rect, localToWindow() on these accounts for the zoom viewport's
-    // graphicsLayer scale + pan + Center pivot at call time, which is what
-    // the selection-menu anchor mapping needs at any zoom (Android parity:
-    // contentToScreen + LayoutCoordinates.localToWindow).
-    var overlayCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     // Generation guard so a previous gesture's drain/cleanup cannot clobber a
     // newer in-flight drag (cleanup runs async after the worker drains).
     var dragGeneration by remember { mutableStateOf(0) }
@@ -399,7 +396,6 @@ internal fun SharedMobilePdfTextSelectionOverlay(
             .fillMaxSize()
             .onGloballyPositioned {
                 overlayWindowRect = it.boundsInWindow()
-                overlayCoordinates = it
             }
             .then(tapDetector)
             .pointerInput(book.path, pageIndex, canvasSize, teardropWidthPx, teardropHeightPx, touchExpansionPx) {
@@ -715,15 +711,11 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     // shouldShowPdfSelectionMenu (menu only when no active handle drag).
     val isHandleDragging = dragHandle != null
     if (anchor != null && selectedText != null && selectedText.isNotBlank() && !isHandleDragging) {
-        // Snapshot the coordinates for the menu provider: localToWindow() on
-        // these maps canvas points through the live zoom transform.
-        val menuCoordinates = overlayCoordinates
         Popup(
             popupPositionProvider = SharedMobilePdfSelectionMenuPositionProvider(
                 anchor = anchor,
                 canvasSize = canvasSize,
-                marginPx = with(density) { 16.dp.toPx() },
-                mapToWindow = { offset -> menuCoordinates?.localToWindow(offset) }
+                marginPx = with(density) { 16.dp.toPx() }
             ),
             onDismissRequest = { selLog { "popup onDismissRequest (ignored — not clearing selection automatically)" } },
             properties = PopupProperties(focusable = false)
@@ -752,6 +744,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                     openSharedMobileEpubLookup(ReaderExternalLookupAction.DICTIONARY, text)
                     applyRangeUpdate(null, emptyList(), null)
                 },
+                onOpenPaletteManager = onOpenPaletteManager,
                 onTranslate = { text ->
                     openSharedMobileEpubLookup(ReaderExternalLookupAction.TRANSLATE, text)
                     applyRangeUpdate(null, emptyList(), null)
@@ -768,7 +761,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                 onSelectAll = {
                     val s = session ?: return@SharedMobilePdfSelectionMenu
                     scope.launch { computeAndApply(PdfTextSelectionRange(0, s.pageCharCount)) }
-                }
+                },
             )
         }
     }
@@ -930,8 +923,7 @@ private suspend fun PointerInputScope.detectTapOrLongPress(
 private class SharedMobilePdfSelectionMenuPositionProvider(
     private val anchor: Rect,
     private val canvasSize: IntSize,
-    private val marginPx: Float,
-    private val mapToWindow: (Offset) -> Offset? = { null }
+    private val marginPx: Float
 ) : PopupPositionProvider {
     override fun calculatePosition(
         anchorBounds: IntRect,
@@ -939,31 +931,24 @@ private class SharedMobilePdfSelectionMenuPositionProvider(
         layoutDirection: LayoutDirection,
         popupContentSize: IntSize
     ): IntOffset {
-        // Prefer the framework's live mapping (accounts for the zoom
-        // viewport's graphicsLayer scale + pan + Center pivot at call time).
-        // Fall back to the fractional overlay-bounds mapping when coordinates
-        // are not yet available. Either way the same shared
-        // above > below > side > fallback policy runs on the result.
-        val mappedTopLeft = mapToWindow(anchor.topLeft)
-        val mappedBottomRight = mapToWindow(anchor.bottomRight)
-        val selection = if (mappedTopLeft != null && mappedBottomRight != null) {
-            SharedSelectionMenuRect(
-                left = minOf(mappedTopLeft.x, mappedBottomRight.x),
-                top = minOf(mappedTopLeft.y, mappedBottomRight.y),
-                right = maxOf(mappedTopLeft.x, mappedBottomRight.x),
-                bottom = maxOf(mappedTopLeft.y, mappedBottomRight.y)
-            )
-        } else {
-            sharedPdfSelectionWindowRect(
-                anchor = SharedSelectionMenuRect(anchor.left, anchor.top, anchor.right, anchor.bottom),
-                canvasWidth = canvasSize.width,
-                canvasHeight = canvasSize.height,
-                overlayLeft = anchorBounds.left,
-                overlayTop = anchorBounds.top,
-                overlayWidth = anchorBounds.right - anchorBounds.left,
-                overlayHeight = anchorBounds.bottom - anchorBounds.top,
-            )
-        }
+        // Android parity (PdfPageRendering contentToScreen + localToWindow):
+        // map the canvas-space anchor fractionally into the popup anchor's
+        // window rect. anchorBounds is supplied by the framework at layout
+        // time, so it always reflects the live zoom scale + pan + pivot —
+        // unlike a remembered LayoutCoordinates snapshot, which can lag the
+        // layout pass on iOS and shift the menu onto the selection.
+        // Fractional mapping is zoom-invariant (anchor fractions carry no
+        // scale), so this yields the same rect as the live mapping whenever
+        // both are fresh, and stays correct when coordinates go stale.
+        val selection = sharedPdfSelectionWindowRect(
+            anchor = SharedSelectionMenuRect(anchor.left, anchor.top, anchor.right, anchor.bottom),
+            canvasWidth = canvasSize.width,
+            canvasHeight = canvasSize.height,
+            overlayLeft = anchorBounds.left,
+            overlayTop = anchorBounds.top,
+            overlayWidth = anchorBounds.right - anchorBounds.left,
+            overlayHeight = anchorBounds.bottom - anchorBounds.top,
+        )
         val placement = sharedSelectionMenuPlacement(
             viewport = SharedSelectionMenuViewport(windowSize.width, windowSize.height),
             popup = SharedSelectionMenuSize(popupContentSize.width, popupContentSize.height),
@@ -972,8 +957,8 @@ private class SharedMobilePdfSelectionMenuPositionProvider(
             gapPx = marginPx
         )
         println(
-            "[PdfTextDrag] menu anchorCanvas=$anchor mapped=$selection " +
-                "viaLiveMap=${mappedTopLeft != null} viewport=${windowSize.width}x${windowSize.height} " +
+            "[PdfTextDrag] menu anchorCanvas=$anchor windowSelection=$selection " +
+                "anchorBounds=$anchorBounds viewport=${windowSize.width}x${windowSize.height} " +
                 "popup=${popupContentSize.width}x${popupContentSize.height} " +
                 "placement=${placement.placement} at=(${placement.x},${placement.y})"
         )
@@ -991,10 +976,11 @@ private fun SharedMobilePdfSelectionMenu(
     onSearch: (String) -> Unit,
     onReadAloud: () -> Unit,
     onAiDefine: ((String) -> Unit)?,
-    onSelectAll: () -> Unit
+    onSelectAll: () -> Unit,
+    onOpenPaletteManager: (() -> Unit)?
 ) {
     var selectedStyle by remember { mutableStateOf(HighlightStyle.BACKGROUND) }
-    val colors = SharedPdfAndroidHighlightColors.palette.take(4)
+    val colors = SharedPdfAndroidHighlightColors.palette
     // Android parity (PdfSelectionMenuPopup): cap height to window - 32dp
     // (min 160dp) with scrolling, and wrap width to content via
     // IntrinsicSize.Max so the menu matches Android's size. BoxWithConstraints
@@ -1060,21 +1046,39 @@ private fun SharedMobilePdfSelectionMenu(
                             .clickable { onHighlight(colorArgb, selectedStyle, false) }
                     )
                 }
+                if (onOpenPaletteManager != null) {
+                    androidx.compose.foundation.layout.Spacer(Modifier.width(6.dp))
+                    SharedReaderHighlightPaletteSpectrumButton(
+                        onClick = onOpenPaletteManager,
+                        size = 28.dp,
+                    )
+                }
             }
             HorizontalDivider()
+            // Android parity (PdfSelectionMenuPopup): one settings-driven "Dict"
+            // action that resolves to AI when Smart AI is on, otherwise the external
+            // app; the note label reuses the localized Note/Edit pair.
+            val copyLabel = readerString("action_copy", "Copy")
+            val speakLabel = readerString("label_speak", "Speak")
+            val dictLabel = readerString("label_dict", "Dict")
+            val translateLabel = readerString("action_translate", "Translate")
+            val searchLabel = readerString("action_search", "Search")
+            val noteLabel = readerString("label_note", "Note")
+            val selectAllLabel = readerString("select_all", "Select All")
             val actions = buildList {
-                add(SharedMobilePdfMenuAction(Res.drawable.copy, "Copy") { onCopy(selectedText) })
-                add(SharedMobilePdfMenuAction(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = "Read aloud") { onReadAloud() })
+                add(SharedMobilePdfMenuAction(Res.drawable.copy, copyLabel) { onCopy(selectedText) })
+                add(SharedMobilePdfMenuAction(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = speakLabel) { onReadAloud() })
                 if (readerExternalLookupActionsAvailable(selectedText.length)) {
-                    onAiDefine?.let { define ->
-                        add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Ai, label = "AI define") { define(selectedText) })
+                    if (onAiDefine != null && readerLookupUsesAiDictionary) {
+                        add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Ai, label = dictLabel) { onAiDefine(selectedText) })
+                    } else {
+                        add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Book, label = dictLabel) { onDefine(selectedText) })
                     }
-                    add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Book, label = "Define") { onDefine(selectedText) })
-                    add(SharedMobilePdfMenuAction(Res.drawable.translate, "Translate") { onTranslate(selectedText) })
-                    add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Search, label = "Search") { onSearch(selectedText) })
+                    add(SharedMobilePdfMenuAction(Res.drawable.translate, translateLabel) { onTranslate(selectedText) })
+                    add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Search, label = searchLabel) { onSearch(selectedText) })
                 }
-                add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Edit, label = "Note") { onHighlight(colors.first(), selectedStyle, true) })
-                add(SharedMobilePdfMenuAction(Res.drawable.select_all, "Select all") { onSelectAll() })
+                add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Edit, label = noteLabel) { onHighlight(colors.first(), selectedStyle, true) })
+                add(SharedMobilePdfMenuAction(Res.drawable.select_all, selectAllLabel) { onSelectAll() })
             }
             Column(Modifier.padding(bottom = 4.dp)) {
                 actions.chunked(3).forEach { rowActions ->

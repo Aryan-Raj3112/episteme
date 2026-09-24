@@ -6,13 +6,17 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -30,10 +34,20 @@ import com.aryan.reader.shared.ReaderMarkdownParser
 fun SharedMarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
-    style: TextStyle = MaterialTheme.typography.bodySmall
+    style: TextStyle = MaterialTheme.typography.bodySmall,
+    /**
+     * Android parity (AiDefinitionPopup / AiResultContentView TTS highlight):
+     * currently-spoken chunk. Matching ranges get the primaryContainer
+     * background and are brought into view while TTS plays.
+     */
+    highlightText: String? = null
 ) {
     val document = remember(markdown) { ReaderMarkdownParser.parse(markdown) }
     val colorScheme = MaterialTheme.colorScheme
+    val highlight = highlightText?.takeIf { it.isNotBlank() }
+    val highlightColor = colorScheme.primaryContainer
+    val inlineCodeBackground = colorScheme.surfaceVariant.copy(alpha = 0.7f)
+    val inlineLinkColor = colorScheme.primary
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         document.blocks.forEachIndexed { index, block ->
             when (block) {
@@ -43,34 +57,73 @@ fun SharedMarkdownText(
                         2 -> MaterialTheme.typography.titleMedium
                         else -> MaterialTheme.typography.titleSmall
                     }
+                    val annotated = remember(block.text, highlight, inlineCodeBackground, inlineLinkColor) {
+                        block.text.toInlineAnnotatedString(inlineCodeBackground, inlineLinkColor)
+                            .withHighlight(highlight, highlightColor)
+                    }
+                    val contains = highlight != null &&
+                        annotated.text.contains(highlight, ignoreCase = false)
+                    val requester = remember(index) { BringIntoViewRequester() }
+                    if (contains) {
+                        LaunchedEffect(highlight) { requester.bringIntoView() }
+                    }
                     Text(
-                        text = block.text.markdownInlineAnnotatedString(),
+                        text = annotated,
                         style = headingStyle,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.bringIntoViewRequester(requester)
                     )
                 }
 
                 is ReaderMarkdownBlock.Paragraph -> {
-                    Text(text = block.text.markdownInlineAnnotatedString(), style = style)
+                    val annotated = remember(block.text, highlight, inlineCodeBackground, inlineLinkColor) {
+                        block.text.toInlineAnnotatedString(inlineCodeBackground, inlineLinkColor)
+                            .withHighlight(highlight, highlightColor)
+                    }
+                    val contains = highlight != null && annotated.text.contains(highlight)
+                    val requester = remember(index) { BringIntoViewRequester() }
+                    if (contains) {
+                        LaunchedEffect(highlight) { requester.bringIntoView() }
+                    }
+                    Text(
+                        text = annotated,
+                        style = style,
+                        modifier = Modifier.bringIntoViewRequester(requester)
+                    )
                 }
 
                 is ReaderMarkdownBlock.Quote -> {
+                    val annotated = remember(block.text, highlight, inlineCodeBackground, inlineLinkColor) {
+                        block.text.toInlineAnnotatedString(inlineCodeBackground, inlineLinkColor)
+                            .withHighlight(highlight, highlightColor)
+                    }
+                    val contains = highlight != null && annotated.text.contains(highlight)
+                    val requester = remember(index) { BringIntoViewRequester() }
+                    if (contains) {
+                        LaunchedEffect(highlight) { requester.bringIntoView() }
+                    }
                     Text(
-                        text = block.text.markdownInlineAnnotatedString(),
+                        text = annotated,
                         style = style,
                         color = colorScheme.onSurfaceVariant,
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(colorScheme.surfaceVariant.copy(alpha = 0.45f), RoundedCornerShape(6.dp))
                             .padding(8.dp)
+                            .bringIntoViewRequester(requester)
                     )
                 }
 
                 is ReaderMarkdownBlock.CodeBlock -> {
+                    val contains = highlight != null && block.text.contains(highlight)
+                    val requester = remember(index) { BringIntoViewRequester() }
+                    if (contains) {
+                        LaunchedEffect(highlight) { requester.bringIntoView() }
+                    }
                     Surface(
                         color = colorScheme.surfaceVariant.copy(alpha = 0.6f),
                         shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().bringIntoViewRequester(requester)
                     ) {
                         Text(
                             text = block.text,
@@ -83,14 +136,26 @@ fun SharedMarkdownText(
                 is ReaderMarkdownBlock.ListItems -> {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         block.items.forEachIndexed { itemIndex, item ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            val annotated = remember(item, highlight, inlineCodeBackground, inlineLinkColor) {
+                                item.toInlineAnnotatedString(inlineCodeBackground, inlineLinkColor)
+                                    .withHighlight(highlight, highlightColor)
+                            }
+                            val contains = highlight != null && annotated.text.contains(highlight)
+                            val requester = remember(index, itemIndex) { BringIntoViewRequester() }
+                            if (contains) {
+                                LaunchedEffect(highlight) { requester.bringIntoView() }
+                            }
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.bringIntoViewRequester(requester)
+                            ) {
                                 Text(
                                     text = if (block.ordered) "${itemIndex + 1}." else "-",
                                     style = style,
                                     color = colorScheme.onSurfaceVariant
                                 )
                                 Text(
-                                    text = item.markdownInlineAnnotatedString(),
+                                    text = annotated,
                                     style = style,
                                     modifier = Modifier.weight(1f)
                                 )
@@ -106,23 +171,37 @@ fun SharedMarkdownText(
     }
 }
 
-@Composable
-private fun String.markdownInlineAnnotatedString(): AnnotatedString {
-    val colorScheme = MaterialTheme.colorScheme
-    return remember(this, colorScheme.primary, colorScheme.surfaceVariant) {
-        buildAnnotatedString {
-            appendMarkdownInline(
-                text = this@markdownInlineAnnotatedString,
-                codeStyle = SpanStyle(
-                    fontFamily = FontFamily.Monospace,
-                    background = colorScheme.surfaceVariant.copy(alpha = 0.7f)
-                ),
-                linkStyle = SpanStyle(
-                    color = colorScheme.primary,
-                    textDecoration = TextDecoration.Underline
-                )
+private fun AnnotatedString.withHighlight(highlight: String?, color: Color): AnnotatedString {
+    if (highlight.isNullOrBlank()) return this
+    val ranges = mutableListOf<IntRange>()
+    var from = 0
+    while (true) {
+        val found = text.indexOf(highlight, from)
+        if (found < 0) break
+        ranges += found until found + highlight.length
+        from = found + highlight.length
+        if (from >= text.length) break
+    }
+    if (ranges.isEmpty()) return this
+    return buildAnnotatedString {
+        append(this@withHighlight)
+        ranges.forEach { range -> addStyle(SpanStyle(background = color), range.first, range.last + 1) }
+    }
+}
+
+private fun String.toInlineAnnotatedString(codeBackground: Color, linkColor: Color): AnnotatedString {
+    return buildAnnotatedString {
+        appendMarkdownInline(
+            text = this@toInlineAnnotatedString,
+            codeStyle = SpanStyle(
+                fontFamily = FontFamily.Monospace,
+                background = codeBackground
+            ),
+            linkStyle = SpanStyle(
+                color = linkColor,
+                textDecoration = TextDecoration.Underline
             )
-        }
+        )
     }
 }
 

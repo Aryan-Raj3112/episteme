@@ -57,6 +57,28 @@ class SharedNativePaginatedReaderInteractionTest {
     }
 
     @Test
+    fun `mobile spread renders flat like android while desktop keeps card chrome`() {
+        val spreadSlot = SharedNativePageRenderGeometry(
+            readerWidthPx = 1_179,
+            readerHeightPx = 2_000,
+            pageOuterWidthPx = 547,
+            pageContentWidthPx = 475,
+            pageContentHeightPx = 1_904,
+            pageGapPx = 84,
+            horizontalMarginPx = 72,
+            verticalMarginPx = 48,
+            configuredPageWidthPx = 2_280,
+            visiblePageCount = 2,
+            spreadMode = "TWO_PAGE"
+        )
+
+        // Desktop benchmark: card chrome on narrow spread slots.
+        assertEquals(true, sharedPaginatedPageChromeVisible(spreadSlot, pageChromeEnabled = true))
+        // Mobile (iOS/Android shared): flat full-bleed pages, crease only.
+        assertEquals(false, sharedPaginatedPageChromeVisible(spreadSlot, pageChromeEnabled = false))
+    }
+
+    @Test
     fun `native selection lookup actions match vertical reader actions`() {
         assertEquals(ReaderExternalLookupAction.DICTIONARY, SharedNativeReaderSelectionAction.DEFINE.externalLookupActionOrNull())
         assertEquals(ReaderExternalLookupAction.DICTIONARY, SharedNativeReaderSelectionAction.DICTIONARY.externalLookupActionOrNull())
@@ -64,6 +86,16 @@ class SharedNativePaginatedReaderInteractionTest {
         assertEquals(ReaderExternalLookupAction.SEARCH, SharedNativeReaderSelectionAction.SEARCH.externalLookupActionOrNull())
         assertNull(SharedNativeReaderSelectionAction.SPEAK.externalLookupActionOrNull())
         assertNull(SharedNativeReaderSelectionAction.NOTE.externalLookupActionOrNull())
+    }
+
+    @Test
+    fun `dict action uses AI only when AI is available and Smart AI engine selected`() {
+        // Android parity (PdfViewerScreen.onDictionaryLookup): the single "Dict"
+        // action opens the in-app AI definition only when AI is available AND the
+        // persisted engine preference picks the online dictionary (Smart AI).
+        assertEquals(false, sharedDictActionUsesAi(aiAvailable = false, usesAiDictionary = true))
+        assertEquals(false, sharedDictActionUsesAi(aiAvailable = true, usesAiDictionary = false))
+        assertEquals(true, sharedDictActionUsesAi(aiAvailable = true, usesAiDictionary = true))
     }
 
     @Test

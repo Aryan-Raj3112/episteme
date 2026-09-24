@@ -55,7 +55,8 @@ import com.aryan.reader.shared.libarchive.archive_write_header
 import com.aryan.reader.shared.libarchive.archive_write_new
 import com.aryan.reader.shared.libarchive.archive_write_open_filename
 import com.aryan.reader.shared.libarchive.archive_write_set_format_zip
-import com.aryan.reader.shared.libarchive.archive_write_set_options
+import com.aryan.reader.shared.libarchive.archive_write_zip_set_compression_deflate
+import com.aryan.reader.shared.libarchive.archive_write_zip_set_compression_store
 import cnames.structs.archive_entry
 import com.aryan.reader.shared.reader.SharedBookLoadCache
 import com.aryan.reader.shared.reader.SharedBookLoadCacheKey
@@ -1490,8 +1491,11 @@ internal fun writeIosZipArchive(
     val writer = archive_write_new() ?: error("Could not create EPUB ZIP writer.")
     try {
         checkArchiveResult(archive_write_set_format_zip(writer), writer, "configure EPUB ZIP writer")
+        // archive_write_set_options only accepts ARCHIVE_STATE_NEW (before open).
+        // Per-entry compression must use the zip-specific setters, which allow
+        // HEADER/DATA so mimetype can stay STORED while other entries DEFLATE.
         checkArchiveResult(
-            archive_write_set_options(writer, "zip:compression=store"),
+            archive_write_zip_set_compression_store(writer),
             writer,
             "configure EPUB ZIP compression",
         )
@@ -1502,10 +1506,11 @@ internal fun writeIosZipArchive(
         )
         orderedEntries.forEach { path ->
             checkArchiveResult(
-                archive_write_set_options(
-                    writer,
-                    if (path == "mimetype") "zip:compression=store" else "zip:compression=deflate",
-                ),
+                if (path == "mimetype") {
+                    archive_write_zip_set_compression_store(writer)
+                } else {
+                    archive_write_zip_set_compression_deflate(writer)
+                },
                 writer,
                 "configure EPUB ZIP entry compression",
             )

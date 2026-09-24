@@ -373,7 +373,9 @@ struct ContentView: View {
             ? copyImportedFileToAppSupport(url, directoryName: "Imports")
             : copyExternalFileToTemporaryStorage(url, requestId: requestId)
         guard let imported else {
-            bridge.recordNativeEvent(message: "Could not open the external file")
+            // Android reports this through a toast (error_external_open_failed);
+            // surface the same banner in Compose instead of failing silently.
+            bridge.reportExternalOpenFailure(fileName: url.lastPathComponent)
             return
         }
         bridge.openExternalFile(
@@ -1039,11 +1041,23 @@ private func copyExternalFileToTemporaryStorage(_ sourceURL: URL, requestId: Str
         requestDirectory = directory
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         let destination = directory.appendingPathComponent(uniqueImportedFileName(sourceURL.lastPathComponent))
+        let sourceModifiedAt = (try? sourceURL.resourceValues(forKeys: [.contentModificationDateKey]))?
+            .contentModificationDate ?? Date()
         try fileManager.copyItem(at: sourceURL, to: destination)
+        // `copyItem` keeps the source's modification date, so a book opened from
+        // another app landed here with its original (possibly years old) date and
+        // the startup orphan sweep (`sweepStaleTemporaryFiles`, 1h threshold)
+        // deleted the freshly staged copy. That is why external opens of books
+        // that were already imported worked (they resolve to the Application
+        // Support copy, which is never swept) while fresh opens failed with a
+        // missing-file error once the sweep ran. Android always stages a newly
+        // written copy, so stamp the staged file's date and keep the source's
+        // date only in the metadata we report.
+        try? fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: destination.path)
         guard let contentId = sha256FileId(destination) else {
             return nil
         }
-        let values = try destination.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let values = try destination.resourceValues(forKeys: [.fileSizeKey])
         keepRequestDirectory = true
         return ImportedReaderFile(
             name: sourceURL.lastPathComponent,
@@ -1051,9 +1065,7 @@ private func copyExternalFileToTemporaryStorage(_ sourceURL: URL, requestId: Str
             contentId: contentId,
             relativePath: sourceURL.lastPathComponent,
             fileSize: Int64(values.fileSize ?? 0),
-            lastModifiedTimestamp: Int64(
-                (values.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000
-            )
+            lastModifiedTimestamp: Int64(sourceModifiedAt.timeIntervalSince1970 * 1000)
         )
     } catch {
         return nil
@@ -1073,8 +1085,12 @@ private func uniqueImportedFileName(_ fileName: String) -> String {
 
 /// Startup orphan sweep (Android `MainViewModel.sweepOrphanedCache` parity,
 /// temp-only): removes crash-orphaned `tmp/ExternalOpen/<requestId>/`
-/// staging directories and `reader-export-*.pdf` share copies older than
-/// 1 hour (Android's `deleteStaleTemporaryBookDirs(1h)` threshold).
+/// staging directories older than 1 hour (Android's
+/// `deleteStaleTemporaryBookDirs(1h)` threshold) and PDF share/save staging
+/// copies older than 24h (Android `AndroidShareArtifactManager`
+/// `DEFAULT_TTL_MILLIS`; the share sheet / document picker has no completion
+/// callback, so copies are retained with a bounded TTL instead of immediate
+/// deletion).
 /// Library storage (`Imports/`, `LocalFolders/`) is never touched: those
 /// files ARE the library, and Android only sweeps cache/tmp patterns too.
 /// The pending-external-removal drain already runs in Kotlin startup state
@@ -1083,7 +1099,8 @@ private func uniqueImportedFileName(_ fileName: String) -> String {
 private func sweepStaleTemporaryFiles(maxAge: TimeInterval = 3600) {
     let fileManager = FileManager.default
     let cutoff = Date().addingTimeInterval(-maxAge)
-    func removeIfStale(_ url: URL) {
+    let shareCutoff = Date().addingTimeInterval(-86400)
+    func removeIfStale(_ url: URL, cutoff: Date = Date().addingTimeInterval(-3600)) {
         guard let modified = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
               modified < cutoff else { return }
         try? fileManager.removeItem(at: url)
@@ -1098,17 +1115,41 @@ private func sweepStaleTemporaryFiles(maxAge: TimeInterval = 3600) {
         includingPropertiesForKeys: [.contentModificationDateKey],
         options: [.skipsHiddenFiles]
     ) {
-        for entry in entries { removeIfStale(entry) }
+        for entry in entries { removeIfStale(entry, cutoff: cutoff) }
     }
-    // One-shot PDF share exports (Kotlin `IosPdfSaveCopy`); the share sheet
-    // consumes them immediately, so survivors are crash leftovers.
+    // Leftover nested staging dirs from an earlier layout
+    // (`tmp/shared_files/share-<UUID>/`); flat staging replaced them because
+    // `UIActivityViewController` item loading fails for the nested path.
+    let shareRoot = tempRoot.appendingPathComponent("shared_files", isDirectory: true)
+    if let entries = try? fileManager.contentsOfDirectory(
+        at: shareRoot,
+        includingPropertiesForKeys: [.contentModificationDateKey],
+        options: [.skipsHiddenFiles]
+    ) {
+        for entry in entries where entry.lastPathComponent.hasPrefix("share-") {
+            removeIfStale(entry, cutoff: shareCutoff)
+        }
+    }
+    // One-shot PDF share/save copies (Kotlin `IosShareArtifactManager`): flat
+    // `tmp/<base>[_annotated]_NNNN.pdf` plus legacy `tmp/reader-export-*`.
+    // The share sheet consumes them immediately, so survivors are crash leftovers.
+    // Match the 4-digit suffix without NSRegularExpression: `<name>_NNNN.pdf`.
+    func isStagedPdfCopy(_ name: String) -> Bool {
+        guard name.hasSuffix(".pdf") else { return false }
+        if name.hasPrefix("reader-export-") { return true }
+        let stem = name.dropLast(4)
+        guard stem.count > 6 else { return false }
+        let suffix = stem.suffix(5)
+        guard suffix.first == "_" else { return false }
+        return suffix.dropFirst().allSatisfy { $0.isNumber }
+    }
     if let entries = try? fileManager.contentsOfDirectory(
         at: tempRoot,
         includingPropertiesForKeys: [.contentModificationDateKey],
         options: [.skipsHiddenFiles]
     ) {
-        for entry in entries where entry.lastPathComponent.hasPrefix("reader-export-") {
-            removeIfStale(entry)
+        for entry in entries where isStagedPdfCopy(entry.lastPathComponent) {
+            removeIfStale(entry, cutoff: shareCutoff)
         }
     }
 }

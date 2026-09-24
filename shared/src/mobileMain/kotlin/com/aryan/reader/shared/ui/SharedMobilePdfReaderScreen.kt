@@ -1,6 +1,7 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -139,6 +140,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
@@ -189,6 +191,7 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.DockLocation
 import com.aryan.reader.shared.ReaderAiFeature
+import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.SharedSummaryCache
 import com.aryan.reader.shared.ReaderAiResultState
 import com.aryan.reader.shared.ReaderExtrasState
@@ -272,6 +275,7 @@ import com.aryan.reader.shared.pdf.SharedPdfReaderGlobalResource
 import com.aryan.reader.shared.pdf.SharedPdfReaderHostConfig
 import com.aryan.reader.shared.pdf.SharedPdfReaderSessionKey
 import com.aryan.reader.shared.pdf.SharedPdfExportSnapshot
+import com.aryan.reader.shared.pdf.sharedPdfOriginalExportSnapshot
 import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
 import com.aryan.reader.shared.pdf.SharedPdfVirtualPage
@@ -679,6 +683,9 @@ fun SharedMobilePdfReaderHost(
     var annotationSnapPreview by remember(readerSessionKey) { mutableStateOf<DockLocation?>(null) }
     var isAnnotationDockMinimized by remember(readerSessionKey) { mutableStateOf(false) }
     var showAnnotationToolSettings by remember(readerSessionKey) { mutableStateOf(false) }
+    // Android parity: the selection menu's palette (spectrum) button opens the
+    // highlight palette editor (HighlightColorPickerDialog).
+    var showHighlightPaletteEditor by remember(readerSessionKey) { mutableStateOf(false) }
     // Android parity (AnnotationSettingsRepository.selectedTool survives edit-mode
     // toggles): shared edit mode IS the selected tool (NONE = off), so the last
     // non-NONE tool is remembered here and restored when edit mode reopens —
@@ -1130,6 +1137,14 @@ fun SharedMobilePdfReaderHost(
         if (ownsNativeAction) onNativePdfAction(book, action, pdfPassword, snapshot)
     }
 
+    fun annotatedPdfExportSnapshot(): SharedPdfExportSnapshot =
+        SharedPdfExportSnapshot(
+            state = readerState.copy(richTextDocumentJson = richTextDocumentJson),
+            richTextPageLayouts = richTextController.pageLayouts,
+            exportDensity = density.density,
+            exportFontScale = density.fontScale,
+        )
+
     fun normalizedPdfHistoryPage(pageIndex: Int): Int {
         if (readerState.displayMode != PdfDisplayMode.PAGINATION) return pageIndex
         return PdfSpreadLayout.normalizePageIndex(
@@ -1469,7 +1484,9 @@ fun SharedMobilePdfReaderHost(
             commitEraseBatch(pageIndex)
             return
         }
-        if (activeStroke.size < 2 || effectiveTool == PdfInkTool.NONE || effectiveTool == PdfInkTool.TEXT) {
+        // Android parity: a single-point tap commits a visible ink dot
+        // (size == 1). Empty strokes still do nothing.
+        if (activeStroke.isEmpty() || effectiveTool == PdfInkTool.NONE || effectiveTool == PdfInkTool.TEXT) {
             activeStroke.clear()
             commitEraseBatch(pageIndex)
             return
@@ -1826,6 +1843,17 @@ fun SharedMobilePdfReaderHost(
         }
     }
 
+    LaunchedEffect(readerSessionKey, pdfTts.isSessionActive, pendingTtsStart) {
+        // Android parity (PdfViewerScreen): auto-scroll and TTS share the bottom
+        // chrome and can never be active together — starting TTS turns
+        // auto-scroll off, so the two overlays never stack or overlap.
+        if ((pdfTts.isSessionActive || pendingTtsStart != null) && autoScrollModeActive) {
+            autoScrollModeActive = false
+            autoScrollPlaying = false
+            autoScrollTemporarilyPaused = false
+        }
+    }
+
     LaunchedEffect(readerSessionKey, readerState.searchQuery) {
         val query = readerState.searchQuery.trim()
         if (query.isBlank()) {
@@ -2082,27 +2110,36 @@ fun SharedMobilePdfReaderHost(
                             onWordReplacements = { if (ownsGlobalModal && ownsTts) showTtsReplacementsSheet = true },
                             onNativeAction = { action ->
                                 if (ownsNativeAction) {
+                                    val exportableAnnotations = shouldShowPdfAnnotationExportChoice(
+                                        sidecarsReady = true,
+                                        inkAnnotationCounts = readerState.annotations
+                                            .filter { it.kind == PdfAnnotationKind.INK }
+                                            .groupBy { it.pageIndex }
+                                            .values
+                                            .map { it.size },
+                                        textBoxCount = readerState.annotations.count { it.kind == PdfAnnotationKind.TEXT },
+                                        highlightCount = readerState.annotations.count { it.kind == PdfAnnotationKind.HIGHLIGHT },
+                                    )
                                     if (action == SharedMobilePdfNativeAction.PRINT && pdfPassword != null) {
                                         // Android parity (print-blocked banner):
                                         // a transient host banner, not a modal
                                         // dialog, using the benchmark copy.
                                         onPasswordProtectedPrint(passwordPrintBlockedMessage)
-                                    } else if (action == SharedMobilePdfNativeAction.SHARE && shouldShowPdfAnnotationExportChoice(
-                                            sidecarsReady = true,
-                                            inkAnnotationCounts = readerState.annotations
-                                                .filter { it.kind == PdfAnnotationKind.INK }
-                                                .groupBy { it.pageIndex }
-                                                .values
-                                                .map { it.size },
-                                            textBoxCount = readerState.annotations.count { it.kind == PdfAnnotationKind.TEXT },
-                                            highlightCount = readerState.annotations.count { it.kind == PdfAnnotationKind.HIGHLIGHT },
-                                        )
-                                    ) {
+                                    } else if (action == SharedMobilePdfNativeAction.SHARE && exportableAnnotations) {
                                         showShareFormatChoice = true
-                                    } else if (action == SharedMobilePdfNativeAction.SAVE_COPY) {
+                                    } else if (action == SharedMobilePdfNativeAction.SHARE) {
+                                        // Android benchmark (requestShare → shareOriginalPdf):
+                                        // without exportable annotations there is no dialog and the
+                                        // original bytes are staged/shared under a suggested name.
+                                        dispatchNativePdfAction(action, sharedPdfOriginalExportSnapshot(readerState))
+                                    } else if (action == SharedMobilePdfNativeAction.SAVE_COPY && exportableAnnotations) {
                                         showSaveFormatChoice = true
+                                    } else if (action == SharedMobilePdfNativeAction.SAVE_COPY) {
+                                        // Android benchmark (requestSaveCopy → launchOriginalSaveCopy):
+                                        // the format dialog is skipped when there is nothing to choose.
+                                        dispatchNativePdfAction(action, sharedPdfOriginalExportSnapshot(readerState))
                                     } else {
-                                        dispatchNativePdfAction(action, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
+                                        dispatchNativePdfAction(action, annotatedPdfExportSnapshot())
                                     }
                                 }
                             },
@@ -2410,6 +2447,7 @@ fun SharedMobilePdfReaderHost(
                         onAiDefine = if (readerAiAvailable) {
                             { text -> onAiAction(ReaderAiFeature.DEFINE, text) }
                         } else null,
+                        onOpenPaletteManager = { showHighlightPaletteEditor = true },
                         onClipboardError = onClipboardError,
                         onReadAloud = { page, charIndex -> requestTts(sharedPdfDisplayIndexFor(virtualLayout, page), charIndex) },
                         userScrollEnabled = !readerState.isScrollLocked,
@@ -2472,6 +2510,7 @@ fun SharedMobilePdfReaderHost(
                         onAiDefine = if (readerAiAvailable) {
                             { text -> onAiAction(ReaderAiFeature.DEFINE, text) }
                         } else null,
+                        onOpenPaletteManager = { showHighlightPaletteEditor = true },
                         onClipboardError = onClipboardError,
                         onReadAloud = { page, charIndex -> requestTts(sharedPdfDisplayIndexFor(virtualLayout, page), charIndex) },
                         userScrollEnabled = !readerState.isScrollLocked,
@@ -2905,41 +2944,85 @@ fun SharedMobilePdfReaderHost(
                         )
                     }
                 }
+                // Android parity (PdfViewerScreen autoScrollPadding /
+                // autoScrollAlignmentBias): the overlay clears the bottom
+                // toolbar plus the navigation inset while the chrome is visible
+                // and drops to 16.dp + inset when it is hidden, hugging the right
+                // edge while collapsed and centring when expanded. The previous
+                // fixed 12.dp padding plus a 76.dp TTS lift let it sit on the
+                // toolbar and drift from the EPUB overlay.
+                val pdfAutoScrollBottomPadding by animateDpAsState(
+                    targetValue = sharedMobilePdfAutoScrollBottomPadding(showChrome, effectiveBottomSystemInset),
+                    animationSpec = tween(PdfChromeMotionDurationMillis),
+                    label = "PdfAutoScrollBottomPadding"
+                )
+                val pdfAutoScrollAlignBias by animateFloatAsState(
+                    targetValue = sharedMobileAutoScrollAlignmentBias(autoScrollCollapsed),
+                    animationSpec = tween(PdfChromeMotionDurationMillis),
+                    label = "PdfAutoScrollAlign"
+                )
                 AnimatedVisibility(
                     visible = autoScrollModeActive && readerState.displayMode == PdfDisplayMode.VERTICAL_SCROLL,
                     enter = slideInVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeIn(tween(PdfChromeMotionDurationMillis)),
                     exit = slideOutVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeOut(tween(PdfChromeMotionDurationMillis)),
-                    modifier = Modifier.align(Alignment.BottomCenter),
+                    modifier = Modifier
+                        .align(BiasAlignment(pdfAutoScrollAlignBias, 1f))
+                        .padding(bottom = pdfAutoScrollBottomPadding)
+                        .padding(horizontal = SharedMobileAutoScrollHorizontalPadding),
                 ) {
-                    SharedMobilePdfAutoScrollControls(
+                    SharedMobileAutoScrollControls(
                         isPlaying = autoScrollPlaying,
-                        isTemporarilyPaused = autoScrollTemporarilyPaused,
-                        profile = autoScrollProfile,
+                        isTempPaused = autoScrollTemporarilyPaused,
+                        speed = autoScrollProfile.speed,
+                        minSpeed = autoScrollProfile.minSpeed,
+                        maxSpeed = autoScrollProfile.maxSpeed,
                         isLocalMode = autoScrollIsLocal,
                         isMusicianMode = autoScrollMusicianMode,
                         useSlider = autoScrollUseSlider,
                         isCollapsed = autoScrollCollapsed,
                         onPlayPause = {
-                            autoScrollPlaying = !autoScrollPlaying
-                            autoScrollTemporarilyPaused = false
+                            // Android parity (onPlayPauseToggle): pausing clears
+                            // the temporary pause too.
+                            if (autoScrollPlaying) {
+                                autoScrollPlaying = false
+                                autoScrollTemporarilyPaused = false
+                            } else {
+                                autoScrollPlaying = true
+                                autoScrollTemporarilyPaused = false
+                            }
                         },
-                        onProfileChange = ::updateAutoScrollProfile,
-                        onLocalModeChange = ::setAutoScrollLocalMode,
-                        onMusicianModeChange = {
-                            autoScrollMusicianMode = it
-                            onPdfAutoScrollMusicianModeChange(it)
-                            if (it) showChrome = false
+                        onSpeedChange = { requested ->
+                            updateAutoScrollProfile(
+                                autoScrollProfile.copy(speed = snapSharedMobileAutoScrollSpeed(requested))
+                            )
                         },
-                        onUseSliderChange = {
-                            autoScrollUseSlider = it
-                            onPdfAutoScrollUseSliderChange(it)
+                        onMinSpeedChange = { requested ->
+                            updateAutoScrollProfile(
+                                autoScrollProfile.withMinSpeed(snapSharedMobileAutoScrollSpeed(requested))
+                            )
                         },
-                        onCollapsedChange = { autoScrollCollapsed = it },
+                        onMaxSpeedChange = { requested ->
+                            updateAutoScrollProfile(
+                                autoScrollProfile.withMaxSpeed(snapSharedMobileAutoScrollSpeed(requested))
+                            )
+                        },
+                        onInputModeToggle = {
+                            autoScrollUseSlider = !autoScrollUseSlider
+                            onPdfAutoScrollUseSliderChange(autoScrollUseSlider)
+                        },
+                        onMusicianModeToggle = {
+                            val next = !autoScrollMusicianMode
+                            autoScrollMusicianMode = next
+                            onPdfAutoScrollMusicianModeChange(next)
+                            if (next) showChrome = false
+                        },
+                        onCollapseChange = { autoScrollCollapsed = it },
                         onScrollToTop = {
                             autoScrollPauseDurationMillis = 1_000L
                             autoScrollInteractionToken++
                             navigateToPage(0, recordHistory = false, reason = PdfNavigationReason.PAGE_TURN)
                         },
+                        onLocalModeChange = ::setAutoScrollLocalMode,
                         onClose = {
                             autoScrollModeActive = false
                             autoScrollPlaying = false
@@ -2948,16 +3031,15 @@ fun SharedMobilePdfReaderHost(
                             // onClose): closing restores the chrome.
                             showChrome = true
                         },
-                        modifier = Modifier.padding(
-                            start = 12.dp,
-                            end = 12.dp,
-                            bottom = ttsBottomPadding + if (pdfTts.isSessionActive || pendingTtsStart != null) 76.dp else 0.dp,
-                        ),
                     )
                 }
                 AnimatedVisibility(
                     // Android parity: the panel shows for blank queries too
                     // (it renders its own "Enter a search term" prompt).
+                    // Android parity (PdfViewerScreen topOverlayInset): the panel
+                    // sits below the top toolbar (64.dp) plus the status bar when
+                    // visible, never under it. Matches SharedMobilePdfReaderTopBar
+                    // applySystemBarInsets so the two never overlap.
                     visible = readerState.isSearchActive && readerState.showSearchResultsPanel
                 ) {
                     SharedMobilePdfSearchResultsPanel(
@@ -2971,6 +3053,17 @@ fun SharedMobilePdfReaderHost(
                         },
                         modifier = Modifier
                             .align(Alignment.TopCenter)
+                            .then(
+                                if (!isSplitPane && mobilePdfSystemBarsVisibility(
+                                        systemUiMode.toReaderSystemUiMode(),
+                                        showChrome,
+                                    ).statusBarsVisible
+                                ) {
+                                    Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                                } else {
+                                    Modifier
+                                }
+                            )
                             .padding(top = 64.dp)
                     )
                 }
@@ -3682,11 +3775,31 @@ fun SharedMobilePdfReaderHost(
                 onDismiss = { showReaderOptions = false }
             )
         }
-        if (readerExtrasState.aiResult.hasContent) {
-            SharedReaderAiResultSheet(
-                result = readerExtrasState.aiResult,
-                onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
-            )
+        // Android parity (AiDefinitionPopup vs AiHubBottomSheet): define
+        // results get the word-headline sheet with TTS/Copy/external lookup;
+        // summary/recap render inline in the hub while it is open, with this
+        // generic sheet only as the hub-dismissed fallback.
+        if (readerExtrasState.aiResult.hasContent && !showAiHub) {
+            val aiResult = readerExtrasState.aiResult
+            if (aiResult.title == ReaderAiFeature.DEFINE.displayName) {
+                SharedMobileAiDefinitionSheet(
+                    word = aiResult.queryText,
+                    result = aiResult,
+                    isMainTtsActive = isPdfTtsPlayingOrLoading,
+                    onOpenExternalDictionary = { word ->
+                        openSharedMobileEpubLookup(ReaderExternalLookupAction.DICTIONARY, word)
+                    },
+                    onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
+                )
+            } else {
+                SharedMobileAiTextResultSheet(
+                    result = aiResult,
+                    isMainTtsActive = isPdfTtsPlayingOrLoading,
+                    ttsBookTitle = book.title?.takeIf { it.isNotBlank() } ?: book.displayName,
+                    onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
+                    showUsageBadge = aiCredits != null,
+                )
+            }
         }
     }
 
@@ -3713,6 +3826,15 @@ fun SharedMobilePdfReaderHost(
         } else {
             noteAnnotationId = null
         }
+    }
+    // Android parity (PdfViewerScreen.showHighlightColorPicker): the selection
+    // menu's spectrum button opens the highlight palette editor.
+    if (showHighlightPaletteEditor) {
+        SharedPdfHighlighterPaletteEditorDialog(
+            palette = SharedPdfHighlighterPalette(readerState.highlighterPalette),
+            onDismiss = { showHighlightPaletteEditor = false },
+            onPaletteChange = { updatePdfHighlighterPalette(it) }
+        )
     }
     if (showFileInformation) {
         SharedBookInfoDialog(
@@ -3752,12 +3874,14 @@ fun SharedMobilePdfReaderHost(
         }
         SharedMobileAiHubSheet(
             sectionTitle = hubPageTitle,
+            bookTitle = hubBookTitle,
             cachedSummary = hubCacheEntries.firstOrNull { it.sectionIndex == hubBasePage },
             cacheEntries = hubCacheEntries,
             showCacheTab = summaryCache != null,
             credits = aiCredits,
+            aiResult = readerExtrasState.aiResult,
+            isMainTtsActive = isPdfTtsPlayingOrLoading,
             onGenerateSummary = {
-                showAiHub = false
                 hubPageSessions.firstOrNull()?.let { session ->
                     session.textForRange(0, session.pageCharCount)
                         ?.takeIf(String::isNotBlank)
@@ -3768,12 +3892,12 @@ fun SharedMobilePdfReaderHost(
                 }
             },
             onGenerateRecap = {
-                showAiHub = false
                 val pages = hubPageSessions.map { session ->
                     session?.let { it.textForRange(0, it.pageCharCount) }
                 }
                 buildPdfAiHubRecapText(pages)?.let { onAiAction(ReaderAiFeature.RECAP, it) }
             },
+            onClearAiResult = { pendingSummarySave = null; onAiResultDismiss() },
             onDeleteCached = { entry ->
                 summaryCache?.deleteSummary(entry.bookTitle, entry.sectionIndex)
                 aiCacheRevision++
@@ -3832,11 +3956,14 @@ fun SharedMobilePdfReaderHost(
             cancelLabel = readerString("action_cancel", "Cancel"),
             onAnnotated = {
                 showShareFormatChoice = false
-                dispatchNativePdfAction(SharedMobilePdfNativeAction.SHARE_ANNOTATED, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
+                dispatchNativePdfAction(SharedMobilePdfNativeAction.SHARE_ANNOTATED, annotatedPdfExportSnapshot())
             },
             onOriginal = {
                 showShareFormatChoice = false
-                dispatchNativePdfAction(SharedMobilePdfNativeAction.SHARE_ORIGINAL, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
+                dispatchNativePdfAction(
+                    SharedMobilePdfNativeAction.SHARE_ORIGINAL,
+                    sharedPdfOriginalExportSnapshot(readerState),
+                )
             },
             onDismiss = { showShareFormatChoice = false },
         )
@@ -3856,20 +3983,14 @@ fun SharedMobilePdfReaderHost(
                 showSaveFormatChoice = false
                 dispatchNativePdfAction(
                     SharedMobilePdfNativeAction.SAVE_COPY,
-                    SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts)
+                    annotatedPdfExportSnapshot(),
                 )
             },
             onOriginal = {
                 showSaveFormatChoice = false
                 dispatchNativePdfAction(
                     SharedMobilePdfNativeAction.SAVE_COPY,
-                    SharedPdfExportSnapshot(
-                        readerState.copy(
-                            annotations = emptyList(),
-                            blankPageInsertions = emptyList(),
-                            richTextDocumentJson = ""
-                        )
-                    )
+                    sharedPdfOriginalExportSnapshot(readerState),
                 )
             },
             onDismiss = { showSaveFormatChoice = false },

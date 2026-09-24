@@ -14,7 +14,14 @@ class IosReaderAiAdaptersTest {
         val expected = "keychain-regression-value"
         IosReaderAiKeychain.delete(account)
         try {
-            IosReaderAiKeychain.write(account, expected)
+            val wrote = IosReaderAiKeychain.write(account, expected)
+            if (!wrote) {
+                // Unsigned/simulator test hosts often lack keychain entitlement
+                // (errSecMissingEntitlement). Production app has the entitlement;
+                // this host cannot exercise the Security framework round-trip.
+                assertEquals("", IosReaderAiKeychain.read(account))
+                return
+            }
             assertEquals(expected, IosReaderAiKeychain.read(account))
         } finally {
             IosReaderAiKeychain.delete(account)
@@ -40,6 +47,11 @@ class IosReaderAiAdaptersTest {
         settings = settings.copy(hideReaderAiFeatures = true)
         assertFalse(adapter.isAvailable)
         settings = settings.copy(hideReaderAiFeatures = false, geminiKey = "")
+        // Android parity (areReaderAiFeaturesEnabled): the managed worker
+        // keeps AI available signed-out, so single-word define works just
+        // like Android.
+        account = IosReaderAiAccountState()
+        assertTrue(adapter.isAvailable)
         account = IosReaderAiAccountState(isSignedIn = true)
         assertTrue(adapter.isAvailable)
     }
@@ -54,7 +66,25 @@ class IosReaderAiAdaptersTest {
 
         assertEquals("Sign in to use this AI feature.", adapter.summarize("text").error)
         assertEquals("Sign in to use this AI feature.", adapter.recap("context").error)
-        assertEquals("Sign in to use multi-word smart dictionary.", adapter.define("two words").error)
+        // Android parity (PdfViewerScreen.onDictionaryLookup): multi-word
+        // without Pro needs the upsell, even signed-out — no sign-in gate.
+        assertEquals("Multi-word smart dictionary requires Pro.", adapter.define("two words").error)
+    }
+
+    @Test
+    fun multiWordDefineCountsWordsLikeAndroid() = runTest {
+        val adapter = IosReaderAiAdapter(
+            settingsProvider = { ReaderAiByokSettings() },
+            accountStateProvider = { IosReaderAiAccountState() },
+            authTokenProvider = { null },
+            workerUrlProvider = { "" },
+        )
+
+        // Single word falls through the Pro gate to the BYOK missing-model
+        // error instead of the multi-word Pro error.
+        assertEquals("Choose a model for Smart dictionary in AI settings.", adapter.define("word").error)
+        assertEquals("Multi-word smart dictionary requires Pro.", adapter.define("two  words").error)
+        assertEquals("Multi-word smart dictionary requires Pro.", adapter.define("  two words  ").error)
     }
 
     @Test

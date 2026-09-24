@@ -25,7 +25,6 @@ object AndroidShareArtifactManager {
     const val REQUEST_DIRECTORY_PREFIX: String = "share-"
     const val DEFAULT_TTL_MILLIS: Long = 24L * 60L * 60L * 1000L
 
-    private val invalidFileNameChars = Regex("[^A-Za-z0-9._-]+")
     private val requestIdPattern = Regex("[A-Za-z0-9-]{1,64}")
 
     data class Artifact(
@@ -129,15 +128,10 @@ object AndroidShareArtifactManager {
         return "$REQUEST_DIRECTORY_PREFIX$normalized"
     }
 
-    fun sanitizeFileName(requestedFileName: String): String {
-        val normalized = requestedFileName
-            .trim()
-            .replace(invalidFileNameChars, "_")
-            .trim('_')
-            .take(120)
-        return normalized.takeIf { it.isNotBlank() && it != "." && it != ".." }
-            ?: "shared-file"
-    }
+    fun sanitizeFileName(requestedFileName: String): String =
+        // Single source of truth lives in shared (SharedPdfExportFilenames) so iOS uses the
+        // identical sanitization; Android behavior unchanged (benchmark).
+        com.aryan.reader.shared.pdf.sanitizeSharedPdfExportFilename(requestedFileName)
 
     private data class PreparedArtifact(
         val requestId: String,

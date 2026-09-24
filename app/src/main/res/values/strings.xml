@@ -809,6 +809,10 @@
     <string name="dict_external_description">Uses the selected app for dictionary lookups.</string>
     <string name="dict_fallback_app">Fallback App</string>
     <string name="dict_dictionary_app">Dictionary App</string>
+    <!-- iOS lookup settings: hand the selection to any installed app that accepts text (share sheet). -->
+    <string name="dict_lookup_any_app">Any App</string>
+    <!-- iOS lookup settings: route the selection to the in-app AI definition. -->
+    <string name="dict_lookup_smart_ai">Smart AI</string>
     <string name="dict_select_app">Select an app</string>
     <string name="dict_translate">Translate</string>
     <string name="dict_translate_description">App used for translating selected text.</string>
@@ -1119,6 +1123,8 @@
     <!-- Dialog body when deleting a tag. %1$s = the tag name. Example: 'Delete tag "To read"? It will be removed from every book.' -->
     <string name="dialog_delete_tag_desc">Delete tag &quot;%1$s&quot;? It will be removed from every book.</string>
     <string name="error_no_browser">No browser found to open the link.</string>
+    <!-- Toast when an external app shares a file without granting read access, so there is nothing to open. -->
+    <string name="error_external_open_failed">Unable to open this file.</string>
 
     <!-- Annotations & Notes -->
     <string name="action_save_note">Save Note</string>
@@ -2550,4 +2556,101 @@
     <string name="settings_device_status_revoke_failed">Unable to revoke the selected device.</string>
     <string name="settings_device_status_revoked">Device revoked.</string>
     <string name="settings_device_status_unavailable">Device management is unavailable.</string>
+
+    <!-- Shared mobile reader chrome: the EPUB reader chrome/TTS sheets in
+         shared/src/mobileMain are rendered by the iOS reader, so these labels
+         need real resources to translate like their Android counterparts. -->
+    <string name="content_desc_expand_reading_controls">Expand reading controls</string>
+    <string name="content_desc_collapse_reading_controls">Collapse reading controls</string>
+    <string name="menu_contents">Contents</string>
+    <string name="menu_more_options">More options</string>
+    <string name="menu_stop_reading">Stop reading</string>
+    <!-- Reader chrome read-aloud button labels (state dependent). -->
+    <string name="tts_pause_reading">Pause reading</string>
+    <string name="tts_previous_chunk">Previous chunk</string>
+    <string name="tts_next_chunk">Next chunk</string>
+    <string name="tts_resume_reading">Resume reading</string>
+    <string name="tts_preparing_cloud_reading">Preparing cloud reading</string>
+    <string name="tts_pause_cloud_reading">Pause cloud reading</string>
+    <string name="tts_resume_cloud_reading">Resume cloud reading</string>
+    <string name="tts_read_aloud_cloud">Read aloud with Cloud AI</string>
+    <string name="epub_open_failed">Could not open EPUB</string>
+    <string name="reader_search_hint">Search in book</string>
+    <string name="reader_search_clear">Clear search</string>
+    <string name="reader_search_no_results">No results found</string>
+    <string name="reader_search_previous_result">Previous result</string>
+    <string name="reader_search_next_result">Next result</string>
+    <string name="reader_jump_back">Jump back</string>
+    <string name="reader_jump_forward">Jump forward</string>
+    <string name="tts_previous_part">Previous reading part</string>
+    <string name="tts_next_part">Next reading part</string>
+    <string name="tts_locate_part">Locate current reading part</string>
+    <string name="tts_cloud_previous_part">Previous cloud reading part</string>
+    <string name="tts_cloud_next_part">Next cloud reading part</string>
+    <string name="tts_cloud_locate_part">Locate cloud reading part</string>
+    <string name="tts_cloud_stop_reading">Stop cloud reading</string>
+    <string name="tts_cloud_ai_reading">Cloud AI reading</string>
+    <!-- Shown under the cloud reading switch when it is on. %1$s = active voice name. -->
+    <string name="tts_cloud_mode_summary">Gemini Live · %1$s</string>
+    <string name="tts_use_device_speech">Use device speech</string>
+    <!-- Shown when the device default voice is selected. -->
+    <string name="tts_device_voice_summary">Uses the voice selected in system settings</string>
+    <string name="tts_choose_voice">Choose voice</string>
+    <string name="tts_choose_cloud_voice">Choose cloud voice</string>
+    <string name="tts_stop_preview">Stop preview</string>
+    <!-- Content description for the per-voice sample button. %1$s = voice name. -->
+    <string name="tts_preview_voice">Preview %1$s</string>
+    <string name="tts_preview_system_voice">Preview system voice</string>
+    <string name="tts_clear_cached_cloud_audio">Clear cached cloud audio</string>
+    <string name="tts_speech_rate">Speech rate</string>
+    <string name="tts_pitch">Pitch</string>
+    <string name="tts_filter_cached_voice">Filter cached voice</string>
+    <string name="tts_favorites_only">Favorites only</string>
+    <!-- %1$d = number of favorite voices. -->
+    <string name="tts_favorites_only_count">Favorites only (%1$d)</string>
+    <string name="tts_no_voices_match_filters">No voices match these filters</string>
+    <!-- %1$s = voice name. -->
+    <string name="tts_remove_from_favorites_named">Remove %1$s from favorites</string>
+    <!-- %1$s = voice name. -->
+    <string name="tts_add_to_favorites_named">Add %1$s to favorites</string>
+    <string name="tts_replacements_empty">No replacements for this book yet.</string>
+    <!-- Marker shown in the rule list when the replacement deletes the matched text. -->
+    <string name="tts_replacements_remove_marker">(remove)</string>
+    <string name="format_select_mode">Select format mode</string>
+    <string name="format_saved_for_this_file">Saved for this file</string>
+    <string name="format_original_weight_note">Original uses the weight supplied by the book or selected font.</string>
+    <string name="auto_scroll_expand">Expand Auto Scroll</string>
+    <string name="auto_scroll_collapse">Collapse Auto Scroll</string>
+    <string name="auto_scroll_select_mode">Select auto-scroll mode</string>
+    <string name="auto_scroll_scroll_to_top">Scroll to top</string>
+    <string name="auto_scroll_swap_controls">Swap speed controls</string>
+    <string name="reader_brightness_follow_system_desc">Follow your device brightness setting.</string>
+    <string name="reader_brightness_decrease">Decrease brightness</string>
+    <string name="reader_brightness_increase">Increase brightness</string>
+    <string name="reader_brightness_override_hint">Changing this value switches from system brightness to a reader-only override.</string>
+    <string name="reader_orientation_hint">Choose how the reader responds when you rotate your device.</string>
+    <string name="dictionary_settings_app_title">Dictionary app</string>
+    <string name="dictionary_settings_app_desc">Used when you select text and choose Dictionary</string>
+    <string name="dictionary_settings_translate_title">Translate app</string>
+    <string name="dictionary_settings_translate_desc">Used when you select text and choose Translate</string>
+    <string name="dictionary_settings_search_title">Search app</string>
+    <string name="dictionary_settings_search_desc">Used when you select text and choose Search</string>
+    <string name="dialog_bookmark_new_name">New name</string>
+    <string name="desktop_bookmark_options">Bookmark options</string>
+    <string name="desktop_highlight">Highlight</string>
+    <string name="desktop_style_background">Background</string>
+    <string name="desktop_style_underline">Underline</string>
+    <string name="desktop_style_wavy">Wavy</string>
+    <string name="desktop_style_strike">Strike</string>
+    <string name="dialog_delete_bookmark_message">This bookmark will be removed from the book.</string>
+    <string name="desktop_no_annotations_with_notes">No annotations with notes</string>
+    <string name="desktop_delete_annotation_message">This removes the highlight and its comment.</string>
+    <string name="content_desc_selected_color">Selected color</string>
+    <string name="desktop_label_style">Style</string>
+    <string name="desktop_label_comment">Comment</string>
+    <string name="desktop_save_comment">Save comment</string>
+    <string name="desktop_no_images">No images in this book</string>
+    <string name="content_desc_save_or_share_image">Save or share image</string>
+    <!-- %1$s = the external URL the reader wants to open. -->
+    <string name="dialog_external_link_message">You clicked on an external link:\n\n%1$s\n\nWhat would you like to do?</string>
 </resources>

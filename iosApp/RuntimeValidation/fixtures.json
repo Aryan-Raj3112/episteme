@@ -6,7 +6,13 @@
       "source": "app/src/main/assets/sample.pdf",
       "kind": "pdf",
       "ownership": "repository-owned",
-      "use": ["open", "zoom", "search", "split", "diagnostic-performance"]
+      "use": [
+        "open",
+        "zoom",
+        "search",
+        "split",
+        "diagnostic-performance"
+      ]
     },
     {
       "id": "epub.reader-test-book",
@@ -23,7 +29,13 @@
         "ANNOTATION_TARGET_GOLF",
         "CFI_TARGET_HOTEL"
       ],
-      "use": ["open", "position-restore", "search", "tts", "diagnostic-performance"]
+      "use": [
+        "open",
+        "position-restore",
+        "search",
+        "tts",
+        "diagnostic-performance"
+      ]
     },
     {
       "id": "pdf.split-secondary",
@@ -31,7 +43,10 @@
       "kind": "pdf",
       "ownership": "manual-or-separately-licensed",
       "note": "Required for split-reader coverage. It must be byte-distinct from pdf.sample; do not duplicate the primary fixture.",
-      "use": ["split", "diagnostic-performance"]
+      "use": [
+        "split",
+        "diagnostic-performance"
+      ]
     },
     {
       "id": "pdf.scanned",
@@ -39,7 +54,13 @@
       "kind": "pdf",
       "ownership": "manual-or-separately-licensed",
       "note": "Required to exercise Vision OCR. pdf.sample is text-based and cannot prove the scanned-PDF path.",
-      "use": ["ocr", "search", "selection", "tts", "diagnostic-performance"]
+      "use": [
+        "ocr",
+        "search",
+        "selection",
+        "tts",
+        "diagnostic-performance"
+      ]
     },
     {
       "id": "pptx.user-owned",
@@ -47,7 +68,12 @@
       "kind": "pptx",
       "ownership": "manual-or-separately-licensed",
       "note": "Use a small deck with text, shapes, images, tables, charts, SmartArt, and hyperlinks. Do not commit a binary fixture.",
-      "use": ["open", "slide-navigation", "visual-rendering", "diagnostic-performance"]
+      "use": [
+        "open",
+        "slide-navigation",
+        "visual-rendering",
+        "diagnostic-performance"
+      ]
     }
   ],
   "flows": [
@@ -86,7 +112,20 @@
       "expected": [
         "PDF, EPUB, and PPTX open through the iOS importer and reach a usable first page/slide/chapter; external-open fallback is labeled separately.",
         "Close and reopen preserve the same Android-benchmark reading position contract.",
-        "Unsupported/corrupt/import-cancelled cases report an actionable state and do not strand the app in loading."
+        "Unsupported/corrupt/import-cancelled cases report an actionable state and do not strand the app in loading.",
+        "Opening a supported book from another app (Files share sheet / Open With) reaches the reader even when the file was never imported into the library first, on both a warm and a cold launch, and the staged copy survives the startup orphan sweep (`tmp/ExternalOpen/<requestId>/` must keep a fresh modification date).",
+        "Episteme is listed as a handler for the formats it reads (PDF, EPUB, MOBI/AZW3, FB2, TXT, MD, HTML, DOCX, ODT, PPTX, CBZ/CBR/CB7/CBT) in the iOS Open With list, matching the Android VIEW intent filters.",
+        "When the native copy of an external file fails, the reader shows the localized \"Unable to open this file.\" banner (Android `error_external_open_failed`) instead of failing silently."
+      ]
+    },
+    {
+      "id": "tts-session",
+      "surface": "reader-and-listening",
+      "expected": [
+        "Starting reader read-aloud or book listening, letting chunks auto-advance, and letting a book finish never freezes the UI or crashes the app: the synthesizer's next utterance is scheduled off its own delegate callback and the audio session is torn down off the main thread.",
+        "Pause/resume/stop, chapter and chunk skipping, and the speak/stop control in the reader chrome stay responsive while a session is active, including right after an utterance starts.",
+        "Ending a session hands audio back to other apps (the session is deactivated) without blocking the main thread, and interruption resume still restores playback.",
+        "Reader TTS voice settings, the read-aloud chrome labels, and the book replacement sheet are translated in the selected app language (Arabic checked), matching the Android screens."
       ]
     },
     {
@@ -100,6 +139,46 @@
       ]
     },
     {
+      "id": "pdf-ink-gesture",
+      "surface": "pdf-reader-annotations",
+      "expected": [
+        "A finger or Pencil touch starts ink on the down: the stroke begins exactly under the touch and keeps drawing through fast flicks, without waiting for the touch slop and without dropping mid-line movement.",
+        "A plain tap commits a single-point dot, a second finger cancels the stroke (Android parity), and drawing still works while zoomed and panned.",
+        "Eraser strokes and the Pencil shortcut erase live without leaving ink behind, and the annotations land on the page under the touch on every visible page."
+      ]
+    },
+    {
+      "id": "auto-scroll-chrome",
+      "surface": "epub-and-pdf-readers",
+      "expected": [
+        "The auto-scroll overlay renders identically in the EPUB and PDF vertical readers (same speed menus, slider/stepper and icons as Android) and never overlaps the bottom toolbar: visible chrome clears the bar plus the safe-area inset, hidden chrome drops to the Android rest padding.",
+        "Collapsing the overlay hugs the right edge, expanding centres it, and starting auto-scroll reveals the chrome unless musician mode is on; closing it restores the chrome.",
+        "Starting TTS turns auto-scroll off, and stepping the speed with + or - always reads one decimal (4.0x, never 3.999999).",
+        "EPUB vertical auto-scroll scrolls smoothly at every speed, matching Android's frame-driven pacing instead of stepping."
+      ]
+    },
+    {
+      "id": "home-language-selection",
+      "surface": "settings-language",
+      "expected": [
+        "Home > Language matches Android: a search field with the localized Search/Clear labels, radio-button rows with translated language names, and the shared no-results message.",
+        "Filtering accepts tags, aliases and accented or decomposed queries (turkce, espanol, zh cn) and behaves the same as Android's language dialog.",
+        "Picking a language applies it to the reader chrome and the settings summary shows the translated language name."
+      ]
+    },
+    {
+      "id": "pagination-page-turns",
+      "surface": "pdf-and-epub-paginated-readers",
+      "expected": [
+        "PDF: toggling Tap to Turn Pages takes effect on the very next edge tap, without turning pages manually first, and disabling it stops edge taps on the next tap as well. Tapping an edge on the first or last spread does nothing but keeps the chrome hidden, like Android.",
+        "PDF: with Tap to Turn Pages and Realistic Page Turns both on, an edge tap plays the 700 ms curl without stutter, and a single-step tap turn snaps instantly while the curl is off (Android scrollToPage).",
+        "EPUB: with Realistic Page Turns off, a swipe in paginated mode slides the page sets flat like the Android pager - no page curl - and the curl returns as soon as the setting is on.",
+        "Both readers in right-to-left pagination: edge taps advance toward the left in RTL, swipes follow the finger (EPUB slides right for a forward turn), and two-page spreads keep the mirrored page order.",
+        "Vertical-scroll PDF navigation (TOC, search, slider, TTS, links, programmatic jumps) settles instantly like Android scrollToPage; only pagination animates.",
+        "Paginated PDF targeted jumps (TOC/search/slider/initial) land without animation; internal links, jump history, TTS and page turns animate per animatesPagination()."
+      ]
+    },
+    {
       "id": "performance",
       "surface": "reader-and-library",
       "expected": [
@@ -107,6 +186,18 @@
         "Record document-open, page/tile render, OCR, search, TTS interruption/resume, and sync/import latency.",
         "Record peak memory and resident growth after repeated open/close; investigate monotonic growth.",
         "Compare the same fixture and operation with Android measurements before accepting a parity result."
+      ]
+    },
+    {
+      "id": "text-selection-lookup",
+      "surface": "reader-epub-and-pdf",
+      "expected": [
+        "Selecting text in an EPUB or PDF shows the Android-parity selection menu: one Dict entry (no duplicate Define/Dictionary), Copy, Speak, Dict, Translate, Search, Note, Clear.",
+        "Define defaults to the Smart AI engine: with AI available (key or signed-in), Dict opens the in-app AI definition popup.",
+        "With Any App selected, Dict/Translate/Search present the iOS share sheet listing installed apps; when Smart AI is selected but AI is unavailable, Dict falls back to the app chooser instead of doing nothing.",
+        "Web engines (Google/Bing/DuckDuckGo) open the matching site via the modern openURL API.",
+        "The PDF selection menu shows five highlight colors plus the spectrum palette button, which opens the highlight palette editor and persists slot changes.",
+        "The PDF annotation bottom sheet tool row uses localized Android labels (Copy/Dict/Translate/Search) and the Note/Comments tabs are localized."
       ]
     }
   ],
@@ -133,8 +224,21 @@
     }
   ],
   "telemetry": {
-    "inAppProvides": ["counters", "last-values", "selected-peaks", "bounded-events"],
-    "inAppDoesNotProvide": ["full-frame-histogram", "p50", "p95"],
-    "externalEvidenceRequired": ["Instruments Time Profiler", "Instruments Allocations", "repeated timestamp samples"]
+    "inAppProvides": [
+      "counters",
+      "last-values",
+      "selected-peaks",
+      "bounded-events"
+    ],
+    "inAppDoesNotProvide": [
+      "full-frame-histogram",
+      "p50",
+      "p95"
+    ],
+    "externalEvidenceRequired": [
+      "Instruments Time Profiler",
+      "Instruments Allocations",
+      "repeated timestamp samples"
+    ]
   }
 }

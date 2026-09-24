@@ -1290,9 +1290,16 @@ internal fun PdfPageRenderer(
 
                 if (richTextController != null) {
                     val isEditable = isEditMode && selectedTool == InkType.TEXT
-                    val hasContent = richTextController.pageLayouts.any {
+                    val hasLayoutOnPage = richTextController.pageLayouts.any {
                         it.pageIndex == selectionData.pageIndex
-                    } || richTextController.hasRenderableText
+                    }
+                    val hasContent = hasLayoutOnPage || richTextController.hasRenderableText
+                    pdfRichLayoutDiag(
+                        "gate page=${selectionData.pageIndex} editable=$isEditable " +
+                            "hasLayoutOnPage=$hasLayoutOnPage hasRenderable=${richTextController.hasRenderableText} " +
+                            "compose=${isEditable || hasContent} " +
+                            "layouts=${richTextController.pageLayouts.size}"
+                    )
 
                     if (isEditable || hasContent) {
                         SharedPdfRichTextLayer(

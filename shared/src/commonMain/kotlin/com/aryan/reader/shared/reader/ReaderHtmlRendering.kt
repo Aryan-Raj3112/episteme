@@ -684,10 +684,17 @@ internal fun ReaderSettings.readerFontFamilyCss(): String {
     return if (readerCustomFontUrl() != null) {
         "'ReaderCustomFont', Georgia, 'Times New Roman', serif"
     } else {
+        // Android parity (epub_reader.js updateReaderStyles + FormatSettings):
+        // the format sheet stores concrete family names ("Lora", "Merriweather",
+        // "Lato", ...) while FormatSettings maps them to "Serif"/"Sans"/"Mono".
+        // Both must render identically; matching only the canonical names left
+        // "Lora" on system-ui just like "Default", so Original->Lora changed
+        // nothing in the WebView while the native preview (toSharedReaderFontFamily)
+        // did change.
         when (fontFamily) {
-            "Serif" -> "Georgia, 'Times New Roman', serif"
-            "Sans" -> "Inter, Segoe UI, Arial, sans-serif"
-            "Mono" -> "'Roboto Mono', Consolas, monospace"
+            "Serif", "Merriweather", "Lora" -> "Georgia, 'Times New Roman', serif"
+            "Sans", "Lato", "Lexend" -> "Inter, Segoe UI, Arial, sans-serif"
+            "Mono", "Roboto Mono" -> "'Roboto Mono', Consolas, monospace"
             else -> "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
         }
     }

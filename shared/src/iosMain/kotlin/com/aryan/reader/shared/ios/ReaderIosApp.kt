@@ -168,6 +168,7 @@ import com.aryan.reader.shared.ReaderTtsOverlaySize
 import com.aryan.reader.shared.resolveReaderTtsOverlaySize
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiFeature
+import com.aryan.reader.shared.readerAiModelById
 import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.AiDefinitionResult
 import com.aryan.reader.shared.RecapResult
@@ -226,7 +227,7 @@ import com.aryan.reader.shared.toSharedMobileReaderState
 import com.aryan.reader.shared.sharedSettingsHubModel
 import com.aryan.reader.shared.sharedLegalLinksForProfile
 import com.aryan.reader.shared.sharedAppLanguageLabel
-import com.aryan.reader.shared.sharedAppLanguages
+import com.aryan.reader.shared.sharedAppLanguageOption
 import com.aryan.reader.shared.shouldApplyMobileFolderScan
 import com.aryan.reader.shared.shouldRequestCloudSyncAfterFolderSyncChange
 import com.aryan.reader.shared.opds.OpdsEntry
@@ -258,6 +259,7 @@ import com.aryan.reader.shared.ui.SharedGoogleFontsBottomSheet
 import com.aryan.reader.shared.ui.SharedGoogleFontsLabels
 import com.aryan.reader.shared.ui.SharedMobileFontsScreen
 import com.aryan.reader.shared.ui.SharedMobileFontsStrings
+import com.aryan.reader.shared.ui.SharedMobileLanguageSelectionList
 import com.aryan.reader.shared.ui.SharedMobileTopAppBar
 import com.aryan.reader.shared.ui.resolveSharedAppDarkTheme
 import com.aryan.reader.shared.ui.SharedAboutScreen
@@ -277,6 +279,7 @@ import com.aryan.reader.shared.SharedReaderTtsMiniBarState
 import com.aryan.reader.shared.shouldShowSharedReaderTtsMiniBar
 import com.aryan.reader.shared.sharedReaderTtsMiniBarBottomPaddingDp
 import com.aryan.reader.shared.ui.SharedMobileDictionarySettingsSheet
+import com.aryan.reader.shared.ui.SharedMobileInfoConfirmationDialog
 import com.aryan.reader.shared.ui.SharedAiSettingsScreen
 import com.aryan.reader.shared.ui.SharedAiSettingsStrings
 import com.aryan.reader.shared.ui.IosSharedMobileCloudTts
@@ -376,6 +379,13 @@ import platform.UIKit.UIActivityViewController
 import platform.UIKit.UIDocumentPickerViewController
 import platform.UIKit.UIModalPresentationFullScreen
 import platform.UIKit.UIPrintInteractionController
+import platform.UIKit.UIWindow
+import platform.UIKit.UIWindowLevelNormal
+import platform.UIKit.UIWindowScene
+import platform.darwin.DISPATCH_TIME_NOW
+import platform.darwin.dispatch_after
+import platform.darwin.dispatch_get_main_queue
+import platform.darwin.dispatch_time
 import platform.posix.fclose
 import platform.posix.fopen
 import platform.posix.fwrite
@@ -514,6 +524,23 @@ class ReaderIosBridge internal constructor(
 
     internal var latestNativeEvent by mutableStateOf<String?>(null)
         private set
+
+    /**
+     * Name of an externally opened file the native side could not copy into the
+     * app, or null. Compose turns it into the same banner Android shows from
+     * ExternalFileOpenRouter instead of failing silently.
+     */
+    internal var externalOpenFailureFileName by mutableStateOf<String?>(null)
+        private set
+
+    fun reportExternalOpenFailure(fileName: String) {
+        externalOpenFailureFileName = fileName.ifBlank { "file" }
+        latestNativeEvent = "Could not open the external file: $fileName"
+    }
+
+    internal fun consumeExternalOpenFailure() {
+        externalOpenFailureFileName = null
+    }
 
     private fun persistHandoff(request: MobileHandoffRequest) {
         handoffEnvelope = MobileHandoffReducer.enqueue(handoffEnvelope, request)
@@ -1002,6 +1029,7 @@ class ReaderIosBridge internal constructor(
 
     fun shareFile(path: String): Boolean {
         if (path.isBlank() || !NSFileManager.defaultManager.fileExistsAtPath(path)) return false
+        println("[$PDF_SHARE_SAVE_TRACE_TAG] library shareFile fileSize=${iosTransferFileSizeBytes(path)} path=$path")
         return presentIosFileTransfer(
             NSURL.fileURLWithPath(path),
             iosFileTransferPresentation(IosFileTransferIntent.USER_SHARE),
@@ -2054,9 +2082,12 @@ private const val IosLookupSearchServiceKey = "ios_reader_lookup_search_service"
 
 private fun loadIosReaderLookupServices():
     Triple<ReaderExternalLookupService, ReaderExternalLookupService, ReaderExternalLookupService> {
+    // Android parity (PdfPreferences): the dictionary engine defaults to the
+    // in-app Smart AI (use_online_dictionary = true); translate/search fall
+    // back to the app chooser / Google when nothing is persisted.
     return Triple(
-        loadIosLookupService(IosLookupDictionaryServiceKey, ReaderExternalLookupService.SYSTEM),
-        loadIosLookupService(IosLookupTranslateServiceKey, ReaderExternalLookupService.GOOGLE_TRANSLATE),
+        loadIosLookupService(IosLookupDictionaryServiceKey, ReaderExternalLookupService.AI),
+        loadIosLookupService(IosLookupTranslateServiceKey, ReaderExternalLookupService.ANY_APP),
         loadIosLookupService(IosLookupSearchServiceKey, ReaderExternalLookupService.GOOGLE),
     )
 }
@@ -3095,6 +3126,11 @@ private fun ReaderIosApp(
     var showIosTtsBookPicker by remember { mutableStateOf(false) }
     val settingsTts = rememberSharedMobileEpubLocalTts()
     var showDictionarySettingsSheet by remember { mutableStateOf(false) }
+    // Android parity (PdfViewerScreen.showDictionaryUpsellDialog /
+    // EpubReaderScreen.showDictionaryUpsellDialog): multi-word smart
+    // dictionary is Pro-only, so the upsell popup appears instead of the
+    // AI result sheet when a phrase is defined without Pro.
+    var showDictionaryUpsellDialog by remember { mutableStateOf(false) }
     val initialLookupServices = remember {
         loadIosReaderLookupServices().also { (dictionary, translate, search) ->
             IosReaderLookupServices.dictionary = dictionary
@@ -3245,10 +3281,28 @@ private fun ReaderIosApp(
             )
             return
         }
+        // Android parity (PdfViewerScreen.onDictionaryLookup /
+        // EpubReaderScreen.onDictionaryLookup): defining more than one word
+        // without Pro shows the smart-dictionary upsell popup instead of
+        // fetching. BYOK bypasses the worker gate exactly like Android OSS.
+        if (feature == ReaderAiFeature.DEFINE && iosCountWords(input) > 1 && !state.isProUser) {
+            val sanitizedSettings = effectiveReaderAiSettings.sanitized()
+            val byokModelId = sanitizedSettings.modelIdFor(ReaderAiFeature.DEFINE)
+            val hasByokDefine = readerAiModelById(byokModelId)?.let {
+                sanitizedSettings.apiKeyFor(it.provider).isNotBlank()
+            } == true
+            if (!hasByokDefine) {
+                showDictionaryUpsellDialog = true
+                return
+            }
+        }
         readerExtrasState = readerExtrasState.copy(
             aiResult = com.aryan.reader.shared.ReaderAiResultState(
                 title = feature.displayName,
                 isLoading = true,
+                // Android parity (AiDefinitionPopup word headline): the
+                // selected text shows immediately, even while loading.
+                queryText = if (feature == ReaderAiFeature.DEFINE) input else null,
             )
         )
         readerAiJob = scope.launch {
@@ -3285,11 +3339,25 @@ private fun ReaderIosApp(
                 is RecapResult -> result.error
                 else -> "AI request failed."
             }
+            // Android parity (AiResultContentView usage badge): surface the
+            // worker-reported cost balance on summary/recap results.
+            val cost = when (result) {
+                is SummarizationResult -> result.cost
+                is RecapResult -> result.cost
+                else -> null
+            }
+            val freeRemaining = when (result) {
+                is SummarizationResult -> result.freeRemaining
+                is RecapResult -> result.freeRemaining
+                else -> null
+            }
             readerExtrasState = readerExtrasState.copy(
                 aiResult = readerExtrasState.aiResult.copy(
                     text = if (readerExtrasState.aiResult.text.isNotBlank()) readerExtrasState.aiResult.text else textResult,
                     isLoading = false,
                     errorMessage = error,
+                    cost = cost,
+                    freeRemaining = freeRemaining,
                 )
             )
         }
@@ -4261,6 +4329,13 @@ private fun ReaderIosApp(
         bridge.consumeCloudSnapshot()
     }
 
+    val externalOpenFailureMessage = readerString("error_external_open_failed", "Unable to open this file.")
+    LaunchedEffect(bridge.externalOpenFailureFileName, externalOpenFailureMessage) {
+        if (bridge.externalOpenFailureFileName == null) return@LaunchedEffect
+        showMessage(externalOpenFailureMessage)
+        bridge.consumeExternalOpenFailure()
+    }
+
     LaunchedEffect(bridge.pendingExternalOpen) {
         val request = bridge.pendingExternalOpen ?: return@LaunchedEffect
         request.ttsTarget?.let { target ->
@@ -4638,14 +4713,20 @@ private fun ReaderIosApp(
                     SharedMobilePdfNativeAction.SAVE_COPY -> scope.launch {
                         pdfExportBusy = true
                         try {
+                            println("[$PDF_SHARE_SAVE_TRACE_TAG] SAVE_COPY entry displayName=${pdfBook.displayName}")
                             when (val export = prepareIosPdfSaveCopy(pdfBook, password, pdfExport)) {
                                 is IosPdfSaveCopyPreparation.Ready -> {
+                                    val size = iosTransferFileSizeBytes(export.book.path)
+                                    println("[$PDF_SHARE_SAVE_TRACE_TAG] SAVE_COPY ready path=${export.book.path} fileSize=$size")
                                     if (!bridge.performPdfNativeAction(export.book, action)) {
                                         showMessage("Unable to export ${pdfBook.displayName}.")
                                     }
                                 }
                                 is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
                             }
+                        } catch (e: Throwable) {
+                            println("[$PDF_SHARE_SAVE_TRACE_TAG] SAVE_COPY failed message=${e.message}")
+                            showMessage("Unable to export ${pdfBook.displayName}.")
                         } finally {
                             pdfExportBusy = false
                         }
@@ -4653,21 +4734,55 @@ private fun ReaderIosApp(
                     SharedMobilePdfNativeAction.SHARE_ANNOTATED -> scope.launch {
                         pdfExportBusy = true
                         try {
+                            println("[$PDF_SHARE_SAVE_TRACE_TAG] SHARE_ANNOTATED entry displayName=${pdfBook.displayName}")
                             when (val export = prepareIosPdfSaveCopy(pdfBook, password, pdfExport)) {
                                 is IosPdfSaveCopyPreparation.Ready -> {
+                                    val size = iosTransferFileSizeBytes(export.book.path)
+                                    println("[$PDF_SHARE_SAVE_TRACE_TAG] SHARE_ANNOTATED ready path=${export.book.path} fileSize=$size")
                                     if (!bridge.performPdfNativeAction(export.book, SharedMobilePdfNativeAction.SHARE)) {
                                         showMessage("Unable to share ${pdfBook.displayName}.")
                                     }
                                 }
                                 is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
                             }
+                        } catch (e: Throwable) {
+                            println("[$PDF_SHARE_SAVE_TRACE_TAG] SHARE_ANNOTATED failed message=${e.message}")
+                            showMessage("Unable to share ${pdfBook.displayName}.")
                         } finally {
                             pdfExportBusy = false
                         }
                     }
-                    SharedMobilePdfNativeAction.SHARE_ORIGINAL -> {
-                        if (!bridge.performPdfNativeAction(pdfBook, SharedMobilePdfNativeAction.SHARE)) {
+                    // Android benchmark (MainViewModel.sharePdf includeAnnotations=false): even an
+                    // original share is staged under a suggested filename so the share sheet never
+                    // exposes internal library paths (and item loading stays reliable).
+                    SharedMobilePdfNativeAction.SHARE,
+                    SharedMobilePdfNativeAction.SHARE_ORIGINAL,
+                    -> scope.launch {
+                        pdfExportBusy = true
+                        try {
+                            println("[$PDF_SHARE_SAVE_TRACE_TAG] SHARE entry action=$action displayName=${pdfBook.displayName}")
+                            when (
+                                val export = prepareIosPdfSaveCopy(
+                                    book = pdfBook,
+                                    password = password,
+                                    snapshot = pdfExport,
+                                    forceOriginal = true,
+                                )
+                            ) {
+                                is IosPdfSaveCopyPreparation.Ready -> {
+                                    val size = iosTransferFileSizeBytes(export.book.path)
+                                    println("[$PDF_SHARE_SAVE_TRACE_TAG] SHARE ready path=${export.book.path} fileSize=$size")
+                                    if (!bridge.performPdfNativeAction(export.book, SharedMobilePdfNativeAction.SHARE)) {
+                                        showMessage("Unable to share ${pdfBook.displayName}.")
+                                    }
+                                }
+                                is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
+                            }
+                        } catch (e: Throwable) {
+                            println("[$PDF_SHARE_SAVE_TRACE_TAG] SHARE failed message=${e.message}")
                             showMessage("Unable to share ${pdfBook.displayName}.")
+                        } finally {
+                            pdfExportBusy = false
                         }
                     }
                     else -> {
@@ -5213,6 +5328,29 @@ private fun ReaderIosApp(
                         onDismiss = { showDictionarySettingsSheet = false },
                     )
                 }
+                // Android parity (PdfViewerScreen/EpubReaderScreen dictionary
+                // upsell): phrases and paragraphs need Pro; Learn More opens
+                // the Pro screen, Not Now just dismisses.
+                if (showDictionaryUpsellDialog) {
+                    SharedMobileInfoConfirmationDialog(
+                        title = readerString(
+                            "ai_unlock_smart_dict",
+                            "Unlock Smart Dictionary",
+                        ),
+                        body = readerString(
+                            "ai_unlock_smart_dict_desc",
+                            "Defining entire phrases and paragraphs up to 2000 characters is a Pro feature. Upgrade to get instant definitions for any selected text.",
+                        ),
+                        confirmLabel = readerString("action_learn_more", "Learn more"),
+                        dismissLabel = readerString("action_not_now", "Not now"),
+                        icon = { Icon(Icons.Default.Ai, contentDescription = null) },
+                        onConfirm = {
+                            showDictionaryUpsellDialog = false
+                            utilityScreen = IosUtilityScreen.PRO
+                        },
+                        onDismiss = { showDictionaryUpsellDialog = false },
+                    )
+                }
                 pdfSplitPickerTarget?.let { target ->
                     IosPdfSplitPickerDialog(
                         books = iosPdfSplitPickerBooks(target),
@@ -5303,7 +5441,11 @@ private fun ReaderIosApp(
                                 includePdfFileNameDisplayName = true,
                                 usePdfFileNameAsDisplayName = state.usePdfFileNameAsDisplayName,
                                 hideReaderAi = state.hideReaderAi,
-                                languageSummary = sharedAppLanguageLabel(state.appLanguageTag),
+                                // Android parity: the settings summary shows the
+                                // translated language name, not the English one.
+                                languageSummary = sharedAppLanguageOption(state.appLanguageTag).let { option ->
+                                    readerString(option.labelKey, sharedAppLanguageLabel(state.appLanguageTag))
+                                },
                             )
                          )
                          Scaffold(
@@ -5655,25 +5797,17 @@ private fun ReaderIosApp(
                         modifier = Modifier.fillMaxSize().statusBarsPadding(),
                     )
                     IosUtilityScreen.LANGUAGE -> IosUtilityPage(title = readerString("options_language", "Language"), onBack = { utilityScreen = languageReturnScreen }) {
-                        LazyColumn(modifier = Modifier.fillMaxSize()) {
-                            items(sharedAppLanguages, key = { it.tag ?: "system" }) { language ->
-                                TextButton(
-                                    onClick = {
-                                        state = state.copy(appLanguageTag = language.tag)
-                                        utilityScreen = languageReturnScreen
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Text(
-                                        if (language.tag == state.appLanguageTag) {
-                                            "✓ ${language.label}"
-                                        } else {
-                                            language.label
-                                        }
-                                    )
-                                }
-                            }
-                        }
+                        // Android parity: the same search-filtered, radio-buttoned
+                        // list as HomeScreen's LanguageSelectionDialog, with the
+                        // localized labels resolving from the Android catalog.
+                        SharedMobileLanguageSelectionList(
+                            selectedTag = state.appLanguageTag,
+                            onSelect = { tag ->
+                                state = state.copy(appLanguageTag = tag)
+                                utilityScreen = languageReturnScreen
+                            },
+                            modifier = Modifier.fillMaxSize().statusBarsPadding(),
+                        )
                     }
                     IosUtilityScreen.FEEDBACK -> IosUtilityPage(title = readerString("feedback_title", "Feedback"), onBack = { utilityScreen = null }) {
                         SharedHelpFeedbackScreen(
@@ -8388,7 +8522,10 @@ private fun performIosPdfNativeAction(
 ): Boolean {
     val path = book.path?.takeIf(NSFileManager.defaultManager::fileExistsAtPath) ?: return false
     val url = NSURL.fileURLWithPath(path)
-    UIApplication.sharedApplication.keyWindow?.rootViewController ?: return false
+    if (iosPrimaryWindow()?.rootViewController == null) {
+        println("[$PDF_SHARE_SAVE_TRACE_TAG] noRootWindow action=$action path=$path")
+        return false
+    }
     return when (action) {
         SharedMobilePdfNativeAction.SHARE -> presentIosFileTransfer(
             url,
@@ -8410,25 +8547,195 @@ private fun performIosPdfNativeAction(
     }
 }
 
-private fun presentIosShareSheet(url: NSURL): Boolean {
-    val presenter = UIApplication.sharedApplication.keyWindow?.rootViewController ?: return false
-    val controller = UIActivityViewController(
-        activityItems = listOf(url),
-        applicationActivities = null,
+/**
+ * Scene-aware window lookup. `UIApplication.keyWindow` is unreliable when Compose hosts
+ * dialogs/alerts in their own `UIWindow` (it can point at a window that is about to be
+ * torn down), which made `presentViewController` silently no-op while logs still said
+ * "presented".
+ */
+private fun iosApplicationWindows(): List<UIWindow> {
+    val app = UIApplication.sharedApplication
+    val fromScenes = app.connectedScenes
+        .filterIsInstance<UIWindowScene>()
+        .flatMap { scene -> scene.windows.filterIsInstance<UIWindow>() }
+    if (fromScenes.isNotEmpty()) return fromScenes
+    return app.windows.filterIsInstance<UIWindow>()
+}
+
+private fun iosWindowTrace(): String = iosApplicationWindows().joinToString(prefix = "[", postfix = "]") { window ->
+    val root = window.rootViewController
+    "key=${window.isKeyWindow()} level=${window.windowLevel} hidden=${window.isHidden()} " +
+        "root=${root?.description} rootAttached=${root?.viewIfLoaded?.window != null}"
+}
+
+private fun iosPrimaryWindow(): UIWindow? {
+    val windows = iosApplicationWindows()
+    val attachedRoots = windows.filter { window ->
+        window.windowLevel == UIWindowLevelNormal &&
+            !window.isHidden() &&
+            window.rootViewController?.viewIfLoaded?.window != null
+    }
+    // Prefer an attached normal-level key window, then any attached normal-level window,
+    // then whatever key window UIKit reports (including Compose dialog windows as last resort).
+    return attachedRoots.firstOrNull { it.isKeyWindow() }
+        ?: attachedRoots.firstOrNull()
+        ?: windows.firstOrNull { it.isKeyWindow() && it.rootViewController != null }
+        ?: windows.firstOrNull { it.rootViewController != null }
+        ?: appKeyWindow()
+}
+
+private fun appKeyWindow(): UIWindow? = UIApplication.sharedApplication.keyWindow
+
+private fun topmostIosPresenter(): UIViewController? {
+    val window = iosPrimaryWindow()
+    val root = window?.rootViewController
+    if (root == null) {
+        println("[$PDF_SHARE_SAVE_TRACE_TAG] presenter rootUnavailable windowTrace=${iosWindowTrace()}")
+        return null
+    }
+    // Presenting on a controller that is already presenting silently does nothing and reports
+    // success, which surfaces as "tap share, dialog dismisses, nothing happens". Walk to the
+    // topmost presented controller so the sheet/picker always has a live presenter, but never
+    // land on a controller mid-dismissal (UIKit also refuses those without an error).
+    var presenter: UIViewController = root
+    while (true) {
+        val presented = presenter.presentedViewController ?: break
+        if (presented.isBeingDismissed()) break
+        presenter = presented
+    }
+    if (presenter.viewIfLoaded?.window == null) {
+        println(
+            "[$PDF_SHARE_SAVE_TRACE_TAG] presenter detached presenter=${presenter.description} " +
+                "root=${root.description} rootAttached=${root.viewIfLoaded?.window != null} " +
+                "windowTrace=${iosWindowTrace()}",
+        )
+        return if (root.viewIfLoaded?.window != null) root else null
+    }
+    return presenter
+}
+
+private const val PDF_SHARE_SAVE_TRACE_TAG = "PdfShareSave"
+private const val IOS_PDF_PRESENT_MAX_ATTEMPTS = 4
+private const val IOS_PDF_PRESENT_RETRY_DELAY_NANOS = 150_000_000L
+
+private fun iosTransferFileSizeBytes(path: String?): Long? {
+    if (path.isNullOrBlank()) return null
+    if (!NSFileManager.defaultManager.fileExistsAtPath(path)) return null
+    val attributes = NSFileManager.defaultManager.attributesOfItemAtPath(path, error = null)
+        ?: return null
+    return (attributes[NSFileSize] as? NSNumber)?.longLongValue
+}
+
+private fun scheduleIosPdfPresentRetry(block: () -> Unit) {
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW, IOS_PDF_PRESENT_RETRY_DELAY_NANOS),
+        dispatch_get_main_queue(),
+    ) {
+        block()
+    }
+}
+
+/**
+ * Presents [makeController] on the topmost live presenter and verifies UIKit actually
+ * attached it. `presentViewController` never throws on refusal — it only logs to the
+ * system console — so a bare call plus an unconditional "presented" log hid real failures.
+ *
+ * Returns false only when presentation cannot be arranged (caller shows a banner).
+ * Mid-transition refusals are retried on the next runloop turns and still report true
+ * because the deferred attempt will either land or log a hard rejection.
+ */
+private fun presentIosPdfController(
+    label: String,
+    fileSize: Long?,
+    path: String?,
+    attempt: Int = 0,
+    makeController: () -> UIViewController?,
+): Boolean {
+    val presenter = topmostIosPresenter()
+    println(
+        "[$PDF_SHARE_SAVE_TRACE_TAG] $label presenter=${presenter?.description} " +
+            "attempt=$attempt fileSize=$fileSize path=$path windowTrace=${iosWindowTrace()}",
     )
-    controller.modalPresentationStyle = UIModalPresentationFullScreen
+    if (presenter == null || fileSize == null) return false
+
+    val midTransition = presenter.isBeingDismissed() ||
+        presenter.isBeingPresented() ||
+        presenter.presentedViewController?.isBeingDismissed() == true
+    if (midTransition) {
+        if (attempt < IOS_PDF_PRESENT_MAX_ATTEMPTS) {
+            println("[$PDF_SHARE_SAVE_TRACE_TAG] $label deferred midTransition attempt=$attempt")
+            scheduleIosPdfPresentRetry {
+                presentIosPdfController(label, fileSize, path, attempt + 1, makeController)
+            }
+            return true
+        }
+        println("[$PDF_SHARE_SAVE_TRACE_TAG] $label failed midTransition attempt=$attempt")
+        return false
+    }
+
+    val controller = makeController() ?: run {
+        println("[$PDF_SHARE_SAVE_TRACE_TAG] $label controllerUnavailable attempt=$attempt")
+        return false
+    }
+    if (controller is UIActivityViewController) {
+        controller.modalPresentationStyle = UIModalPresentationFullScreen
+    }
+
     presenter.presentViewController(controller, animated = true, completion = null)
-    return true
+    if (presenter.presentedViewController === controller) {
+        println("[$PDF_SHARE_SAVE_TRACE_TAG] $label accepted attempt=$attempt")
+        return true
+    }
+
+    println(
+        "[$PDF_SHARE_SAVE_TRACE_TAG] $label rejected attempt=$attempt " +
+            "actual=${presenter.presentedViewController?.description} " +
+            "viewInWindow=${presenter.viewIfLoaded?.window != null}",
+    )
+    if (attempt < IOS_PDF_PRESENT_MAX_ATTEMPTS) {
+        scheduleIosPdfPresentRetry {
+            presentIosPdfController(label, fileSize, path, attempt + 1, makeController)
+        }
+        return true
+    }
+    return false
+}
+
+private fun presentIosShareSheet(url: NSURL): Boolean {
+    // Never throw: callers treat a thrown exception as a silent no-op (no banner), which
+    // surfaces as "tap share, dialog dismisses, nothing happens".
+    return try {
+        val size = iosTransferFileSizeBytes(url.path)
+        presentIosPdfController(
+            label = "shareSheet",
+            fileSize = size,
+            path = url.path,
+        ) {
+            UIActivityViewController(
+                activityItems = listOf(url),
+                applicationActivities = null,
+            )
+        }
+    } catch (e: Throwable) {
+        println("[$PDF_SHARE_SAVE_TRACE_TAG] shareSheet failed message=${e.message}")
+        false
+    }
 }
 
 private fun presentIosDocumentExport(url: NSURL): Boolean {
-    val presenter = UIApplication.sharedApplication.keyWindow?.rootViewController ?: return false
-    presenter.presentViewController(
-        UIDocumentPickerViewController(forExportingURLs = listOf(url), asCopy = true),
-        animated = true,
-        completion = null,
-    )
-    return true
+    return try {
+        val size = iosTransferFileSizeBytes(url.path)
+        presentIosPdfController(
+            label = "documentExport",
+            fileSize = size,
+            path = url.path,
+        ) {
+            UIDocumentPickerViewController(forExportingURLs = listOf(url), asCopy = true)
+        }
+    } catch (e: Throwable) {
+        println("[$PDF_SHARE_SAVE_TRACE_TAG] documentExport failed message=${e.message}")
+        false
+    }
 }
 
 private fun presentIosFileTransfer(

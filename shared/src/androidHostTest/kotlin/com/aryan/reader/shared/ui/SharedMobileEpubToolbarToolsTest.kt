@@ -21,4 +21,15 @@ class SharedMobileEpubToolbarToolsTest {
         assertTrue(defaults.isVisible(ReaderTool.DICTIONARY))
         assertFalse(defaults.isBottom(ReaderTool.DICTIONARY))
     }
+
+    @Test
+    fun brightnessAndOrientationArePlaceableInTopAndBottomBars() {
+        // Regression: both tools were placeable in the bottom set via the
+        // customize sheet but SharedMobileEpubBottomBar had no branches for
+        // them, so they vanished everywhere when moved to the bottom bar.
+        assertContains(SharedMobileEpubToolbarTools, ReaderTool.BRIGHTNESS)
+        assertContains(SharedMobileEpubToolbarTools, ReaderTool.SCREEN_ORIENTATION)
+        assertContains(SharedMobileEpubCustomizableTools, ReaderTool.BRIGHTNESS)
+        assertContains(SharedMobileEpubCustomizableTools, ReaderTool.SCREEN_ORIENTATION)
+    }
 }

@@ -174,6 +174,7 @@ internal class IosBookTtsListeningController {
     private var latestWordOffset = 0
     private var wantsPlayback = false
     private var audioSessionActive = false
+    private var audioSessionGeneration = 0
     private var interruptionState = LocalTtsInterruptionState()
     private var sleepTimerJob: Job? = null
     private var persistJob: Job? = null
@@ -334,6 +335,9 @@ internal class IosBookTtsListeningController {
     fun release() {
         stop()
         interruptionMonitor.close()
+        // AVSpeechSynthesizer keeps a weak reference to its delegate; clear it so a
+        // late callback can never message a released controller.
+        synthesizer.delegate = null
         scope.cancel()
     }
 
@@ -355,7 +359,9 @@ internal class IosBookTtsListeningController {
         when (transition.action) {
             LocalTtsInterruptionAction.NONE -> Unit
             LocalTtsInterruptionAction.PAUSE -> pauseInternal()
-            LocalTtsInterruptionAction.RESUME -> {
+            LocalTtsInterruptionAction.RESUME -> scope.launch {
+                // Activating the audio session blocks while the interrupting app
+                // releases the route, so keep it off the notification callback.
                 configureAudioSession(active = true)
                 resume()
             }
@@ -477,8 +483,14 @@ internal class IosBookTtsListeningController {
         val utteranceText = chunkSpoken.substring(safeOffset)
         if (utteranceText.isBlank()) return
         iosTtsListenLog("speakChunkAt chunk=$chunkIndex offset=$safeOffset textLen=${utteranceText.length}")
+        val hadActiveUtterance = activeUtterance != null
         invalidateActiveUtterance()
-        synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+        // Only interrupt the synthesizer when it actually has our utterance queued:
+        // stopSpeakingAtBoundary on an idle synthesizer (or from inside its own
+        // didFinish callback) is what froze/crashed listening sessions.
+        if (hadActiveUtterance) {
+            synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+        }
         speechBaseOffset = safeOffset
         latestWordOffset = safeOffset
         currentChunkIndex = chunkIndex
@@ -535,10 +547,17 @@ internal class IosBookTtsListeningController {
         iosTtsListenLog("delegate didFinish chunk=$currentChunkIndex active=${isActive(utterance)}")
         if (!isActive(utterance)) return
         activeUtterance = null
-        if (currentChunkIndex >= currentChunks.lastIndex) {
-            scope.launch { advancePastChapterEnd() }
-        } else {
-            speakChunkAt(currentChunkIndex + 1, fromOffset = 0, wantsPlayback = true)
+        val expectedGeneration = generation
+        // AVSpeechSynthesizer still owns the utterance while it runs didFinish,
+        // so the next speak must happen on the next main-loop turn; doing it
+        // inline re-enters the synthesizer and locks up the app.
+        scope.launch {
+            if (expectedGeneration != generation) return@launch
+            if (currentChunkIndex >= currentChunks.lastIndex) {
+                advancePastChapterEnd()
+            } else {
+                speakChunkAt(currentChunkIndex + 1, fromOffset = 0, wantsPlayback = true)
+            }
         }
     }
 
@@ -854,6 +873,7 @@ internal class IosBookTtsListeningController {
     private fun configureAudioSession(active: Boolean) {
         val audioSession = AVAudioSession.sharedInstance()
         if (active) {
+            audioSessionGeneration += 1
             val categorySet = audioSession.setCategory(AVAudioSessionCategoryPlayback, error = null)
             iosTtsListenLog("configureAudioSession active=$active setCategory=$categorySet")
         }
@@ -862,9 +882,18 @@ internal class IosBookTtsListeningController {
         iosTtsListenLog("configureAudioSession active=$active setActive=$activated")
     }
 
+    /**
+     * AVAudioSession.setActive(false) can block for seconds while the system
+     * tears the audio route down, so it must never run on the main thread —
+     * stopping a book used to hang the UI. Skip the teardown when a newer
+     * listening session already re-activated the session meanwhile.
+     */
     private fun deactivateAudioSession() {
-        if (audioSessionActive) {
-            configureAudioSession(active = false)
+        if (!audioSessionActive) return
+        audioSessionActive = false
+        val generation = ++audioSessionGeneration
+        IosTtsAudioSessionTeardown.deactivateIfStillOwner {
+            !audioSessionActive && generation == audioSessionGeneration
         }
     }
 

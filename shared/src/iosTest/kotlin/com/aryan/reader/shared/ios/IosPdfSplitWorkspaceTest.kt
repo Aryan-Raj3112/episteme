@@ -5,6 +5,7 @@ import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.PdfSplitWorkspaceAction
 import com.aryan.reader.shared.PdfSplitPaneState
 import com.aryan.reader.shared.PdfSplitWorkspaceState
+import com.aryan.reader.shared.reduce
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals

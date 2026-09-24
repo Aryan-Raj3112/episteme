@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.shared.pdf.SharedPdfRichLayoutDiag
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfRichTextLog
 import com.aryan.reader.shared.pdf.sharedPdfRichTextSelectionBounds
@@ -124,6 +125,14 @@ fun SharedPdfRichTextLayer(
                 "layout=${pageLayout?.globalStartIndex}-${pageLayout?.globalEndIndex} " +
                 "visibleLen=${pageLayout?.visibleText?.length ?: 0}"
         )
+        SharedPdfRichLayoutDiag.d(
+            "layer.render page=$pageIndex editing=$isTextEditingEnabled " +
+                "active=${controller.activePageIndex} hasLayout=${pageLayout != null} " +
+                "global=${pageLayout?.globalStartIndex}-${pageLayout?.globalEndIndex} " +
+                "visibleLen=${pageLayout?.visibleText?.length ?: 0} " +
+                "pageLayouts=${controller.pageLayouts.size} " +
+                "cfg=${pageWidth.richTextUiFloat()}x${pageHeight.richTextUiFloat()}"
+        )
     }
 
     val marginX = pageWidth * 0.1f
@@ -179,6 +188,86 @@ fun SharedPdfRichTextLayer(
                     maxWidth = editorWidth.toInt(),
                 ),
                 density = density
+            )
+        }
+
+        LaunchedEffect(measureResult, pageIndex) {
+            val multi = measureResult.multiParagraph
+            val lineCount = multi.lineCount
+            var maxLineHeight = 0f
+            var firstLineBottom = 0f
+            var lastLineBottom = 0f
+            var fontMin = Float.MAX_VALUE
+            var fontMax = Float.MIN_VALUE
+            var fontSamples = 0
+            if (lineCount > 0) {
+                firstLineBottom = multi.getLineBottom(0)
+                lastLineBottom = multi.getLineBottom(lineCount - 1)
+                for (i in 0 until lineCount) {
+                    maxLineHeight = maxOf(maxLineHeight, multi.getLineBottom(i) - multi.getLineTop(i))
+                }
+            }
+            textToRender.spanStyles.forEach { range ->
+                if (range.item.fontSize.isSp) {
+                    fontMin = minOf(fontMin, range.item.fontSize.value)
+                    fontMax = maxOf(fontMax, range.item.fontSize.value)
+                    fontSamples++
+                }
+            }
+            val sampleLines = minOf(lineCount, 10)
+            val lineMetrics = buildString {
+                for (i in 0 until sampleLines) {
+                    val top = multi.getLineTop(i)
+                    val bottom = multi.getLineBottom(i)
+                    if (i > 0) append(',')
+                    append("${top.richTextUiFloat()}-${bottom.richTextUiFloat()}")
+                }
+                if (lineCount > sampleLines) append(",...")
+            }
+            // Character span of each visual line: proves whether phantom lines
+            // break on '\n', on ParagraphStyle range boundaries, or soft-wrap.
+            val lineRanges = buildString {
+                for (i in 0 until sampleLines) {
+                    val start = multi.getLineStart(i)
+                    val end = multi.getLineEnd(i)
+                    if (i > 0) append(',')
+                    append("$i:$start-$end")
+                }
+                if (lineCount > sampleLines) append(",...")
+            }
+            val paraStyles = textToRender.paragraphStyles.joinToString(";") { range ->
+                "${range.start}..${range.end}:${range.item.textAlign}"
+            }
+            val escapedText = buildString {
+                val src = textToRender.text
+                val limit = src.length.coerceAtMost(160)
+                for (i in 0 until limit) {
+                    when (val c = src[i]) {
+                        '\n' -> append("\\n")
+                        '\u200B' -> append("\\u200B")
+                        '\u000C' -> append("\\f")
+                        else -> append(c)
+                    }
+                }
+                if (src.length > limit) append("...")
+            }
+            SharedPdfRichLayoutDiag.d(
+                "measure page=$pageIndex editing=$isTextEditingEnabled " +
+                    "active=${controller.activePageIndex} " +
+                    "src=${if (controller.activePageIndex == pageIndex) "local" else "layout"} " +
+                    "len=${textToRender.length} newlines=${textToRender.text.count { it == '\n' }} " +
+                    "paraStyles=${textToRender.paragraphStyles.size} " +
+                    "editorW=${editorWidth.richTextUiFloat()} lines=$lineCount " +
+                    "maxLineH=${maxLineHeight.richTextUiFloat()} " +
+                    "firstBottom=${firstLineBottom.richTextUiFloat()} " +
+                    "lastBottom=${lastLineBottom.richTextUiFloat()} " +
+                    "fontSpMin=${if (fontSamples > 0) fontMin.richTextUiFloat() else "-"} " +
+                    "fontSpMax=${if (fontSamples > 0) fontMax.richTextUiFloat() else "-"} " +
+                    "fontSpans=$fontSamples " +
+                    "lineTopsBots=$lineMetrics " +
+                    "lineRanges=$lineRanges " +
+                    "paraRanges=$paraStyles " +
+                    "text=\"$escapedText\""
             )
         }
 

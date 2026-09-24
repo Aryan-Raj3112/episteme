@@ -1,5 +1,6 @@
 package com.aryan.reader
 
+import com.aryan.reader.shared.sharedAppLanguageOptions
 import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
 import org.junit.Assert.assertEquals
@@ -68,6 +69,29 @@ class AppLanguageOptionsTest {
         assertTrue(japanese.matchesLanguageSearch(label = "日本語", query = "nihongo"))
         assertTrue(korean.matchesLanguageSearch(label = "한국어", query = "hangul"))
         assertTrue(estonian.matchesLanguageSearch(label = "Eesti", query = "eesti"))
+    }
+
+    @Test
+    fun `android options mirror the shared language catalog`() {
+        // The shared list owns tags, label keys, aliases and the search rules so
+        // iOS renders the same catalog. `getValue` in UiLabelResources throws if a
+        // label key has no resource, so building the list already proves every
+        // key resolves; this pins the tags and the order on top of that.
+        assertEquals(
+            sharedAppLanguageOptions.map { it.tag },
+            appLanguageSelectionOptions.map { it.tag }
+        )
+        assertEquals(
+            sharedAppLanguageOptions.map { it.labelKey },
+            listOf(
+                "language_system_default", "language_english", "language_arabic", "language_german",
+                "language_dutch", "language_turkish", "language_french", "language_russian",
+                "language_ukrainian", "language_belarusian", "language_spanish",
+                "language_portuguese_brazilian", "language_italian", "language_polish",
+                "language_indonesian", "language_vietnamese", "language_japanese", "language_korean",
+                "language_hindi", "language_chinese_simplified", "language_estonian"
+            )
+        )
     }
 
     @Test

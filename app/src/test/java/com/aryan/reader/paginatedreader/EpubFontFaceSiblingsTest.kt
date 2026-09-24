@@ -162,6 +162,28 @@ class EpubFontFaceSiblingsTest {
     }
 
     @Test
+    fun initialChapterHtmlIsMemoizedSoRecompositionDoesNotRebuildIt() {
+        // The initial chapter HTML embeds the whole chapter plus trimIndent
+        // copies; rebuilding it on every recomposition tips small heaps (the
+        // 67 KB trimIndent OOM, see docs/crashlytics-triage.md#37). It must be
+        // memoized on exactly the inputs the template reads.
+        val surfacesSource =
+            sourceFile("com/aryan/reader/epubreader/EpubReaderRenderSurfaces.kt").readText()
+        assertTrue(
+            "initialHtml must be memoized with remember so recomposition reuses it",
+            surfacesSource.contains("val initialHtml = remember(")
+        )
+        val initialHtmlBody = surfacesSource.substringAfter("val initialHtml = remember(")
+            .substringBefore("val chapterFontFaceCss by produceState")
+        assertTrue(initialHtmlBody.contains("initialContentToLoad"))
+        assertTrue(initialHtmlBody.contains("chapterHead"))
+        assertTrue(initialHtmlBody.contains("isDarkTheme"))
+        assertTrue(initialHtmlBody.contains("effectiveBg"))
+        assertTrue(initialHtmlBody.contains("effectiveText"))
+        assertTrue(initialHtmlBody.contains(".trimIndent()"))
+    }
+
+    @Test
     fun directoryListingsAreMemoizedSoRepeatedCallsAreConsistent() {
         createFontFile("fonts/Literata-Regular.ttf")
         createFontFile("fonts/Literata-Italic.ttf")

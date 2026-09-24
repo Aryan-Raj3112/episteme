@@ -21,7 +21,17 @@ class IosPdfOcrTextPageTest {
 
         assertEquals("Scanned PDF\npage", page.text)
         assertEquals(page.text.length, page.characterBounds.size)
-        assertEquals(PdfPageBounds(0.1f, 0.1f, 0.4f, 0.16f), page.characterBounds.first())
+        // characterBounds are per-character slices of each Vision word, not whole-word rects.
+        val firstCharWidth = (0.4f - 0.1f) / "Scanned".length
+        val first = page.characterBounds.first()
+        assertEquals(0.1f, first.left, 1e-5f)
+        assertEquals(0.1f, first.top, 1e-5f)
+        assertEquals(0.1f + firstCharWidth, first.right, 1e-5f)
+        assertEquals(0.16f, first.bottom, 1e-5f)
+        // The first word's characters reassemble to the original word bounds.
+        val firstWord = page.characterBounds.take("Scanned".length)
+        assertEquals(0.1f, firstWord.minOf { it.left }, 1e-5f)
+        assertEquals(0.4f, firstWord.maxOf { it.right }, 1e-5f)
     }
 
     @Test

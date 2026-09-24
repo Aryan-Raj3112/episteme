@@ -41,6 +41,15 @@ internal fun loadIosLibrarySnapshot(): SharedLibrarySnapshot {
             .getOrNull()
             ?.migrateAndroidEpubFormatSettings()
         if (decoded != null) {
+            // Persist the normalized snapshot so the next load sees Android format
+            // bounds already applied (and external readers of defaults stay consistent).
+            val stable = decoded
+                .withStableIosBookPaths()
+                .withStableIosAudiobookPaths()
+            defaults.setObject(
+                SharedLibrarySnapshotJson.encode(stable),
+                forKey = IosLibrarySnapshotDefaultsKey,
+            )
             IosLibrarySnapshotFileStore.write(encodeStableIosSnapshot(decoded))
             return decoded
                 .withResolvedIosBookPaths()

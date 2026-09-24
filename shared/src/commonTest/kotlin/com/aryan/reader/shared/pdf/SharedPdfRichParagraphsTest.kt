@@ -414,6 +414,155 @@ class SharedPdfRichParagraphsTest {
     }
 
     @Test
+    fun `adjacent same align paragraphs merge to one range`() {
+        val text = "a\nb\nc"
+        val paragraphs = listOf(
+            SharedPdfRichParagraph(),
+            SharedPdfRichParagraph(alignment = SharedPdfRichTextAlign.CENTER),
+            SharedPdfRichParagraph(alignment = SharedPdfRichTextAlign.CENTER),
+        )
+        val builder = AnnotatedString.Builder(text)
+        applyRichParagraphsToBuilder(builder, text, paragraphs)
+        val ranges = builder.toAnnotatedString().paragraphStyles
+        assertEquals(1, ranges.size, "adjacent CENTER paras must emit one merged range")
+        // Mark-carries-style: range covers first CENTER content through last mark.
+        assertEquals(2, ranges[0].start)
+        assertEquals(text.length, ranges[0].end)
+        assertEquals(
+            listOf(
+                SharedPdfRichParagraph(),
+                SharedPdfRichParagraph(alignment = SharedPdfRichTextAlign.CENTER),
+                SharedPdfRichParagraph(alignment = SharedPdfRichTextAlign.CENTER),
+            ),
+            readRichParagraphs(builder.toAnnotatedString()),
+        )
+    }
+
+    @Test
+    fun `alignment change breaks run into two ranges`() {
+        val text = "a\nb\nc"
+        val paragraphs = listOf(
+            SharedPdfRichParagraph(alignment = SharedPdfRichTextAlign.CENTER),
+            SharedPdfRichParagraph(alignment = SharedPdfRichTextAlign.RIGHT),
+            SharedPdfRichParagraph(alignment = SharedPdfRichTextAlign.RIGHT),
+        )
+        val builder = AnnotatedString.Builder(text)
+        applyRichParagraphsToBuilder(builder, text, paragraphs)
+        val ranges = builder.toAnnotatedString().paragraphStyles
+        assertEquals(2, ranges.size, "CENTER→RIGHT boundary must not merge")
+        assertEquals(androidx.compose.ui.text.style.TextAlign.Center, ranges[0].item.textAlign)
+        assertEquals(androidx.compose.ui.text.style.TextAlign.Right, ranges[1].item.textAlign)
+        // Mark-carries: first range includes the '\n' after "a".
+        assertEquals(0, ranges[0].start)
+        assertEquals(2, ranges[0].end)
+        assertEquals(2, ranges[1].start)
+        assertEquals(text.length, ranges[1].end)
+    }
+
+    @Test
+    fun `mark carries style includes terminating newline`() {
+        val text = "abc\ndef"
+        val paragraphs = listOf(
+            SharedPdfRichParagraph(),
+            SharedPdfRichParagraph(alignment = SharedPdfRichTextAlign.CENTER),
+        )
+        val builder = AnnotatedString.Builder(text)
+        applyRichParagraphsToBuilder(builder, text, paragraphs)
+        val range = builder.toAnnotatedString().paragraphStyles.single()
+        assertEquals(4, range.start)
+        assertEquals(text.length, range.end)
+        // Read-back probes bound.start (4) inside [4, 7).
+        assertEquals(SharedPdfRichTextAlign.CENTER, readRichParagraphs(builder.toAnnotatedString())[1].alignment)
+    }
+
+    @Test
+    fun `set alignment emits merged run for multi paragraph selection`() {
+        val centered = setRichParagraphAlignment(
+            plain("one\ntwo\nthree"),
+            TextRange(0, 14),
+            SharedPdfRichTextAlign.CENTER,
+        )
+        assertEquals(1, centered.paragraphStyles.size, "all-CENTER selection must be one run")
+        assertEquals(0, centered.paragraphStyles[0].start)
+        assertEquals(centered.length, centered.paragraphStyles[0].end)
+        assertEquals(
+            List(3) { SharedPdfRichParagraph(alignment = SharedPdfRichTextAlign.CENTER) },
+            readRichParagraphs(centered),
+        )
+    }
+
+    @Test
+    fun `alignment set and read back preserves left siblings`() {
+        // Center only the middle line: left siblings stay sparse (no ranges).
+        val centered = setRichParagraphAlignment(
+            plain("left\nmid\nright"),
+            TextRange(5, 8),
+            SharedPdfRichTextAlign.CENTER,
+        )
+        assertEquals(1, centered.paragraphStyles.size)
+        val attrs = readRichParagraphs(centered)
+        assertEquals(SharedPdfRichTextAlign.LEFT, attrs[0].alignment)
+        assertEquals(SharedPdfRichTextAlign.CENTER, attrs[1].alignment)
+        assertEquals(SharedPdfRichTextAlign.LEFT, attrs[2].alignment)
+    }
+
+    @Test
+    fun `trailing empty align toggle round-trips through rebuild`() {
+        // Previous paragraph already CENTER: trailing inherit + merge covers EOF.
+        val annotated = AnnotatedString.Builder("abc\n").apply {
+            addStyle(
+                ParagraphStyle(textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+                0,
+                4,
+            )
+        }.toAnnotatedString()
+        val ui = richParagraphUiState(annotated, TextRange(4))
+        assertEquals(SharedPdfRichTextAlign.CENTER, ui.alignment)
+        val retoggled = setRichParagraphAlignment(annotated, TextRange(4), SharedPdfRichTextAlign.CENTER)
+        val rebuilt = readRichParagraphs(retoggled)
+        assertEquals(SharedPdfRichTextAlign.CENTER, rebuilt[0].alignment)
+        assertEquals(SharedPdfRichTextAlign.CENTER, rebuilt[1].alignment)
+        assertTrue(retoggled.paragraphStyles.isNotEmpty(), "CENTER through EOF must keep a style range")
+    }
+
+    @Test
+    fun `trailing empty after left sibling gets eof anchor and round-trips through save`() {
+        // LEFT text + cursor on trailing empty + CENTER: no run covers EOF,
+        // so Rule 3 appends a ZWSP anchor, styles it, and save strips it while
+        // preserving trailing CENTER in document.paragraphs.
+        val centered = setRichParagraphAlignment(
+            plain("left\n"),
+            TextRange(5, 5),
+            SharedPdfRichTextAlign.CENTER,
+        )
+        assertTrue(
+            centered.text.endsWith('​'),
+            "trailing empty CENTER after LEFT must attach EOF anchor, got=${centered.text}",
+        )
+        assertEquals(
+            SharedPdfRichTextAlign.CENTER,
+            richParagraphUiState(centered, TextRange(centered.length)).alignment,
+        )
+        val doc = SharedPdfRichTextMapper.fromAnnotatedString(centered, pageHeightPx = 1000f)
+        assertEquals("left\n", doc.text, "save must strip EOF anchor")
+        assertFalse(doc.text.contains('​'))
+        assertEquals(
+            listOf(
+                SharedPdfRichParagraph(),
+                SharedPdfRichParagraph(alignment = SharedPdfRichTextAlign.CENTER),
+            ),
+            doc.paragraphs,
+        )
+        // Load re-attaches the anchor for edit/measure.
+        val reloaded = SharedPdfRichTextMapper.toAnnotatedString(doc, pageHeightPx = 1000f)
+        assertTrue(reloaded.text.endsWith('​'), "load must re-attach EOF anchor")
+        assertEquals(
+            SharedPdfRichTextAlign.CENTER,
+            readRichParagraphs(reloaded).last().alignment,
+        )
+    }
+
+    @Test
     fun `mapper writes and reads paragraph attributes`() {
         val document = SharedPdfRichDocument(
             text = "a\nb\nc",

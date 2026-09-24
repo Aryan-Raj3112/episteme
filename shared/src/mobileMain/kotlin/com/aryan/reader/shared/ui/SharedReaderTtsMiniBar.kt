@@ -59,6 +59,12 @@ fun SharedReaderTtsMiniBar(
     val canSkipNext = !state.isLoading && state.chunkIndex >= 0 && state.chunkIndex < state.totalChunks - 1
     val title = state.bookTitle ?: readerString("action_read_aloud", "Read aloud")
     val subtitle = state.subtitle()
+    // Resolved outside the semantics block, which is not a composable scope.
+    val playbackToggleContentDescription = if (state.isPlaying) {
+        readerString("tts_pause_reading", "Pause reading")
+    } else {
+        readerString("tts_resume_reading", "Resume reading")
+    }
     Surface(
         modifier = modifier.testTag("ReaderTtsMiniBar"),
         shape = RoundedCornerShape(24.dp),
@@ -88,13 +94,16 @@ fun SharedReaderTtsMiniBar(
                 }
             }
             IconButton(onClick = onPreviousChunk, enabled = canSkipPrevious) {
-                Icon(Icons.Default.SkipPrevious, contentDescription = "Previous chunk")
+                Icon(
+                    Icons.Default.SkipPrevious,
+                    contentDescription = readerString("tts_previous_chunk", "Previous chunk"),
+                )
             }
             Box(contentAlignment = Alignment.Center, modifier = Modifier.size(48.dp)) {
                 FilledIconButton(
                     onClick = onTogglePlayPause,
                     modifier = Modifier.size(44.dp).semantics {
-                        contentDescription = if (state.isPlaying) "Pause reading" else "Resume reading"
+                        contentDescription = playbackToggleContentDescription
                     }
                 ) {
                     Icon(
@@ -107,7 +116,10 @@ fun SharedReaderTtsMiniBar(
                 }
             }
             IconButton(onClick = onNextChunk, enabled = canSkipNext) {
-                Icon(Icons.Default.SkipNext, contentDescription = "Next chunk")
+                Icon(
+                    Icons.Default.SkipNext,
+                    contentDescription = readerString("tts_next_chunk", "Next chunk"),
+                )
             }
             Spacer(Modifier.size(4.dp))
         }

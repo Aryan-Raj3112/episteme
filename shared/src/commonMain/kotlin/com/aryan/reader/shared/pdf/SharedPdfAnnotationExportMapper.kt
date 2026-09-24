@@ -56,7 +56,7 @@ object SharedPdfAnnotationExportMapper {
         if (tool == PdfInkTool.NONE ||
             tool == PdfInkTool.ERASER ||
             tool == PdfInkTool.TEXT ||
-            points.size < 2
+            points.isEmpty()
         ) return null
 
         return SharedPdfInkAnnotationExport(

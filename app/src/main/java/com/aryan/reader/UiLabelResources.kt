@@ -1,8 +1,8 @@
 package com.aryan.reader
 
 import androidx.annotation.StringRes
-import java.text.Normalizer
-import java.util.Locale
+import com.aryan.reader.shared.sharedAppLanguageOptions
+import com.aryan.reader.shared.sharedAppLanguageSearchMatches
 
 data class AppLanguageOption(
     val tag: String?,
@@ -10,95 +10,57 @@ data class AppLanguageOption(
     val searchAliases: List<String> = emptyList()
 )
 
-val systemAppLanguageOption = AppLanguageOption(
-    tag = null,
-    labelRes = R.string.language_system_default,
-    searchAliases = listOf("system", "default", "device", "automatic")
+/**
+ * Bridges the shared language catalog to Android string resources. The tags,
+ * label keys, search aliases and matching rules are owned by
+ * [sharedAppLanguageOptions] (iOS renders the same list from the same keys), so
+ * the two platforms can never drift apart: this table only resolves a key to its
+ * `R.string` entry, and `getValue` fails fast if a key is ever missing.
+ */
+private val sharedLanguageLabelResources: Map<String, Int> = mapOf(
+    "language_system_default" to R.string.language_system_default,
+    "language_english" to R.string.language_english,
+    "language_arabic" to R.string.language_arabic,
+    "language_german" to R.string.language_german,
+    "language_dutch" to R.string.language_dutch,
+    "language_turkish" to R.string.language_turkish,
+    "language_french" to R.string.language_french,
+    "language_russian" to R.string.language_russian,
+    "language_ukrainian" to R.string.language_ukrainian,
+    "language_belarusian" to R.string.language_belarusian,
+    "language_spanish" to R.string.language_spanish,
+    "language_portuguese_brazilian" to R.string.language_portuguese_brazilian,
+    "language_italian" to R.string.language_italian,
+    "language_polish" to R.string.language_polish,
+    "language_indonesian" to R.string.language_indonesian,
+    "language_vietnamese" to R.string.language_vietnamese,
+    "language_japanese" to R.string.language_japanese,
+    "language_korean" to R.string.language_korean,
+    "language_hindi" to R.string.language_hindi,
+    "language_chinese_simplified" to R.string.language_chinese_simplified,
+    "language_estonian" to R.string.language_estonian,
 )
 
-val supportedAppLanguageOptions = listOf(
-    AppLanguageOption("en", R.string.language_english, listOf("english")),
-    AppLanguageOption("ar", R.string.language_arabic, listOf("arabic", "arabi")),
-    AppLanguageOption("de", R.string.language_german, listOf("german", "deutsch")),
-    AppLanguageOption("nl", R.string.language_dutch, listOf("dutch", "nederlands", "holland", "netherlands")),
-    AppLanguageOption("tr", R.string.language_turkish, listOf("turkish", "turkce", "turkçe")),
-    AppLanguageOption("fr", R.string.language_french, listOf("french", "francais", "français")),
-    AppLanguageOption("ru", R.string.language_russian, listOf("russian", "russkiy", "русский")),
-    AppLanguageOption("uk", R.string.language_ukrainian, listOf("ukrainian", "ukrayinska", "українська", "ukraine")),
-    AppLanguageOption("be", R.string.language_belarusian, listOf("belarusian", "belarus", "belaruskaya")),
-    AppLanguageOption("es", R.string.language_spanish, listOf("spanish", "espanol", "español")),
+val appLanguageSelectionOptions: List<AppLanguageOption> = sharedAppLanguageOptions.map { option ->
     AppLanguageOption(
-        "pt-BR",
-        R.string.language_portuguese_brazilian,
-        listOf(
-            "portuguese",
-            "brazilian portuguese",
-            "portugues",
-            "português",
-            "portugues brasileiro",
-            "português brasileiro",
-            "brasil",
-            "brazil",
-            "pt-br"
-        )
-    ),
-    AppLanguageOption("it", R.string.language_italian, listOf("italian", "italiano", "italia", "italy")),
-    AppLanguageOption("pl", R.string.language_polish, listOf("polish", "polski", "polska")),
-    AppLanguageOption("id", R.string.language_indonesian, listOf("indonesian", "bahasa indonesia", "bahasa", "indonesia")),
-    AppLanguageOption(
-        "vi",
-        R.string.language_vietnamese,
-        listOf("vietnamese", "vietnam", "tieng viet", "tiếng việt")
-    ),
-    AppLanguageOption("ja", R.string.language_japanese, listOf("japanese", "nihongo", "日本語")),
-    AppLanguageOption("ko", R.string.language_korean, listOf("korean", "hangul", "hangugeo", "한국어", "한글")),
-    AppLanguageOption("hi", R.string.language_hindi, listOf("hindi", "devanagari", "हिंदी", "हिन्दी")),
-    AppLanguageOption(
-        tag = "zh-CN",
-        labelRes = R.string.language_chinese_simplified,
-        searchAliases = listOf(
-            "chinese",
-            "simplified chinese",
-            "mandarin",
-            "zhongwen",
-            "jian ti zhong wen",
-            "zh-hans",
-            "zh-cn",
-            "中文",
-            "简体中文",
-        )
-    ),
-    AppLanguageOption("et", R.string.language_estonian, listOf("estonian", "eesti"))
-)
-
-val appLanguageSelectionOptions = listOf(systemAppLanguageOption) + supportedAppLanguageOptions
-
-fun AppLanguageOption.matchesLanguageSearch(label: String, query: String): Boolean {
-    val searchTokens = query.normalizedLanguageSearchTokens()
-    if (searchTokens.isEmpty()) return true
-
-    val searchableText = buildString {
-        append(label)
-        append(' ')
-        append(tag.orEmpty())
-        append(' ')
-        append(searchAliases.joinToString(" "))
-    }.normalizedLanguageSearchText()
-
-    return searchTokens.all { token -> token in searchableText }
+        tag = option.tag,
+        labelRes = sharedLanguageLabelResources.getValue(option.labelKey),
+        searchAliases = option.searchAliases,
+    )
 }
 
-private fun String.normalizedLanguageSearchTokens(): List<String> =
-    normalizedLanguageSearchText()
-        .split(' ')
-        .filter { it.isNotBlank() }
+val systemAppLanguageOption = appLanguageSelectionOptions.first()
 
-private fun String.normalizedLanguageSearchText(): String =
-    Normalizer.normalize(this, Normalizer.Form.NFD)
-        .replace("\\p{Mn}+".toRegex(), "")
-        .lowercase(Locale.ROOT)
-        .replace("[^\\p{L}\\p{N}]+".toRegex(), " ")
-        .trim()
+val supportedAppLanguageOptions = appLanguageSelectionOptions.drop(1)
+
+/** Android renders `stringResource(labelRes)` and filters with the shared rules. */
+fun AppLanguageOption.matchesLanguageSearch(label: String, query: String): Boolean =
+    sharedAppLanguageSearchMatches(
+        label = label,
+        tag = tag,
+        searchAliases = searchAliases,
+        query = query,
+    )
 
 val AddBooksSource.labelRes: Int
     @StringRes get() = when (this) {

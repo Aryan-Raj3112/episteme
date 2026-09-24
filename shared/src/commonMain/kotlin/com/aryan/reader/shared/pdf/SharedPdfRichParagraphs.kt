@@ -171,37 +171,134 @@ fun readRichParagraphs(annotated: AnnotatedString, contentOffset: Int = 0): List
     return attrs
 }
 
+/** One merged non-LEFT alignment run: a single ParagraphStyle range. */
+internal data class RichAlignRun(
+    val alignment: SharedPdfRichTextAlign,
+    val start: Int,
+    val end: Int,
+)
+
+/**
+ * Exclusive end offset for [bound]'s alignment style (mark-carries-style):
+ * non-empty paragraphs include their terminating `'\n'` when present so the
+ * mark stays in the same MultiParagraph segment; empty mid-text paragraphs
+ * style the mark itself. Trailing empty at EOF has no character — callers
+ * must not emit an empty range for it (see readRichParagraphs inherit).
+ */
+internal fun richParagraphStyleEnd(text: String, bound: RichParaBounds): Int {
+    if (bound.end > bound.start) {
+        return if (bound.end < text.length && text[bound.end] == '\n') {
+            bound.end + 1
+        } else {
+            bound.end
+        }
+    }
+    return if (bound.start < text.length && text[bound.start] == '\n') {
+        bound.start + 1
+    } else {
+        bound.start
+    }
+}
+
+/** Trailing ZWSP used only as a styleable EOF anchor for Rule 3. */
+internal const val SHARED_PDF_RICH_ALIGN_ANCHOR: Char = '\u200B'
+
+/**
+ * Removes every ZWSP from global text (live buffer / saved document).
+ * Local edit buffers keep their leading ZWSP — do not call this there.
+ */
+internal fun String.withoutRichAlignAnchors(): String =
+    if (indexOf(SHARED_PDF_RICH_ALIGN_ANCHOR) < 0) this else replace(SHARED_PDF_RICH_ALIGN_ANCHOR.toString(), "")
+
+/**
+ * Rule 3: when the trailing empty paragraph is non-LEFT and no run already
+ * covers EOF through a preceding same-align mark, append a ZWSP anchor and
+ * style it so the caret/line can center. Idempotent; LEFT never anchors.
+ */
+internal fun AnnotatedString.withTrailingRichAlignAnchorIfNeeded(
+    paragraphs: List<SharedPdfRichParagraph>,
+): AnnotatedString {
+    if (text.endsWith(SHARED_PDF_RICH_ALIGN_ANCHOR)) return this
+    if (paragraphs.isEmpty()) return this
+    // Local edit buffers start with a content ZWSP — callers must only use
+    // this on global text (no leading ZWSP); local rebuild skips the anchor.
+    val bounds = richParagraphBounds(text)
+    val lastBound = bounds.last()
+    val lastAttrs = paragraphs.getOrElse(bounds.lastIndex) { SharedPdfRichParagraph() }
+    if (lastAttrs.alignment == SharedPdfRichTextAlign.LEFT) return this
+    val runs = richParagraphAlignRuns(text, paragraphs)
+    val coversEof = runs.any { it.start < text.length && it.end >= text.length }
+    val trailingEmpty = lastBound.start == lastBound.end && lastBound.start == text.length
+    if (trailingEmpty && coversEof) return this
+    if (!trailingEmpty && coversEof) return this
+    if (!trailingEmpty && runs.isNotEmpty() && runs.last().end == text.length) return this
+
+    val anchored = text + SHARED_PDF_RICH_ALIGN_ANCHOR
+    val builder = AnnotatedString.Builder(anchored)
+    spanStyles.forEach { builder.addStyle(it.item, it.start, it.end) }
+    getStringAnnotations(0, length).forEach {
+        builder.addStringAnnotation(it.tag, it.item, it.start, it.end)
+    }
+    applyRichParagraphsToBuilder(builder, anchored, paragraphs)
+    return builder.toAnnotatedString()
+}
+
+/**
+ * Merged alignment runs for [text]/[paragraphs]. Consecutive same non-LEFT
+ * paragraphs share one range (Compose splits MultiParagraph on every
+ * ParagraphStyle boundary; per-paragraph ranges invent a line at each split).
+ * LEFT paragraphs are omitted so plain documents stay sparse.
+ */
+internal fun richParagraphAlignRuns(
+    text: String,
+    paragraphs: List<SharedPdfRichParagraph>,
+): List<RichAlignRun> {
+    if (text.isEmpty()) return emptyList()
+    val bounds = richParagraphBounds(text)
+    val runs = mutableListOf<RichAlignRun>()
+    var i = 0
+    while (i < bounds.size) {
+        val align = paragraphs.getOrElse(i) { SharedPdfRichParagraph() }.alignment
+        if (align == SharedPdfRichTextAlign.LEFT) {
+            i++
+            continue
+        }
+        var j = i
+        while (j + 1 < bounds.size &&
+            paragraphs.getOrElse(j + 1) { SharedPdfRichParagraph() }.alignment == align
+        ) {
+            j++
+        }
+        val start = bounds[i].start
+        val end = richParagraphStyleEnd(text, bounds[j])
+        if (end > start) {
+            runs += RichAlignRun(align, start, end)
+        }
+        i = j + 1
+    }
+    return runs
+}
+
 /**
  * Writes paragraph attributes into [builder] (whose text must already equal
  * [text]). Defaults are skipped so plain documents carry no extra ranges;
- * empty paragraphs are skipped (zero-length paragraph styles have no
- * visual effect).
+ * alignment is emitted as merged runs (see [richParagraphAlignRuns]).
  */
 fun applyRichParagraphsToBuilder(
     builder: AnnotatedString.Builder,
     text: String,
     paragraphs: List<SharedPdfRichParagraph>,
 ) {
+    richParagraphAlignRuns(text, paragraphs).forEach { run ->
+        builder.addStyle(
+            ParagraphStyle(textAlign = run.alignment.toComposeTextAlign()),
+            run.start,
+            run.end,
+        )
+    }
     richParagraphBounds(text).forEachIndexed { index, bound ->
-        if (bound.end > text.length) return@forEachIndexed
-        val attrs = paragraphs.getOrElse(index) { SharedPdfRichParagraph() }
-        if (attrs.alignment != SharedPdfRichTextAlign.LEFT) {
-            // Same empty-paragraph rule as setRichParagraphAlignment: cover
-            // the terminating newline so the alignment survives.
-            val styleEnd = if (bound.end > bound.start) {
-                bound.end
-            } else {
-                (bound.start + 1).coerceAtMost(text.length)
-            }
-            if (styleEnd > bound.start) {
-                builder.addStyle(
-                    ParagraphStyle(textAlign = attrs.alignment.toComposeTextAlign()),
-                    bound.start,
-                    styleEnd,
-                )
-            }
-        }
         if (bound.start >= bound.end) return@forEachIndexed
+        val attrs = paragraphs.getOrElse(index) { SharedPdfRichParagraph() }
         attrs.listType.toListTag()?.let { tag ->
             builder.addStringAnnotation(
                 tag = SHARED_PDF_RICH_LIST_TAG,
@@ -789,51 +886,72 @@ fun toggleRichParagraphList(
 }
 
 /**
- * Sets [align] on every paragraph intersecting [selection]. Pure style
- * change: text and selection are untouched.
+ * Sets [align] on every paragraph intersecting [selection], then re-emits
+ * every alignment run (merged) so the result never carries fragmented
+ * per-paragraph ranges. Text characters and selection are untouched.
  */
 fun setRichParagraphAlignment(
     annotated: AnnotatedString,
     selection: TextRange,
     align: SharedPdfRichTextAlign,
 ): AnnotatedString {
-    val bounds = richParagraphBounds(annotated.text)
-    if (bounds.isEmpty()) return annotated
-    val start = selection.min.coerceIn(0, annotated.length)
-    val end = selection.max.coerceIn(start, annotated.length)
+    // Normalize off any prior EOF anchor so bounds/selection match raw text.
+    val rawText = annotated.text.withoutRichAlignAnchors()
+    val hadAnchor = rawText.length != annotated.text.length
+    val base = if (hadAnchor) {
+        val b = AnnotatedString.Builder(rawText)
+        annotated.spanStyles.forEach {
+            val s = it.start.coerceIn(0, rawText.length)
+            val e = it.end.coerceIn(s, rawText.length)
+            if (s < e) b.addStyle(it.item, s, e)
+        }
+        annotated.getStringAnnotations(0, annotated.length).forEach {
+            val s = it.start.coerceIn(0, rawText.length)
+            val e = it.end.coerceIn(s, rawText.length)
+            if (s < e) b.addStringAnnotation(it.tag, it.item, s, e)
+        }
+        b.toAnnotatedString()
+    } else {
+        annotated
+    }
+
+    val bounds = richParagraphBounds(base.text)
+    if (bounds.isEmpty()) return base
+    val start = selection.min.coerceIn(0, base.length)
+    val end = selection.max.coerceIn(start, base.length)
     val firstIndex = bounds.indexOfLast { it.start <= start }.coerceAtLeast(0)
     val lastIndex = bounds.indexOfLast { it.start <= end }.coerceAtLeast(firstIndex)
-    val fresh = AnnotatedString.Builder(annotated.text)
-    annotated.spanStyles.forEach { fresh.addStyle(it.item, it.start, it.end) }
-    annotated.getStringAnnotations(0, annotated.length).forEach {
+
+    val paragraphs = bounds.mapIndexed { index, bound ->
+        val inSelection = index in firstIndex..lastIndex
+        val alignment = if (inSelection) {
+            align
+        } else {
+            readRichParagraphAlignment(base, bound.start, 0, index == 0)
+        }
+        val listType = readRichParagraphListType(
+            base, bound.start, bound.end, 0, index == 0,
+        )
+        SharedPdfRichParagraph(alignment = alignment, listType = listType)
+    }
+
+    val fresh = AnnotatedString.Builder(base.text)
+    base.spanStyles.forEach { fresh.addStyle(it.item, it.start, it.end) }
+    base.getStringAnnotations(0, base.length).forEach {
         fresh.addStringAnnotation(it.tag, it.item, it.start, it.end)
     }
-    // Keep paragraph styles outside the touched range; the touched range
-    // gets exactly one alignment (or none for LEFT).
-    annotated.paragraphStyles.forEach { range ->
-        if (range.end <= bounds[firstIndex].start || range.start > bounds[lastIndex].end) {
-            fresh.addStyle(range.item, range.start, range.end)
-        }
-    }
-    if (align != SharedPdfRichTextAlign.LEFT) {
-        for (i in firstIndex..lastIndex) {
-            val bound = bounds[i]
-            // Empty paragraphs carry no characters, so a zero-length style
-            // would have no effect: extend over the terminating newline so
-            // the alignment sticks (and newly typed text inherits the
-            // paragraph). A trailing empty paragraph with no terminator
-            // cannot carry a style and stays LEFT.
-            val styleEnd = if (bound.end > bound.start) {
-                bound.end
-            } else {
-                (bound.start + 1).coerceAtMost(annotated.length)
-            }
-            if (styleEnd > bound.start) {
-                fresh.addStyle(ParagraphStyle(textAlign = align.toComposeTextAlign()), bound.start, styleEnd)
-            }
-        }
-    }
-    return fresh.toAnnotatedString()
+    applyRichParagraphsToBuilder(fresh, base.text, paragraphs)
+    val result = fresh.toAnnotatedString().withTrailingRichAlignAnchorIfNeeded(paragraphs)
+    val runs = richParagraphAlignRuns(base.text, paragraphs)
+    SharedPdfRichLayoutDiag.d(
+        "align.free align=$align sel=$start..$end paras=$firstIndex..$lastIndex " +
+            "bounds=${bounds.size} paraStylesIn=${base.paragraphStyles.size} " +
+            "paraStylesOut=${result.paragraphStyles.size} " +
+            "anchor=${result.text.endsWith(SHARED_PDF_RICH_ALIGN_ANCHOR)} " +
+            "runs=${runs.joinToString(";") { r -> "${r.start}..${r.end}:${r.alignment}" }} " +
+            "newlines=${base.text.count { it == '\n' }}"
+    )
+    return result
 }
 
 /**
