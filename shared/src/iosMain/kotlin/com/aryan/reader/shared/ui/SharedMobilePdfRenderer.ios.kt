@@ -143,9 +143,16 @@ internal actual fun rememberSharedMobilePdfTileRenders(
     LaunchedEffect(book.path, pageIndex, requests, password, zoomIsSettling, reverseColorMode, preserveImageColors) {
         if (zoomIsSettling) return@LaunchedEffect
         if (requests.isEmpty()) {
+            // Distinguishes "nothing to do" (unzoomed) from a starved planner
+            // (zoomed but no visible bounds): the latter means tiles can never
+            // crisp, so it is worth one diagnostic line in Xcode logs.
+            if (settledZoomScale > 1.01f && visibleBounds == null) {
+                println("[PdfTiles] page=$pageIndex starved scale=$settledZoomScale visibleBounds=null")
+            }
             tiles = emptyList()
             return@LaunchedEffect
         }
+        val fetchStartedAt = TimeSource.Monotonic.markNow()
         val cached = IosPdfTileCache.get(book, pageIndex, password, reverseColorMode, preserveImageColors, requests)
         val cachedIds = cached.mapTo(mutableSetOf()) { it.request.id }
         val missing = requests.filterNot { it.id in cachedIds }
@@ -157,6 +164,11 @@ internal actual fun rememberSharedMobilePdfTileRenders(
         coroutineContext.ensureActive()
         IosPdfTileCache.put(book, pageIndex, password, reverseColorMode, preserveImageColors, rendered)
         tiles = cached + rendered
+        println(
+            "[PdfTiles] page=$pageIndex scale=$settledZoomScale " +
+                "requests=${requests.size} cached=${cached.size} rendered=${rendered.size} " +
+                "fetchMs=${fetchStartedAt.elapsedNow().inWholeMilliseconds}"
+        )
     }
     return tiles
 }

@@ -188,12 +188,13 @@ import com.aryan.reader.shared.pdf.PdfSpreadLayout
 import com.aryan.reader.shared.pdf.PdfZoomCamera
 import com.aryan.reader.shared.pdf.PdfZoomPoint
 import com.aryan.reader.shared.pdf.PdfZoomSize
+import com.aryan.reader.shared.pdf.PdfZoomWindowMeasure
 import com.aryan.reader.shared.pdf.isZoomed
+import com.aryan.reader.shared.pdf.livePdfPageVisibleBounds
 import com.aryan.reader.shared.pdf.pdfDoubleTapTargetScale
 import com.aryan.reader.shared.pdf.pdfVerticalDoubleTapTargetScale
 import com.aryan.reader.shared.pdf.pdfZoomIndicatorPercent
 import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
-import com.aryan.reader.shared.pdf.visiblePdfPageBounds
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.sharedPdfSelectionUnionBounds
 import com.aryan.reader.shared.pdf.sharedPdfSelectionTouchSlopPx
@@ -2196,7 +2197,15 @@ internal fun SharedMobilePdfPageSurface(
     // unhittable until something restarts the block.
     val latestEffectiveAnnotations by rememberUpdatedState(effectiveAnnotations)
     val latestBaseAnnotations by rememberUpdatedState(annotations)
-    var visiblePageBounds by remember(pageIndex) { mutableStateOf<PdfPageBounds?>(null) }
+    // Window-geometry snapshot behind this page (transformed page rect, the
+    // camera that produced it, viewport rect). Scroll/layout re-fires the
+    // observer that records it; zoom/pinch only moves camera state, so the
+    // snapshot can lag the camera — liveVisiblePageBounds below repairs that
+    // lag so high-res tiles always plan for the view on screen.
+    var pageMeasure by remember(pageIndex) { mutableStateOf<PdfZoomWindowMeasure?>(null) }
+    val liveVisiblePageBounds = remember(pageMeasure, zoomCamera) {
+        pageMeasure?.let { livePdfPageVisibleBounds(it, zoomCamera) }
+    }
     val textSession = rememberPdfTextPageSession(book, pageIndex, pdfPassword)
     var allTextHighlightBounds by remember(pageIndex) { mutableStateOf<List<PdfPageBounds>>(emptyList()) }
     LaunchedEffect(showAllTextHighlights, pageIndex, pageRender.bitmap, zoomCamera.scale, textSession) {
@@ -2240,7 +2249,7 @@ internal fun SharedMobilePdfPageSurface(
         pageIndex = pageIndex,
         pageAspectRatio = pageRender.aspectRatio,
         zoomScale = zoomCamera.scale,
-        visibleBounds = visiblePageBounds,
+        visibleBounds = liveVisiblePageBounds,
         password = pdfPassword,
         reverseColorMode = reverseColorMode,
         preserveImageColors = preserveImageColors,
@@ -2281,16 +2290,10 @@ internal fun SharedMobilePdfPageSurface(
                 pageSurfaceWindowRect = page
                 onSurfaceWindowRectChanged(page)
                 val viewport = coordinates.findRootCoordinates().boundsInWindow()
-                visiblePageBounds = visiblePdfPageBounds(
+                pageMeasure = PdfZoomWindowMeasure(
+                    pageRect = PdfPageBounds(page.left, page.top, page.right, page.bottom),
                     camera = zoomCamera,
-                    transformedPageLeft = page.left,
-                    transformedPageTop = page.top,
-                    transformedPageRight = page.right,
-                    transformedPageBottom = page.bottom,
-                    viewportLeft = viewport.left,
-                    viewportTop = viewport.top,
-                    viewportRight = viewport.right,
-                    viewportBottom = viewport.bottom
+                    viewportRect = PdfPageBounds(viewport.left, viewport.top, viewport.right, viewport.bottom)
                 )
             }
             .then(
