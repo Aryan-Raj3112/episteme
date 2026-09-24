@@ -809,6 +809,10 @@
     <string name="dict_external_description">Uses the selected app for dictionary lookups.</string>
     <string name="dict_fallback_app">Fallback App</string>
     <string name="dict_dictionary_app">Dictionary App</string>
+    <!-- iOS lookup settings: hand the selection to any installed app that accepts text (share sheet). -->
+    <string name="dict_lookup_any_app">Any App</string>
+    <!-- iOS lookup settings: route the selection to the in-app AI definition. -->
+    <string name="dict_lookup_smart_ai">Smart AI</string>
     <string name="dict_select_app">Select an app</string>
     <string name="dict_translate">Translate</string>
     <string name="dict_translate_description">App used for translating selected text.</string>

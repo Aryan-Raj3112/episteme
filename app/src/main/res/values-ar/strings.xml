@@ -394,6 +394,8 @@
     <string name="dict_external_description">يستخدم التطبيق المختار للبحث في القاموس.</string>
     <string name="dict_fallback_app">التطبيق الاحتياطي</string>
     <string name="dict_dictionary_app">تطبيق القاموس</string>
+    <string name="dict_lookup_any_app">أي تطبيق</string>
+    <string name="dict_lookup_smart_ai">ذكاء اصطناعي</string>
     <string name="dict_select_app">اختر تطبيقاً</string>
     <string name="dict_translate">ترجمة</string>
     <string name="dict_translate_description">التطبيق المستخدم لترجمة النص المحدد.</string>

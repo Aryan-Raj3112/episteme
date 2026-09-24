@@ -674,11 +674,16 @@ class ReaderExtrasModelsTest {
 
     @Test
     fun `dictionary service options exclude system for translate and search`() {
-        assertEquals(2, ReaderDictionaryServiceOptions.size)
-        assertEquals(2, ReaderTranslateServiceOptions.size)
-        assertEquals(3, ReaderSearchServiceOptions.size)
+        assertEquals(3, ReaderDictionaryServiceOptions.size)
+        assertEquals(3, ReaderTranslateServiceOptions.size)
+        assertEquals(4, ReaderSearchServiceOptions.size)
         assertEquals(false, ReaderTranslateServiceOptions.contains(ReaderExternalLookupService.SYSTEM))
         assertEquals(false, ReaderSearchServiceOptions.contains(ReaderExternalLookupService.SYSTEM))
+        // Android parity: every action can hand off to the user's installed apps,
+        // and the dictionary keeps the Smart AI route first.
+        assertEquals(ReaderExternalLookupService.AI, ReaderDictionaryServiceOptions.first())
+        assertTrue(ReaderTranslateServiceOptions.contains(ReaderExternalLookupService.ANY_APP))
+        assertTrue(ReaderSearchServiceOptions.contains(ReaderExternalLookupService.ANY_APP))
     }
 
     @Test

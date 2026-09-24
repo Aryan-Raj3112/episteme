@@ -215,7 +215,21 @@ enum class ReaderExternalLookupService(val id: String, val title: String) {
     GOOGLE("google", "Google"),
     GOOGLE_TRANSLATE("google_translate", "Google Translate"),
     DUCKDUCKGO("duckduckgo", "DuckDuckGo"),
-    BING("bing", "Bing");
+    BING("bing", "Bing"),
+
+    /**
+     * Android parity (ExternalDictionaryHelper): hand the selection to the user's
+     * installed apps instead of a fixed engine. iOS shows the system share/choose
+     * sheet so the reader can pick any app that accepts text; Android keeps its
+     * per-action installed-app dropdowns.
+     */
+    ANY_APP("any_app", "Any App"),
+
+    /**
+     * Routes the selection to the in-app AI definition flow (iOS prompt is
+     * "Smart AI" in the Android dictionary sheet).
+     */
+    AI("ai", "Smart AI");
 
     companion object {
         fun fromId(id: String?): ReaderExternalLookupService {
@@ -225,16 +239,26 @@ enum class ReaderExternalLookupService(val id: String, val title: String) {
 }
 
 val ReaderDictionaryServiceOptions = listOf(
-    ReaderExternalLookupService.SYSTEM,
+    ReaderExternalLookupService.AI,
+    ReaderExternalLookupService.ANY_APP,
     ReaderExternalLookupService.GOOGLE,
 )
 
+/**
+ * Whether the selection-menu "Dict" action routes to the in-app AI definition
+ * (Smart AI engine) instead of the external/system lookup. Android reads its
+ * persisted engine choice; hosts set this from the same preference.
+ */
+expect var readerLookupUsesAiDictionary: Boolean
+
 val ReaderTranslateServiceOptions = listOf(
+    ReaderExternalLookupService.ANY_APP,
     ReaderExternalLookupService.GOOGLE_TRANSLATE,
     ReaderExternalLookupService.BING,
 )
 
 val ReaderSearchServiceOptions = listOf(
+    ReaderExternalLookupService.ANY_APP,
     ReaderExternalLookupService.GOOGLE,
     ReaderExternalLookupService.DUCKDUCKGO,
     ReaderExternalLookupService.BING,
@@ -274,6 +298,12 @@ fun externalLookupUrl(
             ReaderExternalLookupAction.TRANSLATE -> "https://translate.google.com/?sl=auto&tl=en&text=$encoded&op=translate"
             ReaderExternalLookupAction.SEARCH -> "https://www.google.com/search?q=$encoded"
         }
+        // Android parity (ExternalDictionaryHelper "Any App"): the text is handed
+        // to the user's installed apps via the platform chooser/share sheet, so
+        // there is no web URL to open. The caller (openSharedMobileEpubLookup)
+        // handles ANY_APP before reaching this URL builder.
+        ReaderExternalLookupService.ANY_APP,
+        ReaderExternalLookupService.AI -> ""
     }
 }
 

@@ -682,6 +682,9 @@ fun SharedMobilePdfReaderHost(
     var annotationSnapPreview by remember(readerSessionKey) { mutableStateOf<DockLocation?>(null) }
     var isAnnotationDockMinimized by remember(readerSessionKey) { mutableStateOf(false) }
     var showAnnotationToolSettings by remember(readerSessionKey) { mutableStateOf(false) }
+    // Android parity: the selection menu's palette (spectrum) button opens the
+    // highlight palette editor (HighlightColorPickerDialog).
+    var showHighlightPaletteEditor by remember(readerSessionKey) { mutableStateOf(false) }
     // Android parity (AnnotationSettingsRepository.selectedTool survives edit-mode
     // toggles): shared edit mode IS the selected tool (NONE = off), so the last
     // non-NONE tool is remembered here and restored when edit mode reopens —
@@ -2443,6 +2446,7 @@ fun SharedMobilePdfReaderHost(
                         onAiDefine = if (readerAiAvailable) {
                             { text -> onAiAction(ReaderAiFeature.DEFINE, text) }
                         } else null,
+                        onOpenPaletteManager = { showHighlightPaletteEditor = true },
                         onClipboardError = onClipboardError,
                         onReadAloud = { page, charIndex -> requestTts(sharedPdfDisplayIndexFor(virtualLayout, page), charIndex) },
                         userScrollEnabled = !readerState.isScrollLocked,
@@ -2505,6 +2509,7 @@ fun SharedMobilePdfReaderHost(
                         onAiDefine = if (readerAiAvailable) {
                             { text -> onAiAction(ReaderAiFeature.DEFINE, text) }
                         } else null,
+                        onOpenPaletteManager = { showHighlightPaletteEditor = true },
                         onClipboardError = onClipboardError,
                         onReadAloud = { page, charIndex -> requestTts(sharedPdfDisplayIndexFor(virtualLayout, page), charIndex) },
                         userScrollEnabled = !readerState.isScrollLocked,
@@ -3800,6 +3805,15 @@ fun SharedMobilePdfReaderHost(
         } else {
             noteAnnotationId = null
         }
+    }
+    // Android parity (PdfViewerScreen.showHighlightColorPicker): the selection
+    // menu's spectrum button opens the highlight palette editor.
+    if (showHighlightPaletteEditor) {
+        SharedPdfHighlighterPaletteEditorDialog(
+            palette = SharedPdfHighlighterPalette(readerState.highlighterPalette),
+            onDismiss = { showHighlightPaletteEditor = false },
+            onPaletteChange = { updatePdfHighlighterPalette(it) }
+        )
     }
     if (showFileInformation) {
         SharedBookInfoDialog(

@@ -89,6 +89,16 @@ class SharedNativePaginatedReaderInteractionTest {
     }
 
     @Test
+    fun `dict action uses AI only when AI is available and Smart AI engine selected`() {
+        // Android parity (PdfViewerScreen.onDictionaryLookup): the single "Dict"
+        // action opens the in-app AI definition only when AI is available AND the
+        // persisted engine preference picks the online dictionary (Smart AI).
+        assertEquals(false, sharedDictActionUsesAi(aiAvailable = false, usesAiDictionary = true))
+        assertEquals(false, sharedDictActionUsesAi(aiAvailable = true, usesAiDictionary = false))
+        assertEquals(true, sharedDictActionUsesAi(aiAvailable = true, usesAiDictionary = true))
+    }
+
+    @Test
     fun `paginated edge taps follow reading direction`() {
         assertEquals(SharedPaginatedTapAction.PREVIOUS_PAGE, sharedPaginatedTapAction(0.1f, true, false))
         assertEquals(SharedPaginatedTapAction.NEXT_PAGE, sharedPaginatedTapAction(0.9f, true, false))

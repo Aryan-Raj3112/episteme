@@ -1312,6 +1312,39 @@ private fun SharedPdfInkColorPalette(
     }
 }
 
+/**
+ * Dialog host for [SharedPdfHighlighterPaletteEditor]. Android parity: the PDF
+ * selection menu's spectrum button opens the highlight palette editor
+ * (HighlightColorPickerDialog), so the shared mobile menu routes its
+ * onOpenPaletteManager callback here.
+ */
+@Composable
+fun SharedPdfHighlighterPaletteEditorDialog(
+    palette: SharedPdfHighlighterPalette,
+    onDismiss: () -> Unit,
+    onPaletteChange: (SharedPdfHighlighterPalette) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(readerString("action_save", "Save"))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(readerString("action_cancel", "Cancel"))
+            }
+        },
+        text = {
+            SharedPdfHighlighterPaletteEditor(
+                palette = palette,
+                onPaletteChange = onPaletteChange
+            )
+        }
+    )
+}
+
 @Composable
 fun SharedPdfHighlighterPaletteEditor(
     palette: SharedPdfHighlighterPalette,

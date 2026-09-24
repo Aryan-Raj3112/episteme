@@ -90,6 +90,7 @@ import com.aryan.reader.shared.ReaderMusicianGesturePlan
 import com.aryan.reader.shared.ReaderMusicianNavigationTarget
 import com.aryan.reader.shared.planReaderMusicianGesture
 import com.aryan.reader.shared.readerSearchDelayMillis
+import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.readerExternalLookupActionForSelectionId
 import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.UserHighlight
@@ -1818,7 +1819,7 @@ fun SharedMobileEpubReaderScreen(
                                         val selectionLocator = locator ?: currentLocator ?: return@SharedNativePaginatedReader
                                         val lookupAction = action.externalLookupActionOrNull()
                                         when {
-                                            action == SharedNativeReaderSelectionAction.DEFINE && readerAiAvailable -> onAiAction(ReaderAiFeature.DEFINE, text)
+                                            action.externalLookupActionOrNull() == ReaderExternalLookupAction.DICTIONARY && sharedDictActionUsesAi(readerAiAvailable) -> onAiAction(ReaderAiFeature.DEFINE, text)
                                             lookupAction != null -> openSharedMobileEpubLookup(lookupAction, text)
                                             action == SharedNativeReaderSelectionAction.SPEAK -> speakSelectedText(text, selectionLocator)
                                             action == SharedNativeReaderSelectionAction.NOTE -> createNoteForSelection(text, selectionLocator)
@@ -2220,7 +2221,7 @@ fun SharedMobileEpubReaderScreen(
                                             // Android benchmark (ChapterWebView spectrum button): opens the
                                             // shared palette manager without touching the selection.
                                             selection.action == "palette" -> showHighlightPaletteManager = true
-                                            selection.action == "define" && readerAiAvailable -> onAiAction(ReaderAiFeature.DEFINE, selection.text)
+                                            selection.action == "define" && sharedDictActionUsesAi(readerAiAvailable) -> onAiAction(ReaderAiFeature.DEFINE, selection.text)
                                             lookupAction != null -> openSharedMobileEpubLookup(lookupAction, selection.text)
                                             selection.action == "speak" -> {
                                                 val locator = selection.locator ?: currentLocator ?: return@let

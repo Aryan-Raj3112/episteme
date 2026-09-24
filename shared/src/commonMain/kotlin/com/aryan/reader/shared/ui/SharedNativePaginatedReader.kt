@@ -65,6 +65,8 @@ import com.aryan.reader.paginatedreader.SemanticBlock
 import com.aryan.reader.paginatedreader.SemanticImage
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderLocator
+import com.aryan.reader.shared.readerLookupUsesAiDictionary
+
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -124,9 +126,10 @@ enum class SharedNativeReaderSelectionAction {
 
 internal fun SharedNativeReaderSelectionAction.externalLookupActionOrNull(): ReaderExternalLookupAction? {
     return when (this) {
-        // WebView parity (ReaderHtmlDocumentTemplate): Define opens AI define
-        // when available and falls back to dictionary lookup; Dictionary always
-        // opens the dictionary lookup.
+        // Android parity (PaginatedTextSelectionMenu): the single "Dict" entry
+        // routes through readerLookupUsesAiDictionary — in-app AI define when
+        // the Smart AI engine is selected (and AI is available), else the
+        // external lookup flow (app chooser / web engine).
         SharedNativeReaderSelectionAction.DEFINE,
         SharedNativeReaderSelectionAction.DICTIONARY -> ReaderExternalLookupAction.DICTIONARY
         SharedNativeReaderSelectionAction.TRANSLATE -> ReaderExternalLookupAction.TRANSLATE
@@ -134,6 +137,18 @@ internal fun SharedNativeReaderSelectionAction.externalLookupActionOrNull(): Rea
         SharedNativeReaderSelectionAction.SPEAK,
         SharedNativeReaderSelectionAction.NOTE -> null
     }
+}
+
+/**
+ * Android parity (PdfViewerScreen.onDictionaryLookup): true when the "Dict"
+ * action must open the in-app AI definition — AI available AND the Smart AI
+ * engine is the persisted dictionary choice.
+ */
+internal fun sharedDictActionUsesAi(
+    aiAvailable: Boolean,
+    usesAiDictionary: Boolean = readerLookupUsesAiDictionary,
+): Boolean {
+    return aiAvailable && usesAiDictionary
 }
 
 data class SharedNativeReaderLinkClick(

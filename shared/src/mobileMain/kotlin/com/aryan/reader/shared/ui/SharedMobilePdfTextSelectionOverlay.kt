@@ -83,6 +83,7 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.readerExternalLookupActionsAvailable
+import com.aryan.reader.shared.readerLookupUsesAiDictionary
 import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.PdfInkTool
@@ -141,6 +142,9 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     onHighlight: (PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onReadAloud: (Int) -> Unit,
     onAiDefine: ((String) -> Unit)? = null,
+    // Android parity (PdfSelectionMenuPopup onPaletteClick): opens the palette
+    // manager so the color row can be customized. Null hides the spectrum button.
+    onOpenPaletteManager: (() -> Unit)? = null,
     onClipboardError: ((String) -> Unit)? = null,
     onSelectionDragActiveChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
@@ -752,6 +756,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                     openSharedMobileEpubLookup(ReaderExternalLookupAction.DICTIONARY, text)
                     applyRangeUpdate(null, emptyList(), null)
                 },
+                onOpenPaletteManager = onOpenPaletteManager,
                 onTranslate = { text ->
                     openSharedMobileEpubLookup(ReaderExternalLookupAction.TRANSLATE, text)
                     applyRangeUpdate(null, emptyList(), null)
@@ -768,7 +773,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                 onSelectAll = {
                     val s = session ?: return@SharedMobilePdfSelectionMenu
                     scope.launch { computeAndApply(PdfTextSelectionRange(0, s.pageCharCount)) }
-                }
+                },
             )
         }
     }
@@ -991,10 +996,11 @@ private fun SharedMobilePdfSelectionMenu(
     onSearch: (String) -> Unit,
     onReadAloud: () -> Unit,
     onAiDefine: ((String) -> Unit)?,
-    onSelectAll: () -> Unit
+    onSelectAll: () -> Unit,
+    onOpenPaletteManager: (() -> Unit)?
 ) {
     var selectedStyle by remember { mutableStateOf(HighlightStyle.BACKGROUND) }
-    val colors = SharedPdfAndroidHighlightColors.palette.take(4)
+    val colors = SharedPdfAndroidHighlightColors.palette
     // Android parity (PdfSelectionMenuPopup): cap height to window - 32dp
     // (min 160dp) with scrolling, and wrap width to content via
     // IntrinsicSize.Max so the menu matches Android's size. BoxWithConstraints
@@ -1060,21 +1066,39 @@ private fun SharedMobilePdfSelectionMenu(
                             .clickable { onHighlight(colorArgb, selectedStyle, false) }
                     )
                 }
+                if (onOpenPaletteManager != null) {
+                    androidx.compose.foundation.layout.Spacer(Modifier.width(6.dp))
+                    SharedReaderHighlightPaletteSpectrumButton(
+                        onClick = onOpenPaletteManager,
+                        size = 28.dp,
+                    )
+                }
             }
             HorizontalDivider()
+            // Android parity (PdfSelectionMenuPopup): one settings-driven "Dict"
+            // action that resolves to AI when Smart AI is on, otherwise the external
+            // app; the note label reuses the localized Note/Edit pair.
+            val copyLabel = readerString("action_copy", "Copy")
+            val speakLabel = readerString("label_speak", "Speak")
+            val dictLabel = readerString("label_dict", "Dict")
+            val translateLabel = readerString("action_translate", "Translate")
+            val searchLabel = readerString("action_search", "Search")
+            val noteLabel = readerString("label_note", "Note")
+            val selectAllLabel = readerString("select_all", "Select All")
             val actions = buildList {
-                add(SharedMobilePdfMenuAction(Res.drawable.copy, "Copy") { onCopy(selectedText) })
-                add(SharedMobilePdfMenuAction(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = "Read aloud") { onReadAloud() })
+                add(SharedMobilePdfMenuAction(Res.drawable.copy, copyLabel) { onCopy(selectedText) })
+                add(SharedMobilePdfMenuAction(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = speakLabel) { onReadAloud() })
                 if (readerExternalLookupActionsAvailable(selectedText.length)) {
-                    onAiDefine?.let { define ->
-                        add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Ai, label = "AI define") { define(selectedText) })
+                    if (onAiDefine != null && readerLookupUsesAiDictionary) {
+                        add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Ai, label = dictLabel) { onAiDefine(selectedText) })
+                    } else {
+                        add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Book, label = dictLabel) { onDefine(selectedText) })
                     }
-                    add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Book, label = "Define") { onDefine(selectedText) })
-                    add(SharedMobilePdfMenuAction(Res.drawable.translate, "Translate") { onTranslate(selectedText) })
-                    add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Search, label = "Search") { onSearch(selectedText) })
+                    add(SharedMobilePdfMenuAction(Res.drawable.translate, translateLabel) { onTranslate(selectedText) })
+                    add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Search, label = searchLabel) { onSearch(selectedText) })
                 }
-                add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Edit, label = "Note") { onHighlight(colors.first(), selectedStyle, true) })
-                add(SharedMobilePdfMenuAction(Res.drawable.select_all, "Select all") { onSelectAll() })
+                add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Edit, label = noteLabel) { onHighlight(colors.first(), selectedStyle, true) })
+                add(SharedMobilePdfMenuAction(Res.drawable.select_all, selectAllLabel) { onSelectAll() })
             }
             Column(Modifier.padding(bottom = 4.dp)) {
                 actions.chunked(3).forEach { rowActions ->

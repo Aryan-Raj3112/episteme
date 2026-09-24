@@ -80,6 +80,17 @@ internal fun SharedMobileDictionarySettingsSheet(
     }
 }
 
+/**
+ * Localized titles for the lookup services. The enum's English `title` covers the
+ * Android benchmark sheet; the shared strings make the same list translate on iOS.
+ */
+@Composable
+private fun iosLookupServiceTitle(service: ReaderExternalLookupService): String = when (service) {
+    ReaderExternalLookupService.ANY_APP -> readerString("dict_lookup_any_app", "Any App")
+    ReaderExternalLookupService.AI -> readerString("dict_lookup_smart_ai", "Smart AI")
+    else -> service.title
+}
+
 @Composable
 private fun SharedMobileDictionarySettingsSection(
     title: String,
@@ -109,7 +120,7 @@ private fun SharedMobileDictionarySettingsSection(
                             .padding(horizontal = 16.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(option.title, modifier = Modifier.weight(1f))
+                        Text(iosLookupServiceTitle(option), modifier = Modifier.weight(1f))
                         if (option == selected) {
                             Icon(
                                 Icons.Default.Check,

@@ -6,7 +6,13 @@
       "source": "app/src/main/assets/sample.pdf",
       "kind": "pdf",
       "ownership": "repository-owned",
-      "use": ["open", "zoom", "search", "split", "diagnostic-performance"]
+      "use": [
+        "open",
+        "zoom",
+        "search",
+        "split",
+        "diagnostic-performance"
+      ]
     },
     {
       "id": "epub.reader-test-book",
@@ -23,7 +29,13 @@
         "ANNOTATION_TARGET_GOLF",
         "CFI_TARGET_HOTEL"
       ],
-      "use": ["open", "position-restore", "search", "tts", "diagnostic-performance"]
+      "use": [
+        "open",
+        "position-restore",
+        "search",
+        "tts",
+        "diagnostic-performance"
+      ]
     },
     {
       "id": "pdf.split-secondary",
@@ -31,7 +43,10 @@
       "kind": "pdf",
       "ownership": "manual-or-separately-licensed",
       "note": "Required for split-reader coverage. It must be byte-distinct from pdf.sample; do not duplicate the primary fixture.",
-      "use": ["split", "diagnostic-performance"]
+      "use": [
+        "split",
+        "diagnostic-performance"
+      ]
     },
     {
       "id": "pdf.scanned",
@@ -39,7 +54,13 @@
       "kind": "pdf",
       "ownership": "manual-or-separately-licensed",
       "note": "Required to exercise Vision OCR. pdf.sample is text-based and cannot prove the scanned-PDF path.",
-      "use": ["ocr", "search", "selection", "tts", "diagnostic-performance"]
+      "use": [
+        "ocr",
+        "search",
+        "selection",
+        "tts",
+        "diagnostic-performance"
+      ]
     },
     {
       "id": "pptx.user-owned",
@@ -47,7 +68,12 @@
       "kind": "pptx",
       "ownership": "manual-or-separately-licensed",
       "note": "Use a small deck with text, shapes, images, tables, charts, SmartArt, and hyperlinks. Do not commit a binary fixture.",
-      "use": ["open", "slide-navigation", "visual-rendering", "diagnostic-performance"]
+      "use": [
+        "open",
+        "slide-navigation",
+        "visual-rendering",
+        "diagnostic-performance"
+      ]
     }
   ],
   "flows": [
@@ -147,7 +173,9 @@
         "PDF: toggling Tap to Turn Pages takes effect on the very next edge tap, without turning pages manually first, and disabling it stops edge taps on the next tap as well. Tapping an edge on the first or last spread does nothing but keeps the chrome hidden, like Android.",
         "PDF: with Tap to Turn Pages and Realistic Page Turns both on, an edge tap plays the 700 ms curl without stutter, and a single-step tap turn snaps instantly while the curl is off (Android scrollToPage).",
         "EPUB: with Realistic Page Turns off, a swipe in paginated mode slides the page sets flat like the Android pager - no page curl - and the curl returns as soon as the setting is on.",
-        "Both readers in right-to-left pagination: edge taps advance toward the left in RTL, swipes follow the finger (EPUB slides right for a forward turn), and two-page spreads keep the mirrored page order."
+        "Both readers in right-to-left pagination: edge taps advance toward the left in RTL, swipes follow the finger (EPUB slides right for a forward turn), and two-page spreads keep the mirrored page order.",
+        "Vertical-scroll PDF navigation (TOC, search, slider, TTS, links, programmatic jumps) settles instantly like Android scrollToPage; only pagination animates.",
+        "Paginated PDF targeted jumps (TOC/search/slider/initial) land without animation; internal links, jump history, TTS and page turns animate per animatesPagination()."
       ]
     },
     {
@@ -158,6 +186,17 @@
         "Record document-open, page/tile render, OCR, search, TTS interruption/resume, and sync/import latency.",
         "Record peak memory and resident growth after repeated open/close; investigate monotonic growth.",
         "Compare the same fixture and operation with Android measurements before accepting a parity result."
+      ]
+    },
+    {
+      "id": "text-selection-lookup",
+      "surface": "reader-epub-and-pdf",
+      "expected": [
+        "Selecting text in an EPUB or PDF shows the Android-parity selection menu: one Dict entry (no duplicate Define/Dictionary), Copy, Speak, Dict, Translate, Search, Note, Clear.",
+        "With the Smart AI lookup engine selected and AI available, Dict opens the in-app AI definition popup.",
+        "With Any App selected (default), Dict/Translate/Search present the iOS share sheet listing installed apps instead of silently doing nothing; a web engine opens the matching site.",
+        "The PDF selection menu shows five highlight colors plus the spectrum palette button, which opens the highlight palette editor and persists slot changes.",
+        "The PDF annotation bottom sheet tool row uses localized Android labels (Copy/Dict/Translate/Search) and the Note/Comments tabs are localized."
       ]
     }
   ],
@@ -184,8 +223,21 @@
     }
   ],
   "telemetry": {
-    "inAppProvides": ["counters", "last-values", "selected-peaks", "bounded-events"],
-    "inAppDoesNotProvide": ["full-frame-histogram", "p50", "p95"],
-    "externalEvidenceRequired": ["Instruments Time Profiler", "Instruments Allocations", "repeated timestamp samples"]
+    "inAppProvides": [
+      "counters",
+      "last-values",
+      "selected-peaks",
+      "bounded-events"
+    ],
+    "inAppDoesNotProvide": [
+      "full-frame-histogram",
+      "p50",
+      "p95"
+    ],
+    "externalEvidenceRequired": [
+      "Instruments Time Profiler",
+      "Instruments Allocations",
+      "repeated timestamp samples"
+    ]
   }
 }

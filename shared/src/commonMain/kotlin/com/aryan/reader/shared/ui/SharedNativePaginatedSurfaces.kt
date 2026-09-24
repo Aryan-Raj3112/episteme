@@ -357,32 +357,33 @@ internal fun SharedNativeSelectionMenu(
     val iconColor = foreground.copy(alpha = 0.86f)
     var selectedStyle by remember { mutableStateOf(HighlightStyle.BACKGROUND) }
     val actions = buildList {
-        add(SharedNativeSelectionMenuAction("Copy", SharedNativeSelectionVectorIcons.Copy, onCopy))
-        if (SharedNativeReaderSelectionAction.DEFINE in enabledSelectionActions) {
-            add(
-                SharedNativeSelectionMenuAction(
-                    "Define",
-                    SharedNativeSelectionVectorIcons.Define,
-                    { onSelectionAction(SharedNativeReaderSelectionAction.DEFINE) }
-                )
-            )
-        }
+        add(SharedNativeSelectionMenuAction(readerString("action_copy", "Copy"), SharedNativeSelectionVectorIcons.Copy, onCopy))
         if (SharedNativeReaderSelectionAction.SPEAK in enabledSelectionActions) {
             add(
                 SharedNativeSelectionMenuAction(
-                    "Speak",
+                    readerString("label_speak", "Speak"),
                     SharedNativeSelectionVectorIcons.Speak,
                     { onSelectionAction(SharedNativeReaderSelectionAction.SPEAK) }
                 )
             )
         }
-        // WebView parity (ReaderHtmlDocumentTemplate action order Copy, Define,
-        // Speak, Dictionary, Translate, Search, Note, Clear): Dictionary is its
-        // own entry. Like the WebView template it reuses the Define book glyph.
-        if (SharedNativeReaderSelectionAction.DICTIONARY in enabledSelectionActions) {
+        // Android parity (PaginatedTextSelectionMenu): exactly ONE dictionary
+        // entry labelled "Dict". It routes to the in-app AI define when the
+        // Smart AI engine is selected, else to the external lookup flow.
+        if (SharedNativeReaderSelectionAction.DEFINE in enabledSelectionActions &&
+            SharedNativeReaderSelectionAction.DICTIONARY !in enabledSelectionActions
+        ) {
             add(
                 SharedNativeSelectionMenuAction(
-                    "Dictionary",
+                    readerString("label_dict", "Dict"),
+                    SharedNativeSelectionVectorIcons.Define,
+                    { onSelectionAction(SharedNativeReaderSelectionAction.DEFINE) }
+                )
+            )
+        } else if (SharedNativeReaderSelectionAction.DICTIONARY in enabledSelectionActions) {
+            add(
+                SharedNativeSelectionMenuAction(
+                    readerString("label_dict", "Dict"),
                     SharedNativeSelectionVectorIcons.Define,
                     { onSelectionAction(SharedNativeReaderSelectionAction.DICTIONARY) }
                 )
@@ -391,7 +392,7 @@ internal fun SharedNativeSelectionMenu(
         if (SharedNativeReaderSelectionAction.TRANSLATE in enabledSelectionActions) {
             add(
                 SharedNativeSelectionMenuAction(
-                    "Translate",
+                    readerString("dict_translate", "Translate"),
                     SharedNativeSelectionVectorIcons.Translate,
                     { onSelectionAction(SharedNativeReaderSelectionAction.TRANSLATE) }
                 )
@@ -400,7 +401,7 @@ internal fun SharedNativeSelectionMenu(
         if (SharedNativeReaderSelectionAction.SEARCH in enabledSelectionActions) {
             add(
                 SharedNativeSelectionMenuAction(
-                    "Search",
+                    readerString("action_search", "Search"),
                     SharedNativeSelectionVectorIcons.Search,
                     { onSelectionAction(SharedNativeReaderSelectionAction.SEARCH) }
                 )
@@ -409,13 +410,13 @@ internal fun SharedNativeSelectionMenu(
         if (SharedNativeReaderSelectionAction.NOTE in enabledSelectionActions) {
             add(
                 SharedNativeSelectionMenuAction(
-                    "Note",
+                    readerString("label_note", "Note"),
                     SharedNativeSelectionVectorIcons.Note,
                     { onSelectionAction(SharedNativeReaderSelectionAction.NOTE) }
                 )
             )
         }
-        add(SharedNativeSelectionMenuAction("Clear", SharedNativeSelectionVectorIcons.Clear, onDismiss))
+        add(SharedNativeSelectionMenuAction(readerString("action_clear", "Clear"), SharedNativeSelectionVectorIcons.Clear, onDismiss))
     }
     Surface(
         modifier = modifier,

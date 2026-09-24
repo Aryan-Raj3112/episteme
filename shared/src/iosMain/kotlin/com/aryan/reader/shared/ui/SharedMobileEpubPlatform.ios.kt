@@ -83,7 +83,12 @@ import platform.UIKit.UIEdgeInsetsMake
 import platform.UIKit.UIScrollViewContentInsetAdjustmentBehavior
 import platform.UIKit.UIActivityViewController
 import platform.UIKit.UIModalPresentationFullScreen
+import platform.UIKit.UIModalPresentationPageSheet
 import platform.UIKit.UIReferenceLibraryViewController
+import platform.UIKit.UIWindow
+import platform.UIKit.UIWindowLevelNormal
+import platform.UIKit.UIWindowScene
+import platform.UIKit.UIViewController
 import platform.WebKit.WKScriptMessage
 import platform.WebKit.WKScriptMessageHandlerProtocol
 import platform.WebKit.WKNavigation
@@ -224,11 +229,50 @@ internal actual val sharedMobileEpubPageInfoAlwaysApplyBottomSafeInset: Boolean 
 internal actual val sharedMobileEpubPageInfoMatchesReaderBackground: Boolean = true
 
 internal object IosReaderLookupServices {
-    var dictionary: ReaderExternalLookupService = ReaderExternalLookupService.SYSTEM
-    var translate: ReaderExternalLookupService = ReaderExternalLookupService.GOOGLE_TRANSLATE
-    var search: ReaderExternalLookupService = ReaderExternalLookupService.GOOGLE
+    var dictionary: ReaderExternalLookupService = ReaderExternalLookupService.ANY_APP
+    var translate: ReaderExternalLookupService = ReaderExternalLookupService.ANY_APP
+    var search: ReaderExternalLookupService = ReaderExternalLookupService.ANY_APP
 }
 
+/**
+ * Android benchmark: `UIApplication.keyWindow` is deprecated and nil with scene
+ * delegates, so resolve the top-most presented controller from a connected scene
+ * instead. Without this the Define panel silently no-ops. Mirrors the hardened
+ * window/presenter resolution in ReaderIosApp (topmostIosPresenter): skip hidden
+ * or detached windows, then walk to the topmost presented controller —
+ * presenting on a controller that is already presenting silently does nothing.
+ */
+internal fun iosLookupPresenter(): UIViewController? {
+    val application = UIApplication.sharedApplication
+    val fromScenes = application.connectedScenes
+        .filterIsInstance<UIWindowScene>()
+        .flatMap { scene -> scene.windows.filterIsInstance<UIWindow>() }
+    val windows = if (fromScenes.isNotEmpty()) fromScenes else application.windows.filterIsInstance<UIWindow>()
+    val attachedRoots = windows.filter { window ->
+        window.windowLevel == UIWindowLevelNormal &&
+            !window.isHidden() &&
+            window.rootViewController?.viewIfLoaded?.window != null
+    }
+    val window = attachedRoots.firstOrNull { it.isKeyWindow() }
+        ?: attachedRoots.firstOrNull()
+        ?: windows.firstOrNull { it.isKeyWindow() && it.rootViewController != null }
+        ?: windows.firstOrNull { it.rootViewController != null }
+    var controller = window?.rootViewController ?: return null
+    while (true) {
+        val presented = controller.presentedViewController ?: break
+        if (presented.isBeingDismissed()) break
+        controller = presented
+    }
+    return controller
+}
+
+/**
+ * Android parity (ExternalDictionaryHelper + "select an app first" toast): hand the
+ * selection to the user's installed apps. The system share sheet is the closest iOS
+ * equivalent of Android's PROCESS_TEXT chooser — it lists every app that accepts
+ * text, so Define/Translate/Search can reach any installed dictionary, translator,
+ * or browser instead of only hardcoded web engines.
+ */
 internal actual fun openSharedMobileEpubLookup(
     action: ReaderExternalLookupAction,
     text: String
@@ -240,14 +284,28 @@ internal actual fun openSharedMobileEpubLookup(
         ReaderExternalLookupAction.TRANSLATE -> IosReaderLookupServices.translate
         ReaderExternalLookupAction.SEARCH -> IosReaderLookupServices.search
     }
-    if (action == ReaderExternalLookupAction.DICTIONARY && service == ReaderExternalLookupService.SYSTEM) {
-        val presenter = UIApplication.sharedApplication.keyWindow?.rootViewController ?: return false
-        presenter.presentViewController(
-            UIReferenceLibraryViewController(term = query),
-            animated = true,
-            completion = null
-        )
-        return true
+    when (service) {
+        ReaderExternalLookupService.ANY_APP -> {
+            val presenter = iosLookupPresenter() ?: return false
+            val controller = UIActivityViewController(
+                activityItems = listOf(query),
+                applicationActivities = null
+            )
+            // iPad requires an anchor; phones present full screen.
+            controller.modalPresentationStyle = UIModalPresentationPageSheet
+            presenter.presentViewController(controller, animated = true, completion = null)
+            return true
+        }
+        ReaderExternalLookupService.SYSTEM -> {
+            val presenter = iosLookupPresenter() ?: return false
+            presenter.presentViewController(
+                UIReferenceLibraryViewController(term = query),
+                animated = true,
+                completion = null
+            )
+            return true
+        }
+        else -> Unit
     }
     return openSharedMobileEpubExternalLink(externalLookupUrl(action, query, service))
 }
@@ -264,7 +322,7 @@ internal actual fun shareSharedMobileEpubImage(bytes: ByteArray, fileName: Strin
     }
     if (written != bytes.size.toULong()) return false
     val url = NSURL.fileURLWithPath(path)
-    val presenter = UIApplication.sharedApplication.keyWindow?.rootViewController ?: return false
+    val presenter = iosLookupPresenter() ?: return false
     val controller = UIActivityViewController(activityItems = listOf(url), applicationActivities = null)
     controller.modalPresentationStyle = UIModalPresentationFullScreen
     presenter.presentViewController(controller, animated = true, completion = null)

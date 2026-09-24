@@ -139,19 +139,19 @@ internal fun SharedMobilePdfAnnotationBottomSheet(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                SharedMobilePdfAnnotationTool(icon = Res.drawable.copy, label = "Copy") {
+                SharedMobilePdfAnnotationTool(icon = Res.drawable.copy, label = readerString("action_copy", "Copy")) {
                     val result = writeSharedClipboard(copiedTextLabel, annotation.text)
                     if (!result.success) onClipboardError?.invoke(clipboardErrorMessage)
                 }
-                SharedMobilePdfAnnotationTool(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = "Read aloud", onClick = onReadAloud)
+                SharedMobilePdfAnnotationTool(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = readerString("action_read_aloud", "Read aloud"), onClick = onReadAloud)
                 if (readerExternalLookupActionsAvailable(annotation.text.length)) {
-                    SharedMobilePdfAnnotationTool(imageVector = Icons.Default.Book, label = "Define") {
+                    SharedMobilePdfAnnotationTool(imageVector = Icons.Default.Book, label = readerString("label_dict", "Dict")) {
                         openSharedMobileEpubLookup(ReaderExternalLookupAction.DICTIONARY, annotation.text)
                     }
-                    SharedMobilePdfAnnotationTool(icon = Res.drawable.translate, label = "Translate") {
+                    SharedMobilePdfAnnotationTool(icon = Res.drawable.translate, label = readerString("action_translate", "Translate")) {
                         openSharedMobileEpubLookup(ReaderExternalLookupAction.TRANSLATE, annotation.text)
                     }
-                    SharedMobilePdfAnnotationTool(imageVector = Icons.Default.Search, label = "Search") {
+                    SharedMobilePdfAnnotationTool(imageVector = Icons.Default.Search, label = readerString("action_search", "Search")) {
                         openSharedMobileEpubLookup(ReaderExternalLookupAction.SEARCH, annotation.text)
                     }
                 }
@@ -257,7 +257,10 @@ private fun SharedMobilePdfHighlightColorRow(selected: Int, onSelect: (Int) -> U
 @Composable
 private fun SharedMobilePdfAnnotationTabs(selected: SharedMobilePdfAnnotationSection, count: Int, onSelect: (SharedMobilePdfAnnotationSection) -> Unit) {
     Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.onSurface.copy(alpha = .06f), RoundedCornerShape(8.dp)).padding(4.dp)) {
-        listOf(SharedMobilePdfAnnotationSection.NOTE to "Note", SharedMobilePdfAnnotationSection.COMMENTS to "Comments ($count)").forEach { (section, label) ->
+        listOf(
+            SharedMobilePdfAnnotationSection.NOTE to readerString("label_note", "Note"),
+            SharedMobilePdfAnnotationSection.COMMENTS to "${readerString("label_comments", "Comments")} ($count)"
+        ).forEach { (section, label) ->
             Box(
                 Modifier.weight(1f).height(40.dp).clip(RoundedCornerShape(6.dp))
                     .background(if (selected == section) MaterialTheme.colorScheme.primary else Color.Transparent)

@@ -15,9 +15,6 @@
 	<string>Episteme</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
-		<!-- Formats Episteme reads. Rank Default (not Alternate) so iOS offers the
-		     app in the Open With list for each supported type the way Android
-		     advertises them in its VIEW intent filters. -->
 		<dict>
 			<key>CFBundleTypeName</key>
 			<string>Reader document</string>
@@ -38,7 +35,6 @@
 				<string>com.microsoft.powerpoint.pptx</string>
 				<string>com.aryan.reader.fb2</string>
 				<string>com.aryan.reader.mobi</string>
-				<!-- Comic archives: CBZ/CB7 are ZIP archives, CBR is RAR, CBT is TAR. -->
 				<string>public.zip-archive</string>
 				<string>com.pkware.zip-archive</string>
 				<string>com.rarlab.rar-archive</string>
@@ -46,9 +42,6 @@
 				<string>public.tar-archive</string>
 			</array>
 		</dict>
-		<!-- Fallback: files other apps hand over with a generic type, mirroring
-		     Android's application/octet-stream VIEW filter. Alternate rank keeps
-		     Episteme in the list without claiming unrelated files by default. -->
 		<dict>
 			<key>CFBundleTypeName</key>
 			<string>Reader fallback document</string>

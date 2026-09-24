@@ -747,6 +747,7 @@ internal fun SharedMobilePdfVerticalPages(
     onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onReadAloud: (Int, Int) -> Unit,
     onAiDefine: ((String) -> Unit)? = null,
+    onOpenPaletteManager: (() -> Unit)? = null,
     onClipboardError: ((String) -> Unit)? = null,
     userScrollEnabled: Boolean,
     isScrollLocked: Boolean,
@@ -822,7 +823,12 @@ internal fun SharedMobilePdfVerticalPages(
             pageHeightPx = pageHeight,
             pageFraction = navigationCenterFraction
         )
-        listState.animateScrollToItem(
+        // Android parity (PdfViewerScreen verticalReaderState.scrollToPage):
+        // vertical-scroll navigation is ALWAYS instant, for every navigation
+        // reason — page turns, TOC, search, slider, TTS and links all snap.
+        // Only pagination animates (see animatesPagination()). The previous
+        // animateScrollToItem made long jumps visibly scroll the whole way.
+        listState.scrollToItem(
             index = target,
             scrollOffset = centeredOffset
         )
@@ -932,6 +938,7 @@ internal fun SharedMobilePdfVerticalPages(
                         onHighlight = onHighlight,
                         onReadAloud = onReadAloud,
                         onAiDefine = onAiDefine,
+                        onOpenPaletteManager = onOpenPaletteManager,
                         onClipboardError = onClipboardError,
                         onCanvasSizeChanged = onCanvasSizeChanged,
                         onFinishInkStroke = onFinishInkStroke,
@@ -1099,6 +1106,7 @@ internal fun SharedMobilePdfPaginatedPages(
     onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onReadAloud: (Int, Int) -> Unit,
     onAiDefine: ((String) -> Unit)? = null,
+    onOpenPaletteManager: (() -> Unit)? = null,
     onClipboardError: ((String) -> Unit)? = null,
     userScrollEnabled: Boolean,
     isScrollLocked: Boolean,
@@ -1487,6 +1495,7 @@ internal fun SharedMobilePdfPaginatedPages(
                                     onHighlight = onHighlight,
                                     onReadAloud = onReadAloud,
                                     onAiDefine = onAiDefine,
+                                    onOpenPaletteManager = onOpenPaletteManager,
                                     onClipboardError = onClipboardError,
                                     onCanvasSizeChanged = onCanvasSizeChanged,
                                     onFinishInkStroke = onFinishInkStroke,
@@ -2108,6 +2117,7 @@ internal fun SharedMobilePdfPageSurface(
     onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onReadAloud: (Int, Int) -> Unit,
     onAiDefine: ((String) -> Unit)? = null,
+    onOpenPaletteManager: (() -> Unit)? = null,
     onClipboardError: ((String) -> Unit)? = null,
     onCanvasSizeChanged: (IntSize) -> Unit,
     onFinishInkStroke: (Int, Boolean) -> Unit,
