@@ -178,7 +178,6 @@ import com.aryan.reader.shared.ui.iosInstalledLookupAppSchemes
 import com.aryan.reader.shared.migrateLegacyIosReaderAutoScrollSpeed
 import com.aryan.reader.shared.migrateAndroidEpubFormatSettings
 import com.aryan.reader.shared.currentTimestamp
-import com.aryan.reader.shared.canEnableGoogleDriveSync
 import com.aryan.reader.shared.canOpenMobilePdfTab
 import com.aryan.reader.shared.canUseCloudSync
 import com.aryan.reader.shared.cloudSyncSetupRoute
@@ -1491,7 +1490,7 @@ class ReaderIosBridge internal constructor(
     }
 
     fun requestCloudSync(snapshotJson: String) {
-        cloudSyncStatus = "Checking Google Drive…"
+        cloudSyncStatus = "Checking cloud…"
         cloudSyncHandler?.invoke(snapshotJson)
     }
 
@@ -1697,7 +1696,12 @@ internal data class IosAccountState(
     val hasLoaded: Boolean = false,
 ) {
     val canSync: Boolean
-        get() = canEnableGoogleDriveSync(providers, googleDriveAuthorized)
+        get() = canUseCloudSync(
+            providers = providers,
+            hasGoogleDrivePermission = googleDriveAuthorized,
+            isProUser = true,
+            requiresGoogle = IosFeatureGating.REQUIRES_GOOGLE_DRIVE_FOR_SYNC,
+        )
 }
 
 private data class IosSystemUiState(
@@ -3414,6 +3418,18 @@ private fun ReaderIosApp(
         providers = bridge.accountState.providers,
         hasGoogleDrivePermission = bridge.accountState.googleDriveAuthorized,
         isProUser = state.isProUser,
+        requiresGoogle = IosFeatureGating.REQUIRES_GOOGLE_DRIVE_FOR_SYNC,
+    )
+
+    /**
+     * Eligibility before the master toggle is considered, so the drawer row
+     * can decide whether turning sync on is allowed at all.
+     */
+    fun cloudSyncEligibleIgnoringMasterToggle(): Boolean = canUseCloudSync(
+        providers = bridge.accountState.providers,
+        hasGoogleDrivePermission = bridge.accountState.googleDriveAuthorized,
+        isProUser = state.isProUser,
+        requiresGoogle = IosFeatureGating.REQUIRES_GOOGLE_DRIVE_FOR_SYNC,
     )
 
     fun openLibraryBook(book: BookItem, temporary: Boolean = false) {
@@ -3802,6 +3818,7 @@ private fun ReaderIosApp(
             isProUser = state.isProUser,
             providers = bridge.accountState.providers,
             hasGoogleDrivePermission = bridge.accountState.googleDriveAuthorized,
+            requiresGoogle = IosFeatureGating.REQUIRES_GOOGLE_DRIVE_FOR_SYNC,
         )
         if (setupIntent == CloudSyncSetupIntent.READY) {
             pendingCloudSyncSetup = false
@@ -3809,8 +3826,16 @@ private fun ReaderIosApp(
             utilityScreen = IosUtilityScreen.SETTINGS
             showMessage(
                 stringResolver.string(
-                    "account_google_drive_sync_available",
-                    "Google Drive sync is available.",
+                    if (IosFeatureGating.REQUIRES_GOOGLE_DRIVE_FOR_SYNC) {
+                        "account_google_drive_sync_available"
+                    } else {
+                        "account_icloud_sync_available"
+                    },
+                    if (IosFeatureGating.REQUIRES_GOOGLE_DRIVE_FOR_SYNC) {
+                        "Google Drive sync is available."
+                    } else {
+                        "iCloud sync is available."
+                    },
                 )
             )
             requestCloudSyncIfEligible()
@@ -3973,7 +3998,11 @@ private fun ReaderIosApp(
         if (!bridge.appLifecycleState.isActive) return@LaunchedEffect
         refreshIosCloudFolderSyncState()
         requestCloudSyncIfEligible()
-        bridge.requestCloudFolderSync("pull", null, false)
+        // Drive folder mirror is not ported to CloudKit; only run its pull
+        // when that backend is exposed (it also needs the hidden Google auth).
+        if (IosFeatureGating.SHOW_DRIVE_FOLDER_SYNC) {
+            bridge.requestCloudFolderSync("pull", null, false)
+        }
     }
 
     // Account switches reload the per-account folder selection, mirroring
@@ -3984,10 +4013,12 @@ private fun ReaderIosApp(
     }
 
     // Arm the executor's second-line eligibility gate (account + Pro + sync),
-    // mirroring Android's in-worker re-gate before every run.
+    // mirroring Android's in-worker re-gate before every run. The Drive folder
+    // executor stays unarmed while that backend is hidden (CloudKit port N/A).
     LaunchedEffect(iosAccountId, state.isProUser, state.isSyncEnabled) {
         bridge.armFolderSyncExecution(
-            iosAccountId != null && state.isProUser && state.isSyncEnabled,
+            IosFeatureGating.SHOW_DRIVE_FOLDER_SYNC &&
+                iosAccountId != null && state.isProUser && state.isSyncEnabled,
         )
     }
 
@@ -3995,6 +4026,7 @@ private fun ReaderIosApp(
     // (Android `registerLocalCloudFolders` parity). Registration is not
     // selection: unselected roots stay inert until the user opts in.
     LaunchedEffect(state.syncedFolders, iosAccountId, state.isProUser) {
+        if (!IosFeatureGating.SHOW_DRIVE_FOLDER_SYNC) return@LaunchedEffect
         if (iosAccountId == null || !state.isProUser) return@LaunchedEffect
         state.syncedFolders
             .filterNot { it.isCloudPlaceholder }
@@ -4062,8 +4094,10 @@ private fun ReaderIosApp(
             ),
             accountAvatar = { user, modifier -> IosAccountAvatar(user, modifier) },
             drawerCapabilities = capabilities,
-            // Intentional temporary iOS scope: cloud sync rows hidden.
+            // Library sync (CloudKit) is visible; the Drive folder row stays
+            // hidden until that backend is ported (IosFeatureGating).
             showSyncControls = IosFeatureGating.SHOW_CLOUD_SYNC,
+            showFolderSyncControls = IosFeatureGating.SHOW_DRIVE_FOLDER_SYNC,
             // Intentional temporary iOS scope: credits badge hidden in favor
             // of Pro status while credits purchase is hidden.
             showCreditsBalance = IosFeatureGating.SHOW_CREDITS_PURCHASE,
@@ -4075,18 +4109,12 @@ private fun ReaderIosApp(
             onSignInClick = { runAction { bridge.requestAuthentication("APPLE") } },
             onSignOutClick = { runAction { showSignOutConfirmation = true } },
             onSyncToggle = { enabled ->
-                if (!enabled || canUseCloudSync(
-                        providers = bridge.accountState.providers,
-                        hasGoogleDrivePermission = bridge.accountState.googleDriveAuthorized,
-                        isProUser = state.isProUser,
-                    )
-                ) {
+                val eligible = !enabled || cloudSyncEligibleIgnoringMasterToggle()
+                if (eligible) {
                     state = state.reduce(AppAction.SyncEnabledChanged(enabled))
                     if (enabled) requestCloudSyncIfEligible()
                 } else if (!state.isProUser) {
                     showMessage("Cloud sync requires Pro")
-                } else {
-                    showMessage("Sync requires a linked Google account and Google Drive permission")
                 }
             },
             onFolderSyncToggle = { enabled ->
@@ -5408,6 +5436,7 @@ private fun ReaderIosApp(
                             isProUser = state.isProUser,
                             providers = bridge.accountState.providers,
                             hasGoogleDrivePermission = bridge.accountState.googleDriveAuthorized,
+                            requiresGoogle = IosFeatureGating.REQUIRES_GOOGLE_DRIVE_FOR_SYNC,
                         )
                         val settingsModel = sharedSettingsHubModel(
                             SharedSettingsHubInput(
@@ -5417,25 +5446,27 @@ private fun ReaderIosApp(
                                 isProUser = state.isProUser,
                                 accountAvailable = true,
                                 includeAccountAuthActions = true,
-                                // Intentional temporary iOS scope: cloud sync
-                                // rows hidden (logic kept for later). Android
-                                // benchmark inputs are unchanged.
+                                // Library sync is exposed on the CloudKit
+                                // backend; Android benchmark inputs are
+                                // unchanged.
                                 syncAvailable = IosFeatureGating.SHOW_CLOUD_SYNC,
                                 cloudSyncSetupIntent = cloudSyncSetupIntent,
-                                folderSyncAvailable = IosFeatureGating.SHOW_CLOUD_SYNC,
+                                // Drive folder mirror is not ported to CloudKit.
+                                folderSyncAvailable = IosFeatureGating.SHOW_DRIVE_FOLDER_SYNC,
                                 aiSettingsAvailable = true,
                                 ttsSettingsAvailable = true,
                                 bookCacheMaintenanceAvailable = false,
                                 reflowCacheMaintenanceAvailable = true,
                                 includeLanguage = true,
                                 includeScreenCaptureProtection = false,
-                                // Intentional temporary iOS scope: clear-cloud data is part of
-                                // cloud sync (Android ties it to supportsSync), so hide it
-                                // together with the sync rows while logic is kept.
-                                includeCloudLocalDataClear = IosFeatureGating.SHOW_CLOUD_SYNC,
+                                // The destructive clear action deletes Drive +
+                                // Firestore content, which is not this CloudKit
+                                // silo, so it stays hidden until a CloudKit
+                                // zone reset exists.
+                                includeCloudLocalDataClear = IosFeatureGating.SHOW_CLOUD_DATA_CLEAR,
                                 // Account deletion is always available on iOS
                                 // (Apple review requirement); sync rows above
-                                // stay hidden behind SHOW_CLOUD_SYNC.
+                                // use their own backend flags.
                                 includeAccountDeletion = true,
                                 includeDiagnosticLogExport = true,
                                 includeHideReaderAi = true,
@@ -7517,11 +7548,16 @@ private fun IosAccountScreen(
                     modifier = Modifier.padding(bottom = 12.dp),
                 )
             }
-            // Intentional temporary iOS scope: cloud sync status copy hidden
-            // with cloud sync (sync eligibility logic kept for later).
+            // Sync status copy follows the active backend: the CloudKit path never
+            // mentions Google, the Drive path keeps the benchmark strings.
             if (IosFeatureGating.SHOW_CLOUD_SYNC) {
                 Text(
                     when {
+                        !IosFeatureGating.REQUIRES_GOOGLE_DRIVE_FOR_SYNC && account.uid != null ->
+                            readerString(
+                                "account_icloud_sync_available",
+                                "iCloud sync is available.",
+                            )
                         account.canSync -> readerString(
                             "account_google_drive_sync_available",
                             "Google Drive sync is available.",

@@ -127,6 +127,9 @@
 							com.apple.SignInWithApple = {
 								enabled = 1;
 							};
+							com.apple.iCloud = {
+								enabled = 1;
+							};
 						};
 					};
 				};

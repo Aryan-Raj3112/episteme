@@ -39,6 +39,10 @@ final class LocalStoreKitController: ObservableObject {
     private var updatesTask: Task<Void, Never>?
     private var startupTask: Task<Void, Never>?
     private var isProUnlocked = false
+    /// Published for the CloudKit sync Pro gate (ContentView forwards to
+    /// `LocalAccountController.setProSyncEnabled`). Source of truth stays
+    /// server entitlements; this is only a projection.
+    @Published var proSyncEnabled = false
     private var serverCredits = 0
     private var localTestingProUnlocked = false
     private var localTestingCredits = 0
@@ -519,6 +523,7 @@ final class LocalStoreKitController: ObservableObject {
     }
 
     private func publish() {
+        proSyncEnabled = isProUnlocked || localTestingProUnlocked
         bridge?.updateLocalStoreKitState(
             available: !products.isEmpty,
             entitlementsLoaded: serverEntitlementsLoaded,

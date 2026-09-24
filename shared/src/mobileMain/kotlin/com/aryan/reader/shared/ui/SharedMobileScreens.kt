@@ -81,6 +81,12 @@ fun SharedMobileAppDrawerContent(
     // hide cloud sync rows while keeping the sync logic. Defaults stay true
     // so Android behavior remains the benchmark.
     showSyncControls: Boolean = true,
+    /**
+     * Folder backup/mirror row visibility. Defaults to [showSyncControls] so
+     * Android (which keeps both on) is unchanged; iOS can keep library sync on
+     * while its Drive-based folder sync remains hidden.
+     */
+    showFolderSyncControls: Boolean = showSyncControls,
     // Temporary iOS launch scope (see IosFeatureGating): iOS passes false to
     // hide the credits balance badge and show Pro status instead, while the
     // credits data and purchase logic stay intact. Defaults stay true.
@@ -289,7 +295,7 @@ fun SharedMobileAppDrawerContent(
 
             // Temporary iOS scope: folder backup is part of cloud sync and is
             // hidden together with the library sync row (logic kept).
-            if (currentUser != null && isSyncEnabled && showSyncControls) {
+            if (currentUser != null && isSyncEnabled && showFolderSyncControls) {
                 NavigationDrawerItem(
                     icon = { Icon(Icons.Default.FolderSpecial, contentDescription = null) },
                     label = {
