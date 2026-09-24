@@ -1944,8 +1944,8 @@ fun SharedMobileEpubReaderScreen(
                                 val selectionLocator = locator ?: currentLocator ?: return@SharedNativeVerticalReader
                                 val lookupAction = action.externalLookupActionOrNull()
                                 when {
-                                        action == SharedNativeReaderSelectionAction.DEFINE && readerAiAvailable -> onAiAction(ReaderAiFeature.DEFINE, text)
-                                        lookupAction != null -> openSharedMobileEpubLookup(lookupAction, text)
+                                    action.externalLookupActionOrNull() == ReaderExternalLookupAction.DICTIONARY && sharedDictActionUsesAi(readerAiAvailable) -> onAiAction(ReaderAiFeature.DEFINE, text)
+                                    lookupAction != null -> openSharedMobileEpubLookup(lookupAction, text)
                                     action == SharedNativeReaderSelectionAction.SPEAK -> speakSelectedText(text, selectionLocator)
                                     action == SharedNativeReaderSelectionAction.NOTE -> createNoteForSelection(text, selectionLocator)
                                     else -> Unit

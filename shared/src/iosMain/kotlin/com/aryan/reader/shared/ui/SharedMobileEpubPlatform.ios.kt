@@ -207,9 +207,11 @@ internal actual fun SharedMobileEpubWebView(
 }
 
 internal actual fun openSharedMobileEpubExternalLink(url: String): Boolean {
-    val normalized = normalizeReaderHref(url)
-    val target = NSURL.URLWithString(normalized) ?: return false
-    return UIApplication.sharedApplication.openURL(target)
+    // Delegate to the hardened opener (canOpenURL guard + modern
+    // openURL(_:options:completionHandler:) API): the deprecated
+    // UIApplication.openURL(Bool) variant silently no-ops on recent iOS,
+    // which made Translate/Search web lookups appear dead.
+    return openSharedMobileExternalUrl(url)
 }
 
 // iPhone corner radii (~13-16pt) curve into the benchmark 16.dp side padding,
@@ -229,7 +231,10 @@ internal actual val sharedMobileEpubPageInfoAlwaysApplyBottomSafeInset: Boolean 
 internal actual val sharedMobileEpubPageInfoMatchesReaderBackground: Boolean = true
 
 internal object IosReaderLookupServices {
-    var dictionary: ReaderExternalLookupService = ReaderExternalLookupService.ANY_APP
+    // Startup defaults; the host overrides these from NSUserDefaults in
+    // loadIosReaderLookupServices. Android parity: dictionary defaults to the
+    // in-app Smart AI, translate/search to the app chooser / Google.
+    var dictionary: ReaderExternalLookupService = ReaderExternalLookupService.AI
     var translate: ReaderExternalLookupService = ReaderExternalLookupService.ANY_APP
     var search: ReaderExternalLookupService = ReaderExternalLookupService.ANY_APP
 }
@@ -285,17 +290,7 @@ internal actual fun openSharedMobileEpubLookup(
         ReaderExternalLookupAction.SEARCH -> IosReaderLookupServices.search
     }
     when (service) {
-        ReaderExternalLookupService.ANY_APP -> {
-            val presenter = iosLookupPresenter() ?: return false
-            val controller = UIActivityViewController(
-                activityItems = listOf(query),
-                applicationActivities = null
-            )
-            // iPad requires an anchor; phones present full screen.
-            controller.modalPresentationStyle = UIModalPresentationPageSheet
-            presenter.presentViewController(controller, animated = true, completion = null)
-            return true
-        }
+        ReaderExternalLookupService.ANY_APP -> return openSharedMobileEpubLookupViaAppChooser(action, query)
         ReaderExternalLookupService.SYSTEM -> {
             val presenter = iosLookupPresenter() ?: return false
             presenter.presentViewController(
@@ -305,9 +300,42 @@ internal actual fun openSharedMobileEpubLookup(
             )
             return true
         }
-        else -> Unit
+        // Android parity (PdfViewerScreen.onDictionaryLookup): when the Smart AI
+        // engine is selected but AI is unavailable (no key/sign-in or offline),
+        // the lookup still works — it falls through to the app chooser instead
+        // of silently doing nothing. The in-app AI popup itself is triggered by
+        // the reader handlers BEFORE this lookup is reached.
+        ReaderExternalLookupService.AI -> Unit
+        ReaderExternalLookupService.GOOGLE,
+        ReaderExternalLookupService.GOOGLE_TRANSLATE,
+        ReaderExternalLookupService.DUCKDUCKGO,
+        ReaderExternalLookupService.BING -> Unit
     }
-    return openSharedMobileEpubExternalLink(externalLookupUrl(action, query, service))
+    val lookupUrl = externalLookupUrl(action, query, service)
+    if (lookupUrl.isBlank()) {
+        return openSharedMobileEpubLookupViaAppChooser(action, query)
+    }
+    return openSharedMobileEpubExternalLink(lookupUrl)
+}
+
+/**
+ * Android parity (ExternalDictionaryHelper): hand the selection to the user's
+ * installed apps. The system share sheet is the closest iOS equivalent of
+ * Android's PROCESS_TEXT chooser.
+ */
+internal fun openSharedMobileEpubLookupViaAppChooser(
+    action: ReaderExternalLookupAction,
+    query: String
+): Boolean {
+    val presenter = iosLookupPresenter() ?: return false
+    val controller = UIActivityViewController(
+        activityItems = listOf(query),
+        applicationActivities = null
+    )
+    // iPad requires an anchor; phones present full screen.
+    controller.modalPresentationStyle = UIModalPresentationPageSheet
+    presenter.presentViewController(controller, animated = true, completion = null)
+    return true
 }
 
 internal actual fun shareSharedMobileEpubImage(bytes: ByteArray, fileName: String): Boolean {

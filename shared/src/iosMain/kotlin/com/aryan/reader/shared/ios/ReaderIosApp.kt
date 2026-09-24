@@ -2080,9 +2080,12 @@ private const val IosLookupSearchServiceKey = "ios_reader_lookup_search_service"
 
 private fun loadIosReaderLookupServices():
     Triple<ReaderExternalLookupService, ReaderExternalLookupService, ReaderExternalLookupService> {
+    // Android parity (PdfPreferences): the dictionary engine defaults to the
+    // in-app Smart AI (use_online_dictionary = true); translate/search fall
+    // back to the app chooser / Google when nothing is persisted.
     return Triple(
-        loadIosLookupService(IosLookupDictionaryServiceKey, ReaderExternalLookupService.SYSTEM),
-        loadIosLookupService(IosLookupTranslateServiceKey, ReaderExternalLookupService.GOOGLE_TRANSLATE),
+        loadIosLookupService(IosLookupDictionaryServiceKey, ReaderExternalLookupService.AI),
+        loadIosLookupService(IosLookupTranslateServiceKey, ReaderExternalLookupService.ANY_APP),
         loadIosLookupService(IosLookupSearchServiceKey, ReaderExternalLookupService.GOOGLE),
     )
 }

@@ -193,8 +193,9 @@
       "surface": "reader-epub-and-pdf",
       "expected": [
         "Selecting text in an EPUB or PDF shows the Android-parity selection menu: one Dict entry (no duplicate Define/Dictionary), Copy, Speak, Dict, Translate, Search, Note, Clear.",
-        "With the Smart AI lookup engine selected and AI available, Dict opens the in-app AI definition popup.",
-        "With Any App selected (default), Dict/Translate/Search present the iOS share sheet listing installed apps instead of silently doing nothing; a web engine opens the matching site.",
+        "Define defaults to the Smart AI engine: with AI available (key or signed-in), Dict opens the in-app AI definition popup.",
+        "With Any App selected, Dict/Translate/Search present the iOS share sheet listing installed apps; when Smart AI is selected but AI is unavailable, Dict falls back to the app chooser instead of doing nothing.",
+        "Web engines (Google/Bing/DuckDuckGo) open the matching site via the modern openURL API.",
         "The PDF selection menu shows five highlight colors plus the spectrum palette button, which opens the highlight palette editor and persists slot changes.",
         "The PDF annotation bottom sheet tool row uses localized Android labels (Copy/Dict/Translate/Search) and the Note/Comments tabs are localized."
       ]
