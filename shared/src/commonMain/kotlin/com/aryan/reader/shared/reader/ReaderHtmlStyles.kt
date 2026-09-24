@@ -358,6 +358,17 @@ internal fun readerDocumentStyles(
               max-width: 100%;
               overflow-wrap: anywhere;
               word-wrap: break-word;
+              /*
+               * Last-line overflow defense: author rules with ID specificity +
+               * !important (or deep absolutely-positioned descendants the
+               * tag-level resets above cannot reach) can still paint past the
+               * page box and widen the WKWebView document. `clip` (not
+               * `hidden`) clips without creating a scroll container, so
+               * position:sticky, IntersectionObserver virtualization, and the
+               * fixed selection menu keep working. Table/pre inner scrollers
+               * keep their own overflow-x:auto and scroll internally.
+               */
+              overflow-x: clip;
             }
             .reader-virtual-chunk {
               box-sizing: border-box;
@@ -398,6 +409,18 @@ internal fun readerDocumentStyles(
               box-sizing: border-box;
               max-width: 100% !important;
               height: auto !important;
+            }
+            /*
+             * Embeds are stripped from EPUB chapters by the sanitizer, but
+             * streamed (OPDS) pages can carry them: never let an iframe or
+             * plugin box widen the page. Height is left alone so players keep
+             * their aspect instead of collapsing.
+             */
+            .reader-content iframe,
+            .reader-content embed,
+            .reader-content object {
+              box-sizing: border-box;
+              max-width: 100% !important;
             }
             /*
              * Placeholder for figures whose image file is missing from the archive

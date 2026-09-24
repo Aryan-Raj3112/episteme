@@ -1020,6 +1020,11 @@ fun SharedMobileEpubReaderScreen(
         val epub = loadedBook ?: return
         val targetChapterIndex = (currentChapterIndex + direction).coerceIn(0, epub.chapters.lastIndex)
         if (targetChapterIndex == currentChapterIndex) return
+        // The JS pull gesture posts its progress:0 reset just before the
+        // boundary message, but the chapter reload can win the race and drop
+        // it (stuck indicator). Clearing here is the single source of truth.
+        pullDirection = null
+        pullProgress = 0f
         val chapterPages = pages.filter { it.chapterIndex == targetChapterIndex }
         val targetPage = if (direction < 0) chapterPages.lastOrNull() else chapterPages.firstOrNull()
         val locator = targetPage?.toMobileEpubLocator(epub) ?: ReaderLocator(
@@ -2674,10 +2679,52 @@ fun SharedMobileEpubReaderScreen(
                 val canPullDirection = (pullDirection == "previous" && currentChapterIndex > 0) ||
                     (pullDirection == "next" && currentChapterIndex < (loadedBook?.chapters?.lastIndex ?: -1))
                 if (pullProgress > 0.05f && settings.pullToTurnEnabled && canPullDirection) {
+                    // The indicator must clear the same stack it overlays: the
+                    // top one sits below the status bar, the top toolbar (55.dp
+                    // like the TOP PageInfo offset above), and the TOP PageInfo
+                    // bar when visible; the bottom one sits above the toolbar +
+                    // safe inset and the BOTTOM PageInfo bar when visible.
+                    val pullIsPrevious = pullDirection == "previous"
+                    val pullTopReserve = (if (showChrome) 55.dp else 0.dp) +
+                        (if (pageInfoVisible && settings.pageInfoPosition == PageInfoPosition.TOP) {
+                            SharedMobileEpubPageInfoBarContentHeight
+                        } else {
+                            0.dp
+                        })
+                    val pullBottomReserve = (if (showChrome) {
+                        sharedMobileEpubBottomChromePadding(epubEffectiveBottomInset)
+                    } else {
+                        0.dp
+                    }) +
+                        (if (pageInfoVisible && settings.pageInfoPosition == PageInfoPosition.BOTTOM) {
+                            SharedMobileEpubPageInfoBarContentHeight
+                        } else {
+                            0.dp
+                        })
                     SharedMobileEpubChapterChangeIndicator(
                         direction = pullDirection.orEmpty(),
                         progress = pullProgress,
-                        modifier = Modifier.align(if (pullDirection == "previous") Alignment.TopCenter else Alignment.BottomCenter).padding(8.dp)
+                        modifier = Modifier
+                            .align(if (pullIsPrevious) Alignment.TopCenter else Alignment.BottomCenter)
+                            .then(
+                                if (pullIsPrevious) {
+                                    if (!systemUiHidden) {
+                                        Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                                    } else {
+                                        Modifier
+                                    }
+                                } else {
+                                    if (!navigationUiHidden) {
+                                        Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+                                    } else {
+                                        Modifier
+                                    }
+                                }
+                            )
+                            .padding(
+                                top = if (pullIsPrevious) 8.dp + pullTopReserve else 0.dp,
+                                bottom = if (pullIsPrevious) 0.dp else 8.dp + pullBottomReserve
+                            )
                     )
                 }
                 // Android parity (EpubReaderScreen effectiveTopPadding): the search

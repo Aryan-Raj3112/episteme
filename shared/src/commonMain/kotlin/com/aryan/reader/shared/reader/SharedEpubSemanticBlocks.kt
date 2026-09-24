@@ -22,6 +22,8 @@ import com.aryan.reader.paginatedreader.SemanticSpan
 import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTableCell
 import com.aryan.reader.paginatedreader.SemanticTextBlock
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 /**
  * Converts a chapter's (sanitized and resource-rewritten) XHTML body into the same
@@ -143,6 +145,19 @@ private class SharedSemanticDomElement(
             }
         }
         return false
+    }
+
+    fun findFirstElementNamed(name: String): SharedSemanticDomElement? {
+        val stack = ArrayDeque<SharedSemanticDomNode>()
+        children.forEach { stack.addLast(it) }
+        while (stack.isNotEmpty()) {
+            val node = stack.removeLast()
+            if (node is SharedSemanticDomElement) {
+                if (node.localName == name) return node
+                node.children.forEach { stack.addLast(it) }
+            }
+        }
+        return null
     }
 
     val isBlockElement: Boolean get() = localName in SharedEpubBlockTags
@@ -517,6 +532,16 @@ private class SharedEpubSemanticBlockBuilder(
             when (child) {
                 is SharedSemanticDomText -> buffer += child
                 is SharedSemanticDomElement -> when {
+                    // Standalone vector art must become an image block: "svg"
+                    // stays in NonRenderableTags so inline svg never leaks its
+                    // <text> content into surrounding paragraphs (buildLocalText
+                    // still skips it), but block-level svg is intercepted here
+                    // first. Same for <picture>, whose <img> would otherwise
+                    // dissolve into the text buffer and vanish.
+                    child.localName == "svg" || child.localName == "picture" -> {
+                        flush()
+                        buildSpecific(child, target)
+                    }
                     child.localName in SharedEpubNonRenderableTags -> Unit
                     child.localName == "br" || child.localName == "hr" || child.localName == "img" ||
                         child.localName == "math" || child.localName == "table" ||
@@ -563,6 +588,8 @@ private class SharedEpubSemanticBlockBuilder(
                 blockIndex = nextBlockIndex++
             )
             "img" -> buildImage(element)?.let { target += it }
+            "svg" -> buildSvgImage(element)?.let { target += it }
+            "picture" -> buildPictureImage(element)?.let { target += it }
             "math" -> {
                 val text = buildLocalText(listOf(element)).text.trim()
                 target += SemanticMath(
@@ -584,17 +611,113 @@ private class SharedEpubSemanticBlockBuilder(
     }
 
     private fun buildImage(element: SharedSemanticDomElement): SemanticImage? {
-        val src = element.attribute("src")?.trim()?.takeIf(String::isNotBlank) ?: return null
+        // Lazy-loaded markup often carries no src (data-src/srcset only);
+        // Android resolves data-src the same way. Without a fallback the
+        // image silently drops out of pagination while the WebView still
+        // shows it.
+        val src = element.attribute("src")?.trim()?.takeIf(String::isNotBlank)
+            ?: element.attribute("data-src")?.trim()?.takeIf(String::isNotBlank)
+            ?: element.attribute("srcset").firstSrcSetUrl()
+            ?: return null
         return SemanticImage(
             path = src,
             altText = element.attribute("alt"),
-            intrinsicWidth = element.attribute("width")?.toFloatOrNull(),
-            intrinsicHeight = element.attribute("height")?.toFloatOrNull(),
+            intrinsicWidth = element.attribute("width").sharedSemanticCssPixelSize(),
+            intrinsicHeight = element.attribute("height").sharedSemanticCssPixelSize(),
             style = CssStyle(),
             elementId = element.elementId(),
             cfi = element.cfiPath(),
             blockIndex = nextBlockIndex++
         )
+    }
+
+    /**
+     * Inline vector art (`<svg>` directly in chapter markup) never reaches the
+     * resource-rewritten `<img>` path, so pagination dropped it entirely while
+     * the WebView rendered it. Serializes the element into a data-URI image
+     * with viewBox-derived intrinsics so measure == render can contain-fit it.
+     */
+    private fun buildSvgImage(element: SharedSemanticDomElement): SemanticImage? {
+        val markup = element.toStandaloneSvgMarkup().takeIf { it.isNotBlank() } ?: return null
+        // Attribute keys are lowercased by the parser (viewBox -> viewbox).
+        val viewBoxSize = element.attribute("viewbox").sharedSemanticViewBoxSize()
+        return SemanticImage(
+            path = "data:image/svg+xml;base64,${markup.encodeToByteArray().toSharedSemanticBase64()}",
+            altText = element.attribute("aria-label")?.trim()?.takeIf(String::isNotBlank),
+            intrinsicWidth = element.attribute("width").sharedSemanticCssPixelSize()
+                ?: viewBoxSize?.first,
+            intrinsicHeight = element.attribute("height").sharedSemanticCssPixelSize()
+                ?: viewBoxSize?.second,
+            style = CssStyle(),
+            elementId = element.elementId(),
+            cfi = element.cfiPath(),
+            blockIndex = nextBlockIndex++
+        )
+    }
+
+    private fun buildPictureImage(element: SharedSemanticDomElement): SemanticImage? {
+        element.findFirstElementNamed("img")?.let { return buildImage(it) }
+        val sourceUrl = element.findFirstElementNamed("source")
+            ?.attribute("srcset").firstSrcSetUrl()
+            ?: return null
+        return SemanticImage(
+            path = sourceUrl,
+            altText = null,
+            intrinsicWidth = null,
+            intrinsicHeight = null,
+            style = CssStyle(),
+            elementId = element.elementId(),
+            cfi = element.cfiPath(),
+            blockIndex = nextBlockIndex++
+        )
+    }
+
+    /**
+     * Serializes an `<svg>` element (with Skia/browser-compatible casing) so it
+     * can travel as a data-URI image. Raster `<image>` references rewritten to
+     * `reader-epub-res://` URLs are embedded as data URIs: neither Skia's
+     * SVGDOM nor a data-URI context can resolve them, and without embedding
+     * the whole SVG decodes to nothing (invisible in pagination).
+     */
+    private fun SharedSemanticDomElement.toStandaloneSvgMarkup(): String {
+        val out = StringBuilder()
+        appendSvgMarkup(out, isRoot = true)
+        return out.toString()
+    }
+
+    private fun SharedSemanticDomElement.appendSvgMarkup(out: StringBuilder, isRoot: Boolean) {
+        out.append('<').append(name)
+        if (isRoot && attribute("xmlns") == null) {
+            out.append(" xmlns=\"http://www.w3.org/2000/svg\"")
+        }
+        for ((key, value) in attributes) {
+            var rendered = value
+            if (localName == "image" && key == "href") {
+                embedSharedSvgImageHref(value)?.let { rendered = it }
+            }
+            out.append(' ').append(key.sharedSemanticSvgAttributeName())
+                .append("=\"").append(rendered.escapeSharedSemanticSvgAttribute()).append('"')
+        }
+        if (children.isEmpty()) {
+            out.append("/>")
+            return
+        }
+        out.append('>')
+        for (child in children) {
+            when (child) {
+                is SharedSemanticDomText -> out.append(child.text.escapeSharedSemanticSvgText())
+                is SharedSemanticDomElement -> child.appendSvgMarkup(out, isRoot = false)
+            }
+        }
+        out.append("</").append(name).append('>')
+    }
+
+    private fun embedSharedSvgImageHref(href: String): String? {
+        if (!isSharedEpubResourceUrl(href)) return null
+        val bytes = runCatching { resolveSharedEpubResourceBytes(href) }.getOrNull()
+            ?.takeIf { it.isNotEmpty() } ?: return null
+        val entryPath = parseSharedEpubResourceUrl(href)?.entryPath ?: return null
+        return "data:${sharedEpubResourceMimeType(entryPath)};base64,${bytes.toSharedSemanticBase64()}"
     }
 
     private fun buildHeader(element: SharedSemanticDomElement, target: MutableList<SemanticBlock>) {
@@ -834,3 +957,73 @@ private class SharedEpubSemanticBlockBuilder(
         )
     }
 }
+
+/** First URL of a srcset list (`"a.jpg 1x, b.jpg 2x"` -> `"a.jpg"`). */
+private fun String?.firstSrcSetUrl(): String? {
+    val first = this?.split(',')
+        ?.firstOrNull()
+        ?.trim()
+        ?.split(Regex("\\s+"))
+        ?.firstOrNull()
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: return null
+    return first
+}
+
+/**
+ * Parses an HTML width/height attribute to px. Bare numbers and `px`
+ * (the only absolute units the paginated measure/render path can honor
+ * without font context); `pt` converts like the math-SVG path; `%`/`em`
+ * intentionally return null so the viewBox/fallback sizing takes over
+ * instead of a wrong absolute value.
+ */
+private fun String?.sharedSemanticCssPixelSize(): Float? {
+    val trimmed = this?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    trimmed.toFloatOrNull()?.let { return it.takeIf { value -> value > 0f } }
+    if (trimmed.endsWith("px", ignoreCase = true)) {
+        return trimmed.dropLast(2).toFloatOrNull()?.takeIf { it > 0f }
+    }
+    if (trimmed.endsWith("pt", ignoreCase = true)) {
+        return trimmed.dropLast(2).toFloatOrNull()?.takeIf { it > 0f }?.times(1.3333334f)
+    }
+    return null
+}
+
+/** `viewBox="minX minY width height"` -> width to height (attribute key arrives lowercased). */
+private fun String?.sharedSemanticViewBoxSize(): Pair<Float, Float>? {
+    val parts = this
+        ?.trim()
+        ?.split(Regex("[,\\s]+"))
+        ?.mapNotNull { it.toFloatOrNull() }
+        ?: return null
+    if (parts.size < 4) return null
+    val width = parts[2]
+    val height = parts[3]
+    return if (width > 0f && height > 0f) width to height else null
+}
+
+/**
+ * Restores the canonical casing of the SVG attributes the parser lowercased.
+ * Geometry-critical only: a lowercased `viewbox` is ignored by SVG parsers,
+ * which would lose the aspect ratio of every serialized SVG without explicit
+ * width/height.
+ */
+private fun String.sharedSemanticSvgAttributeName(): String = when (this) {
+    "viewbox" -> "viewBox"
+    "preserveaspectratio" -> "preserveAspectRatio"
+    "gradienttransform" -> "gradientTransform"
+    "patterntransform" -> "patternTransform"
+    else -> this
+}
+
+private fun String.escapeSharedSemanticSvgAttribute(): String = replace("&", "&amp;")
+    .replace("\"", "&quot;")
+    .replace("<", "&lt;")
+
+private fun String.escapeSharedSemanticSvgText(): String = replace("&", "&amp;")
+    .replace("<", "&lt;")
+    .replace(">", "&gt;")
+
+@OptIn(ExperimentalEncodingApi::class)
+private fun ByteArray.toSharedSemanticBase64(): String = Base64.Default.encode(this)

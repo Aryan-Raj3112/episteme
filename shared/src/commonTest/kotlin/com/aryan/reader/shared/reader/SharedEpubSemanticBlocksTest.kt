@@ -332,4 +332,68 @@ class SharedEpubSemanticBlocksTest {
         assertTrue(result.none { it.style.isReaderMissingFigure() })
         assertTrue(result.any { it is SemanticParagraph && (it as SemanticParagraph).text.contains("Cap") })
     }
+
+    @Test
+    fun `standalone svg becomes an image block with viewBox intrinsics`() {
+        val result = blocks(
+            """<svg viewBox="0 0 200 100"><rect width="200" height="100"/></svg>"""
+        )
+        val image = result.single() as SemanticImage
+        assertTrue(image.path.startsWith("data:image/svg+xml;base64,"))
+        assertEquals(200f, image.intrinsicWidth)
+        assertEquals(100f, image.intrinsicHeight)
+        val markup = image.path.substringAfter(',').decodeBase64ForTest()
+        assertTrue(markup.contains("viewBox=\"0 0 200 100\""))
+        assertTrue(markup.contains("xmlns=\"http://www.w3.org/2000/svg\""))
+        assertTrue(markup.contains("<rect"))
+    }
+
+    @Test
+    fun `svg explicit dimensions win over viewBox`() {
+        val result = blocks(
+            """<svg width="640px" height="480" viewBox="0 0 200 100"><rect width="10" height="10"/></svg>"""
+        )
+        val image = result.single() as SemanticImage
+        assertEquals(640f, image.intrinsicWidth)
+        assertEquals(480f, image.intrinsicHeight)
+    }
+
+    @Test
+    fun `inline svg inside a paragraph leaks no text and makes no block`() {
+        val result = blocks("""<p>Before<svg viewBox="0 0 10 10"><text>Hidden</text></svg>After</p>""")
+        assertEquals(1, result.size)
+        val paragraph = result[0] as SemanticParagraph
+        assertTrue(!paragraph.text.contains("Hidden"))
+    }
+
+    @Test
+    fun `picture resolves its inner img`() {
+        val result = blocks(
+            """<picture><source srcset="b.webp"/><img src="a.jpg" alt="A" width="120" height="80"/></picture>"""
+        )
+        val image = result.single() as SemanticImage
+        assertEquals("a.jpg", image.path)
+        assertEquals("A", image.altText)
+        assertEquals(120f, image.intrinsicWidth)
+    }
+
+    @Test
+    fun `img falls back to data-src and srcset`() {
+        val lazy = blocks("""<img data-src="lazy.jpg" alt="L"/>""").single() as SemanticImage
+        assertEquals("lazy.jpg", lazy.path)
+        val srcset = blocks("""<img srcset="small.jpg 480w, large.jpg 800w" alt="S"/>""").single() as SemanticImage
+        assertEquals("small.jpg", srcset.path)
+    }
+
+    @Test
+    fun `img pixel suffixed dimensions parse`() {
+        val result = blocks("""<img src="a.jpg" width="640px" height="480px"/>""")
+        val image = result.single() as SemanticImage
+        assertEquals(640f, image.intrinsicWidth)
+        assertEquals(480f, image.intrinsicHeight)
+    }
 }
+
+@OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+private fun String.decodeBase64ForTest(): String =
+    kotlin.io.encoding.Base64.Default.decode(this).decodeToString()

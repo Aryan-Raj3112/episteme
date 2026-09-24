@@ -970,6 +970,10 @@ private class IosEpubWebViewCoordinator(
             activeWebView = this
             navigationDelegate = this@IosEpubWebViewCoordinator.navigationDelegate
             opaque = true
+            // The reader owns chapter navigation (pull-to-turn, TOC, links);
+            // the system swipe-back gesture would hijack edge pans and fight
+            // the pull gesture at the chapter boundaries.
+            allowsBackForwardNavigationGestures = false
             backgroundColor = UIColor.whiteColor
             scrollView.backgroundColor = UIColor.whiteColor
             // Compose owns the safe area (PageInfo reserve + bar insets) and the
@@ -985,6 +989,10 @@ private class IosEpubWebViewCoordinator(
             scrollView.alwaysBounceVertical = true
             scrollView.alwaysBounceHorizontal = false
             scrollView.showsHorizontalScrollIndicator = false
+            // Wide tables/pre blocks scroll inside their own CSS overflow
+            // container; without a directional lock a diagonal pan drifts the
+            // whole page sideways and reads as page-level horizontal overflow.
+            scrollView.directionalLockEnabled = true
         }
     }
 
@@ -1436,17 +1444,26 @@ private val IosEpubBridgeBootstrapScript = """
       if (!window.readerIosPointerBridgeInstalled) {
         window.readerIosPointerBridgeInstalled = true;
         var start = null;
+        // Last pull direction posted to native ('previous' | 'next'). The
+        // touchend reset below must clear the indicator even when the release
+        // point cannot decide a direction (multi-touch, selection, links), so
+        // the last move-time direction is remembered instead of inferred.
+        var lastPullDirection = 'next';
+        function edgeState() {
+          var root = document.scrollingElement || document.documentElement;
+          var maxScroll = Math.max(0, root.scrollHeight - window.innerHeight);
+          return {
+            atTop: window.scrollY <= 2,
+            atBottom: window.scrollY >= maxScroll - 2
+          };
+        }
         document.addEventListener('touchstart', function (event) {
           if (!event.touches || event.touches.length !== 1) { start = null; return; }
           var touch = event.touches[0];
-          var root = document.scrollingElement || document.documentElement;
-          var maxScroll = Math.max(0, root.scrollHeight - window.innerHeight);
           start = {
             x: touch.clientX,
             y: touch.clientY,
-            at: Date.now(),
-            atTop: window.scrollY <= 2,
-            atBottom: window.scrollY >= maxScroll - 2
+            at: Date.now()
           };
         }, { passive: true, capture: true });
         document.addEventListener('touchmove', function (event) {
@@ -1456,30 +1473,68 @@ private val IosEpubBridgeBootstrapScript = """
           var dx = touch.clientX - start.x;
           var dy = touch.clientY - start.y;
           if (Math.abs(dy) <= Math.abs(dx) * 1.25) return;
+          // Android parity (InteractiveWebView gates on the live scroll edge
+          // during the drag, not the touchstart edge): a gesture that reaches
+          // the edge mid-drag can still pull. Rubber-band overscroll keeps
+          // scrollY at/below the edge so this stays true through release.
+          var edges = edgeState();
           var multiplier = Math.max(0.5, Math.min(2.0, Number(window.readerIosPullMultiplier || 1)));
           var threshold = 100 * multiplier;
-          if (start.atTop && dy > 0) {
+          if (edges.atTop && dy > 0) {
+            lastPullDirection = 'previous';
             post('readerChapterPull', JSON.stringify({ direction: 'previous', progress: Math.min(1.25, dy / threshold) }));
-          } else if (start.atBottom && dy < 0) {
+          } else if (edges.atBottom && dy < 0) {
+            lastPullDirection = 'next';
             post('readerChapterPull', JSON.stringify({ direction: 'next', progress: Math.min(1.25, -dy / threshold) }));
           }
         }, { passive: true, capture: true });
         document.addEventListener('touchend', function (event) {
-          if (!start || !event.changedTouches || event.changedTouches.length !== 1) { start = null; return; }
+          if (!start || !event.changedTouches || event.changedTouches.length !== 1) {
+            start = null;
+            post('readerChapterPull', JSON.stringify({ direction: lastPullDirection, progress: 0 }));
+            return;
+          }
           var touch = event.changedTouches[0];
           var dx = touch.clientX - start.x;
           var dy = touch.clientY - start.y;
           var elapsed = Date.now() - start.at;
-          var startedAtTop = start.atTop;
-          var startedAtBottom = start.atBottom;
           start = null;
+          // The reset posts before every early return: selection, links, and
+          // the tap/drag classifiers below must never leave a stale
+          // progress behind (stuck indicator that never changes chapter).
+          // Chapter navigation itself also clears native state, so a reset
+          // lost to a document reload cannot stick either.
+          if (dy >= 0) lastPullDirection = 'previous'; else lastPullDirection = 'next';
+          post('readerChapterPull', JSON.stringify({ direction: lastPullDirection, progress: 0 }));
+          var edges = edgeState();
+          var startedAtTop = edges.atTop;
+          var startedAtBottom = edges.atBottom;
           var selection = window.getSelection && window.getSelection();
           if (selection && selection.toString().trim()) return;
           var target = event.target;
           if (target && target.closest && target.closest('a,button,input,textarea,select,#reader-selection-menu,.reader-selection-handle')) return;
           var multiplier = Math.max(0.5, Math.min(2.0, Number(window.readerIosPullMultiplier || 1)));
           var threshold = 100 * multiplier;
-          post('readerChapterPull', JSON.stringify({ direction: dy >= 0 ? 'previous' : 'next', progress: 0 }));
+          if (window.readerIosSeamlessChapter === true && Math.abs(dy) >= 18 && Math.abs(dy) > Math.abs(dx) * 1.25) {
+            if (startedAtTop && dy > 0) {
+              post('readerChapterBoundary', JSON.stringify({ direction: 'previous' }));
+              return;
+            }
+            if (startedAtBottom && dy < 0) {
+              post('readerChapterBoundary', JSON.stringify({ direction: 'next' }));
+              return;
+            }
+          }
+          if (window.readerIosPullEnabled !== false && elapsed <= 1400 && Math.abs(dy) >= threshold && Math.abs(dy) > Math.abs(dx) * 1.25) {
+            if (startedAtTop && dy > 0) {
+              post('readerChapterBoundary', JSON.stringify({ direction: 'previous' }));
+              return;
+            }
+            if (startedAtBottom && dy < 0) {
+              post('readerChapterBoundary', JSON.stringify({ direction: 'next' }));
+              return;
+            }
+          }
           if (window.readerIosSeamlessChapter === true && Math.abs(dy) >= 18 && Math.abs(dy) > Math.abs(dx) * 1.25) {
             if (startedAtTop && dy > 0) {
               post('readerChapterBoundary', JSON.stringify({ direction: 'previous' }));
@@ -1509,7 +1564,7 @@ private val IosEpubBridgeBootstrapScript = """
         }, { passive: true, capture: true });
         document.addEventListener('touchcancel', function () {
           start = null;
-          post('readerChapterPull', JSON.stringify({ direction: 'next', progress: 0 }));
+          post('readerChapterPull', JSON.stringify({ direction: lastPullDirection, progress: 0 }));
         }, { passive: true, capture: true });
       }
     })();
