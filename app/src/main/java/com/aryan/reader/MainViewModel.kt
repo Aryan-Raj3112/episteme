@@ -4568,7 +4568,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
             .build()
 
-        val request = OneTimeWorkRequestBuilder<FolderSyncWorker>().setInputData(data).build()
+        val request = OneTimeWorkRequestBuilder<FolderSyncWorker>()
+            .setInputData(data)
+            // Retry timing only; local indexing is offline-capable so no constraints.
+            .setBackoffCriteria(
+                androidx.work.BackoffPolicy.EXPONENTIAL,
+                30L,
+                TimeUnit.SECONDS
+            )
+            .build()
 
         val enqueued = SafeWorkManager.enqueueUniqueWork(
             appContext,
@@ -7250,7 +7258,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     .putString(ReflowWorker.KEY_ORIGINAL_TITLE, originalTitle).build()
 
             val request = OneTimeWorkRequestBuilder<ReflowWorker>().setInputData(inputData)
-                .addTag(ReflowWorker.WORK_NAME).addTag("book_$pdfBookId").build()
+                .addTag(ReflowWorker.WORK_NAME).addTag("book_$pdfBookId")
+                // Retry timing only; reflow is local compute, no constraints.
+                .setBackoffCriteria(
+                    androidx.work.BackoffPolicy.EXPONENTIAL,
+                    30L,
+                    TimeUnit.SECONDS
+                )
+                .build()
 
             val enqueued = SafeWorkManager.enqueueUniqueWork(
                 appContext,

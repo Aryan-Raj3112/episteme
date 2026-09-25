@@ -45,6 +45,33 @@ class MediaNotificationBitmapLoaderTest {
     }
 
     @Test
+    fun `uri bitmap is shared across loader instances`() {
+        val artworkFile = java.io.File.createTempFile("notif-art", ".png", context.cacheDir)
+        artworkFile.deleteOnExit()
+        artworkFile.outputStream().use { out ->
+            encodePng(Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888))
+                .inputStream().copyTo(out)
+        }
+        val uri = android.net.Uri.fromFile(artworkFile)
+
+        val first = MediaNotificationBitmapLoader(context).loadBitmap(uri).get()
+
+        // A fresh instance can only serve synchronously via the shared cache.
+        val secondFuture = MediaNotificationBitmapLoader(context).loadBitmap(uri)
+        assertTrue(secondFuture.isDone)
+        assertEquals(first.width, secondFuture.get().width)
+    }
+
+    @Test
+    fun `prewarm tolerates null and unreadable artwork`() {
+        MediaNotificationBitmapLoader.prewarm(context, null)
+        MediaNotificationBitmapLoader.prewarm(
+            context,
+            android.net.Uri.parse("content://com.aryan.reader.missing/artwork.png")
+        )
+    }
+
+    @Test
     fun `metadata without artwork resolves to null`() {
         val loader = MediaNotificationBitmapLoader(context)
         val metadata = MediaMetadata.Builder().setTitle("book").build()

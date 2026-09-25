@@ -29,6 +29,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
+import androidx.work.BackoffPolicy
 import androidx.work.CoroutineWorker
 import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
@@ -134,6 +135,12 @@ class BookProcessingWorker(
             val workRequest = OneTimeWorkRequestBuilder<BookProcessingWorker>()
                 .setInputData(workData)
                 .addTag(WORK_TAG)
+                // Retry timing only; extraction is local compute, no constraints.
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL,
+                    30L,
+                    java.util.concurrent.TimeUnit.SECONDS
+                )
                 .build()
 
             SafeWorkManager.enqueueUniqueWork(

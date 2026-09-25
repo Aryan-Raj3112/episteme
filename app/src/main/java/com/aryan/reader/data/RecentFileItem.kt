@@ -19,8 +19,15 @@
  */
 package com.aryan.reader.data
 
+import androidx.compose.runtime.Immutable
 import com.aryan.reader.FileType
 
+/**
+ * Immutable library row. Instances are never mutated in place — updates go
+ * through `copy()` with freshly built lists — so Compose can trust equals()
+ * for skipping card/cover recompositions on unrelated state emissions.
+ */
+@Immutable
 data class RecentFileItem(
     val bookId: String,
     val uriString: String?,

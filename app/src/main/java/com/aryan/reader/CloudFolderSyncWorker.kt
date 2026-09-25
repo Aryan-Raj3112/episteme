@@ -3604,8 +3604,9 @@ class CloudFolderSyncWorker(
                 // Metadata wakes are issued from an IO coroutine after a
                 // sidecar commit. Querying here lets us distinguish an active
                 // first attempt from a retrying request in backoff without
-                // putting an unbounded wait on the UI thread.
-                workManager.getWorkInfosForUniqueWork(workName).get()
+                // putting an unbounded wait on the UI thread. Bounded: on
+                // timeout the REPLACE fallback below still guarantees a wake.
+                workManager.getWorkInfosForUniqueWork(workName).get(2, TimeUnit.SECONDS)
             }.getOrElse { error ->
                 // If WorkManager's state database cannot be read, ensuring a
                 // durable wake is safer than KEEP, which could swallow it.
@@ -3639,7 +3640,9 @@ class CloudFolderSyncWorker(
         ): ExistingWorkPolicy {
             if (workManager == null) return ExistingWorkPolicy.KEEP
             val infos = runCatching {
-                workManager.getWorkInfosForUniqueWork(workName).get()
+                // Bounded like the metadata query above; KEEP fallback below
+                // never cancels an active transfer on timeout.
+                workManager.getWorkInfosForUniqueWork(workName).get(2, TimeUnit.SECONDS)
             }.getOrElse { error ->
                 // KEEP is safer when WorkManager cannot answer: an active
                 // transfer must never be cancelled because its state is

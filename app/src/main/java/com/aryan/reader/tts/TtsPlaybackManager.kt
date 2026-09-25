@@ -1184,6 +1184,10 @@ class TtsPlaybackManager(
             currentChunkIndex = chunkIndex,
             totalChunks = textChunks.size
         )
+        // Prewarm the notification artwork on IO: the loader serves
+        // synchronously on Main, and chapter turns otherwise pay a
+        // content-resolver read + double decode per chunk.
+        com.aryan.reader.MediaNotificationBitmapLoader.prewarm(appContext, coverImageUri?.toUri())
         val metadata = MediaMetadata.Builder()
             .setTitle(bookTitle)
             .setDisplayTitle(bookTitle)
@@ -2674,6 +2678,10 @@ class TtsPlaybackManager(
     private fun createMediaItem(text: String, path: String, index: Int, chunk: TtsChunk): MediaItem {
         val isStreaming = path.startsWith("ttsstream://")
         val localAudioFile = if (isStreaming) null else File(path)
+        // Same prewarm as updateLocalMediaItem: playlist items are built
+        // ahead of playback, so the cover is usually cached before Media3
+        // asks for it on Main.
+        com.aryan.reader.MediaNotificationBitmapLoader.prewarm(appContext, coverImageUri?.toUri())
         val chapterLabel = buildTtsNotificationContextLabel(
             chapterTitle = chapterTitle,
             chapterIndex = chapterIndex,

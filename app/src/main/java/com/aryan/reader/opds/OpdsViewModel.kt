@@ -9,6 +9,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
+import androidx.work.BackoffPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import com.aryan.reader.FolderSyncWorker
 import com.aryan.reader.SafeWorkManager
@@ -185,7 +186,15 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
             .putBoolean(FolderSyncWorker.KEY_METADATA_ONLY, false)
             .putString(FolderSyncWorker.KEY_TARGET_FOLDER_URI, folderUriString)
             .build()
-        val request = OneTimeWorkRequestBuilder<FolderSyncWorker>().setInputData(data).build()
+        val request = OneTimeWorkRequestBuilder<FolderSyncWorker>()
+            .setInputData(data)
+            // Retry timing only; local indexing is offline-capable so no constraints.
+            .setBackoffCriteria(
+                BackoffPolicy.EXPONENTIAL,
+                30L,
+                java.util.concurrent.TimeUnit.SECONDS
+            )
+            .build()
         SafeWorkManager.enqueueUniqueWork(
             context,
             FolderSyncWorker.WORK_NAME_ONETIME,
