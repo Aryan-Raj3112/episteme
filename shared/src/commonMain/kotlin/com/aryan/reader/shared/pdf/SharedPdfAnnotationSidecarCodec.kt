@@ -326,13 +326,14 @@ object SharedPdfAnnotationSidecarCodec {
             val obj = element.jsonObjectOrNull() ?: return@mapNotNull null
             val bounds = obj.objectValue("bounds")?.toPdfPageBoundsOrNull() ?: return@mapNotNull null
             val rawFontSize = obj.float("fontSize") ?: 16f
+            val boxText = obj.string("text").orEmpty()
             SharedPdfAnnotation(
                 id = obj.string("id") ?: stableAnnotationId("text", element),
                 pageIndex = obj.int("pageIndex") ?: return@mapNotNull null,
                 kind = PdfAnnotationKind.TEXT,
                 tool = PdfInkTool.TEXT,
                 bounds = bounds,
-                text = obj.string("text").orEmpty(),
+                text = boxText,
                 colorArgb = obj.int("color") ?: 0xFF000000.toInt(),
                 backgroundArgb = obj.int("backgroundColor") ?: 0x00000000,
                 strokeWidth = SharedPdfAnnotationDefaults.configFor(PdfInkTool.TEXT).strokeWidth,
@@ -343,7 +344,11 @@ object SharedPdfAnnotationSidecarCodec {
                 isUnderline = obj.boolean("isUnderline") ?: false,
                 isStrikeThrough = obj.boolean("isStrikeThrough") ?: false,
                 fontPath = obj.string("fontPath"),
-                fontName = obj.string("fontName")
+                fontName = obj.string("fontName"),
+                paragraphs = sharedPdfTextBoxParagraphsFromJson(
+                    obj["paragraphs"],
+                    sharedPdfTextBoxParagraphCount(boxText),
+                )
             )
         }
     }
@@ -436,6 +441,7 @@ object SharedPdfAnnotationSidecarCodec {
                             put("isStrikeThrough", JsonPrimitive(annotation.isStrikeThrough))
                             annotation.fontPath?.let { put("fontPath", JsonPrimitive(it)) }
                             annotation.fontName?.let { put("fontName", JsonPrimitive(it)) }
+                            sharedPdfTextBoxParagraphsToJson(annotation.paragraphs)?.let { put("paragraphs", it) }
                             put("bounds", bounds.toJsonObject())
                         }
                     )

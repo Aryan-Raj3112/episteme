@@ -66,13 +66,22 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.pdf.data.PdfTextBox
+import com.aryan.reader.shared.pdf.RichParagraphUiState
+import com.aryan.reader.shared.pdf.SharedPdfRichParagraph
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxAnnotatedString
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxDockState
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxKeystroke
+import com.aryan.reader.shared.pdf.trimmedRichParagraphs
 import timber.log.Timber
 import kotlin.math.roundToInt
 
@@ -157,14 +166,15 @@ fun ResizableTextBox(
     pageHeightPx: Float,
     scale: Float = 1f,
     onBoundsChanged: (Rect) -> Unit,
-    onTextChanged: (String) -> Unit,
+    onTextChanged: (String, List<SharedPdfRichParagraph>) -> Unit,
     onSelect: () -> Unit,
     onDragStart: (Offset) -> Unit,
     onDrag: (Offset, Rect) -> Unit,
     onDragEnd: () -> Unit,
     modifier: Modifier = Modifier,
     onDragCancel: () -> Unit = {},
-    handlePosition: HandlePosition = HandlePosition.AUTO
+    handlePosition: HandlePosition = HandlePosition.AUTO,
+    onParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> }
 ) {
     if (pageWidthPx <= 0 || pageHeightPx <= 0) return
 
@@ -204,6 +214,57 @@ fun ResizableTextBox(
                 "Cursive" -> FontFamily.Cursive
                 else -> FontFamily.Default
             }
+        }
+    }
+    val currentOnParagraphUiStateChanged by rememberUpdatedState(onParagraphUiStateChanged)
+    // Box-level style as the AnnotatedString base; per-paragraph alignment
+    // and list tags come from shared helpers (same model as rich text).
+    val boxSpanStyle = SpanStyle(
+        color = box.color,
+        background = box.backgroundColor,
+        fontFamily = fontFamily,
+        fontWeight = if (box.isBold) FontWeight.Bold else FontWeight.Normal,
+        fontStyle = if (box.isItalic) FontStyle.Italic else FontStyle.Normal,
+        textDecoration = run {
+            val decs = mutableListOf<TextDecoration>()
+            if (box.isUnderline) decs.add(TextDecoration.Underline)
+            if (box.isStrikeThrough) decs.add(TextDecoration.LineThrough)
+            if (decs.isEmpty()) TextDecoration.None else TextDecoration.combine(decs)
+        }
+    )
+    val externalAnnotated = remember(box.text, box.paragraphs, boxSpanStyle) {
+        sharedPdfTextBoxAnnotatedString(box.text, box.paragraphs, boxSpanStyle)
+    }
+    var fieldValue by remember(box.id) {
+        mutableStateOf(TextFieldValue(externalAnnotated))
+    }
+    // Paragraphs backing the field text. Kept in lockstep with fieldValue so
+    // rapid keystrokes always reconcile against their true predecessor even
+    // before the parent recomposes with the updated box.
+    var fieldParagraphs by remember(box.id) { mutableStateOf(box.paragraphs) }
+    // Sync external changes (dock alignment/list toggles, undo, reload)
+    // into the field without clobbering in-progress typing: typing already
+    // echoes back through onTextChanged so text matches after recomposition.
+    LaunchedEffect(box.id, externalAnnotated) {
+        if (fieldValue.annotatedString != externalAnnotated) {
+            val sel = fieldValue.selection
+            val safeSel = TextRange(
+                sel.min.coerceIn(0, externalAnnotated.length),
+                sel.max.coerceIn(0, externalAnnotated.length)
+            )
+            fieldValue = TextFieldValue(externalAnnotated, safeSel)
+            fieldParagraphs = box.paragraphs
+        }
+    }
+    // Report dock state for the selected box (alignment + list actives).
+    // Stored-aware: empty paragraphs report their stored alignment, which
+    // the anchor-free buffer alone cannot represent.
+    LaunchedEffect(fieldValue.text, fieldParagraphs, fieldValue.selection, isSelected) {
+        if (isSelected) {
+            currentOnParagraphUiStateChanged(
+                sharedPdfTextBoxDockState(fieldValue.text, fieldParagraphs, fieldValue.selection),
+                fieldValue.selection
+            )
         }
     }
     androidx.compose.runtime.SideEffect {
@@ -364,15 +425,35 @@ fun ResizableTextBox(
                     )
             ) {
                 BasicTextField(
-                    value = box.text,
-                    onValueChange = { newText ->
+                    value = fieldValue,
+                    onValueChange = { newValue ->
                         Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
                             "event=value_change id=${box.id} page=${box.pageIndex} " +
-                                "oldLength=${box.text.length} newLength=${newText.length} " +
+                                "oldLength=${fieldValue.text.length} newLength=${newValue.text.length} " +
                                 "selected=$isSelected editMode=$isEditMode enabled=$isTextInputEnabled " +
                                 "focused=$isTextFieldFocused"
                         )
-                        currentOnTextChanged(newText)
+                        // Route every keystroke through shared list/alignment
+                        // maintenance (same Samsung-Notes rules as rich text:
+                        // marker relocation, Enter inheritance, backspace exit,
+                        // numbered renumber) plus stored-alignment preservation
+                        // for empty paragraphs. Rebuild annotated from the
+                        // normalized result; box style covers marker spans.
+                        val result = sharedPdfTextBoxKeystroke(
+                            oldText = fieldValue.text,
+                            oldParagraphs = fieldParagraphs,
+                            newText = newValue.text,
+                            newSelection = newValue.selection,
+                            markerFallbackStyle = boxSpanStyle
+                        )
+                        val normalized = sharedPdfTextBoxAnnotatedString(
+                            result.text,
+                            result.paragraphs,
+                            boxSpanStyle
+                        )
+                        fieldValue = TextFieldValue(normalized, result.selection)
+                        fieldParagraphs = result.paragraphs.trimmedRichParagraphs()
+                        currentOnTextChanged(result.text, fieldParagraphs)
                     },
                     modifier = Modifier
                         .fillMaxSize()

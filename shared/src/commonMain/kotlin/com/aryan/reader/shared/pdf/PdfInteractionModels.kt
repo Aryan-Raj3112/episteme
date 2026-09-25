@@ -142,7 +142,13 @@ data class SharedPdfAnnotation(
     val fontName: String? = null,
     val rangeStartIndex: Int? = null,
     val rangeEndIndex: Int? = null,
-    val createdAt: Long = 0L
+    val createdAt: Long = 0L,
+    /**
+     * Per-paragraph alignment/list for TEXT boxes (Android benchmark).
+     * Same model as rich text, sparse: empty = all LEFT/NONE. Defaults keep
+     * old payloads byte-compatible; old readers ignore the field.
+     */
+    val paragraphs: List<SharedPdfRichParagraph> = emptyList()
 )
 
 fun sharedPdfHighlightAnnotation(

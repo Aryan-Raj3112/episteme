@@ -290,8 +290,17 @@ import com.aryan.reader.saveTtsReplacementPreferences
 import com.aryan.reader.scaledToCanvasLimit
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.HighlightStyle
+import androidx.compose.ui.text.TextRange
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
+import com.aryan.reader.shared.pdf.RichParagraphUiState
 import com.aryan.reader.shared.pdf.SharedPdfRichListType
+import com.aryan.reader.shared.pdf.SharedPdfRichTextAlign
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxAnnotatedString
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxDockState
+import com.aryan.reader.shared.pdf.sharedPdfToggleTextBoxList
+import com.aryan.reader.shared.pdf.sharedPdfSetTextBoxAlignment
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxParagraphs
+import com.aryan.reader.shared.pdf.trimmedRichParagraphs
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.pdf.PdfNavigationReason
 import com.aryan.reader.shared.pdf.RealisticPdfPageTurnAnimationSpec
@@ -6630,6 +6639,9 @@ private class PdfViewerSurfaceState {
     var dynamicBeyondViewportPageCount: Int by androidx.compose.runtime.mutableStateOf(0)
     lateinit var textBoxes: androidx.compose.runtime.snapshots.SnapshotStateList<PdfTextBox>
     lateinit var paginationDraggingBoxId: PdfViewerMutableValue<String?>
+    var textBoxParagraphUiState: RichParagraphUiState? by androidx.compose.runtime.mutableStateOf(null)
+    var textBoxSelection: TextRange by androidx.compose.runtime.mutableStateOf(TextRange.Zero)
+    var textBoxSelectionBoxId: String? by androidx.compose.runtime.mutableStateOf(null)
     var isDrawingActive: Boolean by androidx.compose.runtime.mutableStateOf(false)
     lateinit var viewConfiguration: androidx.compose.ui.platform.ViewConfiguration
     lateinit var currentActiveScale: PdfViewerMutableValue<Float>
@@ -6914,6 +6926,53 @@ private fun <T> pdfViewerMutableValue(
     getter: () -> T,
     setter: (T) -> Unit,
 ): PdfViewerMutableValue<T> = PdfViewerMutableValue(getter, setter)
+
+/**
+ * Text-box paragraph ops (Android benchmark, shared-first): same L/C/R +
+ * BULLET/NUMBERED semantics as page rich text, applied to the selected box
+ * using its last-known cursor selection (falls back to end-of-text).
+ */
+private fun applyTextBoxAlignment(
+    textBoxes: androidx.compose.runtime.snapshots.SnapshotStateList<PdfTextBox>,
+    selectedTextBoxId: String?,
+    surfaceState: PdfViewerSurfaceState,
+    align: SharedPdfRichTextAlign,
+) {
+    val box = textBoxes.find { it.id == selectedTextBoxId } ?: return
+    val selection = if (surfaceState.textBoxSelectionBoxId == box.id) {
+        surfaceState.textBoxSelection
+    } else {
+        TextRange(box.text.length)
+    }
+    val annotated = sharedPdfTextBoxAnnotatedString(box.text, box.paragraphs)
+    val result = sharedPdfSetTextBoxAlignment(annotated, selection, align)
+    val paragraphs = sharedPdfTextBoxParagraphs(result).trimmedRichParagraphs()
+    val idx = textBoxes.indexOfFirst { it.id == box.id }
+    if (idx != -1) textBoxes[idx] = box.copy(paragraphs = paragraphs)
+}
+
+private fun applyTextBoxListType(
+    textBoxes: androidx.compose.runtime.snapshots.SnapshotStateList<PdfTextBox>,
+    selectedTextBoxId: String?,
+    surfaceState: PdfViewerSurfaceState,
+    type: com.aryan.reader.shared.pdf.SharedPdfRichListType,
+) {
+    val box = textBoxes.find { it.id == selectedTextBoxId } ?: return
+    val selection = if (surfaceState.textBoxSelectionBoxId == box.id) {
+        surfaceState.textBoxSelection
+    } else {
+        TextRange(box.text.length)
+    }
+    val annotated = sharedPdfTextBoxAnnotatedString(box.text, box.paragraphs)
+    val result = sharedPdfToggleTextBoxList(annotated, selection, type)
+    val idx = textBoxes.indexOfFirst { it.id == box.id }
+    if (idx != -1) {
+        textBoxes[idx] = box.copy(
+            text = result.text,
+            paragraphs = result.paragraphs.trimmedRichParagraphs()
+        )
+    }
+}
 
 // Deliberately non-inline: the bounded calls above compile to small capture
 // methods instead of inlining every bridge write into PdfViewerScreenContent.
@@ -7253,7 +7312,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                             scale = currentActiveScale,
                                             handlePosition = overlayHandlePos,
                                             onBoundsChanged = {},
-                                            onTextChanged = {},
+                                            onTextChanged = { _, _ -> },
                                             onSelect = {},
                                             onDragStart = {},
                                             onDrag = { _, _ -> },
@@ -7791,6 +7850,11 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                             "selected=${updatedBox.id == selectedTextBoxId} textBoxEditMode=$isDrawingActive"
                                     )
                                     if (idx != -1) textBoxes[idx] = updatedBox
+                                },
+                                onTextBoxParagraphUiStateChanged = { state, selection ->
+                                    surfaceState.textBoxParagraphUiState = state
+                                    surfaceState.textBoxSelection = selection
+                                    surfaceState.textBoxSelectionBoxId = selectedTextBoxId
                                 },
                                 onTextBoxSelect = { id ->
                                     Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
@@ -10117,21 +10181,58 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                     }
                 },
                 popupsBelowBar = popupsBelowBar,
-                // Paragraph row is page-rich-text only; legacy text boxes
-                // stay on the single-row bar.
+                // Paragraph row: rich text via controller, text boxes via
+                // shared helpers on the selected box (same L/C/R + lists).
                 paragraphState = if (selectedTextBoxId != null) {
-                    null
+                    val box = textBoxes.find { it.id == selectedTextBoxId }
+                    if (box == null) {
+                        null
+                    } else {
+                        val selection = if (surfaceState.textBoxSelectionBoxId == box.id) {
+                            surfaceState.textBoxSelection
+                        } else {
+                            TextRange(box.text.length)
+                        }
+                        sharedPdfTextBoxDockState(box.text, box.paragraphs, selection)
+                    }
                 } else {
                     richTextController.richParagraphUiState()
                 },
                 onNumberedListClick = {
-                    richTextController.toggleRichListType(SharedPdfRichListType.NUMBERED)
+                    if (selectedTextBoxId != null) {
+                        applyTextBoxListType(
+                            textBoxes = textBoxes,
+                            selectedTextBoxId = selectedTextBoxId,
+                            surfaceState = surfaceState,
+                            type = SharedPdfRichListType.NUMBERED
+                        )
+                    } else {
+                        richTextController.toggleRichListType(SharedPdfRichListType.NUMBERED)
+                    }
                 },
                 onBulletedListClick = {
-                    richTextController.toggleRichListType(SharedPdfRichListType.BULLET)
+                    if (selectedTextBoxId != null) {
+                        applyTextBoxListType(
+                            textBoxes = textBoxes,
+                            selectedTextBoxId = selectedTextBoxId,
+                            surfaceState = surfaceState,
+                            type = SharedPdfRichListType.BULLET
+                        )
+                    } else {
+                        richTextController.toggleRichListType(SharedPdfRichListType.BULLET)
+                    }
                 },
                 onAlignmentSelected = { align ->
-                    richTextController.setRichParagraphAlignment(align)
+                    if (selectedTextBoxId != null) {
+                        applyTextBoxAlignment(
+                            textBoxes = textBoxes,
+                            selectedTextBoxId = selectedTextBoxId,
+                            surfaceState = surfaceState,
+                            align = align
+                        )
+                    } else {
+                        richTextController.setRichParagraphAlignment(align)
+                    }
                 },
             )
             }
@@ -11338,6 +11439,11 @@ private fun PdfViewerPaginationPage(
             selectedTextBoxId = id
             pdfRichLayoutDiag("exit.path=textBoxSelect path=pagination id=$id")
             richTextController?.clearSelection()
+        },
+        onTextBoxParagraphUiStateChanged = { state, selection ->
+            surfaceState.textBoxParagraphUiState = state
+            surfaceState.textBoxSelection = selection
+            surfaceState.textBoxSelectionBoxId = selectedTextBoxId
         },
         draggingBoxId = paginationDraggingBoxId,
         onTextBoxDragStart = { box, _, _ ->

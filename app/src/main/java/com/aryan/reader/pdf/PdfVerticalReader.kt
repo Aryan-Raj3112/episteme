@@ -106,6 +106,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
@@ -122,6 +123,7 @@ import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.shared.pdf.calculatePdfVerticalPageLayoutPx
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
+import com.aryan.reader.shared.pdf.RichParagraphUiState
 import com.aryan.reader.shared.pdf.finitePdfZoomValue
 import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
 import com.aryan.reader.shared.pdf.pdfVerticalDoubleTapTargetScale
@@ -312,6 +314,7 @@ internal fun PdfVerticalReader(
     selectedTextBoxId: String? = null,
     onTextBoxChange: (PdfTextBox) -> Unit = {},
     onTextBoxSelect: (String) -> Unit = {},
+    onTextBoxParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> },
     bottomContentPaddingPx: Float = 0f,
     topContentPaddingPx: Float = 0f,
     onTextBoxMoved: (String, Int, Rect) -> Unit = { _, _, _ -> },
@@ -2859,6 +2862,7 @@ internal fun PdfVerticalReader(
                                     selectedTextBoxId = selectedTextBoxId,
                                     onTextBoxChange = onTextBoxChange,
                                     onTextBoxSelect = onTextBoxSelect,
+                                    onTextBoxParagraphUiStateChanged = onTextBoxParagraphUiStateChanged,
                                     userHighlights = effectiveUserHighlightsByPage[page.index].orEmpty(),
                                     onHighlightAdd = onHighlightAdd,
                                     onHighlightUpdate = onHighlightUpdate,
@@ -3418,7 +3422,7 @@ internal fun PdfVerticalReader(
                         scale = currentZoom,
                         handlePosition = overlayHandlePos,
                         onBoundsChanged = {},
-                        onTextChanged = {},
+                        onTextChanged = { _, _ -> },
                         onSelect = {},
                         onDragStart = {},
                         onDrag = { _, _ -> },

@@ -40,6 +40,8 @@ import com.aryan.reader.shared.pdf.SharedPdfLegacyInkDecodeResult
 import com.aryan.reader.shared.pdf.SharedPdfLegacyInkStreamDecoder
 import com.aryan.reader.shared.pdf.SharedPdfLegacyTextBox
 import com.aryan.reader.shared.pdf.SharedPdfLegacyTextBoxCodec
+import com.aryan.reader.shared.pdf.SharedPdfRichParagraph
+import com.aryan.reader.shared.pdf.trimmedRichParagraphs
 import timber.log.Timber
 import java.io.InputStream
 import java.util.UUID
@@ -57,7 +59,8 @@ data class PdfTextBox(
     val isUnderline: Boolean = false,
     val isStrikeThrough: Boolean = false,
     val fontPath: String? = null,
-    val fontName: String? = null
+    val fontName: String? = null,
+    val paragraphs: List<SharedPdfRichParagraph> = emptyList()
 )
 
 data class PdfAnnotation(
@@ -145,6 +148,7 @@ object TextBoxSerializer {
                 isStrikeThrough = box.isStrikeThrough,
                 fontPath = box.fontPath,
                 fontName = box.fontName,
+                paragraphs = box.paragraphs.trimmedRichParagraphs(),
             )
         })
     }
@@ -165,6 +169,7 @@ object TextBoxSerializer {
                 isStrikeThrough = box.isStrikeThrough,
                 fontPath = box.fontPath,
                 fontName = box.fontName,
+                paragraphs = box.paragraphs,
             )
         }
     }

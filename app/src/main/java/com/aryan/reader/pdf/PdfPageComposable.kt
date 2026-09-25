@@ -99,7 +99,9 @@ import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.pdf.ocr.OcrElement
 import com.aryan.reader.pdf.ocr.OcrResult
+import androidx.compose.ui.text.TextRange
 import com.aryan.reader.shared.HighlightStyle
+import com.aryan.reader.shared.pdf.RichParagraphUiState
 import com.aryan.reader.shared.pdf.PdfSelectionHandle
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.pdf.PdfSelectionGeometry
@@ -264,6 +266,7 @@ internal fun PdfPageComposable(
     selectedTextBoxId: String? = null,
     onTextBoxChange: (PdfTextBox) -> Unit = {},
     onTextBoxSelect: (String) -> Unit = {},
+    onTextBoxParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> },
     onTextBoxDragStart: (PdfTextBox, Offset, Offset) -> Unit = { _, _, _ -> },
     onTextBoxDrag: (Offset) -> Unit = {},
     onTextBoxDragEnd: () -> Unit = {},
@@ -4423,6 +4426,7 @@ internal fun PdfPageComposable(
                         selectedTextBoxId = selectedTextBoxId,
                         onTextBoxChange = onTextBoxChange,
                         onTextBoxSelect = onTextBoxSelect,
+                        onTextBoxParagraphUiStateChanged = onTextBoxParagraphUiStateChanged,
                         onTextBoxDragStart = onTextBoxDragStart,
                         onTextBoxDrag = onTextBoxDrag,
                         onTextBoxDragEnd = onTextBoxDragEnd,

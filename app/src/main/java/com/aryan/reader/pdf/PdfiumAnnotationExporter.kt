@@ -43,6 +43,8 @@ import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationExportMapper
+import com.aryan.reader.shared.pdf.SharedPdfRichTextAlign
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxParagraphAlignments
 import com.aryan.reader.shared.pdf.pdfInkAppearancePoints
 import com.aryan.reader.shared.pdf.sharedPdfInkAppearanceContent
 import java.io.File
@@ -606,7 +608,8 @@ internal object PdfiumAnnotationExporter {
                 isItalic = box.isItalic,
                 isUnderline = box.isUnderline,
                 isStrikeThrough = box.isStrikeThrough,
-                typeface = typeface
+                typeface = typeface,
+                paragraphsAlign = sharedPdfTextBoxParagraphAlignments(box.text, box.paragraphs)
             )
             drawStaticLayout(
                 bitmap = bitmap,
@@ -670,7 +673,8 @@ internal object PdfiumAnnotationExporter {
         isItalic: Boolean,
         isUnderline: Boolean,
         isStrikeThrough: Boolean,
-        typeface: Typeface
+        typeface: Typeface,
+        paragraphsAlign: List<SharedPdfRichTextAlign> = emptyList()
     ) {
         if (text.isEmpty()) return
         val end = text.length
@@ -688,6 +692,28 @@ internal object PdfiumAnnotationExporter {
         }
         if (isStrikeThrough) {
             text.setSpan(StrikethroughSpan(), 0, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        // Per-paragraph alignment (same L/C/R as rich text; list markers
+        // are plain text and flow through). No JUSTIFY.
+        if (paragraphsAlign.isNotEmpty()) {
+            var offset = 0
+            paragraphsAlign.forEach { align ->
+                val alignment = when (align) {
+                    SharedPdfRichTextAlign.CENTER -> Layout.Alignment.ALIGN_CENTER
+                    SharedPdfRichTextAlign.RIGHT -> Layout.Alignment.ALIGN_OPPOSITE
+                    SharedPdfRichTextAlign.LEFT -> null
+                } ?: run { offset = text.indexOf('\n', offset).let { if (it < 0) text.length else it + 1 }; return@forEach }
+                val lineEnd = text.indexOf('\n', offset).let { if (it < 0) text.length else it }
+                if (offset < lineEnd) {
+                    text.setSpan(
+                        AlignmentSpan.Standard(alignment),
+                        offset,
+                        lineEnd,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+                offset = lineEnd + 1
+            }
         }
     }
 

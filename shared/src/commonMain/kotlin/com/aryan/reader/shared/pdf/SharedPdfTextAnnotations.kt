@@ -45,7 +45,8 @@ data class SharedPdfTextDraft(
     val text: String = "",
     val style: SharedPdfTextStyleConfig = SharedPdfTextStyleConfig(),
     val createdAt: Long = 0L,
-    val isManuallySized: Boolean = false
+    val isManuallySized: Boolean = false,
+    val paragraphs: List<SharedPdfRichParagraph> = emptyList()
 )
 
 object SharedPdfTextAnnotationDefaults {
@@ -276,7 +277,8 @@ fun SharedPdfTextDraft.toAnnotation(): SharedPdfAnnotation {
         isStrikeThrough = style.isStrikeThrough,
         fontPath = style.fontPath,
         fontName = style.fontName,
-        createdAt = createdAt
+        createdAt = createdAt,
+        paragraphs = paragraphs.trimmedRichParagraphs()
     )
 }
 
