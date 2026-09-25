@@ -1318,7 +1318,10 @@ internal fun PdfPageRenderer(
                             centeringOffsetX = staticData.centeringOffsetX,
                             centeringOffsetY = staticData.centeringOffsetY,
                             isDarkMode = staticData.isDarkMode,
-                            isScrolling = isScrolling
+                            isScrolling = isScrolling,
+                            // Currently retired: page rich text never handles
+                            // taps on Android (taps create text boxes).
+                            tapHandlingEnabled = false,
                         )
                     }
                 }

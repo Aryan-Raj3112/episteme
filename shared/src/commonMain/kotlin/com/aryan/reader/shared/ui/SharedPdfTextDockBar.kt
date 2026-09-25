@@ -54,7 +54,7 @@ data class SharedPdfTextDockBarPainters(
     val alignRight: Painter,
 )
 
-/** Second-row paragraph controls (lists + alignment). Null hides the row (legacy text boxes). */
+/** Second-row paragraph controls (lists + alignment). Null hides the row. */
 data class SharedPdfTextDockParagraphControls(
     val state: RichParagraphUiState,
     val onNumberedListClick: () -> Unit,
@@ -89,6 +89,12 @@ fun SharedPdfTextDockBar(
     fontSizePopup: @Composable BoxScope.() -> Unit,
     paragraphControls: SharedPdfTextDockParagraphControls? = null,
     alignmentPopup: @Composable BoxScope.() -> Unit = {},
+    /**
+     * False hides the insert-text-box cell. Android retired the page editor:
+     * boxes are created by tapping, so the icon is hidden there. Defaults
+     * true so iOS/desktop are unaffected.
+     */
+    showInsertTextBox: Boolean = true,
 ) {
     Column(Modifier.fillMaxWidth()) {
         Surface(Modifier.fillMaxWidth().height(48.dp), color = Color(0xFFF0F0F0), shadowElevation = 8.dp) {
@@ -126,7 +132,9 @@ fun SharedPdfTextDockBar(
                     SharedPdfTextDockBarCell { SharedPdfTextDockPainterButton(isItalic, painters.italic, labels.italic, onItalicClick) }
                     SharedPdfTextDockBarCell { SharedPdfTextDockPainterButton(isUnderline, painters.underline, labels.underline, onUnderlineClick) }
                     SharedPdfTextDockBarCell { SharedPdfTextDockPainterButton(isStrikethrough, painters.strikethrough, labels.strikethrough, onStrikethroughClick) }
-                    SharedPdfTextDockBarCell { SharedPdfTextDockPainterButton(false, painters.textBox, labels.insertTextBox, onInsertTextBox) }
+                    if (showInsertTextBox) {
+                        SharedPdfTextDockBarCell { SharedPdfTextDockPainterButton(false, painters.textBox, labels.insertTextBox, onInsertTextBox) }
+                    }
                     if (paragraphControls != null) {
                         SharedPdfTextDockBarCell {
                             SharedPdfTextDockPainterButton(

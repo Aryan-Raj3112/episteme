@@ -293,7 +293,9 @@ import com.aryan.reader.shared.HighlightStyle
 import androidx.compose.ui.text.TextRange
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
 import com.aryan.reader.shared.pdf.RichParagraphUiState
+import com.aryan.reader.shared.pdf.SharedPdfRichDocument
 import com.aryan.reader.shared.pdf.SharedPdfRichListType
+import com.aryan.reader.shared.pdf.sharedPdfRichPagesToTextBoxes
 import com.aryan.reader.shared.pdf.SharedPdfRichTextAlign
 import com.aryan.reader.shared.pdf.sharedPdfTextBoxAnnotatedString
 import com.aryan.reader.shared.pdf.sharedPdfTextBoxDockState
@@ -1309,26 +1311,32 @@ private fun PdfViewerScreenContent(
         }.takeIf { it >= 0 }
     }
 
+    // Currently retired: page rich text is hidden on Android, so tool style
+    // is no longer mirrored into the page controller (boxes read the dock
+    // default directly). Kept structure for one-line re-enable.
+    @Suppress("DEPRECATION")
     LaunchedEffect(richTextController, toolSettings.textStyle) {
-        richTextController?.let { controller ->
-            val config = toolSettings.textStyle
-            val style = SpanStyle(
-                color = Color(config.colorArgb),
-                background = Color(config.backgroundColorArgb),
-                fontSize = config.fontSize.sp,
-                fontWeight = if (config.isBold) FontWeight.Bold else FontWeight.Normal,
-                fontStyle = if (config.isItalic) FontStyle.Italic else FontStyle.Normal,
-                fontFamily = PdfFontCache.getFontFamily(config.fontPath),
-                textDecoration = run {
-                    val decorations = mutableListOf<TextDecoration>()
-                    if (config.isUnderline) decorations.add(TextDecoration.Underline)
-                    if (config.isStrikeThrough) decorations.add(TextDecoration.LineThrough)
-                    if (decorations.isEmpty()) TextDecoration.None
-                    else TextDecoration.combine(decorations)
-                })
+        if (ENABLE_PAGE_RICH_TEXT) {
+            richTextController?.let { controller ->
+                val config = toolSettings.textStyle
+                val style = SpanStyle(
+                    color = Color(config.colorArgb),
+                    background = Color(config.backgroundColorArgb),
+                    fontSize = config.fontSize.sp,
+                    fontWeight = if (config.isBold) FontWeight.Bold else FontWeight.Normal,
+                    fontStyle = if (config.isItalic) FontStyle.Italic else FontStyle.Normal,
+                    fontFamily = PdfFontCache.getFontFamily(config.fontPath),
+                    textDecoration = run {
+                        val decorations = mutableListOf<TextDecoration>()
+                        if (config.isUnderline) decorations.add(TextDecoration.Underline)
+                        if (config.isStrikeThrough) decorations.add(TextDecoration.LineThrough)
+                        if (decorations.isEmpty()) TextDecoration.None
+                        else TextDecoration.combine(decorations)
+                    })
 
-            if (controller.currentStyle != style || controller.currentFontPath != config.fontPath) {
-                controller.updateCurrentStyle(style, config.fontPath, config.fontName)
+                if (controller.currentStyle != style || controller.currentFontPath != config.fontPath) {
+                    controller.updateCurrentStyle(style, config.fontPath, config.fontName)
+                }
             }
         }
     }
@@ -1809,42 +1817,29 @@ private fun PdfViewerScreenContent(
         }
     }
 
-    val onInsertTextBox = {
-        val currentP = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
-
-        Timber.tag("PdfTextBoxDebug").d("Viewer: onInsertTextBox triggered. Target Page: $currentP, DisplayMode: $displayMode")
-        Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
-            "event=insert_request page=$currentP displayMode=$displayMode " +
-                "textBoxEditMode=$isDrawingActive selectedTextBoxId=${selectedTextBoxId ?: "none"}"
-        )
-
-        val defaultWidth = 0.4f
-        val defaultHeight = 0.1f
-        val startX = 0.3f
-        val startY = 0.45f
-
+    // Page rich text is retired: boxes are the only text annotation and a tap
+    // in TEXT mode creates one anchored at the tap (docs/...retirement.md).
+    // Both display modes share this core; callers differ only in how they
+    // learn the tap point.
+    val insertTextBoxAtPage = { pageIndex: Int, centerXRel: Float, centerYRel: Float ->
         val newStyle = toolSettings.textStyle
 
-        val pageRatio = displayPageRatios.getOrElse(currentP) { 1f }
+        val pageRatio = displayPageRatios.getOrElse(pageIndex) { 1f }
         val screenWidthPx = view.width.toFloat().takeIf { it > 0f } ?: with(density) { 360.dp.toPx() }
-        val estimatedPageHeightPx = if (pageRatio > 0) screenWidthPx / pageRatio else screenWidthPx
-        val newFontSizePx = with(density) { newStyle.fontSize.sp.toPx() }
-        val fontSizeNorm = if (estimatedPageHeightPx > 0) newFontSizePx / estimatedPageHeightPx else 0.02f
+        val fontSizeNorm = pdfTextBoxFontSizeNorm(
+            displayFontSizeSp = newStyle.fontSize,
+            spToPx = { sp -> with(density) { sp.sp.toPx() } },
+            pageRatio = pageRatio,
+            containerWidthPx = screenWidthPx,
+        )
 
-        val newBox = PdfTextBox(
+        val newBox = buildTextBoxAtTap(
             id = generateShortId(),
-            pageIndex = currentP,
-            relativeBounds = Rect(startX, startY, startX + defaultWidth, startY + defaultHeight),
-            text = "",
-            color = Color(newStyle.colorArgb),
-            backgroundColor = Color(newStyle.backgroundColorArgb),
-            fontSize = fontSizeNorm,
-            isBold = newStyle.isBold,
-            isItalic = newStyle.isItalic,
-            isUnderline = newStyle.isUnderline,
-            isStrikeThrough = newStyle.isStrikeThrough,
-            fontPath = newStyle.fontPath,
-            fontName = newStyle.fontName
+            pageIndex = pageIndex,
+            xRel = centerXRel,
+            yRel = centerYRel,
+            style = newStyle,
+            fontSizeNorm = fontSizeNorm,
         )
 
         textBoxes.add(newBox)
@@ -1858,6 +1853,27 @@ private fun PdfViewerScreenContent(
         pdfRichLayoutDiag("exit.path=textBoxInsertCreated id=${newBox.id}")
         richTextController?.clearSelection()
         showBars = false
+    }
+
+    val onInsertTextBox = {
+        val currentP = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
+
+        Timber.tag("PdfTextBoxDebug").d("Viewer: onInsertTextBox triggered. Target Page: $currentP, DisplayMode: $displayMode")
+        Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+            "event=insert_request page=$currentP displayMode=$displayMode " +
+                "textBoxEditMode=$isDrawingActive selectedTextBoxId=${selectedTextBoxId ?: "none"}"
+        )
+
+        // Retired icon path (hidden): fixed default rect, same as before.
+        insertTextBoxAtPage(currentP, 0.3f + PDF_TEXT_BOX_DEFAULT_WIDTH_REL / 2f, 0.45f + PDF_TEXT_BOX_DEFAULT_HEIGHT_REL / 2f)
+    }
+
+    val onTextBoxCreateAtTap = { pageIndex: Int, xRel: Float, yRel: Float ->
+        Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+            "event=insert_tap page=$pageIndex rel=($xRel,$yRel) " +
+                "textBoxEditMode=$isDrawingActive selectedTextBoxId=${selectedTextBoxId ?: "none"}"
+        )
+        insertTextBoxAtPage(pageIndex, xRel, yRel)
     }
 
     val onSingleTapStable = remember {
@@ -4276,6 +4292,7 @@ private fun PdfViewerScreenContent(
         surfaceState.zoomIndicatorPercentage = zoomIndicatorPercentage
         surfaceState.toolSettings = toolSettings
         surfaceState.onInsertTextBox = onInsertTextBox
+        surfaceState.onTextBoxCreateAt = onTextBoxCreateAtTap
         surfaceState.customFonts = customFonts
         surfaceState.onSingleTapStable = onSingleTapStable
     }
@@ -6811,6 +6828,11 @@ private class PdfViewerSurfaceState {
     var zoomIndicatorPercentage: Int by mutableStateOf(0)
     var toolSettings: AnnotationToolSettings by androidx.compose.runtime.mutableStateOf(AnnotationToolSettings())
     lateinit var onInsertTextBox: () -> Unit
+    /**
+     * Currently retired page editor: taps in TEXT mode create a text box at
+     * the tap (page index + relative 0..1 coords). Bound in content scope.
+     */
+    lateinit var onTextBoxCreateAt: (pageIndex: Int, xRel: Float, yRel: Float) -> Unit
     lateinit var customFonts: List<CustomFontEntity>
     lateinit var ttsOverlaySize: PdfViewerMutableValue<ReaderTtsOverlaySize>
     lateinit var currentTtsMode: PdfViewerMutableValue<TtsPlaybackManager.TtsMode>
@@ -7164,7 +7186,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     if (richTextController != null) {
         SharedPdfRichTextHiddenInput(
             controller = richTextController.sharedDelegate,
-            enabled = hiddenRichTextInputEnabled,
+            // Currently retired: page rich text never takes the IME on Android.
+            enabled = hiddenRichTextInputEnabled && ENABLE_PAGE_RICH_TEXT,
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
@@ -7271,6 +7294,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                     pagerPageIndex = pagerPageIndex,
                                     pageTurnAnimationEnabled = pageTurnAnimationEnabled,
                                     pageTurnTouchY = pageTurnTouchY,
+                                    onTextBoxCreateAt = surfaceState.onTextBoxCreateAt,
                                 )
                             }
 
@@ -7856,6 +7880,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                     surfaceState.textBoxSelection = selection
                                     surfaceState.textBoxSelectionBoxId = selectedTextBoxId
                                 },
+                                onTextBoxCreateAt = surfaceState.onTextBoxCreateAt,
                                 onTextBoxSelect = { id ->
                                     Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
                                         "event=viewer_select path=vertical id=$id " +
@@ -9907,38 +9932,135 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
             keyboardTopPx = boxMaxHeightFloat - WindowInsets.ime.getBottom(currentDensity),
         )
 
-        val effectiveStyle by remember(selectedTextBoxId, textBoxes, richTextController.currentStyle, displayPageRatios, boxMaxWidthFloat) {
+        // Page rich text is retired: the dock edits text boxes only. With no
+        // box selected it shows the default style new boxes are created with.
+        val effectiveStyle by remember(selectedTextBoxId, textBoxes, toolSettings.textStyle, displayPageRatios, boxMaxWidthFloat) {
             derivedStateOf {
-                if (selectedTextBoxId != null) {
-                    val box = textBoxes.find { it.id == selectedTextBoxId }
-                    if (box != null) {
-                        val pageRatio = displayPageRatios.getOrElse(box.pageIndex) { 1f }
-                        val estimatedPageHeightPx = if (pageRatio > 0) boxMaxWidthFloat / pageRatio else boxMaxWidthFloat
+                val box = textBoxes.find { it.id == selectedTextBoxId }
+                if (box != null) {
+                    val pageRatio = displayPageRatios.getOrElse(box.pageIndex) { 1f }
+                    val estimatedPageHeightPx = if (pageRatio > 0) boxMaxWidthFloat / pageRatio else boxMaxWidthFloat
 
-                        val fontSizePx = box.fontSize * estimatedPageHeightPx
-                        val fontSizeSp = with(currentDensity) { fontSizePx.toSp() }
+                    val fontSizePx = box.fontSize * estimatedPageHeightPx
+                    val fontSizeSp = with(currentDensity) { fontSizePx.toSp() }
 
-                        SpanStyle(
-                            color = box.color,
-                            background = box.backgroundColor,
-                            fontSize = fontSizeSp,
-                            fontWeight = if (box.isBold) FontWeight.Bold else FontWeight.Normal,
-                            fontStyle = if (box.isItalic) FontStyle.Italic else FontStyle.Normal,
-                            textDecoration = run {
-                                val decs = mutableListOf<TextDecoration>()
-                                if (box.isUnderline) decs.add(TextDecoration.Underline)
-                                if (box.isStrikeThrough) decs.add(TextDecoration.LineThrough)
-                                if (decs.isEmpty()) TextDecoration.None else TextDecoration.combine(decs)
-                            }
-                        )
-                    } else richTextController.currentStyle
+                    SpanStyle(
+                        color = box.color,
+                        background = box.backgroundColor,
+                        fontSize = fontSizeSp,
+                        fontWeight = if (box.isBold) FontWeight.Bold else FontWeight.Normal,
+                        fontStyle = if (box.isItalic) FontStyle.Italic else FontStyle.Normal,
+                        textDecoration = run {
+                            val decs = mutableListOf<TextDecoration>()
+                            if (box.isUnderline) decs.add(TextDecoration.Underline)
+                            if (box.isStrikeThrough) decs.add(TextDecoration.LineThrough)
+                            if (decs.isEmpty()) TextDecoration.None else TextDecoration.combine(decs)
+                        }
+                    )
                 } else {
-                    richTextController.currentStyle
+                    val defaults = toolSettings.textStyle
+                    SpanStyle(
+                        color = Color(defaults.colorArgb),
+                        background = Color(defaults.backgroundColorArgb),
+                        fontSize = defaults.fontSize.sp,
+                        fontWeight = if (defaults.isBold) FontWeight.Bold else FontWeight.Normal,
+                        fontStyle = if (defaults.isItalic) FontStyle.Italic else FontStyle.Normal,
+                        textDecoration = run {
+                            val decs = mutableListOf<TextDecoration>()
+                            if (defaults.isUnderline) decs.add(TextDecoration.Underline)
+                            if (defaults.isStrikeThrough) decs.add(TextDecoration.LineThrough)
+                            if (decs.isEmpty()) TextDecoration.None else TextDecoration.combine(decs)
+                        }
+                    )
                 }
             }
         }
 
+        // Legacy page text (retired editor): documents that already carry it
+        // render read-only and must be converted — converting is the only
+        // action offered.
+        var showLegacyConvertDialog by remember { mutableStateOf(false) }
+        var legacyConverting by remember { mutableStateOf(false) }
+        val legacyPageCount = richTextController?.pageLayouts?.count {
+            it.visibleText.text.isNotBlank()
+        } ?: 0
+        val showLegacyBanner = legacyPageCount > 0 && !legacyConverting
+
         Box(modifier = Modifier.fillMaxSize()) {
+            if (showLegacyBanner) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .padding(top = 12.dp, start = 16.dp, end = 16.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    tonalElevation = 4.dp,
+                    shadowElevation = 4.dp,
+                ) {
+                    Row(
+                        modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp, end = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.banner_legacy_page_text, legacyPageCount),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { showLegacyConvertDialog = true }) {
+                            Text(stringResource(R.string.action_convert_to_text_boxes))
+                        }
+                    }
+                }
+            }
+            if (showLegacyConvertDialog) {
+                AlertDialog(
+                    onDismissRequest = {},
+                    title = { Text(stringResource(R.string.dialog_legacy_page_text_title)) },
+                    text = { Text(stringResource(R.string.dialog_legacy_page_text_desc, legacyPageCount)) },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                val controller = richTextController
+                                if (controller != null && !legacyConverting) {
+                                    coroutineScope.launch {
+                                        legacyConverting = true
+                                        try {
+                                            controller.saveImmediate()
+                                            val document = controller.snapshotDocument()
+                                                ?: SharedPdfRichDocument()
+                                            val specs = sharedPdfRichPagesToTextBoxes(
+                                                document,
+                                                controller.pageLayouts,
+                                            ) { pageIndex ->
+                                                val canvasWidthPx = boxMaxWidthFloat.toInt().coerceAtLeast(1)
+                                                val ratio = displayPageRatios.getOrElse(pageIndex) { 1f }
+                                                val canvasHeightPx = (if (ratio > 0) boxMaxWidthFloat / ratio else boxMaxWidthFloat)
+                                                    .toInt().coerceAtLeast(1)
+                                                IntSize(canvasWidthPx, canvasHeightPx)
+                                            }
+                                            specs.forEach { spec ->
+                                                textBoxes.add(buildTextBoxFromSpec(spec, generateShortId()))
+                                            }
+                                            Timber.tag("PdfTextBoxDebug").i(
+                                                "Legacy page text converted: ${specs.size} boxes"
+                                            )
+                                            controller.sharedDelegate.replaceDocument(SharedPdfRichDocument())
+                                            controller.saveImmediate()
+                                        } catch (e: Exception) {
+                                            Timber.tag("PdfTextBoxDebug").e(e, "Legacy page text conversion failed")
+                                        } finally {
+                                            legacyConverting = false
+                                            showLegacyConvertDialog = false
+                                        }
+                                    }
+                                } else {
+                                    showLegacyConvertDialog = false
+                                }
+                            }
+                        ) { Text(stringResource(R.string.action_convert_to_text_boxes)) }
+                    }
+                )
+            }
             val dragModifier =
                 if (isTextFloating) {
                     Modifier.offset {
@@ -10085,7 +10207,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                 },
                 onUpdateStyle = { newStyle ->
                     Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
-                        "event=style_update target=${if (selectedTextBoxId == null) "page_rich_text" else "legacy_text_box"} " +
+                        "event=style_update target=text_box " +
                             "selectedTextBoxId=${selectedTextBoxId ?: "none"} fontSize=${newStyle.fontSize.value} " +
                             "bold=${newStyle.fontWeight == FontWeight.Bold} italic=${newStyle.fontStyle == FontStyle.Italic} " +
                             "underline=${newStyle.textDecoration?.contains(TextDecoration.Underline) == true} " +
@@ -10102,6 +10224,9 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                         fontPath = toolSettings.textStyle.fontPath,
                         fontName = toolSettings.textStyle.fontName
                     )
+                    // Always persists the default (new boxes inherit it);
+                    // additionally updates the selected box. Page rich text
+                    // is retired, so there is no page-controller branch.
                     annotationSettingsRepo.updateTextStyle(newConfig)
 
                     if (selectedTextBoxId != null) {
@@ -10124,8 +10249,6 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 isStrikeThrough = newStyle.textDecoration?.contains(TextDecoration.LineThrough) == true
                             )
                         }
-                    } else {
-                        richTextController.updateCurrentStyle(newStyle)
                     }
                 },
                 onApplyToSelection = {},
@@ -10139,7 +10262,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                 onFontSelected = { name, path ->
                     Timber.tag("PdfFontDebug").i("UI Action: Font Selected -> Name: $name, Path: $path")
                     Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
-                        "event=style_font_update target=${if (selectedTextBoxId == null) "page_rich_text" else "legacy_text_box"} " +
+                        "event=style_font_update target=text_box " +
                             "selectedTextBoxId=${selectedTextBoxId ?: "none"}"
                     )
                     val currentConfig = toolSettings.textStyle
@@ -10152,24 +10275,6 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                             val oldBox = textBoxes[idx]
                             textBoxes[idx] = oldBox.copy(fontPath = path, fontName = name)
                         }
-                    } else {
-                        richTextController.let { controller ->
-                            val style = SpanStyle(
-                                color = Color(newConfig.colorArgb),
-                                background = Color(newConfig.backgroundColorArgb),
-                                fontSize = newConfig.fontSize.sp,
-                                fontWeight = if (newConfig.isBold) FontWeight.Bold else FontWeight.Normal,
-                                fontStyle = if (newConfig.isItalic) FontStyle.Italic else FontStyle.Normal,
-                                textDecoration = run {
-                                    val decs = mutableListOf<TextDecoration>()
-                                    if (newConfig.isUnderline) decs.add(TextDecoration.Underline)
-                                    if (newConfig.isStrikeThrough) decs.add(TextDecoration.LineThrough)
-                                    if (decs.isEmpty()) TextDecoration.None else TextDecoration.combine(decs)
-                                },
-                                fontFamily = PdfFontCache.getFontFamily(path)
-                            )
-                            controller.updateCurrentStyle(style, path, name)
-                        }
                     }
                 },
                 currentFontName = remember(selectedTextBoxId, textBoxes, toolSettings.textStyle) {
@@ -10181,8 +10286,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                     }
                 },
                 popupsBelowBar = popupsBelowBar,
-                // Paragraph row: rich text via controller, text boxes via
-                // shared helpers on the selected box (same L/C/R + lists).
+                // Page rich text is retired: the paragraph row belongs to the
+                // selected text box only; hidden when nothing is selected.
                 paragraphState = if (selectedTextBoxId != null) {
                     val box = textBoxes.find { it.id == selectedTextBoxId }
                     if (box == null) {
@@ -10196,7 +10301,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                         sharedPdfTextBoxDockState(box.text, box.paragraphs, selection)
                     }
                 } else {
-                    richTextController.richParagraphUiState()
+                    null
                 },
                 onNumberedListClick = {
                     if (selectedTextBoxId != null) {
@@ -10206,8 +10311,6 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                             surfaceState = surfaceState,
                             type = SharedPdfRichListType.NUMBERED
                         )
-                    } else {
-                        richTextController.toggleRichListType(SharedPdfRichListType.NUMBERED)
                     }
                 },
                 onBulletedListClick = {
@@ -10218,8 +10321,6 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                             surfaceState = surfaceState,
                             type = SharedPdfRichListType.BULLET
                         )
-                    } else {
-                        richTextController.toggleRichListType(SharedPdfRichListType.BULLET)
                     }
                 },
                 onAlignmentSelected = { align ->
@@ -10230,10 +10331,10 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                             surfaceState = surfaceState,
                             align = align
                         )
-                    } else {
-                        richTextController.setRichParagraphAlignment(align)
                     }
                 },
+                // Page editor retired: boxes are created by tapping the page.
+                showInsertTextBox = false,
             )
             }
         }
@@ -10419,6 +10520,11 @@ private fun PdfViewerPaginationPage(
     pagerPageIndex: Int,
     pageTurnAnimationEnabled: Boolean,
     pageTurnTouchY: Float?,
+    /**
+     * Currently retired page editor: taps in TEXT mode create a text box at
+     * the tap instead of focusing page rich text. Relative 0..1 coords.
+     */
+    onTextBoxCreateAt: (pageIndex: Int, xRel: Float, yRel: Float) -> Unit = { _, _, _ -> },
 ) {
     val surfaceState = paginationPageState.surfaceState
     val diagPaneContext = "pane=${surfaceState.paneBookId ?: "solo"} session=${surfaceState.paneSessionId}"
@@ -11255,6 +11361,40 @@ private fun PdfViewerPaginationPage(
         )
         else VirtualPage.PdfPage(pageIndex)
 
+    // Page rich text is retired: taps in TEXT mode (no box selected) create a
+    // text box at the tap. Mirrors the vertical reader's tap lambda.
+    val onRichTextTapForBoxes = { tappedIndex: Int, xBitmap: Float, yBitmap: Float, bitmapW: Float, bitmapH: Float ->
+        if (!isEditMode || selectedTool != InkType.TEXT || selectedTextBoxId != null) {
+            false
+        } else if (visibleTextBoxesByPage[tappedIndex].orEmpty().any { box ->
+                xBitmap >= box.relativeBounds.left * bitmapW &&
+                    xBitmap <= box.relativeBounds.right * bitmapW &&
+                    yBitmap >= box.relativeBounds.top * bitmapH &&
+                    yBitmap <= box.relativeBounds.bottom * bitmapH
+            }
+        ) {
+            false
+        } else {
+            val marginX = bitmapW * 0.1f
+            val marginY = bitmapH * 0.08f
+            val editorX = xBitmap - marginX
+            val editorY = yBitmap - marginY
+            if (editorX < 0f || editorY < 0f ||
+                editorX > bitmapW - marginX * 2f ||
+                editorY > bitmapH - marginY * 2f
+            ) {
+                false
+            } else {
+                onTextBoxCreateAt(
+                    tappedIndex,
+                    (xBitmap / bitmapW).coerceIn(0f, 1f),
+                    (yBitmap / bitmapH).coerceIn(0f, 1f)
+                )
+                true
+            }
+        }
+    }
+
     PdfPageComposable(
         pdfDocument = stablePdfDocument,
         documentKey = activeDocumentRenderKey,
@@ -11299,6 +11439,7 @@ private fun PdfViewerPaginationPage(
         onHighlightLoading = { /* no-op for paginated mode */ },
         onPreSingleTap = onPaginationPreSingleTap,
         onSingleTap = { _ -> onSingleTapStable() },
+        onRichTextTap = onRichTextTapForBoxes,
         isProUser = isProUser,
         onShowDictionaryUpsellDialog = {
             if (useOnlineDictionary) {

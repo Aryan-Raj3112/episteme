@@ -152,11 +152,16 @@ fun TextAnnotationDock(
     currentFontName: String? = null,
     onFontSelected: (String, String?) -> Unit = { _, _ -> },
     // Second-row paragraph controls (lists + alignment). Null hides the row
-    // (legacy text boxes stay on the single-row bar).
+    // (shown for the selected text box; hidden when nothing is selected).
     paragraphState: RichParagraphUiState? = null,
     onNumberedListClick: () -> Unit = {},
     onBulletedListClick: () -> Unit = {},
     onAlignmentSelected: (SharedPdfRichTextAlign) -> Unit = {},
+    /**
+     * Currently retired on Android (page editor hidden, tap creates boxes):
+     * false hides the insert-text-box cell. Defaults true.
+     */
+    showInsertTextBox: Boolean = true,
 ) {
     val dockState = rememberPdfTextDockState(onPopupStateChange)
 
@@ -288,6 +293,7 @@ fun TextAnnotationDock(
                 onUpdateStyle(currentStyle.copy(textDecoration = next, fontFamily = currentStyle.fontFamily)); onApplyToSelection()
             },
             onInsertTextBox = { Timber.tag("PdfTextBoxDebug").d("Dock: Insert Text Box icon clicked"); onInsertTextBox() },
+            showInsertTextBox = showInsertTextBox,
             paragraphControls = paragraphState?.let { state ->
                 SharedPdfTextDockParagraphControls(
                     state = state,

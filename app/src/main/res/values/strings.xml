@@ -2655,4 +2655,10 @@
     <string name="content_desc_save_or_share_image">Save or share image</string>
     <!-- %1$s = the external URL the reader wants to open. -->
     <string name="dialog_external_link_message">You clicked on an external link:\n\n%1$s\n\nWhat would you like to do?</string>
+    <string name="dialog_legacy_page_text_title">Word-like text annotations removed</string>
+    <!-- %1$d = number of pages carrying legacy page text. Example: "Word-like text annotations are retired — only text boxes are available now. …". -->
+    <string name="dialog_legacy_page_text_desc">Word-like text annotations are retired — only text boxes are available now. Convert the legacy text on %1$d pages into text boxes? Alignment and lists carry over; mixed styles collapse to the dominant style.</string>
+    <!-- %1$d = number of pages carrying legacy page text. Example: "Only text boxes are available now — convert legacy text on 3 pages?". -->
+    <string name="banner_legacy_page_text">Only text boxes are available now — convert legacy text on %1$d pages?</string>
+    <string name="action_convert_to_text_boxes">Convert</string>
 </resources>

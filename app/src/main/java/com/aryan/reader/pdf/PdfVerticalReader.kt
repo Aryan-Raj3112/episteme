@@ -315,6 +315,11 @@ internal fun PdfVerticalReader(
     onTextBoxChange: (PdfTextBox) -> Unit = {},
     onTextBoxSelect: (String) -> Unit = {},
     onTextBoxParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> },
+    /**
+     * Currently retired page editor: taps in TEXT mode create a text box at
+     * the tap instead of focusing page rich text. Relative 0..1 coords.
+     */
+    onTextBoxCreateAt: (pageIndex: Int, xRel: Float, yRel: Float) -> Unit = { _, _, _ -> },
     bottomContentPaddingPx: Float = 0f,
     topContentPaddingPx: Float = 0f,
     onTextBoxMoved: (String, Int, Rect) -> Unit = { _, _, _ -> },
@@ -2667,22 +2672,22 @@ internal fun PdfVerticalReader(
                                 }
                             }
 
-                            // Page rich-text cursor placement (TEXT tool, no box):
-                            // bitmap space == rich-layer space (targetWidth =
-                            // actualBitmapWidthPx), so only the 10%/8% editor
-                            // margins come off. Box taps and out-of-editor taps
-                            // fall through to the normal single-tap behavior.
+                            // TEXT tool tap (no box selected): page rich text is
+                            // retired, so a tap inside the editor rect creates
+                            // a text box at the tap. bitmap space maps 1:1 to
+                            // relative page coords; only the 10%/8% margins
+                            // come off. Box taps and out-of-editor taps fall
+                            // through to the normal single-tap behavior.
                             val onRichTextTapLambda = remember(
                                 isEditMode,
                                 selectedTool,
                                 selectedTextBoxId,
-                                richTextController,
+                                onTextBoxCreateAt,
                                 textBoxes
                             ) {
                                 { tappedIndex: Int, xBitmap: Float, yBitmap: Float, bitmapW: Float, bitmapH: Float ->
-                                    val controller = richTextController
                                     if (!isEditMode || selectedTool != InkType.TEXT ||
-                                        selectedTextBoxId != null || controller == null
+                                        selectedTextBoxId != null
                                     ) {
                                         false
                                     } else if (textBoxes.any { box ->
@@ -2711,9 +2716,10 @@ internal fun PdfVerticalReader(
                                                 "tap page=$tappedIndex bitmap=(${xBitmap.roundToInt()},${yBitmap.roundToInt()}) " +
                                                     "editor=(${editorX.roundToInt()},${editorY.roundToInt()})"
                                             )
-                                            controller.handleTapOnPage(
+                                            onTextBoxCreateAt(
                                                 tappedIndex,
-                                                Offset(editorX, editorY)
+                                                (xBitmap / bitmapW).coerceIn(0f, 1f),
+                                                (yBitmap / bitmapH).coerceIn(0f, 1f)
                                             )
                                             true
                                         }

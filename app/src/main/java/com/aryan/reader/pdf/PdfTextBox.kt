@@ -111,7 +111,13 @@ internal fun isPdfRichTextInputEnabled(
     isEditMode: Boolean,
     selectedTool: InkType,
     selectedTextBoxId: String?,
-): Boolean = isEditMode && selectedTool == InkType.TEXT && selectedTextBoxId == null
+): Boolean {
+    // Currently retired: page rich text is hidden on Android, text boxes only
+    // (docs/android-page-rich-text-retirement.md). The page editor never owns
+    // the IME; a selected box owns its own field. Kept (not deleted) so
+    // re-enabling is a one-line change via ENABLE_PAGE_RICH_TEXT.
+    return false
+}
 
 // Eagerly consumes pointer events so parent scaled pan/zoom gestures don't intercept it
 suspend fun PointerInputScope.detectEagerDragGestures(
