@@ -315,6 +315,7 @@ internal fun PdfVerticalReader(
     onTextBoxChange: (PdfTextBox) -> Unit = {},
     onTextBoxSelect: (String) -> Unit = {},
     onTextBoxParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> },
+    textBoxPendingSelection: TextBoxPendingSelection? = null,
     /**
      * Currently retired page editor: taps in TEXT mode create a text box at
      * the tap instead of focusing page rich text. Relative 0..1 coords.
@@ -2869,6 +2870,7 @@ internal fun PdfVerticalReader(
                                     onTextBoxChange = onTextBoxChange,
                                     onTextBoxSelect = onTextBoxSelect,
                                     onTextBoxParagraphUiStateChanged = onTextBoxParagraphUiStateChanged,
+                                    textBoxPendingSelection = textBoxPendingSelection,
                                     userHighlights = effectiveUserHighlightsByPage[page.index].orEmpty(),
                                     onHighlightAdd = onHighlightAdd,
                                     onHighlightUpdate = onHighlightUpdate,

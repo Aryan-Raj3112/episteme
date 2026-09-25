@@ -72,6 +72,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -81,6 +82,8 @@ import com.aryan.reader.shared.pdf.SharedPdfRichParagraph
 import com.aryan.reader.shared.pdf.sharedPdfTextBoxAnnotatedString
 import com.aryan.reader.shared.pdf.sharedPdfTextBoxDockState
 import com.aryan.reader.shared.pdf.sharedPdfTextBoxKeystroke
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxParagraphCount
+import com.aryan.reader.shared.pdf.toComposeTextAlign
 import com.aryan.reader.shared.pdf.trimmedRichParagraphs
 import timber.log.Timber
 import kotlin.math.roundToInt
@@ -105,6 +108,51 @@ private const val TEXT_BOX_DRAG_PILL_GAP_DP = 8f
 
 /** Stable tag for tracing text-box selection, focus, and IME value delivery. */
 internal const val PDF_TEXT_BOX_INPUT_TRACE_TAG = "PdfTextBoxInputTrace"
+
+/**
+ * Dedicated debug tag for the text-box feature (cursor, alignment, list,
+ * typing echo). Filter logcat with `TextBoxTrace` to follow one session.
+ */
+internal const val TEXT_BOX_TRACE_TAG = "TextBoxTrace"
+
+/** Escaped + truncated text for trace logs (flags a leaked ZWSP anchor). */
+internal fun pdfTextBoxTraceText(text: String, maxLen: Int = 160): String {
+    val escaped = text.replace("\n", "\\n").replace("\u200B", "<ZWSP>")
+    return if (escaped.length <= maxLen) {
+        "\"$escaped\""
+    } else {
+        "\"${escaped.take(maxLen)}…\"(len=${text.length})"
+    }
+}
+
+/** Compact paragraph summary for trace logs: [index:Align/List …]. */
+internal fun pdfTextBoxTraceParagraphs(paragraphs: List<SharedPdfRichParagraph>): String =
+    if (paragraphs.isEmpty()) {
+        "[]"
+    } else {
+        paragraphs.mapIndexed { index, paragraph ->
+            "$index:${paragraph.alignment.name.first()}/${paragraph.listType.name.first()}"
+        }.joinToString(prefix = "[", postfix = "]")
+    }
+
+/** Compact dock-state summary for trace logs. */
+internal fun pdfTextBoxTraceDockState(state: RichParagraphUiState): String =
+    "${state.alignment} b=${state.isBulleted} n=${state.isNumbered}"
+
+/**
+ * One-shot post-toggle cursor for a text box (Android only).
+ *
+ * The dock list toggle inserts markers around the field, so the correct
+ * cursor (shifted past "• "/"1. ") is computed parent-side. A plain
+ * [TextRange] mirror cannot be used: it goes stale within a frame (the
+ * mirror only learns the field's own reports) and re-adopting it yanked
+ * the cursor to 0 on every keystroke. The [token] is bumped per toggle
+ * and consumed once, so later syncs never re-adopt a stale cursor.
+ */
+data class TextBoxPendingSelection(
+    val range: TextRange,
+    val token: Long,
+)
 
 /** A selected legacy text box owns the IME instead of the page rich-text editor. */
 internal fun isPdfRichTextInputEnabled(
@@ -180,7 +228,13 @@ fun ResizableTextBox(
     modifier: Modifier = Modifier,
     onDragCancel: () -> Unit = {},
     handlePosition: HandlePosition = HandlePosition.AUTO,
-    onParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> }
+    onParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> },
+    // One-shot post-toggle cursor from the parent (e.g. list markers
+    // inserted around the field): adopted once on the next external sync
+    // so the caret lands AFTER "• "/"1. " instead of staying at its stale
+    // pre-toggle offset. Never the live mirror — see
+    // TextBoxPendingSelection.
+    pendingSelection: TextBoxPendingSelection? = null,
 ) {
     if (pageWidthPx <= 0 || pageHeightPx <= 0) return
 
@@ -242,33 +296,117 @@ fun ResizableTextBox(
         sharedPdfTextBoxAnnotatedString(box.text, box.paragraphs, boxSpanStyle)
     }
     var fieldValue by remember(box.id) {
-        mutableStateOf(TextFieldValue(externalAnnotated))
+        mutableStateOf(TextFieldValue(externalAnnotated)).also {
+            Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                "field_init id=${box.id} text=${pdfTextBoxTraceText(box.text)} " +
+                    "paras=${pdfTextBoxTraceParagraphs(box.paragraphs)}"
+            )
+        }
     }
     // Paragraphs backing the field text. Kept in lockstep with fieldValue so
     // rapid keystrokes always reconcile against their true predecessor even
     // before the parent recomposes with the updated box.
     var fieldParagraphs by remember(box.id) { mutableStateOf(box.paragraphs) }
     // Sync external changes (dock alignment/list toggles, undo, reload)
-    // into the field without clobbering in-progress typing: typing already
-    // echoes back through onTextChanged so text matches after recomposition.
-    LaunchedEffect(box.id, externalAnnotated) {
-        if (fieldValue.annotatedString != externalAnnotated) {
-            val sel = fieldValue.selection
-            val safeSel = TextRange(
-                sel.min.coerceIn(0, externalAnnotated.length),
-                sel.max.coerceIn(0, externalAnnotated.length)
+    // into the field. Three rules keep live typing intact:
+    // 1. A fresh toggle token adopts the post-toggle text + cursor once,
+    //    then is consumed (never re-adopted).
+    // 2. While the IME session is active, parent text is NEVER adopted:
+    //    the echo of our own keystrokes always lags a frame, and adopting
+    //    it reverted fresh input and pinned the cursor. The field wins;
+    //    paragraphs are still adopted when the paragraph count matches
+    //    (dock alignment tapped mid-lag), which is index-safe.
+    // 3. Idle (unfocused) fields adopt parent text: background merges apply
+    //    when nobody is typing, and the blur race self-heals because the
+    //    parent always holds our synchronous echoes.
+    // Span-only mismatches (IME autocorrect underlines) rebuild the
+    // annotated string but keep the current cursor and composition.
+    var consumedSelectionToken by remember(box.id) { mutableStateOf(-1L) }
+    LaunchedEffect(box.id, externalAnnotated, pendingSelection, box.paragraphs, isTextFieldFocused) {
+        val current = fieldValue
+        val token = pendingSelection?.takeIf { it.token != consumedSelectionToken }
+        if (token != null) {
+            val wanted = TextRange(
+                token.range.min.coerceIn(0, externalAnnotated.length),
+                token.range.max.coerceIn(0, externalAnnotated.length)
             )
-            fieldValue = TextFieldValue(externalAnnotated, safeSel)
-            fieldParagraphs = box.paragraphs
+            Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                "sync_token id=${box.id} token=${token.token} sel=$wanted " +
+                    "boxText=${pdfTextBoxTraceText(externalAnnotated.text)} " +
+                    "boxParas=${pdfTextBoxTraceParagraphs(box.paragraphs)}"
+            )
+            fieldValue = TextFieldValue(externalAnnotated, wanted, null)
+            fieldParagraphs = box.paragraphs.trimmedRichParagraphs()
+            consumedSelectionToken = token.token
+            return@LaunchedEffect
         }
+        val textChanged = current.text != externalAnnotated.text
+        if (textChanged && isTextFieldFocused) {
+            // Paragraphs-only external changes (dock alignment tapped
+            // mid-lag) are still safe to adopt when the paragraph count
+            // matches — indices line up, and the echo case is a no-op
+            // because the parent echoes our paragraphs verbatim.
+            if (sharedPdfTextBoxParagraphCount(current.text) ==
+                sharedPdfTextBoxParagraphCount(externalAnnotated.text)
+            ) {
+                fieldParagraphs = box.paragraphs.trimmedRichParagraphs()
+            }
+            Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                "sync_skip_echo_guard id=${box.id} " +
+                    "fieldText=${pdfTextBoxTraceText(current.text)} " +
+                    "boxText=${pdfTextBoxTraceText(externalAnnotated.text)} " +
+                    "currentSel=${current.selection} " +
+                    "fieldParas=${pdfTextBoxTraceParagraphs(fieldParagraphs)}"
+            )
+            return@LaunchedEffect
+        }
+        val parasChanged = fieldParagraphs.trimmedRichParagraphs() !=
+            box.paragraphs.trimmedRichParagraphs()
+        val spansChanged = current.annotatedString != externalAnnotated
+        if (!textChanged && !parasChanged && !spansChanged) {
+            Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                "sync id=${box.id} decision=SKIP currentSel=${current.selection}"
+            )
+            return@LaunchedEffect
+        }
+        val wantedSelection = TextRange(
+            current.selection.min.coerceIn(0, externalAnnotated.length),
+            current.selection.max.coerceIn(0, externalAnnotated.length)
+        )
+        val composition = if (!textChanged) current.composition else null
+        Timber.tag(TEXT_BOX_TRACE_TAG).d(
+            "sync id=${box.id} textChanged=$textChanged parasChanged=$parasChanged " +
+                "spansChanged=$spansChanged focused=$isTextFieldFocused " +
+                "currentSel=${current.selection} wantedSel=$wantedSelection " +
+                "fieldText=${pdfTextBoxTraceText(current.text)} " +
+                "boxText=${pdfTextBoxTraceText(externalAnnotated.text)} " +
+                "fieldParas=${pdfTextBoxTraceParagraphs(fieldParagraphs)} " +
+                "boxParas=${pdfTextBoxTraceParagraphs(box.paragraphs)} decision=RESET"
+        )
+        fieldValue = TextFieldValue(externalAnnotated, wantedSelection, composition)
+        fieldParagraphs = box.paragraphs.trimmedRichParagraphs()
+        Timber.tag(TEXT_BOX_TRACE_TAG).d(
+            "synced id=${box.id} sel=$wantedSelection compositionKept=${composition != null}"
+        )
     }
     // Report dock state for the selected box (alignment + list actives).
     // Stored-aware: empty paragraphs report their stored alignment, which
     // the anchor-free buffer alone cannot represent.
     LaunchedEffect(fieldValue.text, fieldParagraphs, fieldValue.selection, isSelected) {
         if (isSelected) {
+            val dockState = sharedPdfTextBoxDockState(fieldValue.text, fieldParagraphs, fieldValue.selection)
+            Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                "dock_report id=${box.id} state=${pdfTextBoxTraceDockState(dockState)} " +
+                    "sel=${fieldValue.selection} textLen=${fieldValue.text.length} " +
+                    "paras=${pdfTextBoxTraceParagraphs(fieldParagraphs)} " +
+                    "emptyFallback=${if (fieldValue.text.isEmpty()) {
+                        fieldParagraphs.getOrElse(0) { SharedPdfRichParagraph() }.alignment
+                    } else {
+                        "n/a"
+                    }}"
+            )
             currentOnParagraphUiStateChanged(
-                sharedPdfTextBoxDockState(fieldValue.text, fieldParagraphs, fieldValue.selection),
+                dockState,
                 fieldValue.selection
             )
         }
@@ -443,22 +581,67 @@ fun ResizableTextBox(
                         // maintenance (same Samsung-Notes rules as rich text:
                         // marker relocation, Enter inheritance, backspace exit,
                         // numbered renumber) plus stored-alignment preservation
-                        // for empty paragraphs. Rebuild annotated from the
-                        // normalized result; box style covers marker spans.
+                        // for empty paragraphs. Plain typing inside unchanged
+                        // structure flows through UNTOUCHED: rebuilding the
+                        // AnnotatedString on every keystroke (and dropping
+                        // TextFieldValue.composition) interrupts the IME
+                        // pipeline — predictive text, autocorrect and
+                        // space-commit silently swallow characters.
+                        // Paragraph base: when the field text matches the box,
+                        // the box paragraphs are freshest (they include our
+                        // echoes plus any dock change that landed after our
+                        // last keystroke — using stale field paragraphs here
+                        // is what wiped empty-line alignment on the next
+                        // keystroke). When they differ the parent echo is
+                        // lagging, so the field paragraphs are newer.
+                        val oldFieldText = fieldValue.text
+                        val useBoxParagraphs = oldFieldText == box.text
+                        val baseParagraphs = if (useBoxParagraphs) box.paragraphs else fieldParagraphs
                         val result = sharedPdfTextBoxKeystroke(
-                            oldText = fieldValue.text,
-                            oldParagraphs = fieldParagraphs,
+                            oldText = oldFieldText,
+                            oldParagraphs = baseParagraphs,
                             newText = newValue.text,
                             newSelection = newValue.selection,
                             markerFallbackStyle = boxSpanStyle
                         )
-                        val normalized = sharedPdfTextBoxAnnotatedString(
-                            result.text,
-                            result.paragraphs,
-                            boxSpanStyle
+                        val newParagraphs = result.paragraphs.trimmedRichParagraphs()
+                        val textSame = result.text == newValue.text
+                        val selSame = result.selection == newValue.selection
+                        val parasSame = newParagraphs == fieldParagraphs
+                        val needsRebuild = result.shifts.isNotEmpty() ||
+                            !textSame ||
+                            !selSame ||
+                            !parasSame
+                        Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                            "value_change id=${box.id} newText=${pdfTextBoxTraceText(newValue.text)} " +
+                                "newSel=${newValue.selection} composition=${newValue.composition} " +
+                                "baseSrc=${if (useBoxParagraphs) "box" else "field"} " +
+                                "resultText=${pdfTextBoxTraceText(result.text)} resultSel=${result.selection} " +
+                                "shifts=${result.shifts.size} paras=${pdfTextBoxTraceParagraphs(newParagraphs)} " +
+                                "textSame=$textSame selSame=$selSame parasSame=$parasSame " +
+                                "rebuild=$needsRebuild"
                         )
-                        fieldValue = TextFieldValue(normalized, result.selection)
-                        fieldParagraphs = result.paragraphs.trimmedRichParagraphs()
+                        fieldValue = if (needsRebuild) {
+                            // Rebuild annotated from the normalized result;
+                            // box style covers marker spans. Composition is
+                            // only valid when the text itself is unchanged
+                            // (offsets still line up).
+                            val normalized = sharedPdfTextBoxAnnotatedString(
+                                result.text,
+                                result.paragraphs,
+                                boxSpanStyle
+                            )
+                            val composition =
+                                if (result.text == newValue.text) newValue.composition else null
+                            Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                                "rebuild id=${box.id} sel=${result.selection} " +
+                                    "compositionKept=${composition != null}"
+                            )
+                            TextFieldValue(normalized, result.selection, composition)
+                        } else {
+                            newValue
+                        }
+                        fieldParagraphs = newParagraphs
                         currentOnTextChanged(result.text, fieldParagraphs)
                     },
                     modifier = Modifier
@@ -479,6 +662,18 @@ fun ResizableTextBox(
                         color = box.color,
                         background = box.backgroundColor,
                         fontFamily = fontFamily,
+                        // Empty text carries no paragraph style range, so the
+                        // caret would always sit left: fall back to the stored
+                        // alignment so it renders center/right as selected.
+                        // Non-empty text is covered by explicit paragraph
+                        // spans, which take precedence over this.
+                        textAlign = if (fieldValue.text.isEmpty()) {
+                            fieldParagraphs.getOrElse(0) {
+                                SharedPdfRichParagraph()
+                            }.alignment.toComposeTextAlign()
+                        } else {
+                            TextAlign.Unspecified
+                        },
                         fontSize = with(LocalDensity.current) {
                             (box.fontSize * pageHeightPx).toSp()
                         },

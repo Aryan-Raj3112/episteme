@@ -300,8 +300,7 @@ import com.aryan.reader.shared.pdf.SharedPdfRichTextAlign
 import com.aryan.reader.shared.pdf.sharedPdfTextBoxAnnotatedString
 import com.aryan.reader.shared.pdf.sharedPdfTextBoxDockState
 import com.aryan.reader.shared.pdf.sharedPdfToggleTextBoxList
-import com.aryan.reader.shared.pdf.sharedPdfSetTextBoxAlignment
-import com.aryan.reader.shared.pdf.sharedPdfTextBoxParagraphs
+import com.aryan.reader.shared.pdf.sharedPdfSetTextBoxAlignmentState
 import com.aryan.reader.shared.pdf.trimmedRichParagraphs
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.pdf.PdfNavigationReason
@@ -6659,6 +6658,11 @@ private class PdfViewerSurfaceState {
     var textBoxParagraphUiState: RichParagraphUiState? by androidx.compose.runtime.mutableStateOf(null)
     var textBoxSelection: TextRange by androidx.compose.runtime.mutableStateOf(TextRange.Zero)
     var textBoxSelectionBoxId: String? by androidx.compose.runtime.mutableStateOf(null)
+    // One-shot post-toggle cursor (see TextBoxPendingSelection): consumed
+    // once by the field, so it can never go stale and yank the cursor.
+    // textBoxSelection above remains the toggle INPUT (last-known cursor).
+    var textBoxPendingSelection: TextBoxPendingSelection? by androidx.compose.runtime.mutableStateOf(null)
+    var textBoxPendingSelectionToken: Long by androidx.compose.runtime.mutableStateOf(0L)
     var isDrawingActive: Boolean by androidx.compose.runtime.mutableStateOf(false)
     lateinit var viewConfiguration: androidx.compose.ui.platform.ViewConfiguration
     lateinit var currentActiveScale: PdfViewerMutableValue<Float>
@@ -6953,6 +6957,10 @@ private fun <T> pdfViewerMutableValue(
  * Text-box paragraph ops (Android benchmark, shared-first): same L/C/R +
  * BULLET/NUMBERED semantics as page rich text, applied to the selected box
  * using its last-known cursor selection (falls back to end-of-text).
+ *
+ * Alignment is a pure paragraph-state update (no text change, no ZWSP
+ * anchor): the annotated round-trip cannot represent alignment on empty
+ * text and would silently drop it.
  */
 private fun applyTextBoxAlignment(
     textBoxes: androidx.compose.runtime.snapshots.SnapshotStateList<PdfTextBox>,
@@ -6966,9 +6974,12 @@ private fun applyTextBoxAlignment(
     } else {
         TextRange(box.text.length)
     }
-    val annotated = sharedPdfTextBoxAnnotatedString(box.text, box.paragraphs)
-    val result = sharedPdfSetTextBoxAlignment(annotated, selection, align)
-    val paragraphs = sharedPdfTextBoxParagraphs(result).trimmedRichParagraphs()
+    val paragraphs = sharedPdfSetTextBoxAlignmentState(box.text, box.paragraphs, selection, align)
+    Timber.tag(TEXT_BOX_TRACE_TAG).d(
+        "dock_align id=${box.id} align=$align sel=$selection textLen=${box.text.length} " +
+            "parasIn=${pdfTextBoxTraceParagraphs(box.paragraphs)} " +
+            "parasOut=${pdfTextBoxTraceParagraphs(paragraphs)}"
+    )
     val idx = textBoxes.indexOfFirst { it.id == box.id }
     if (idx != -1) textBoxes[idx] = box.copy(paragraphs = paragraphs)
 }
@@ -6987,12 +6998,26 @@ private fun applyTextBoxListType(
     }
     val annotated = sharedPdfTextBoxAnnotatedString(box.text, box.paragraphs)
     val result = sharedPdfToggleTextBoxList(annotated, selection, type)
+    surfaceState.textBoxPendingSelectionToken += 1
+    val token = surfaceState.textBoxPendingSelectionToken
+    Timber.tag(TEXT_BOX_TRACE_TAG).d(
+        "dock_list id=${box.id} type=$type selIn=$selection " +
+            "textIn=${pdfTextBoxTraceText(box.text)} textOut=${pdfTextBoxTraceText(result.text)} " +
+            "selOut=${result.selection} parasOut=${pdfTextBoxTraceParagraphs(result.paragraphs)} " +
+            "token=$token"
+    )
     val idx = textBoxes.indexOfFirst { it.id == box.id }
     if (idx != -1) {
         textBoxes[idx] = box.copy(
             text = result.text,
             paragraphs = result.paragraphs.trimmedRichParagraphs()
         )
+        // Forward the post-toggle cursor (shifted past inserted markers)
+        // as a one-shot token. The live mirror below stays the toggle
+        // INPUT for the next tap — it is never fed back into the field.
+        surfaceState.textBoxPendingSelection = TextBoxPendingSelection(result.selection, token)
+        surfaceState.textBoxSelection = result.selection
+        surfaceState.textBoxSelectionBoxId = box.id
     }
 }
 
@@ -7879,12 +7904,22 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                     surfaceState.textBoxParagraphUiState = state
                                     surfaceState.textBoxSelection = selection
                                     surfaceState.textBoxSelectionBoxId = selectedTextBoxId
+                                    Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                                        "mirror_write path=vertical boxId=$selectedTextBoxId " +
+                                            "state=${pdfTextBoxTraceDockState(state)} sel=$selection"
+                                    )
+                                },
+                                textBoxPendingSelection = surfaceState.textBoxPendingSelection?.takeIf {
+                                    surfaceState.textBoxSelectionBoxId == selectedTextBoxId
                                 },
                                 onTextBoxCreateAt = surfaceState.onTextBoxCreateAt,
                                 onTextBoxSelect = { id ->
                                     Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
                                         "event=viewer_select path=vertical id=$id " +
                                             "selectedBefore=${selectedTextBoxId ?: "none"} textBoxEditMode=$isDrawingActive"
+                                    )
+                                    Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                                        "select path=vertical id=$id selectedBefore=${selectedTextBoxId ?: "none"}"
                                     )
                                     selectedTextBoxId = id
                                     pdfRichLayoutDiag("exit.path=textBoxSelect path=vertical id=$id")
@@ -11577,6 +11612,9 @@ private fun PdfViewerPaginationPage(
                 "event=viewer_select path=pagination id=$id " +
                     "selectedBefore=${selectedTextBoxId ?: "none"} textBoxEditMode=$isDrawingActive"
             )
+            Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                "select path=pagination id=$id selectedBefore=${selectedTextBoxId ?: "none"}"
+            )
             selectedTextBoxId = id
             pdfRichLayoutDiag("exit.path=textBoxSelect path=pagination id=$id")
             richTextController?.clearSelection()
@@ -11585,6 +11623,13 @@ private fun PdfViewerPaginationPage(
             surfaceState.textBoxParagraphUiState = state
             surfaceState.textBoxSelection = selection
             surfaceState.textBoxSelectionBoxId = selectedTextBoxId
+            Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                "mirror_write path=pagination boxId=$selectedTextBoxId " +
+                    "state=${pdfTextBoxTraceDockState(state)} sel=$selection"
+            )
+        },
+        textBoxPendingSelection = surfaceState.textBoxPendingSelection?.takeIf {
+            surfaceState.textBoxSelectionBoxId == selectedTextBoxId
         },
         draggingBoxId = paginationDraggingBoxId,
         onTextBoxDragStart = { box, _, _ ->

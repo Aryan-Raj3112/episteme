@@ -1136,6 +1136,9 @@ internal fun PdfPageRenderer(
     onTextBoxChange: (PdfTextBox) -> Unit,
     onTextBoxSelect: (String) -> Unit,
     onTextBoxParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> },
+    // One-shot post-toggle cursor for the selected box (see
+    // TextBoxPendingSelection). Null = keep field cursor.
+    textBoxPendingSelection: TextBoxPendingSelection? = null,
     onTextBoxDragStart: (PdfTextBox, Offset, Offset) -> Unit,
     onTextBoxDrag: (Offset) -> Unit,
     onTextBoxDragEnd: () -> Unit,
@@ -1361,6 +1364,14 @@ internal fun PdfPageRenderer(
                                         "selected=${box.id == selectedTextBoxId} editMode=$isEditMode " +
                                         "dragging=${draggingBoxId == box.id}"
                                 )
+                                Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                                    "renderer_value id=${box.id} oldLen=${box.text.length} " +
+                                        "newLen=${newText.length} newText=${pdfTextBoxTraceText(newText)} " +
+                                        "paras=${pdfTextBoxTraceParagraphs(newParagraphs)} " +
+                                        "pendingSel=${
+                                            textBoxPendingSelection?.takeIf { box.id == selectedTextBoxId }
+                                        }"
+                                )
                                 onTextBoxChange(box.copy(text = newText, paragraphs = newParagraphs))
                             },
                             onSelect = {
@@ -1410,6 +1421,9 @@ internal fun PdfPageRenderer(
                                 if (box.id == selectedTextBoxId) {
                                     onTextBoxParagraphUiStateChanged(state, selection)
                                 }
+                            },
+                            pendingSelection = textBoxPendingSelection?.takeIf {
+                                box.id == selectedTextBoxId
                             },
                             onDragCancel = {
                                 Timber.tag("PdfTextBoxDebug").d("PdfPageRenderer onDragCancel [ID: ${box.id}]")

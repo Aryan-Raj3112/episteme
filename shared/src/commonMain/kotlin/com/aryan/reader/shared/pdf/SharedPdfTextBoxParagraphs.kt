@@ -254,6 +254,37 @@ fun sharedPdfSetTextBoxAlignment(
     align: SharedPdfRichTextAlign,
 ): AnnotatedString = setRichParagraphAlignment(annotated, selection, align)
 
+/**
+ * Pure paragraph-state setter for text-box alignment (dock path).
+ *
+ * Unlike [sharedPdfSetTextBoxAlignment] (annotated round-trip for the
+ * retired page editor), this never touches text and never appends the
+ * ZWSP EOF anchor: empty paragraphs have no style range to read back,
+ * so the annotated round-trip silently drops alignment set on an empty
+ * box/line. Stored state is resized to the '\n'-paragraph count
+ * (missing entries are LEFT) and trimmed like every other producer.
+ */
+fun sharedPdfSetTextBoxAlignmentState(
+    text: String,
+    paragraphs: List<SharedPdfRichParagraph>,
+    selection: TextRange,
+    align: SharedPdfRichTextAlign,
+): List<SharedPdfRichParagraph> {
+    val bounds = richParagraphBounds(text)
+    if (bounds.isEmpty()) return paragraphs.trimmedRichParagraphs()
+    val start = selection.min.coerceIn(0, text.length)
+    val end = selection.max.coerceIn(start, text.length)
+    val firstIndex = bounds.indexOfLast { it.start <= start }.coerceAtLeast(0)
+    val lastIndex = bounds.indexOfLast { it.start <= end }.coerceAtLeast(firstIndex)
+    val resized = MutableList(bounds.size) { index ->
+        paragraphs.getOrElse(index) { SharedPdfRichParagraph() }
+    }
+    for (i in firstIndex..lastIndex) {
+        resized[i] = resized[i].copy(alignment = align)
+    }
+    return resized.trimmedRichParagraphs()
+}
+
 /** Toggles [type] on paragraphs intersecting [selection]; manages markers. */
 fun sharedPdfToggleTextBoxList(
     annotated: AnnotatedString,

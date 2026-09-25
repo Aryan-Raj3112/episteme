@@ -129,4 +129,88 @@ class SharedPdfTextBoxParagraphsTest {
         assertEquals(SharedPdfRichTextAlign.LEFT, result.paragraphs[0].alignment)
         assertEquals(SharedPdfRichTextAlign.RIGHT, result.paragraphs[1].alignment)
     }
+
+    @Test
+    fun `alignment state sticks on empty text`() {
+        val result = sharedPdfSetTextBoxAlignmentState(
+            text = "",
+            paragraphs = emptyList(),
+            selection = TextRange(0),
+            align = SharedPdfRichTextAlign.CENTER,
+        )
+        assertEquals(
+            listOf(SharedPdfRichParagraph(alignment = SharedPdfRichTextAlign.CENTER)),
+            result,
+        )
+    }
+
+    @Test
+    fun `alignment state targets only selected paragraphs and keeps lists`() {
+        val stored = listOf(
+            SharedPdfRichParagraph(listType = SharedPdfRichListType.BULLET),
+            SharedPdfRichParagraph(),
+        )
+        val result = sharedPdfSetTextBoxAlignmentState(
+            text = "• a\nb",
+            paragraphs = stored,
+            selection = TextRange(4),
+            align = SharedPdfRichTextAlign.RIGHT,
+        )
+        assertEquals(SharedPdfRichTextAlign.LEFT, result[0].alignment)
+        assertEquals(SharedPdfRichListType.BULLET, result[0].listType)
+        assertEquals(SharedPdfRichTextAlign.RIGHT, result[1].alignment)
+    }
+
+    @Test
+    fun `alignment state on trailing empty line is stored`() {
+        val result = sharedPdfSetTextBoxAlignmentState(
+            text = "hello\n",
+            paragraphs = emptyList(),
+            selection = TextRange(6),
+            align = SharedPdfRichTextAlign.CENTER,
+        )
+        assertEquals(SharedPdfRichTextAlign.LEFT, result[0].alignment)
+        assertEquals(SharedPdfRichTextAlign.CENTER, result[1].alignment)
+    }
+
+    @Test
+    fun `clearing alignment trims back to defaults`() {
+        val stored = listOf(SharedPdfRichParagraph(alignment = SharedPdfRichTextAlign.CENTER))
+        val result = sharedPdfSetTextBoxAlignmentState(
+            text = "",
+            paragraphs = stored,
+            selection = TextRange(0),
+            align = SharedPdfRichTextAlign.LEFT,
+        )
+        assertEquals(emptyList(), result)
+    }
+
+    @Test
+    fun `list toggle on empty box leaves cursor after the marker`() {
+        val bulleted = sharedPdfToggleTextBoxList(
+            AnnotatedString(""),
+            TextRange(0),
+            SharedPdfRichListType.BULLET,
+        )
+        assertEquals("• ", bulleted.text)
+        assertEquals(TextRange(SHARED_PDF_RICH_BULLET_MARKER.length), bulleted.selection)
+        val numbered = sharedPdfToggleTextBoxList(
+            AnnotatedString(""),
+            TextRange(0),
+            SharedPdfRichListType.NUMBERED,
+        )
+        assertEquals("1. ", numbered.text)
+        assertEquals(TextRange(sharedPdfRichNumberedMarker(1).length), numbered.selection)
+    }
+
+    @Test
+    fun `list toggle on plain line leaves cursor after the marker`() {
+        val result = sharedPdfToggleTextBoxList(
+            AnnotatedString("hello"),
+            TextRange(0),
+            SharedPdfRichListType.BULLET,
+        )
+        assertEquals("• hello", result.text)
+        assertEquals(TextRange(SHARED_PDF_RICH_BULLET_MARKER.length), result.selection)
+    }
 }
