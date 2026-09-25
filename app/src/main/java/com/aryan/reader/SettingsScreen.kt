@@ -280,13 +280,19 @@ fun SettingsScreen(
         customFonts.toSharedCustomFontItems()
     }
 
-    val settingsModel = sharedSettingsHubModel(
-        androidSettingsHubInput(
-            uiState = uiState,
-            hideReaderAi = hideReaderAi
+    // Model build allocates section/item lists; remember on its real inputs
+    // so unrelated uiState emissions (progress, sync ticks) skip it.
+    val settingsModel = remember(uiState, hideReaderAi) {
+        sharedSettingsHubModel(
+            androidSettingsHubInput(
+                uiState = uiState,
+                hideReaderAi = hideReaderAi
+            )
         )
-    )
-    val settingsPage = settingsModel.page(settingsDestination)
+    }
+    val settingsPage = remember(settingsModel, settingsDestination) {
+        settingsModel.page(settingsDestination)
+    }
 
     val cloudFolderOptions = remember(
         uiState.syncedFolders,

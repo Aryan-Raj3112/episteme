@@ -1363,7 +1363,7 @@ fun AutoScrollControls(
                             if (onScrollToTop != null) {
                                 IconButton(
                                     onClick = onScrollToTop,
-                                    modifier = Modifier.size(32.dp)
+                                    modifier = Modifier.size(48.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.ArrowUpward,
@@ -1375,7 +1375,7 @@ fun AutoScrollControls(
                             }
                             IconButton(
                                 onClick = onMusicianModeToggle,
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(48.dp)
                             ) {
                                 Icon(
                                     painter = painterResource(id = R.drawable.music_note),
@@ -1386,7 +1386,7 @@ fun AutoScrollControls(
                             }
                             IconButton(
                                 onClick = onInputModeToggle,
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(48.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.SwapHoriz,
@@ -1397,7 +1397,7 @@ fun AutoScrollControls(
                             }
                             IconButton(
                                 onClick = { onCollapseChange(true) },
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(48.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.ChevronRight,
@@ -1408,7 +1408,7 @@ fun AutoScrollControls(
                             }
                             IconButton(
                                 onClick = onClose,
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(48.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Close,
@@ -1995,7 +1995,7 @@ fun TtsOverlayControls(
                         Spacer(Modifier.width(8.dp))
 
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            IconButton(onClick = onLocateCurrentChunk, modifier = Modifier.size(32.dp)) {
+                            IconButton(onClick = onLocateCurrentChunk, modifier = Modifier.size(48.dp)) {
                                 Icon(
                                     painterResource(R.drawable.pin_drop),
                                     "Locate current chunk",
@@ -2005,7 +2005,7 @@ fun TtsOverlayControls(
                             }
                             IconButton(
                                 onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.MEDIUM) },
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(48.dp)
                             ) {
                                 Icon(
                                     Icons.Default.KeyboardArrowDown,
@@ -2016,7 +2016,7 @@ fun TtsOverlayControls(
                             }
                             IconButton(
                                 onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.SMALL) },
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(48.dp)
                             ) {
                                 Icon(
                                     Icons.Default.KeyboardArrowRight,
@@ -2025,7 +2025,7 @@ fun TtsOverlayControls(
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
+                            IconButton(onClick = onClose, modifier = Modifier.size(48.dp)) {
                                 Icon(Icons.Default.Close, stringResource(R.string.content_desc_stop_tts), tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                             }
                         }
@@ -2131,14 +2131,14 @@ fun TtsOverlayControls(
                                         stringResource(R.string.tts_speed_short, "%.1f".format(rate)),
                                         style = MaterialTheme.typography.labelMedium
                                     )
-                                    IconButton(onClick = { rate = 1.0f; saveAndApply() }, modifier = Modifier.size(24.dp)) {
+                                    IconButton(onClick = { rate = 1.0f; saveAndApply() }, modifier = Modifier.size(48.dp)) {
                                         Icon(Icons.Default.Refresh, stringResource(R.string.content_desc_reset_speed), modifier = Modifier.size(16.dp))
                                     }
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     IconButton(
                                         onClick = { rate = ((rate * 10f).roundToInt() / 10f - 0.1f).coerceAtLeast(0.5f); saveAndApply() },
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(48.dp)
                                     ) {
                                         Icon(Icons.Default.Remove, contentDescription = null, modifier = Modifier.size(18.dp))
                                     }
@@ -2184,7 +2184,7 @@ fun TtsOverlayControls(
                                     )
                                     IconButton(
                                         onClick = { rate = ((rate * 10f).roundToInt() / 10f + 0.1f).coerceAtMost(3.0f); saveAndApply() },
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(48.dp)
                                     ) {
                                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                                     }
@@ -2200,14 +2200,14 @@ fun TtsOverlayControls(
                                         stringResource(R.string.tts_pitch_short, "%.1f".format(pitch)),
                                         style = MaterialTheme.typography.labelMedium
                                     )
-                                    IconButton(onClick = { pitch = 1.0f; saveAndApply() }, modifier = Modifier.size(24.dp)) {
+                                    IconButton(onClick = { pitch = 1.0f; saveAndApply() }, modifier = Modifier.size(48.dp)) {
                                         Icon(Icons.Default.Refresh, stringResource(R.string.content_desc_reset_pitch), modifier = Modifier.size(16.dp))
                                     }
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     IconButton(
                                         onClick = { pitch = ((pitch * 10f).roundToInt() / 10f - 0.1f).coerceAtLeast(0.5f); saveAndApply() },
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(48.dp)
                                     ) {
                                         Icon(Icons.Default.Remove, contentDescription = null, modifier = Modifier.size(18.dp))
                                     }
@@ -2253,7 +2253,7 @@ fun TtsOverlayControls(
                                     )
                                     IconButton(
                                         onClick = { pitch = ((pitch * 10f).roundToInt() / 10f + 0.1f).coerceAtMost(2.0f); saveAndApply() },
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(48.dp)
                                     ) {
                                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                                     }

@@ -99,7 +99,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -313,7 +313,7 @@ fun EpubReaderScreen(
     onImportFonts: (List<Uri>) -> Unit,
     viewModel: MainViewModel
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     val isReflowFile = uiState.selectedBookId?.endsWith("_reflow") == true
     val originalBookId = if (isReflowFile) uiState.selectedBookId!!.removeSuffix("_reflow") else null
@@ -428,7 +428,7 @@ fun EpubReaderHost(
     val view = LocalView.current
     val context = LocalContext.current
     val motionPolicy = rememberReaderMotionPolicy()
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val window = (view.context as? Activity)?.window
     val activity = context as? Activity
     val scope = rememberCoroutineScope()
@@ -748,7 +748,7 @@ fun EpubReaderHost(
     var paginatedExplicitNavigationAnchor by paginatedExplicitNavigationAnchorState
 
     val ttsController = viewModel.ttsController
-    val ttsState by ttsController.ttsState.collectAsState()
+    val ttsState by ttsController.ttsState.collectAsStateWithLifecycle()
 
     val totalBookLengthChars = remember(chapters) {
         chapters.sumOf { it.plainTextCharacterCount().toLong() }

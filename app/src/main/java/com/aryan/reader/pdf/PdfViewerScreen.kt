@@ -125,7 +125,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -541,13 +541,13 @@ fun PdfViewerScreen(
     var isBackgroundIndexing by remember { mutableStateOf(false) }
     var backgroundIndexingProgress by remember { mutableFloatStateOf(0f) }
 
-    val uiState by viewModel.uiState.collectAsState()
-    val customFonts by viewModel.customFonts.collectAsState()
-    val bubbleZoomDownloadProgress by viewModel.speechBubbleModelDownloadProgress.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val customFonts by viewModel.customFonts.collectAsStateWithLifecycle()
+    val bubbleZoomDownloadProgress by viewModel.speechBubbleModelDownloadProgress.collectAsStateWithLifecycle()
     val annotationSettingsRepo = remember(context) { AnnotationSettingsRepository(context) }
-    val toolSettings by annotationSettingsRepo.settings.collectAsState()
+    val toolSettings by annotationSettingsRepo.settings.collectAsStateWithLifecycle()
     val ttsController = ttsControllerOverride ?: rememberTtsController()
-    val ttsState by ttsController.ttsState.collectAsState()
+    val ttsState by ttsController.ttsState.collectAsStateWithLifecycle()
     val surfaceState = remember { PdfViewerSurfaceState() }
     val documentSetup = remember(
         uiState,
@@ -2249,7 +2249,7 @@ private fun PdfViewerScreenContent(
         }
     }
 
-    val reflowInfo by viewModel.reflowWorkInfo.collectAsState(initial = null)
+    val reflowInfo by viewModel.reflowWorkInfo.collectAsStateWithLifecycle(initialValue = null)
 
     val isReflowingThisBook by remember(reflowInfo, bookId) {
         derivedStateOf {

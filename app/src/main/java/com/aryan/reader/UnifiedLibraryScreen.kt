@@ -97,7 +97,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -131,6 +130,7 @@ import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerDestination
 import com.aryan.reader.shared.ui.mobileUnifiedLibraryDrawerModel
 import com.aryan.reader.shared.ui.SharedAnnotationExportFormatDialog
 import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
@@ -185,6 +185,14 @@ fun UnifiedLibraryScreen(
     var selectedShelfId by rememberSaveable { mutableStateOf<String?>(null) }
     var filter by rememberSaveable { mutableStateOf(UnifiedLibraryFilter.ALL) }
     var query by rememberSaveable { mutableStateOf("") }
+    // Filtering + sorting is O(n log n) on Main; debounce keystrokes so each
+    // character doesn't pay a full pass. The field itself stays instant —
+    // only the list lags up to 300ms behind fast typing.
+    var debouncedQuery by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(query) {
+        delay(300)
+        debouncedQuery = query
+    }
     var showLibraryControls by rememberSaveable { mutableStateOf(false) }
     var showAdvancedFilters by rememberSaveable { mutableStateOf(false) }
     var showThemeSheet by rememberSaveable { mutableStateOf(false) }
@@ -323,20 +331,24 @@ fun UnifiedLibraryScreen(
             )
         }
     }
-    val visibleBooks = remember(uiState.rawLibraryFiles, uiState.libraryFilters, filter, query, uiState.sortOrder) {
+    val visibleBooks = remember(uiState.rawLibraryFiles, uiState.libraryFilters, filter, debouncedQuery, uiState.sortOrder) {
         sortFiles(
             filterUnifiedLibraryBooks(
                 applyLibraryFilters(uiState.rawLibraryFiles, uiState.libraryFilters),
                 filter,
-                query
+                debouncedQuery
             ),
             uiState.sortOrder
         )
     }
     val section = UnifiedLibrarySection.fromPersisted(uiState.unifiedLibrarySection)
-    // Do not cache this: reader position writes replace the matching library item.
-    // Use the unfiltered collection so an active library filter never hides resume.
-    val continueReading = findContinueReadingBook(uiState.rawLibraryFiles)
+    // Keyed on the list identity: recomputes exactly when the library changes
+    // (including position writes, which replace the item), but skips the O(n)
+    // scan on unrelated recompositions (scroll, drawer, keystrokes).
+    // Uses the unfiltered collection so an active filter never hides resume.
+    val continueReading = remember(uiState.rawLibraryFiles) {
+        findContinueReadingBook(uiState.rawLibraryFiles)
+    }
     val advancedFilterCount = uiState.libraryFilters.selectedFilterCount()
     val selectedItems = uiState.contextualActionItems
 
@@ -559,7 +571,7 @@ fun UnifiedLibraryScreen(
                     books = visibleBooks,
                     continueReading = continueReading,
                     filter = filter,
-                    query = query,
+                    query = debouncedQuery,
                     sortOrder = uiState.sortOrder,
                     advancedFilterCount = advancedFilterCount,
                     useListView = uiState.unifiedLibraryListView,
@@ -1332,9 +1344,12 @@ private fun UnifiedCreateShelfDialog(onConfirm: (String) -> Unit, onDismiss: () 
     )
 }
 
+// Hoisted: shape allocation + clip without the offscreen shadow pass the
+// scrolling continue card used to pay per recomposition.
+private val ContinueReadingCoverShape = RoundedCornerShape(18.dp)
+
 @Composable
-private fun UnifiedContinueReadingCard(item: RecentFileItem, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val progress = (item.progressPercentage ?: 0f).coerceIn(0f, 100f)
+private fun UnifiedContinueReadingCard(item: RecentFileItem, onClick: () -> Unit, modifier: Modifier = Modifier) {    val progress = (item.progressPercentage ?: 0f).coerceIn(0f, 100f)
     val appLayoutDirection = if (LocalConfiguration.current.layoutDirection == View.LAYOUT_DIRECTION_RTL) {
         LayoutDirection.Rtl
     } else {
@@ -1356,7 +1371,7 @@ private fun UnifiedContinueReadingCard(item: RecentFileItem, onClick: () -> Unit
                         item = item,
                 modifier = coverModifier
                             .size(94.dp, 146.dp)
-                            .shadow(10.dp, RoundedCornerShape(18.dp), clip = true),
+                            .clip(ContinueReadingCoverShape),
                         contentDescription = item.displayName,
                 contentScale = ContentScale.Crop,
                     )

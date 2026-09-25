@@ -47,7 +47,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -132,7 +132,7 @@ fun PdfSplitReaderScreen(
     var pickerTargetSessionId by rememberSaveable { mutableStateOf<Long?>(null) }
     var pickerTargetRevision by rememberSaveable { mutableStateOf(0L) }
     val ttsController = rememberTtsController()
-    val ttsState by ttsController.ttsState.collectAsState()
+    val ttsState by ttsController.ttsState.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     var isAppActive by remember {
         mutableStateOf(lifecycleOwner.lifecycle.currentState == Lifecycle.State.RESUMED)
