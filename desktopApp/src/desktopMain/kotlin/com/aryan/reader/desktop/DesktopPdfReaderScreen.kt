@@ -4183,7 +4183,7 @@ internal fun PdfReaderScreen(
                             SharedPdfInlineTextEditorOverlay(
                                 draft = activeTextDraft?.takeIf { it.pageIndex == pageIndex },
                                 canvasSize = pageCanvasSize,
-                                onTextChange = { updateActiveTextDraft(it, pageCanvasSize) },
+                                onTextChange = { text, _ -> updateActiveTextDraft(text, pageCanvasSize) },
                                 onBoundsChange = ::updateActiveTextDraftBounds
                             )
                             selectedTextAnnotationForPage?.let { annotation ->
@@ -4195,8 +4195,8 @@ internal fun PdfReaderScreen(
                                         style = annotation.sharedPdfTextStyle(),
                                         bounds = bounds,
                                         canvasSize = pageCanvasSize,
-                                        onTextChange = { text ->
-                                            updateAnnotation(annotation.copy(text = text))
+                                        onTextChange = { text, paragraphs ->
+                                            updateAnnotation(annotation.copy(text = text, paragraphs = paragraphs))
                                         },
                                         onBoundsChange = { nextBounds ->
                                             updateAnnotation(annotation.copy(bounds = nextBounds))

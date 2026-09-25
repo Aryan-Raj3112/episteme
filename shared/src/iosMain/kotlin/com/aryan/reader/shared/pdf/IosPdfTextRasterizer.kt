@@ -124,7 +124,11 @@ private fun SharedPdfAnnotation.toIosPdfTextBoxOverlay(
         fontFamily = null,
     )
     val pixels = renderIosPdfParagraph(
-        text = AnnotatedString(safeText, listOf(AnnotatedString.Range(style, 0, safeText.length))),
+        // Paragraph runs (alignment) travel in the annotated value
+        // (Android benchmark applyTextBoxSpans); list markers live in the
+        // text itself. Built on the sanitized text: ZWSP removal never
+        // changes paragraph indices, matching Android's skew contract.
+        text = sharedPdfTextBoxAnnotatedString(safeText, paragraphs, style),
         width = width,
         height = height,
         padding = padding,

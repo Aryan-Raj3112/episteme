@@ -234,6 +234,23 @@ fun SharedPdfTextDraft.withText(
     )
 }
 
+/**
+ * Keystroke/dock companion to [withText]: replaces text AND paragraph
+ * attributes in one atomic draft update (Android benchmark:
+ * ResizableTextBox onTextChanged(text, paragraphs)). Paragraphs are
+ * trimmed like every other producer; bounds recompute exactly like
+ * [withText].
+ */
+fun SharedPdfTextDraft.withTextAndParagraphs(
+    text: String,
+    paragraphs: List<SharedPdfRichParagraph>,
+    canvasSize: IntSize
+): SharedPdfTextDraft {
+    return withText(text, canvasSize).copy(
+        paragraphs = paragraphs.trimmedRichParagraphs()
+    )
+}
+
 fun SharedPdfTextDraft.withStyle(
     style: SharedPdfTextStyleConfig,
     canvasSize: IntSize

@@ -297,3 +297,17 @@ fun sharedPdfToggleTextBoxList(
     type = type,
     markerFallbackStyle = markerFallbackStyle,
 )
+
+/**
+ * One-shot post-toggle cursor for a text-box editor (mobile shared UI).
+ *
+ * The dock list toggle inserts markers around the field, so the correct
+ * cursor (shifted past "• "/"1. ") is computed parent-side. A plain
+ * [TextRange] mirror cannot be used: it goes stale within a frame (the
+ * mirror only learns the field's own reports) and re-adopting it yanks
+ * the cursor. The [token] is bumped per toggle and consumed once.
+ */
+data class SharedPdfTextBoxPendingSelection(
+    val range: TextRange,
+    val token: Long,
+)

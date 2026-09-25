@@ -168,6 +168,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontStyle
@@ -262,13 +263,23 @@ import com.aryan.reader.shared.pdf.sharedPdfSelectionTouchSlopPx
 import com.aryan.reader.shared.pdf.sharedPdfSelectionUnionBounds
 import com.aryan.reader.shared.pdf.sharedPdfStrokeWidthRange
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
+import com.aryan.reader.shared.pdf.SharedPdfRichDocument
+import com.aryan.reader.shared.pdf.SharedPdfRichTextAlign
 import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
 import com.aryan.reader.shared.pdf.SharedPdfTextAnnotationDefaults
+import com.aryan.reader.shared.pdf.SharedPdfTextBoxPendingSelection
 import com.aryan.reader.shared.pdf.SharedPdfTextDraft
 import com.aryan.reader.shared.pdf.SharedPdfTextStyleConfig
 import com.aryan.reader.shared.pdf.sharedPdfTextStyle
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxAnnotatedString
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxDockState
+import com.aryan.reader.shared.pdf.sharedPdfToggleTextBoxList
+import com.aryan.reader.shared.pdf.sharedPdfSetTextBoxAlignmentState
+import com.aryan.reader.shared.pdf.sharedPdfRichPagesToTextBoxes
 import com.aryan.reader.shared.pdf.toAnnotation
+import com.aryan.reader.shared.pdf.trimmedRichParagraphs
 import com.aryan.reader.shared.pdf.withStyle
+import com.aryan.reader.shared.pdf.withTextAndParagraphs
 import com.aryan.reader.shared.pdf.SharedPdfReaderAction
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import com.aryan.reader.shared.pdf.SharedPdfReaderGlobalResource
@@ -1098,10 +1109,23 @@ fun SharedMobilePdfReaderHost(
     }
     var textStyle by remember(readerSessionKey) { mutableStateOf(SharedPdfTextStyleConfig()) }
     var textDraft by remember(readerSessionKey) { mutableStateOf<SharedPdfTextDraft?>(null) }
-    // Android parity: minimized dock stops all annotation input
-    // (isDrawingActive = isEditMode && !isDockMinimized).
-    val isRichTextEditingEnabled =
-        readerState.selectedTool == PdfInkTool.TEXT && textDraft == null && !isAnnotationDockMinimized
+    // Last-known draft cursor (toggle input + dock paragraph state).
+    var textDraftSelection by remember(readerSessionKey) { mutableStateOf(TextRange.Zero) }
+    // One-shot post-toggle cursor, consumed once by the editor (Android
+    // benchmark TextBoxPendingSelection): never the live mirror.
+    var textDraftPendingSelection by remember(readerSessionKey) {
+        mutableStateOf<SharedPdfTextBoxPendingSelection?>(null)
+    }
+    var textDraftPendingToken by remember(readerSessionKey) { mutableStateOf(0L) }
+    // Per-page canvas sizes for the legacy rich-text converter.
+    val pageCanvasSizes = remember(readerSessionKey) { mutableStateMapOf<Int, IntSize>() }
+    var showLegacyConvertDialog by remember(readerSessionKey) { mutableStateOf(false) }
+    var legacyConverting by remember(readerSessionKey) { mutableStateOf(false) }
+    // Retired editor (Android benchmark ENABLE_PAGE_RICH_TEXT): page rich
+    // text keeps loading/rendering/exporting legacy documents, but never
+    // edits — text boxes are the only text annotation. The gate that used
+    // to enable flowing-text editing now stays false.
+    val isRichTextEditingEnabled = false
     val readerStateForPages =
         if (isAnnotationDockMinimized) readerState.copy(selectedTool = PdfInkTool.NONE) else readerState
 
@@ -1323,6 +1347,8 @@ fun SharedMobilePdfReaderHost(
     fun startEditingTextBox(annotation: SharedPdfAnnotation) {
         val annotationStyle = annotation.sharedPdfTextStyle()
         textStyle = annotationStyle
+        textDraftSelection = TextRange(annotation.text.length)
+        textDraftPendingSelection = null
         textDraft = SharedPdfTextDraft(
             id = annotation.id,
             pageIndex = annotation.pageIndex,
@@ -1330,12 +1356,62 @@ fun SharedMobilePdfReaderHost(
             text = annotation.text,
             style = annotationStyle,
             createdAt = annotation.createdAt,
-            isManuallySized = true
+            isManuallySized = true,
+            paragraphs = annotation.paragraphs.trimmedRichParagraphs()
+        )
+    }
+
+    // Android benchmark (tap creates box at tap): TEXT-mode tap on empty
+    // page area opens a draft sized for the tap point.
+    fun insertTextBoxAt(pageIndex: Int, xRel: Float, yRel: Float, tapCanvasSize: IntSize) {
+        val now = currentTimestamp()
+        textDraftSelection = TextRange.Zero
+        textDraftPendingSelection = null
+        textDraft = SharedPdfTextAnnotationDefaults.createDraft(
+            id = "ios_pdf_textbox_${now}_${readerState.annotations.size}",
+            pageIndex = pageIndex,
+            anchor = PdfPagePoint(xRel.coerceIn(0f, 1f), yRel.coerceIn(0f, 1f), now),
+            canvasSize = tapCanvasSize,
+            style = textStyle,
+            createdAt = now
         )
     }
 
     fun updateTextDraft(draft: SharedPdfTextDraft) {
         textDraft = draft
+    }
+
+    /**
+     * Draft paragraph ops (Android benchmark applyTextBoxAlignment /
+     * applyTextBoxListType): same L/C/R + BULLET/NUMBERED semantics,
+     * applied to the open draft using its last-known cursor selection.
+     * Alignment is a pure paragraph-state update (no text change, no ZWSP
+     * anchor): the annotated round-trip cannot represent alignment on
+     * empty text and would silently drop it.
+     */
+    fun applyDraftAlignment(align: SharedPdfRichTextAlign) {
+        val draft = textDraft ?: return
+        updateTextDraft(
+            draft.copy(
+                paragraphs = sharedPdfSetTextBoxAlignmentState(
+                    draft.text,
+                    draft.paragraphs,
+                    textDraftSelection,
+                    align
+                )
+            )
+        )
+    }
+
+    fun applyDraftList(type: SharedPdfRichListType) {
+        val draft = textDraft ?: return
+        val annotated = sharedPdfTextBoxAnnotatedString(draft.text, draft.paragraphs)
+        val result = sharedPdfToggleTextBoxList(annotated, textDraftSelection, type)
+        textDraftPendingToken += 1
+        textDraftPendingSelection =
+            SharedPdfTextBoxPendingSelection(result.selection, textDraftPendingToken)
+        textDraftSelection = result.selection
+        updateTextDraft(draft.withTextAndParagraphs(result.text, result.paragraphs, canvasSize))
     }
 
     // Mirrors Android's single-tap deselect: an empty box is removed, a non-empty one is kept.
@@ -1354,6 +1430,60 @@ fun SharedMobilePdfReaderHost(
             dispatch(SharedPdfReaderAction.AnnotationUpdated(annotation))
         } else {
             dispatch(SharedPdfReaderAction.AnnotationAdded(annotation))
+        }
+    }
+
+    // Android benchmark (legacy convert-only flow): word-like page text is
+    // retired — the banner/dialog below offer a single Convert action that
+    // transfers each page into stacked text boxes (paragraph groups keep
+    // alignment + lists) and then clears the flowing document. Boxes persist
+    // before the rich document is cleared, so conversion never loses text.
+    fun convertLegacyPageText() {
+        if (legacyConverting) return
+        legacyConverting = true
+        showLegacyConvertDialog = false
+        scope.launch {
+            try {
+                val document = SharedPdfRichTextSerializer.decode(richTextDocumentJson)
+                val specs = sharedPdfRichPagesToTextBoxes(document, richTextController.pageLayouts) { pageIndex ->
+                    pageCanvasSizes[pageIndex]?.takeIf { it.width > 0 && it.height > 0 }
+                        ?: canvasSize.takeIf { it.width > 0 && it.height > 0 }
+                        ?: IntSize(1000, 1414)
+                }
+                if (specs.isNotEmpty()) {
+                    val now = currentTimestamp()
+                    val boxes = specs.mapIndexed { index, spec ->
+                        SharedPdfAnnotation(
+                            id = "ios_pdf_textbox_legacy_${now}_$index",
+                            pageIndex = spec.pageIndex,
+                            kind = PdfAnnotationKind.TEXT,
+                            tool = PdfInkTool.TEXT,
+                            bounds = spec.bounds,
+                            text = spec.text,
+                            colorArgb = spec.colorArgb,
+                            backgroundArgb = spec.backgroundArgb,
+                            strokeWidth = SharedPdfAnnotationDefaults.configFor(PdfInkTool.TEXT).strokeWidth,
+                            fontSize = SharedPdfTextAnnotationDefaults.pageRelativeFontSizeToDisplay(
+                                spec.fontSizeNorm
+                            ),
+                            pageRelativeFontSize = spec.fontSizeNorm,
+                            isBold = spec.isBold,
+                            isItalic = spec.isItalic,
+                            isUnderline = spec.isUnderline,
+                            isStrikeThrough = spec.isStrikeThrough,
+                            fontPath = spec.fontPath,
+                            createdAt = now,
+                            paragraphs = spec.paragraphs.trimmedRichParagraphs()
+                        )
+                    }
+                    dispatch(SharedPdfReaderAction.AnnotationsChanged(readerState.annotations + boxes))
+                }
+                richTextController.replaceDocument(SharedPdfRichDocument())
+                richTextController.saveImmediate()
+                richTextDocumentJson = SharedPdfRichTextSerializer.encode(SharedPdfRichDocument())
+            } finally {
+                legacyConverting = false
+            }
         }
     }
 
@@ -2456,8 +2586,21 @@ fun SharedMobilePdfReaderHost(
                         onZoomCameraChanged = { pdfZoomCamera = it },
                         textDraft = textDraft,
                         onTextDraftChange = ::updateTextDraft,
-                        onTextPageTap = { annotation ->
-                            if (annotation != null) startEditingTextBox(annotation) else dismissTextDraft()
+                        onTextPageTap = { hit, pageIndex, xRel, yRel, tapCanvasSize ->
+                            if (hit != null) {
+                                startEditingTextBox(hit)
+                            } else if (textDraft != null) {
+                                dismissTextDraft()
+                            } else if (readerState.selectedTool == PdfInkTool.TEXT) {
+                                insertTextBoxAt(pageIndex, xRel, yRel, tapCanvasSize)
+                            }
+                        },
+                        onTextDraftParagraphUiStateChanged = { _, selection ->
+                            textDraftSelection = selection
+                        },
+                        textDraftPendingSelection = textDraftPendingSelection,
+                        onPageCanvasSizeChanged = { pageIndex, size ->
+                            pageCanvasSizes[pageIndex] = size
                         },
                         richTextController = richTextController,
                         isRichTextEditingEnabled = isRichTextEditingEnabled,
@@ -2519,8 +2662,21 @@ fun SharedMobilePdfReaderHost(
                         onZoomCameraChanged = { pdfZoomCamera = it },
                         textDraft = textDraft,
                         onTextDraftChange = ::updateTextDraft,
-                        onTextPageTap = { annotation ->
-                            if (annotation != null) startEditingTextBox(annotation) else dismissTextDraft()
+                        onTextPageTap = { hit, pageIndex, xRel, yRel, tapCanvasSize ->
+                            if (hit != null) {
+                                startEditingTextBox(hit)
+                            } else if (textDraft != null) {
+                                dismissTextDraft()
+                            } else if (readerState.selectedTool == PdfInkTool.TEXT) {
+                                insertTextBoxAt(pageIndex, xRel, yRel, tapCanvasSize)
+                            }
+                        },
+                        onTextDraftParagraphUiStateChanged = { _, selection ->
+                            textDraftSelection = selection
+                        },
+                        textDraftPendingSelection = textDraftPendingSelection,
+                        onPageCanvasSizeChanged = { pageIndex, size ->
+                            pageCanvasSizes[pageIndex] = size
                         },
                         richTextController = richTextController,
                         isRichTextEditingEnabled = isRichTextEditingEnabled,
@@ -2539,6 +2695,79 @@ fun SharedMobilePdfReaderHost(
                         selectionHost = selectionHost,
                         onPageSurfaceWindowRectChanged = { page, rect -> selectionPageWindowRects[page] = rect },
                         modifier = Modifier.fillMaxSize()
+                    )
+                }
+                // Retired word-like text (Android benchmark legacy banner):
+                // legacy flowing text keeps rendering until the user converts
+                // it into text boxes (convert-only, like Android).
+                if (richTextController.hasRenderableText) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        shape = RoundedCornerShape(12.dp),
+                        shadowElevation = 4.dp,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 8.dp, start = 16.dp, end = 16.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)
+                        ) {
+                            Text(
+                                text = readerString(
+                                    "banner_legacy_page_text",
+                                    "This file has word-like text. Only text boxes are available now."
+                                ),
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(
+                                onClick = { showLegacyConvertDialog = true },
+                                enabled = !legacyConverting
+                            ) {
+                                Text(
+                                    text = readerString(
+                                        "action_convert_to_text_boxes",
+                                        "Convert"
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+                if (showLegacyConvertDialog) {
+                    AlertDialog(
+                        onDismissRequest = {},
+                        title = {
+                            Text(
+                                text = readerString(
+                                    "dialog_legacy_page_text_title",
+                                    "Word-like text annotations removed"
+                                )
+                            )
+                        },
+                        text = {
+                            Text(
+                                text = readerString(
+                                    "dialog_legacy_page_text_desc",
+                                    "Only text boxes are available now. Convert to transfer this text into text boxes, keeping alignment and lists."
+                                )
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(
+                                onClick = ::convertLegacyPageText,
+                                enabled = !legacyConverting
+                            ) {
+                                Text(
+                                    text = readerString(
+                                        "action_convert_to_text_boxes",
+                                        "Convert"
+                                    )
+                                )
+                            }
+                        }
                     )
                 }
                 AnimatedVisibility(
@@ -3515,20 +3744,13 @@ fun SharedMobilePdfReaderHost(
                                         // Android parity (TextAnnotationDock
                                         // onUpdateStyle): the tool default is
                                         // always persisted; live edits go to
-                                        // the open draft, otherwise to the
-                                        // flowing rich-text selection/cursor
-                                        // (which also re-requests the keyboard,
-                                        // keeping it up while formatting).
+                                        // the open draft. Page rich text is
+                                        // retired, so there is no flowing-text
+                                        // selection to style anymore.
                                         textStyle = newStyle
                                         val draft = textDraft
                                         if (draft != null) {
                                             updateTextDraft(draft.withStyle(newStyle, canvasSize))
-                                        } else {
-                                            richTextController.updateCurrentStyle(
-                                                newStyle.toSharedPdfRichSpanStyle(),
-                                                newStyle.fontPath,
-                                                newStyle.fontName
-                                            )
                                         }
                                     },
                                     onInsertTextBox = ::insertTextBox,
@@ -3538,21 +3760,25 @@ fun SharedMobilePdfReaderHost(
                                     dragGestureModifier = textDockDragGesture,
                                     popupsBelowBar = textPopupsBelowBar,
                                     onPopupStateChange = { richTextController.showCursorOverride = !it },
-                                    // Paragraph row is flowing-rich-text only;
-                                    // open drafts stay on the single-row bar.
-                                    paragraphState = if (textDraft != null) {
-                                        null
-                                    } else {
-                                        richTextController.richParagraphUiState()
+                                    // Retired rich text: the paragraph row
+                                    // belongs to the open draft only (Android
+                                    // benchmark paragraphState), hidden
+                                    // otherwise.
+                                    paragraphState = textDraft?.let { draft ->
+                                        sharedPdfTextBoxDockState(
+                                            draft.text,
+                                            draft.paragraphs,
+                                            textDraftSelection
+                                        )
                                     },
                                     onNumberedListClick = {
-                                        richTextController.toggleRichListType(SharedPdfRichListType.NUMBERED)
+                                        applyDraftList(SharedPdfRichListType.NUMBERED)
                                     },
                                     onBulletedListClick = {
-                                        richTextController.toggleRichListType(SharedPdfRichListType.BULLET)
+                                        applyDraftList(SharedPdfRichListType.BULLET)
                                     },
                                     onAlignmentSelected = {
-                                        richTextController.setRichParagraphAlignment(it)
+                                        applyDraftAlignment(it)
                                     },
                                 )
                             }

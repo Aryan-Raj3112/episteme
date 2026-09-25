@@ -63,6 +63,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -83,12 +84,14 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -105,10 +108,21 @@ import com.aryan.reader.shared.pdf.SharedPdfTextAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfTextDraft
 import com.aryan.reader.shared.pdf.SharedPdfTextResizeHandle
 import com.aryan.reader.shared.pdf.SharedPdfTextStyleConfig
+import com.aryan.reader.shared.pdf.RichParagraphUiState
+import com.aryan.reader.shared.pdf.SharedPdfRichListType
+import com.aryan.reader.shared.pdf.SharedPdfRichParagraph
+import com.aryan.reader.shared.pdf.SharedPdfRichTextAlign
+import com.aryan.reader.shared.pdf.SharedPdfTextBoxPendingSelection
 import com.aryan.reader.shared.pdf.movedBy
 import com.aryan.reader.shared.pdf.resizedBy
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxAnnotatedString
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxDockState
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxKeystroke
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxParagraphCount
 import com.aryan.reader.shared.pdf.sharedPdfTextFontSizePx
 import com.aryan.reader.shared.pdf.sharedPdfStrokeWidthRange
+import com.aryan.reader.shared.pdf.toComposeTextAlign
+import com.aryan.reader.shared.pdf.trimmedRichParagraphs
 import com.aryan.reader.shared.pdf.withSharedPdfTextFontSize
 import kotlin.math.roundToInt
 
@@ -1512,8 +1526,10 @@ fun SharedDesktopPdfTextAnnotationDock(
 fun SharedPdfInlineTextEditorOverlay(
     draft: SharedPdfTextDraft?,
     canvasSize: IntSize,
-    onTextChange: (String) -> Unit,
+    onTextChange: (String, List<SharedPdfRichParagraph>) -> Unit,
     onBoundsChange: (PdfPageBounds) -> Unit,
+    pendingSelection: SharedPdfTextBoxPendingSelection? = null,
+    onParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     if (draft == null || canvasSize.width <= 0 || canvasSize.height <= 0) return
@@ -1526,10 +1542,29 @@ fun SharedPdfInlineTextEditorOverlay(
         canvasSize = canvasSize,
         onTextChange = onTextChange,
         onBoundsChange = onBoundsChange,
+        paragraphs = draft.paragraphs,
+        pendingSelection = pendingSelection,
+        onParagraphUiStateChanged = onParagraphUiStateChanged,
         modifier = modifier
     )
 }
 
+/**
+ * Paragraph-aware text-box editor (Android benchmark: ResizableTextBox
+ * field logic). The live value is an [AnnotatedString] built by
+ * [sharedPdfTextBoxAnnotatedString] (box style + per-paragraph alignment
+ * runs + list tags); every keystroke runs [sharedPdfTextBoxKeystroke]
+ * (marker relocation, Enter inheritance, backspace exit, renumber) with
+ * the same IME-safe rules as Android: plain typing passes through
+ * untouched, structural edits rebuild preserving selection/composition,
+ * and boxes with non-default paragraphs always rebuild to restore clean
+ * merged runs (IME edits fragment ParagraphStyle ranges, which flickers
+ * alignment and splits MultiParagraph into phantom lines).
+ *
+ * Parent sync follows the same three rules as Android: fresh toggle
+ * tokens are adopted once, focused fields never adopt lagging parent
+ * text (echo guard), idle fields adopt parent text.
+ */
 @Composable
 fun SharedPdfTextBoxEditorOverlay(
     id: String,
@@ -1537,9 +1572,12 @@ fun SharedPdfTextBoxEditorOverlay(
     style: SharedPdfTextStyleConfig,
     bounds: PdfPageBounds,
     canvasSize: IntSize,
-    onTextChange: (String) -> Unit,
+    onTextChange: (String, List<SharedPdfRichParagraph>) -> Unit,
     onBoundsChange: (PdfPageBounds) -> Unit,
     customFontFamilies: Map<String, FontFamily> = emptyMap(),
+    paragraphs: List<SharedPdfRichParagraph> = emptyList(),
+    pendingSelection: SharedPdfTextBoxPendingSelection? = null,
+    onParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> },
     onGlobalDragStart: (() -> Unit)? = null,
     onGlobalDrag: ((Offset) -> Unit)? = null,
     onGlobalDragEnd: (() -> Unit)? = null,
@@ -1553,6 +1591,7 @@ fun SharedPdfTextBoxEditorOverlay(
     val focusRequester = remember(id) { FocusRequester() }
     var liveBounds by remember(id) { mutableStateOf(bounds) }
     var isResizing by remember(id) { mutableStateOf(false) }
+    var isTextFieldFocused by remember(id) { mutableStateOf(false) }
 
     LaunchedEffect(bounds) {
         if (!isResizing) {
@@ -1574,18 +1613,81 @@ fun SharedPdfTextBoxEditorOverlay(
     val moveHandleWidthPx = with(density) { moveHandleWidth.toPx() }
     val moveHandleHeightPx = with(density) { moveHandleHeight.toPx() }
     val moveHandleBelow = topPx + heightPx + moveHandleHeightPx + 10f <= canvasSize.height
-    var textFieldValue by remember(id) {
-        mutableStateOf(TextFieldValue(text, TextRange(text.length)))
+    // Box-level style as the AnnotatedString base; per-paragraph alignment
+    // and list tags come from shared helpers (same model as Android).
+    // Font size stays on the TextStyle (like Android) so display scaling
+    // never fights the paragraph runs.
+    val markerFallbackStyle = SpanStyle(
+        color = textColor,
+        background = backgroundColor,
+        fontFamily = sharedPdfFontFamily(style.fontPath, customFontFamilies)
+            ?: sharedPdfFontFamily(style.fontName, customFontFamilies),
+        fontWeight = if (style.isBold) FontWeight.Bold else FontWeight.Normal,
+        fontStyle = if (style.isItalic) FontStyle.Italic else FontStyle.Normal,
+        textDecoration = style.textDecoration
+    )
+    val externalAnnotated = remember(text, paragraphs, markerFallbackStyle) {
+        sharedPdfTextBoxAnnotatedString(text, paragraphs, markerFallbackStyle)
     }
+    var textFieldValue by remember(id) {
+        mutableStateOf(TextFieldValue(externalAnnotated, TextRange(externalAnnotated.length)))
+    }
+    // Paragraphs backing the field text, kept in lockstep so rapid
+    // keystrokes reconcile against their true predecessor even before the
+    // parent recomposes with the updated draft.
+    var fieldParagraphs by remember(id) { mutableStateOf(paragraphs) }
+    var consumedSelectionToken by remember(id) { mutableStateOf(-1L) }
 
     LaunchedEffect(id, style) {
         focusRequester.requestFocus()
     }
 
-    LaunchedEffect(id, text) {
-        if (text != textFieldValue.text) {
-            textFieldValue = TextFieldValue(text, TextRange(text.length))
+    // Parent sync: fresh toggle tokens adopted once; focused fields never
+    // adopt lagging parent text (echo guard, with count-guarded paragraph
+    // adopt for mid-lag dock taps); idle fields adopt parent text.
+    // Span-only mismatches rebuild keeping cursor + composition.
+    // box.paragraphs in the keys (not just the annotated value) so
+    // alignment set on empty text still reaches the field.
+    LaunchedEffect(id, externalAnnotated, pendingSelection, paragraphs, isTextFieldFocused) {
+        val current = textFieldValue
+        val token = pendingSelection?.takeIf { it.token != consumedSelectionToken }
+        if (token != null) {
+            val wanted = TextRange(
+                token.range.min.coerceIn(0, externalAnnotated.length),
+                token.range.max.coerceIn(0, externalAnnotated.length)
+            )
+            textFieldValue = TextFieldValue(externalAnnotated, wanted, null)
+            fieldParagraphs = paragraphs.trimmedRichParagraphs()
+            consumedSelectionToken = token.token
+            return@LaunchedEffect
         }
+        val textChanged = current.text != externalAnnotated.text
+        if (textChanged && isTextFieldFocused) {
+            if (sharedPdfTextBoxParagraphCount(current.text) ==
+                sharedPdfTextBoxParagraphCount(externalAnnotated.text)
+            ) {
+                fieldParagraphs = paragraphs.trimmedRichParagraphs()
+            }
+            return@LaunchedEffect
+        }
+        val parasChanged = fieldParagraphs.trimmedRichParagraphs() !=
+            paragraphs.trimmedRichParagraphs()
+        val spansChanged = current.annotatedString != externalAnnotated
+        if (!textChanged && !parasChanged && !spansChanged) return@LaunchedEffect
+        val wantedSelection = TextRange(
+            current.selection.min.coerceIn(0, externalAnnotated.length),
+            current.selection.max.coerceIn(0, externalAnnotated.length)
+        )
+        val composition = if (!textChanged) current.composition else null
+        textFieldValue = TextFieldValue(externalAnnotated, wantedSelection, composition)
+        fieldParagraphs = paragraphs.trimmedRichParagraphs()
+    }
+    // Stored-aware dock state (empty paragraphs report stored alignment).
+    LaunchedEffect(textFieldValue.text, fieldParagraphs, textFieldValue.selection) {
+        onParagraphUiStateChanged(
+            sharedPdfTextBoxDockState(textFieldValue.text, fieldParagraphs, textFieldValue.selection),
+            textFieldValue.selection
+        )
     }
 
     val fontSizePx = style.sharedPdfTextFontSizePx(canvasSize)
@@ -1594,9 +1696,47 @@ fun SharedPdfTextBoxEditorOverlay(
         BasicTextField(
             value = textFieldValue,
             onValueChange = { nextValue ->
-                textFieldValue = nextValue
-                if (nextValue.text != text) {
-                    onTextChange(nextValue.text)
+                // Same IME-safe rules as Android: shared list/alignment
+                // maintenance first, then untouched passthrough for plain
+                // typing, selection/composition-preserving rebuild for
+                // structural edits, and span-fixup rebuild for boxes with
+                // non-default paragraphs (IME edits fragment runs).
+                // Paragraph base prefers the parent draft when texts match
+                // (echoes + dock changes), else the field (lagging echo).
+                val oldFieldText = textFieldValue.text
+                val useParentParagraphs = oldFieldText == text
+                val baseParagraphs = if (useParentParagraphs) paragraphs else fieldParagraphs
+                val result = sharedPdfTextBoxKeystroke(
+                    oldText = oldFieldText,
+                    oldParagraphs = baseParagraphs,
+                    newText = nextValue.text,
+                    newSelection = nextValue.selection,
+                    markerFallbackStyle = markerFallbackStyle
+                )
+                val newParagraphs = result.paragraphs.trimmedRichParagraphs()
+                val structural = result.shifts.isNotEmpty() ||
+                    result.text != nextValue.text ||
+                    result.selection != nextValue.selection ||
+                    newParagraphs != fieldParagraphs
+                val hasNonDefault = newParagraphs.any {
+                    it.alignment != SharedPdfRichTextAlign.LEFT ||
+                        it.listType != SharedPdfRichListType.NONE
+                }
+                textFieldValue = if (!structural && !hasNonDefault) {
+                    nextValue
+                } else {
+                    val normalized = sharedPdfTextBoxAnnotatedString(
+                        result.text,
+                        result.paragraphs,
+                        markerFallbackStyle
+                    )
+                    val composition =
+                        if (result.text == nextValue.text) nextValue.composition else null
+                    TextFieldValue(normalized, result.selection, composition)
+                }
+                fieldParagraphs = newParagraphs
+                if (result.text != text || newParagraphs != paragraphs.trimmedRichParagraphs()) {
+                    onTextChange(result.text, fieldParagraphs)
                 }
             },
             textStyle = TextStyle(
@@ -1607,7 +1747,15 @@ fun SharedPdfTextBoxEditorOverlay(
                 fontStyle = if (style.isItalic) FontStyle.Italic else FontStyle.Normal,
                 fontFamily = sharedPdfFontFamily(style.fontPath, customFontFamilies)
                     ?: sharedPdfFontFamily(style.fontName, customFontFamilies),
-                textDecoration = style.textDecoration
+                textDecoration = style.textDecoration,
+                // Empty text carries no paragraph style range: fall back to
+                // the stored alignment so the caret renders center/right.
+                textAlign = if (textFieldValue.text.isEmpty()) {
+                    fieldParagraphs.getOrElse(0) { SharedPdfRichParagraph() }
+                        .alignment.toComposeTextAlign()
+                } else {
+                    TextAlign.Unspecified
+                }
             ),
             cursorBrush = SolidColor(textColor),
             modifier = Modifier
@@ -1630,6 +1778,7 @@ fun SharedPdfTextBoxEditorOverlay(
                 .padding(horizontal = 8.dp, vertical = 6.dp)
                 .verticalScroll(rememberScrollState())
                 .focusRequester(focusRequester)
+                .onFocusChanged { isTextFieldFocused = it.isFocused }
         )
 
         SharedPdfTextResizeHandle.entries.forEach { handle ->

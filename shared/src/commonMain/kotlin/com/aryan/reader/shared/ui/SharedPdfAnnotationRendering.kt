@@ -68,6 +68,7 @@ import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxAnnotatedString
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
@@ -165,7 +166,12 @@ fun SharedPdfAnnotationOverlay(
                 val heightPx = ((bounds.bottom - bounds.top) * canvasSize.height).coerceAtLeast(18f)
                 val fontSizePx = annotation.sharedPdfTextFontSizePx(canvasSize)
                 Text(
-                    text = annotation.text,
+                    // Paragraph runs (alignment) travel in the annotated
+                    // value; box color/fonts stay on the Text params and the
+                    // background on the rect above (Android benchmark:
+                    // committed boxes render stored alignment). List markers
+                    // live in the text itself.
+                    text = sharedPdfTextBoxAnnotatedString(annotation.text, annotation.paragraphs),
                     color = Color(annotation.colorArgb),
                     fontSize = with(density) { fontSizePx.toSp() },
                     lineHeight = with(density) { (fontSizePx * 1.25f).toSp() },

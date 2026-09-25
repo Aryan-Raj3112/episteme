@@ -914,7 +914,7 @@ internal fun DesktopVerticalPdfPage(
                     SharedPdfInlineTextEditorOverlay(
                         draft = activeTextDraft?.takeIf { it.pageIndex == pageIndex },
                         canvasSize = pageCanvasSize,
-                        onTextChange = { onTextDraftChanged(it, pageCanvasSize) },
+                        onTextChange = { text, _ -> onTextDraftChanged(text, pageCanvasSize) },
                         onBoundsChange = { onTextDraftBoundsChanged(it) }
                     )
                     selectedTextAnnotationForPage?.let { annotation ->
@@ -926,8 +926,8 @@ internal fun DesktopVerticalPdfPage(
                                 style = annotation.sharedPdfTextStyle(),
                                 bounds = bounds,
                                 canvasSize = pageCanvasSize,
-                                onTextChange = { text ->
-                                    onAnnotationUpdated(annotation.copy(text = text))
+                                onTextChange = { text, paragraphs ->
+                                    onAnnotationUpdated(annotation.copy(text = text, paragraphs = paragraphs))
                                 },
                                 onBoundsChange = { nextBounds ->
                                     onAnnotationUpdated(annotation.copy(bounds = nextBounds))

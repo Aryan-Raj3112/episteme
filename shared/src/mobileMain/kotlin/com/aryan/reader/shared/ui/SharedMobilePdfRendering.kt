@@ -131,6 +131,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -200,6 +201,9 @@ import com.aryan.reader.shared.pdf.sharedPdfSelectionUnionBounds
 import com.aryan.reader.shared.pdf.sharedPdfSelectionTouchSlopPx
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfTextDraft
+import com.aryan.reader.shared.pdf.RichParagraphUiState
+import com.aryan.reader.shared.pdf.SharedPdfTextBoxPendingSelection
+import com.aryan.reader.shared.pdf.withTextAndParagraphs
 import com.aryan.reader.shared.pdf.SharedPdfTextDragState
 import com.aryan.reader.shared.pdf.sharedPdfTextDropBounds
 import com.aryan.reader.shared.pdf.containsNormalizedPoint
@@ -756,9 +760,12 @@ internal fun SharedMobilePdfVerticalPages(
     onZoomCameraChanged: (PdfZoomCamera) -> Unit,
     textDraft: SharedPdfTextDraft?,
     onTextDraftChange: (SharedPdfTextDraft) -> Unit,
-    onTextPageTap: (SharedPdfAnnotation?) -> Unit,
+    onTextPageTap: (hit: SharedPdfAnnotation?, pageIndex: Int, xRel: Float, yRel: Float, canvasSize: IntSize) -> Unit,
     richTextController: SharedPdfRichTextController?,
     isRichTextEditingEnabled: Boolean,
+    onTextDraftParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> },
+    textDraftPendingSelection: SharedPdfTextBoxPendingSelection? = null,
+    onPageCanvasSizeChanged: (Int, IntSize) -> Unit = { _, _ -> },
     showAllTextHighlights: Boolean = false,
     onAllTextHighlightsLoadingChange: (Boolean) -> Unit = {},
     onToggleChrome: () -> Unit,
@@ -930,6 +937,9 @@ internal fun SharedMobilePdfVerticalPages(
                         textDraft = textDraft,
                         onTextDraftChange = onTextDraftChange,
                         onTextPageTap = onTextPageTap,
+                        onTextDraftParagraphUiStateChanged = onTextDraftParagraphUiStateChanged,
+                        textDraftPendingSelection = textDraftPendingSelection,
+                        onPageCanvasSizeChanged = onPageCanvasSizeChanged,
                         richTextController = richTextController,
                         isRichTextEditingEnabled = isRichTextEditingEnabled,
                         displayPageIndex = page,
@@ -1115,9 +1125,12 @@ internal fun SharedMobilePdfPaginatedPages(
     onZoomCameraChanged: (PdfZoomCamera) -> Unit,
     textDraft: SharedPdfTextDraft?,
     onTextDraftChange: (SharedPdfTextDraft) -> Unit,
-    onTextPageTap: (SharedPdfAnnotation?) -> Unit,
+    onTextPageTap: (hit: SharedPdfAnnotation?, pageIndex: Int, xRel: Float, yRel: Float, canvasSize: IntSize) -> Unit,
     richTextController: SharedPdfRichTextController?,
     isRichTextEditingEnabled: Boolean,
+    onTextDraftParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> },
+    textDraftPendingSelection: SharedPdfTextBoxPendingSelection? = null,
+    onPageCanvasSizeChanged: (Int, IntSize) -> Unit = { _, _ -> },
     onPageChanged: (Int) -> Unit,
     onManualPageTurnStarted: () -> Unit,
     onToggleChrome: () -> Unit,
@@ -1481,6 +1494,9 @@ internal fun SharedMobilePdfPaginatedPages(
                                     textDraft = textDraft,
                                     onTextDraftChange = onTextDraftChange,
                                     onTextPageTap = onTextPageTap,
+                                    onTextDraftParagraphUiStateChanged = onTextDraftParagraphUiStateChanged,
+                                    textDraftPendingSelection = textDraftPendingSelection,
+                                    onPageCanvasSizeChanged = onPageCanvasSizeChanged,
                                     richTextController = richTextController,
                                     isRichTextEditingEnabled = isRichTextEditingEnabled,
                                     displayPageIndex = displayPage,
@@ -2101,10 +2117,13 @@ internal fun SharedMobilePdfPageSurface(
     strokeWidth: Float,
     textDraft: SharedPdfTextDraft?,
     onTextDraftChange: (SharedPdfTextDraft) -> Unit,
-    onTextPageTap: (SharedPdfAnnotation?) -> Unit,
+    onTextPageTap: (hit: SharedPdfAnnotation?, pageIndex: Int, xRel: Float, yRel: Float, canvasSize: IntSize) -> Unit,
     richTextController: SharedPdfRichTextController?,
     isRichTextEditingEnabled: Boolean,
     displayPageIndex: Int,
+    onTextDraftParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> },
+    textDraftPendingSelection: SharedPdfTextBoxPendingSelection? = null,
+    onPageCanvasSizeChanged: (Int, IntSize) -> Unit = { _, _ -> },
     onTextDragStart: (Offset, IntSize, Int) -> Unit = { _, _, _ -> },
     onTextDrag: (Offset) -> Unit = {},
     onTextDragEnd: () -> Unit = {},
@@ -2284,6 +2303,7 @@ internal fun SharedMobilePdfPageSurface(
             .onSizeChanged {
                 localCanvasSize = it
                 onCanvasSizeChanged(it)
+                onPageCanvasSizeChanged(pageIndex, it)
             }
             .onGloballyPositioned { coordinates ->
                 val page = coordinates.boundsInWindow()
@@ -2590,31 +2610,17 @@ internal fun SharedMobilePdfPageSurface(
                                         it.bounds?.containsNormalizedPoint(point.x, point.y) == true
                                 }
                                 if (hit != null) {
-                                    onTextPageTap(hit)
+                                    onTextPageTap(hit, pageIndex, point.x, point.y, localCanvasSize)
                                     return@detectTapGestures
                                 }
                                 if (textDraft != null) {
-                                    onTextPageTap(null)
+                                    onTextPageTap(null, pageIndex, point.x, point.y, localCanvasSize)
                                     return@detectTapGestures
                                 }
-                                // No box under the tap: place the flowing document cursor
-                                // (Android's RichTextLayer tap handling, handled at surface level
-                                // so box hit-testing wins on box areas).
-                                val controller = richTextController ?: return@detectTapGestures
-                                if (!isRichTextEditingEnabled) return@detectTapGestures
-                                val marginX = localCanvasSize.width * 0.1f
-                                val marginY = localCanvasSize.height * 0.08f
-                                val editorWidth = localCanvasSize.width - marginX * 2f
-                                val editorHeight = localCanvasSize.height - marginY * 2f
-                                val editorLocal = Offset(offset.x - marginX, offset.y - marginY)
-                                if (
-                                    editorLocal.x >= 0f &&
-                                    editorLocal.y >= 0f &&
-                                    editorLocal.x <= editorWidth &&
-                                    editorLocal.y <= editorHeight
-                                ) {
-                                    controller.handleTapOnPage(displayPageIndex, editorLocal)
-                                }
+                                // No box under the tap: parent-side tap-to-create
+                                // (page rich text is retired and never takes
+                                // taps; see SharedMobilePdfReaderScreen).
+                                onTextPageTap(null, pageIndex, point.x, point.y, localCanvasSize)
                             }
                         }
                     }
@@ -2694,12 +2700,14 @@ internal fun SharedMobilePdfPageSurface(
                 modifier = Modifier.fillMaxSize()
             )
             if (richTextController != null && localCanvasSize.width > 0 && localCanvasSize.height > 0) {
+                // Retired editor (Android benchmark ENABLE_PAGE_RICH_TEXT):
+                // legacy page text keeps rendering, but never edits.
                 SharedPdfRichTextLayer(
                     pageIndex = displayPageIndex,
                     controller = richTextController,
                     pageWidth = localCanvasSize.width.toFloat(),
                     pageHeight = localCanvasSize.height.toFloat(),
-                    isTextEditingEnabled = isRichTextEditingEnabled,
+                    isTextEditingEnabled = false,
                     isDarkMode = activeTheme.isDark,
                     tapHandlingEnabled = false
                 )
@@ -2732,9 +2740,12 @@ internal fun SharedMobilePdfPageSurface(
                     bounds = draft.bounds,
                     canvasSize = localCanvasSize,
                     customFontFamilies = customFontFamilies,
-                    onTextChange = { nextText ->
-                        onTextDraftChange(draft.withText(nextText, localCanvasSize))
+                    paragraphs = draft.paragraphs,
+                    onTextChange = { nextText, nextParagraphs ->
+                        onTextDraftChange(draft.withTextAndParagraphs(nextText, nextParagraphs, localCanvasSize))
                     },
+                    onParagraphUiStateChanged = onTextDraftParagraphUiStateChanged,
+                    pendingSelection = textDraftPendingSelection,
                     onBoundsChange = { nextBounds ->
                         onTextDraftChange(draft.withBounds(nextBounds))
                     },
@@ -2844,14 +2855,16 @@ internal fun SharedMobilePdfBlankPageSurface(
                 blankCanvasSize.width > 0 &&
                 blankCanvasSize.height > 0
             ) {
+                // Retired editor: legacy text renders, blank pages never
+                // start new flowing text (text boxes only).
                 SharedPdfRichTextLayer(
                     pageIndex = displayIndex,
                     controller = richTextController,
                     pageWidth = blankCanvasSize.width.toFloat(),
                     pageHeight = blankCanvasSize.height.toFloat(),
-                    isTextEditingEnabled = isRichTextEditingEnabled,
+                    isTextEditingEnabled = false,
                     isDarkMode = activeTheme.isDark,
-                    tapHandlingEnabled = true
+                    tapHandlingEnabled = false
                 )
             }
             if (showPageNumberOverlay) {
