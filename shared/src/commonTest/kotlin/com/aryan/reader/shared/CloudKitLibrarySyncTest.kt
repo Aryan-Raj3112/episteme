@@ -93,4 +93,14 @@ class CloudKitLibrarySyncTest {
         assertEquals("BookState:b1", cloudKitBookStateRecordName("b1"))
         assertEquals("BookContent:b1", cloudKitBookContentRecordName("b1"))
     }
+
+    @Test
+    fun `tombstone publishes only when remote is missing or older`() {
+        assertTrue(shouldPublishCloudKitTombstone(localDeletedAt = 100L, remoteTombstoneClock = null))
+        assertTrue(shouldPublishCloudKitTombstone(localDeletedAt = 200L, remoteTombstoneClock = 100L))
+        // Equal clock = already published: this is the re-save loop that made
+        // every tombstone appear in each pass's dirty set.
+        assertFalse(shouldPublishCloudKitTombstone(localDeletedAt = 100L, remoteTombstoneClock = 100L))
+        assertFalse(shouldPublishCloudKitTombstone(localDeletedAt = 50L, remoteTombstoneClock = 100L))
+    }
 }

@@ -46,6 +46,57 @@ private fun mergedCloudBookTombstones(
         .filter { it.deletedAt > (activeBooks[it.bookId] ?: Long.MIN_VALUE) }
 }
 
+private fun cloudBookLwwTimestamp(book: BookItem): Long = book.cloudModifiedTimestamp()
+
+/**
+ * Whether a post-pull merge left anything the remote does not already have.
+ *
+ * After a pull the UI used to fire an unconditional push, doubling every
+ * sync pass even when the remote was already authoritative. This predicate
+ * keeps the echo only when a local row genuinely wins a comparison (or has
+ * never been shared): book state, tombstones, shelves, fonts, and sidecars,
+ * using the same shared LWW clocks every backend consumes.
+ */
+fun cloudSnapshotHasLocalUpdates(
+    local: SharedLibrarySnapshot,
+    remote: SharedLibrarySnapshot,
+): Boolean {
+    val remoteBooksById = remote.books.associateBy(BookItem::id)
+    val remoteTombstonesById = remote.bookTombstones.associateBy(CloudBookTombstone::bookId)
+    val remoteShelvesById = remote.shelfRecords.associateBy(ShelfRecord::id)
+    val remoteFontsById = remote.customFonts.associateBy(CustomFontItem::id)
+    val remoteSidecarsById = remote.pdfSidecars.associateBy(SharedPdfCloudSidecarSnapshot::bookId)
+
+    val booksChanged = local.books.any { book ->
+        val remoteBook = remoteBooksById[book.id]
+        remoteBook == null || cloudBookLwwTimestamp(book) > cloudBookLwwTimestamp(remoteBook)
+    }
+    if (booksChanged) return true
+
+    val tombstonesChanged = local.bookTombstones.any { tombstone ->
+        val remoteTombstone = remoteTombstonesById[tombstone.bookId]
+        remoteTombstone == null || tombstone.deletedAt > remoteTombstone.deletedAt
+    }
+    if (tombstonesChanged) return true
+
+    val shelvesChanged = local.shelfRecords.any { shelf ->
+        val remoteShelf = remoteShelvesById[shelf.id]
+        remoteShelf == null || shelf.modifiedAt > remoteShelf.modifiedAt
+    }
+    if (shelvesChanged) return true
+
+    val fontsChanged = local.customFonts.any { font ->
+        val remoteFont = remoteFontsById[font.id]
+        remoteFont == null || font.timestamp > remoteFont.timestamp
+    }
+    if (fontsChanged) return true
+
+    return local.pdfSidecars.any { sidecar ->
+        val remoteSidecar = remoteSidecarsById[sidecar.bookId]
+        remoteSidecar == null || sidecar.timestamp > remoteSidecar.timestamp
+    }
+}
+
 /**
  * Applies cloud reading state to books already present on this device.
  *

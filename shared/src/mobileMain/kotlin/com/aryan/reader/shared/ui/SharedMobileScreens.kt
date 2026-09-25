@@ -31,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Surface
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -61,6 +62,12 @@ fun SharedMobileAppDrawerContent(
     },
     isSyncEnabled: Boolean,
     isFolderSyncEnabled: Boolean,
+    /**
+     * True while a cloud pass is in flight; the Sync row shows a spinner in
+     * place of the Switch. Defaults false so Android (which owns its sync
+     * progress in `MainViewModel`) is unchanged.
+     */
+    isCloudSyncing: Boolean = false,
     onSignInClick: () -> Unit,
     onSignOutClick: () -> Unit,
     onSyncToggle: (Boolean) -> Unit,
@@ -280,9 +287,15 @@ fun SharedMobileAppDrawerContent(
                                     tint = MaterialTheme.colorScheme.primary,
                                 )
                             }
+                            if (isCloudSyncing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                            }
                             Switch(
                                 checked = isSyncEnabled,
-                                enabled = isProUser,
+                                enabled = isProUser && !isCloudSyncing,
                                 onCheckedChange = { enabled ->
                                     if (isProUser) onSyncToggle(enabled) else onProClick()
                                 },

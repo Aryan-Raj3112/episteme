@@ -224,6 +224,37 @@ final class CloudKitLibraryTransport {
         return try await fetchAsset(recordName: name, key: "contentAsset")
     }
 
+    /// Batch `BookContent` asset download by book id. `database.records(for:)`
+    /// fetches every record (with its `CKAsset`) in one operation, so a
+    /// multi-book pull does one round trip instead of one per book. Maps each
+    /// requested id to its materialised asset URL; missing/failed records are
+    /// simply absent from the result.
+    func fetchContentAssets(bookIds: [String]) async throws -> [String: URL] {
+        guard !bookIds.isEmpty else { return [:] }
+        let idToBook = Dictionary(
+            uniqueKeysWithValues: bookIds.map {
+                (CKRecord.ID(
+                    recordName: CloudKitLibrarySyncKt.cloudKitBookContentRecordName(bookId: $0),
+                    zoneID: zoneID
+                ), $0)
+            }
+        )
+        let result: [String: URL]
+        do {
+            let fetched = try await database.records(for: Array(idToBook.keys))
+            result = fetched.reduce(into: [:]) { acc, entry in
+                guard let bookId = idToBook[entry.key],
+                      case .success(let record) = entry.value,
+                      let url = (record["contentAsset"] as? CKAsset)?.fileURL else { return }
+                acc[bookId] = url
+            }
+        } catch {
+            throw mapCKError(error)
+        }
+        logger.info("cloudkit_sync.fetch_assets requested=\(bookIds.count) got=\(result.count)")
+        return result
+    }
+
     /// Download one `FontContent` asset (font bytes).
     func fetchFontAsset(fontId: String) async throws -> URL? {
         let name = CloudKitLibrarySyncKt.cloudKitLibraryRecordName(

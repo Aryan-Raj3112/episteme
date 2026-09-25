@@ -9,8 +9,10 @@ import com.aryan.reader.shared.pdf.SharedPdfCloudSidecarSnapshot
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 class CloudLibrarySnapshotMergeTest {
     @Test
@@ -403,5 +405,54 @@ class CloudLibrarySnapshotMergeTest {
     fun `shelf ref synthesis stamps clock plus index for new pairs`() {
         assertEquals(103L, sharedShelfRefAddedAt(existingAddedAt = null, shelfClock = 100L, index = 3))
         assertEquals(7L, sharedShelfRefAddedAt(existingAddedAt = null, shelfClock = 0L, index = 7))
+    }
+
+    private fun book(id: String, readingClock: Long) = BookItem(
+        id = id,
+        path = "/local/$id.epub",
+        type = FileType.EPUB,
+        displayName = "$id.epub",
+        timestamp = 1L,
+        readingPositionModifiedTimestamp = readingClock,
+    )
+
+    @Test
+    fun `a pull that only adopted remote state does not need an echo push`() {
+        val local = SharedLibrarySnapshot(books = listOf(book("a", 100L)))
+        val remote = SharedLibrarySnapshot(books = listOf(book("a", 100L).copy(path = "/remote/a.epub")))
+        assertFalse(cloudSnapshotHasLocalUpdates(local = local, remote = remote))
+    }
+
+    @Test
+    fun `a newer local book position still echoes after a pull`() {
+        val local = SharedLibrarySnapshot(books = listOf(book("a", 300L)))
+        val remote = SharedLibrarySnapshot(books = listOf(book("a", 100L)))
+        assertTrue(cloudSnapshotHasLocalUpdates(local = local, remote = remote))
+    }
+
+    @Test
+    fun `a local book the remote has never seen echoes`() {
+        val local = SharedLibrarySnapshot(books = listOf(book("new", 5L)))
+        val remote = SharedLibrarySnapshot(books = listOf(book("a", 100L)))
+        assertTrue(cloudSnapshotHasLocalUpdates(local = local, remote = remote))
+    }
+
+    @Test
+    fun `a newer local tombstone echoes`() {
+        val local = SharedLibrarySnapshot(
+            books = listOf(book("a", 100L)),
+            bookTombstones = listOf(CloudBookTombstone(bookId = "gone", deletedAt = 900L)),
+        )
+        val remote = SharedLibrarySnapshot(
+            books = listOf(book("a", 100L)),
+            bookTombstones = listOf(CloudBookTombstone(bookId = "gone", deletedAt = 900L)),
+        )
+        assertFalse(cloudSnapshotHasLocalUpdates(local = local, remote = remote))
+        assertTrue(
+            cloudSnapshotHasLocalUpdates(
+                local = local.copy(bookTombstones = listOf(CloudBookTombstone(bookId = "gone", deletedAt = 1000L))),
+                remote = remote,
+            )
+        )
     }
 }

@@ -181,6 +181,7 @@ import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.canOpenMobilePdfTab
 import com.aryan.reader.shared.canUseCloudSync
 import com.aryan.reader.shared.cloudSyncSetupRoute
+import com.aryan.reader.shared.cloudSnapshotHasLocalUpdates
 import com.aryan.reader.shared.mergeCloudLibrarySnapshotWithDownloadedBooks
 import com.aryan.reader.shared.enqueueMobileFolderScan
 import com.aryan.reader.shared.mobileExternalFileCloseAction
@@ -520,6 +521,15 @@ class ReaderIosBridge internal constructor(
     internal var pendingCloudSync by mutableStateOf<IosPendingCloudSync?>(null)
         private set
     internal var cloudSyncStatus by mutableStateOf<String?>(null)
+        private set
+    /**
+     * True while a pull/push pass is in flight, for the drawer's Sync
+     * indicator. Driven entirely from the request/complete bridge boundary
+     * (both Drive and CloudKit paths funnel through it), so no native change
+     * is required. Coalesced/generation-mismatched passes deliberately leave
+     * it true: the still-running pass clears it via `completeCloudSync`.
+     */
+    internal var isCloudSyncing by mutableStateOf(false)
         private set
 
     internal var latestNativeEvent by mutableStateOf<String?>(null)
@@ -1490,11 +1500,13 @@ class ReaderIosBridge internal constructor(
     }
 
     fun requestCloudSync(snapshotJson: String) {
-        cloudSyncStatus = "Checking cloud…"
+        isCloudSyncing = true
+        cloudSyncStatus = "Checking cloud..."
         cloudSyncHandler?.invoke(snapshotJson)
     }
 
     fun uploadCloudSnapshot(snapshotJson: String) {
+        isCloudSyncing = true
         cloudUploadHandler?.invoke(snapshotJson)
     }
 
@@ -1504,6 +1516,7 @@ class ReaderIosBridge internal constructor(
         downloadedBookPaths: List<String>,
         status: String,
     ) {
+        isCloudSyncing = false
         pendingCloudSync = remoteSnapshotJson
             ?.takeIf(String::isNotBlank)
             ?.let { json ->
@@ -1521,6 +1534,12 @@ class ReaderIosBridge internal constructor(
 
     internal fun consumeCloudSnapshot() {
         pendingCloudSync = null
+    }
+
+    /** Clears the drawer indicator when the session ends mid-pass. */
+    internal fun resetCloudSyncProgress() {
+        isCloudSyncing = false
+        cloudSyncStatus = null
     }
 
     // ---- Cloud-folder transfer executor (P0 #4) ----
@@ -3049,6 +3068,9 @@ private fun ReaderIosApp(
         val account = bridge.accountState
         val previousUid = state.currentUser?.uid
         state = if (account.uid == null) {
+            // A pass killed by sign-out never reaches `completeCloudSync`;
+            // clear the drawer indicator here so it cannot stick.
+            bridge.resetCloudSyncProgress()
             state.copy(
                 currentUser = null,
                 isProUser = false,
@@ -3807,6 +3829,25 @@ private fun ReaderIosApp(
         )
     }
 
+    /**
+     * Android parity (`MainViewModel.uploadSingleBookMetadata` on reader
+     * close): the metadata/position a book accumulates during reading is
+     * pushed the moment the reader closes, so the other device sees the new
+     * position within seconds instead of waiting for the next foreground
+     * pull. Push-only (no downloads) keeps it cheap: the CloudKit push pass
+     * fetches remote state, classifies dirty, and saves only winners.
+     */
+    fun uploadCloudSnapshotOnClose() {
+        if (!state.isSyncEnabled || !cloudSyncEligibleIgnoringMasterToggle()) return
+        bridge.uploadCloudSnapshot(
+            SharedLibrarySnapshotJson.encode(
+                state.toIosCloudSnapshot()
+                    .withStableIosBookPaths()
+                    .withStableIosAudiobookPaths()
+            )
+        )
+    }
+
     LaunchedEffect(
         pendingCloudSyncSetup,
         state.isProUser,
@@ -4005,6 +4046,20 @@ private fun ReaderIosApp(
         }
     }
 
+    // Startup / entitlement re-arm. The first foreground event can fire
+    // before StoreKit's entitlement check returns, so a signed-in Pro user
+    // would otherwise wait for the *next* foreground transition (or a manual
+    // tap) for their initial pull. Android's auth emission drives
+    // verifyDeviceForProUser + SyncWorker enqueue; iOS mirrors that by
+    // re-arming pull on `isProUser`/`isSyncEnabled` flipping true.
+    var cloudStartupPullArmed by remember { mutableStateOf(false) }
+    LaunchedEffect(state.isProUser, state.isSyncEnabled) {
+        if (cloudStartupPullArmed) return@LaunchedEffect
+        if (!state.isProUser || !state.isSyncEnabled) return@LaunchedEffect
+        cloudStartupPullArmed = true
+        requestCloudSyncIfEligible()
+    }
+
     // Account switches reload the per-account folder selection, mirroring
     // Android's CloudFolderSyncPrefs.load(accountId) per auth emission.
     LaunchedEffect(iosAccountId) {
@@ -4103,6 +4158,7 @@ private fun ReaderIosApp(
             showCreditsBalance = IosFeatureGating.SHOW_CREDITS_PURCHASE,
             isSyncEnabled = state.isSyncEnabled,
             isFolderSyncEnabled = state.isFolderSyncEnabled,
+            isCloudSyncing = bridge.isCloudSyncing,
             // Android parity (`HomeScreen.AppDrawerContent.onSignInClick` ->
             // `viewModel.signIn`): trigger Apple sign-in directly instead of
             // opening the account screen.
@@ -4203,6 +4259,11 @@ private fun ReaderIosApp(
             clearIosReaderSession()
             state = state.withoutMobileReaderSession()
             if (!finishManagedExternalOpen(book)) {
+                // Android parity (`MainViewModel` reader-close): the reading
+                // state accumulated during the session is pushed the moment
+                // the reader closes. The old iOS path only pulled, so the
+                // other device waited until the next foreground transition.
+                uploadCloudSnapshotOnClose()
                 requestCloudSyncIfEligible()
             }
         }
@@ -4352,13 +4413,20 @@ private fun ReaderIosApp(
                 showMessage("The book could not be downloaded")
             }
         }
-        bridge.uploadCloudSnapshot(
-            SharedLibrarySnapshotJson.encode(
-                mergedSnapshot
-                    .withStableIosBookPaths()
-                    .withStableIosAudiobookPaths()
+        // Push only what the merge actually left local. After a pull the old
+        // code pushed unconditionally, doubling every sync even when the
+        // remote was already authoritative. Compare pre-merge local vs the
+        // just-fetched remote with the shared LWW clocks (Android applies
+        // updates without echoing a full snapshot back).
+        if (cloudSnapshotHasLocalUpdates(local = localSnapshot, remote = remoteSnapshot)) {
+            bridge.uploadCloudSnapshot(
+                SharedLibrarySnapshotJson.encode(
+                    mergedSnapshot
+                        .withStableIosBookPaths()
+                        .withStableIosAudiobookPaths()
+                )
             )
-        )
+        }
         bridge.consumeCloudSnapshot()
     }
 
@@ -4580,7 +4648,20 @@ private fun ReaderIosApp(
                 addBooksToLibrary(importedBooks, "Added $importedCount import(s)")
             }
         }
-        val presentationCandidates = state.rawLibraryBooks.filter { book ->
+        // Presentation extraction (covers/metadata) moved to the dedicated
+        // `pendingPresentationIds` effect below, so books that arrive via a
+        // CloudKit download also get a cover without being opened.
+    }
+
+    // Cover/metadata extraction for every book that still lacks it. Keyed on
+    // the *pending set*, not the whole library, so routine state churn
+    // (page turns) cannot cancel an in-flight extraction; each persisted
+    // result shrinks the set and re-triggers the effect for the remainder.
+    // Runs after imports AND after a CloudKit pull materializes downloaded
+    // books, so grids populate without opening a book (Android parity:
+    // `BookImporter` extracts on import/download).
+    val pendingPresentationIds = state.rawLibraryBooks
+        .filter { book ->
             book.path != null &&
                 book.type in IosPresentationMetadataTypes &&
                 (
@@ -4590,7 +4671,27 @@ private fun ReaderIosApp(
                         book.seriesName.isNullOrBlank()
                 )
         }
-        presentationCandidates.forEach { book ->
+        .map { it.id }
+    // Key on emptiness so a mid-loop state update (which shrinks the list)
+    // does not cancel the coroutine; the loop re-reads the pending set each
+    // iteration, so newly downloaded books get picked up too. Books whose
+    // extraction yields nothing usable are tracked in `attempted` so they
+    // cannot re-match and spin forever.
+    LaunchedEffect(pendingPresentationIds.isNotEmpty()) {
+        val attempted = mutableSetOf<String>()
+        while (true) {
+            val book = state.rawLibraryBooks.firstOrNull { candidate ->
+                candidate.id !in attempted &&
+                    candidate.path != null &&
+                    candidate.type in IosPresentationMetadataTypes &&
+                    (
+                        candidate.coverImagePath.isNullOrBlank() ||
+                            candidate.title.isNullOrBlank() ||
+                            candidate.title == candidate.displayName.substringBeforeLast('.', candidate.displayName) ||
+                            candidate.seriesName.isNullOrBlank()
+                    )
+            } ?: break
+            attempted += book.id
             // PDF cover/metadata extraction rasterizes a page through PDFium; keep it off the
             // UI thread and serialized with the shared reader pipeline (Android parity).
             val presentation = withContext(Dispatchers.Default) {

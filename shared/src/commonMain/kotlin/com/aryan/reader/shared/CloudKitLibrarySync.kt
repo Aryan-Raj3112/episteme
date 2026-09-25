@@ -140,6 +140,19 @@ fun shouldFetchCloudKitBookContent(clocks: CloudKitBookClocks): Boolean =
         remoteDeleted = clocks.remoteDeleted,
     )
 
+/**
+ * Whether a deletion tombstone must be published. The previous check compared
+ * against the remote *BookState* clock, but a deleted book has no BookState,
+ * so every pass re-published every tombstone forever (the repeating
+ * `BookTombstone` entries in the save logs). The correct comparison is the
+ * remote tombstone clock itself: publish only when no remote tombstone exists
+ * or the local deletion is strictly newer.
+ */
+fun shouldPublishCloudKitTombstone(
+    localDeletedAt: Long,
+    remoteTombstoneClock: Long?,
+): Boolean = remoteTombstoneClock == null || localDeletedAt > remoteTombstoneClock
+
 enum class CloudKitLibraryRetryKind {
     /** Honor server `retryAfter` (rate-limited / zone-busy / unavailable). */
     RETRY_AFTER,

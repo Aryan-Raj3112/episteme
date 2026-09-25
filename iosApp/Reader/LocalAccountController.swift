@@ -3360,16 +3360,18 @@ final class LocalAccountController: NSObject, ObservableObject {
                 assetURL: localURL
             ))
         }
-        // Tombstones publish with the deletion clock as the local side (same
-        // shared LWW rule as Firestore): only winners hit the wire.
+        // Tombstones publish only when the remote tombstone is missing or the
+        // local deletion is strictly newer. The previous comparison used the
+        // remote BookState clock, but a deleted book has no BookState, so every
+        // pass re-published every tombstone (the repeating `BookTombstone`
+        // entries in the save logs).
         for tombstone in CloudKitLibraryMapper.parseTombstones(preparedLocalJSON) {
             guard let bookId = tombstone["bookId"] as? String, !bookId.isEmpty else { continue }
             let deletedAt = (tombstone["deletedAt"] as? NSNumber)?.int64Value ?? 0
-            let remoteTs = (maps.states[bookId]?["lastModifiedTimestamp"] as? NSNumber)?.int64Value ?? 0
-            guard maps.states[bookId] == nil || CloudSyncDecisionsKt.shouldUploadLocalCloudBookUpdate(
-                localModifiedTimestamp: deletedAt,
-                remoteModifiedTimestamp: remoteTs,
-                localSidecarModifiedTimestamp: 0
+            let remoteTombstone = maps.tombstones[bookId]
+            guard CloudKitLibrarySyncKt.shouldPublishCloudKitTombstone(
+                localDeletedAt: deletedAt,
+                remoteTombstoneClock: remoteTombstone.map { KotlinLong(longLong: $0) }
             ) else { continue }
             records.append(cloudKitTransport.genericRecord(
                 recordType: CloudKitLibrarySyncKt.CLOUDKIT_RECORD_BOOK_TOMBSTONE,
@@ -3677,9 +3679,9 @@ final class LocalAccountController: NSObject, ObservableObject {
     }
 
     /// Download only winning remote payloads (clock gate): local file missing
-    /// or remote content ts strictly newer. Assets are fetched lazily by
-    /// record name — query results never carry asset bytes, so we download
-    /// only the books this pass actually needs.
+    /// or remote content ts strictly newer. Batched via `fetchContentAssets`
+    /// so a multi-book pull is one round trip, not one per book. Assets are
+    /// fetched lazily only for books this pass actually needs.
     private func cloudKitDownloadMissingBooks(
         localJSON: String,
         maps: CloudKitRemoteMaps
@@ -3690,18 +3692,19 @@ final class LocalAccountController: NSObject, ObservableObject {
                 return (id, book)
             }
         )
-        let imports = try cloudImportsDirectory()
-        var downloaded: [DownloadedCloudBook] = []
+        // Pass 1: decide what to download from clocks alone (no asset fetch).
+        struct Pending { let bookId: String; let fields: [String: Any]; let contentTs: Int64 }
+        var pending: [Pending] = []
         for (bookId, fields) in maps.states {
             guard maps.tombstones[bookId] == nil else { continue }
             let remoteContentTs = maps.contentModified[bookId] ?? 0
             guard remoteContentTs > 0 else { continue }
             let local = localById[bookId]
             // The snapshot's `fileContentModifiedTimestamp` is 0 for iOS
-            // imports (only the EPUB metadata edit sets it), so the gate must
-            // read the real local file mtime, mirroring `uploadCloud
-            // BookContents`. Otherwise every remote book re-downloads each
-            // pass (the exact mirror of the upload-side `content=0` bug).
+            // imports (only the EPUB metadata edit sets it), so the gate reads
+            // the real local file mtime (mirrors `uploadCloudBookContents`).
+            // Otherwise every remote book re-downloads each pass, the exact
+            // mirror of the upload-side `content=0` bug.
             let localURL = (local?["path"] as? String).flatMap(resolveCloudBookPath)
             let localExists = localURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
             let localTs = localURL.flatMap { url -> Int64? in
@@ -3711,20 +3714,27 @@ final class LocalAccountController: NSObject, ObservableObject {
                 return mtime.map { Int64($0 * 1000) }
             } ?? (local?["fileContentModifiedTimestamp"] as? NSNumber)?.int64Value ?? 0
             guard !localExists || remoteContentTs > localTs else { continue }
-            // Only download bytes for books we actually need.
-            guard let assetURL = try await cloudKitTransport.fetchContentAsset(bookId: bookId) else { continue }
-            let type = (fields["type"] as? String) ?? ""
+            pending.append(Pending(bookId: bookId, fields: fields, contentTs: remoteContentTs))
+        }
+        guard !pending.isEmpty else { return [] }
+        // Pass 2: one batched download for every book this pass needs.
+        let assets = try await cloudKitTransport.fetchContentAssets(bookIds: pending.map(\.bookId))
+        let imports = try cloudImportsDirectory()
+        var downloaded: [DownloadedCloudBook] = []
+        for entry in pending {
+            guard let assetURL = assets[entry.bookId] else { continue }
+            let type = (entry.fields["type"] as? String) ?? ""
             let ext = CloudBook.primaryExtension[type] ?? "bin"
-            let destination = imports.appendingPathComponent("\(bookId).\(ext)")
-            let temporary = imports.appendingPathComponent(".\(bookId).\(UUID().uuidString).download")
+            let destination = imports.appendingPathComponent("\(entry.bookId).\(ext)")
+            let temporary = imports.appendingPathComponent(".\(entry.bookId).\(UUID().uuidString).download")
             try? FileManager.default.removeItem(at: temporary)
             try FileManager.default.copyItem(at: assetURL, to: temporary)
             try commitStagedCloudFile(temporary, to: destination)
             try? FileManager.default.setAttributes(
-                [.modificationDate: Date(timeIntervalSince1970: Double(remoteContentTs) / 1000)],
+                [.modificationDate: Date(timeIntervalSince1970: Double(entry.contentTs) / 1000)],
                 ofItemAtPath: destination.path
             )
-            downloaded.append(DownloadedCloudBook(id: bookId, path: destination.path))
+            downloaded.append(DownloadedCloudBook(id: entry.bookId, path: destination.path))
         }
         return downloaded
     }
