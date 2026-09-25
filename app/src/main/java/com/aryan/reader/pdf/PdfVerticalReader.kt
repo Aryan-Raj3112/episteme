@@ -314,6 +314,7 @@ internal fun PdfVerticalReader(
     selectedTextBoxId: String? = null,
     onTextBoxChange: (PdfTextBox) -> Unit = {},
     onTextBoxSelect: (String) -> Unit = {},
+    onTextBoxMenuAction: (PdfTextBoxMenuAction) -> Unit = {},
     onTextBoxParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> },
     textBoxPendingSelection: TextBoxPendingSelection? = null,
     /**
@@ -2869,6 +2870,7 @@ internal fun PdfVerticalReader(
                                     selectedTextBoxId = selectedTextBoxId,
                                     onTextBoxChange = onTextBoxChange,
                                     onTextBoxSelect = onTextBoxSelect,
+                                    onTextBoxMenuAction = onTextBoxMenuAction,
                                     onTextBoxParagraphUiStateChanged = onTextBoxParagraphUiStateChanged,
                                     textBoxPendingSelection = textBoxPendingSelection,
                                     userHighlights = effectiveUserHighlightsByPage[page.index].orEmpty(),

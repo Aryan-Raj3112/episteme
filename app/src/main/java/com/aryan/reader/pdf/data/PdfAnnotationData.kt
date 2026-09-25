@@ -60,7 +60,14 @@ data class PdfTextBox(
     val isStrikeThrough: Boolean = false,
     val fontPath: String? = null,
     val fontName: String? = null,
-    val paragraphs: List<SharedPdfRichParagraph> = emptyList()
+    val paragraphs: List<SharedPdfRichParagraph> = emptyList(),
+    /**
+     * Locked boxes keep their text and styles editable but cannot be moved,
+     * resized, or duplicated-into-new-geometry; handles and the drag pill
+     * disappear while locked. Persisted via the legacy sidecar codec so the
+     * flag survives sessions and cloud sync.
+     */
+    val isLocked: Boolean = false,
 )
 
 data class PdfAnnotation(
@@ -149,6 +156,7 @@ object TextBoxSerializer {
                 fontPath = box.fontPath,
                 fontName = box.fontName,
                 paragraphs = box.paragraphs.trimmedRichParagraphs(),
+                isLocked = box.isLocked,
             )
         })
     }
@@ -170,6 +178,7 @@ object TextBoxSerializer {
                 fontPath = box.fontPath,
                 fontName = box.fontName,
                 paragraphs = box.paragraphs,
+                isLocked = box.isLocked,
             )
         }
     }

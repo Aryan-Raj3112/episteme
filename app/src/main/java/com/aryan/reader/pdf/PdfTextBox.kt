@@ -24,16 +24,27 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.IconButton
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -108,6 +119,9 @@ private const val TEXT_BOX_DRAG_PILL_TOUCH_WIDTH_DP = 72f
 private const val TEXT_BOX_DRAG_PILL_TOUCH_HEIGHT_DP = 48f
 private const val TEXT_BOX_DRAG_PILL_GAP_DP = 8f
 
+/** Vertical gap between a duplicated text box and its original (page-relative). */
+const val PDF_TEXT_BOX_DUPLICATE_GAP_REL = 0.04f
+
 /** Stable tag for tracing text-box selection, focus, and IME value delivery. */
 internal const val PDF_TEXT_BOX_INPUT_TRACE_TAG = "PdfTextBoxInputTrace"
 
@@ -140,6 +154,9 @@ internal fun pdfTextBoxTraceParagraphs(paragraphs: List<SharedPdfRichParagraph>)
 /** Compact dock-state summary for trace logs. */
 internal fun pdfTextBoxTraceDockState(state: RichParagraphUiState): String =
     "${state.alignment} b=${state.isBulleted} n=${state.isNumbered}"
+
+/** Compact per-box action menu entries shown above a selected text box. */
+enum class PdfTextBoxMenuAction { DELETE, DUPLICATE, LOCK }
 
 /**
  * One-shot post-toggle cursor for a text box (Android only).
@@ -237,6 +254,9 @@ fun ResizableTextBox(
     // pre-toggle offset. Never the live mirror — see
     // TextBoxPendingSelection.
     pendingSelection: TextBoxPendingSelection? = null,
+    // Compact box menu (delete / duplicate / lock). Null hides the menu
+    // (e.g. the pagination drag preview where actions make no sense).
+    onTextBoxMenuAction: ((PdfTextBoxMenuAction) -> Unit)? = null,
 ) {
     if (pageWidthPx <= 0 || pageHeightPx <= 0) return
 
@@ -515,6 +535,12 @@ fun ResizableTextBox(
     val dragPillWidthPx = with(density) { dragPillTouchWidth.toPx() }
     val dragPillHeightPx = with(density) { dragPillTouchHeight.toPx() }
     val dragPillGapPx = with(density) { (TEXT_BOX_DRAG_PILL_GAP_DP / scale).dp.toPx() }
+    // Compact action menu: constant on-screen size, opposite end from the pill.
+    val showActionMenu = isSelected && onTextBoxMenuAction != null
+    val actionMenuWidthDp = 100.dp
+    val actionMenuHeightDp = 24.dp
+    val actionMenuWidthPx = with(density) { actionMenuWidthDp.toPx() / scale }
+    val actionMenuHeightPx = with(density) { actionMenuHeightDp.toPx() / scale }
     val chromeLayout = calculateTextBoxChromeLayout(
         textBoundsPx = currentRectPx,
         isSelected = isSelected,
@@ -522,7 +548,10 @@ fun ResizableTextBox(
         handleSizePx = handleSizePx,
         dragPillWidthPx = dragPillWidthPx,
         dragPillHeightPx = dragPillHeightPx,
-        dragPillGapPx = dragPillGapPx
+        dragPillGapPx = dragPillGapPx,
+        hasActionMenu = showActionMenu,
+        actionMenuWidthPx = actionMenuWidthPx,
+        actionMenuHeightPx = actionMenuHeightPx,
     )
 
     Box(
@@ -713,7 +742,7 @@ fun ResizableTextBox(
                 )
             }
 
-            if (isSelected) {
+            if (isSelected && !box.isLocked) {
                 val handles = ResizeHandle.entries.filter { it != ResizeHandle.NONE }
 
                 fun getHandleCenter(handle: ResizeHandle, w: Float, h: Float): Offset {
@@ -809,7 +838,7 @@ fun ResizableTextBox(
             }
         }
 
-        if (isSelected) {
+        if (isSelected && !box.isLocked) {
             DragPill(
                 isDarkMode = isDarkMode,
                 scale = scale,
@@ -858,6 +887,96 @@ fun ResizableTextBox(
                         }
                     }
             )
+        }
+
+        if (showActionMenu) {
+            TextBoxActionMenu(
+                isLocked = box.isLocked,
+                isDarkMode = isDarkMode,
+                scale = scale,
+                onAction = onTextBoxMenuAction,
+                modifier = Modifier
+                    .offset {
+                        IntOffset(
+                            chromeLayout.actionMenuLeftPx.roundToInt(),
+                            chromeLayout.actionMenuTopPx.roundToInt()
+                        )
+                    }
+                    .zIndex(20f)
+            )
+        }
+    }
+}
+
+/**
+ * Compact action menu floating at the end of a selected text box opposite the
+ * drag pill: delete, duplicate, and lock/unlock. Constant on-screen size
+ * (like the handles), destructive action tinted with the theme error color.
+ */
+@Composable
+private fun TextBoxActionMenu(
+    isLocked: Boolean,
+    isDarkMode: Boolean,
+    scale: Float,
+    onAction: (PdfTextBoxMenuAction) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val safeScale = scale.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val menuWidth = (100f / safeScale).dp
+    val menuHeight = (24f / safeScale).dp
+    Row(
+        modifier = modifier.width(menuWidth).height(menuHeight),
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape((12f / safeScale).dp),
+            color = if (isDarkMode) Color(0xFF2A2A2A) else Color.White,
+            contentColor = if (isDarkMode) Color.White else Color.Black,
+            tonalElevation = (3f / safeScale).dp,
+            shadowElevation = (4f / safeScale).dp,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                PdfTextBoxMenuAction.entries.forEachIndexed { index, action ->
+                    if (index > 0) {
+                        Box(
+                            Modifier
+                                .width(1.dp)
+                                .height((16f / safeScale).dp)
+                                .background(
+                                    (if (isDarkMode) Color.White else Color.Black).copy(alpha = 0.15f)
+                                )
+                        )
+                    }
+                    IconButton(
+                        onClick = { onAction(action) },
+                        modifier = Modifier.size((24f / safeScale).dp)
+                    ) {
+                        Icon(
+                            imageVector = when (action) {
+                                PdfTextBoxMenuAction.DELETE -> Icons.Default.Delete
+                                PdfTextBoxMenuAction.DUPLICATE -> Icons.Default.ContentCopy
+                                PdfTextBoxMenuAction.LOCK ->
+                                    if (isLocked) Icons.Default.LockOpen else Icons.Default.Lock
+                            },
+                            contentDescription = stringResource(
+                                when (action) {
+                                    PdfTextBoxMenuAction.DELETE -> R.string.textbox_menu_delete
+                                    PdfTextBoxMenuAction.DUPLICATE -> R.string.textbox_menu_duplicate
+                                    PdfTextBoxMenuAction.LOCK ->
+                                        if (isLocked) R.string.textbox_menu_unlock else R.string.textbox_menu_lock
+                                }
+                            ),
+                            tint = if (action == PdfTextBoxMenuAction.DELETE) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                Color.Unspecified
+                            },
+                            modifier = Modifier.size((13f / safeScale).dp)
+                        )
+                    }
+                }
+            }
         }
     }
 }

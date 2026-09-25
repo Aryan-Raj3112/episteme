@@ -1135,6 +1135,7 @@ internal fun PdfPageRenderer(
     selectedTextBoxId: String?,
     onTextBoxChange: (PdfTextBox) -> Unit,
     onTextBoxSelect: (String) -> Unit,
+    onTextBoxMenuAction: (PdfTextBoxMenuAction) -> Unit = {},
     onTextBoxParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> },
     // One-shot post-toggle cursor for the selected box (see
     // TextBoxPendingSelection). Null = keep field cursor.
@@ -1382,6 +1383,7 @@ internal fun PdfPageRenderer(
                                 )
                                 onTextBoxSelect(box.id)
                             },
+                            onTextBoxMenuAction = onTextBoxMenuAction,
                             onDragStart = { touchOffset ->
                                 Timber.tag("PdfTextBoxDebug").d("PdfPageRenderer onDragStart[ID: ${box.id}] isVerticalScroll=$isVerticalScroll | offset=$touchOffset")
                                 if (isVerticalScroll) {

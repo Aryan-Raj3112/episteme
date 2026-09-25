@@ -1721,6 +1721,10 @@
     <string name="content_desc_close_image">Close Image</string>
     <string name="content_desc_toggle_search_highlights">Toggle search highlights</string>
     <string name="content_desc_drag_text_box">Drag to move text box</string>
+    <string name="textbox_menu_delete">Delete text box</string>
+    <string name="textbox_menu_duplicate">Duplicate text box</string>
+    <string name="textbox_menu_lock">Lock text box position and size</string>
+    <string name="textbox_menu_unlock">Unlock text box position and size</string>
     <string name="content_desc_no_files_icon">No files icon</string>
     <!-- Accessibility label. %1$s = visible field label being copied. Example: "Copy Title". -->
     <string name="content_desc_copy_value">Copy %1$s</string>

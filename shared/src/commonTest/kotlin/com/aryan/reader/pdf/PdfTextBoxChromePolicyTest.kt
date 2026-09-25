@@ -32,6 +32,56 @@ class PdfTextBoxChromePolicyTest {
     }
 
     @Test
+    fun `action menu occupies the end opposite the drag pill`() {
+        // Pill at top -> menu at bottom; pill at bottom -> menu at top. The
+        // two tracks never overlap and the content only shifts for tracks
+        // that sit above it.
+        listOf(true, false).forEach { isHandleAtTop ->
+            val layout = calculateTextBoxChromeLayout(
+                textBoundsPx = Rect(100f, 200f, 220f, 280f),
+                isSelected = true,
+                isHandleAtTop = isHandleAtTop,
+                handleSizePx = 10f,
+                dragPillWidthPx = 72f,
+                dragPillHeightPx = 48f,
+                dragPillGapPx = 8f,
+                hasActionMenu = true,
+                actionMenuWidthPx = 100f,
+                actionMenuHeightPx = 24f,
+            )
+
+            val pillEnd = layout.dragPillTopPx + 48f
+            val menuEnd = layout.actionMenuTopPx + 24f
+            val overlap = layout.dragPillTopPx < menuEnd && layout.actionMenuTopPx < pillEnd
+            assertTrue(!overlap)
+            assertEquals(
+                isHandleAtTop,
+                layout.dragPillTopPx < layout.actionMenuTopPx,
+            )
+            // Content origin is preserved regardless of which tracks sit above.
+            assertEquals(
+                200f,
+                layout.outerTranslationY + layout.contentOffsetY + 5f,
+            )
+        }
+    }
+
+    @Test
+    fun `action menu reserves no track when absent`() {
+        val layout = calculateTextBoxChromeLayout(
+            textBoundsPx = Rect(100f, 200f, 220f, 280f),
+            isSelected = true,
+            isHandleAtTop = false,
+            handleSizePx = 10f,
+            dragPillWidthPx = 72f,
+            dragPillHeightPx = 48f,
+            dragPillGapPx = 8f,
+        )
+
+        assertEquals(48f + 8f + 80f + 10f, layout.containerHeightPx)
+    }
+
+    @Test
     fun `unselected chrome adds only resize handle extent`() {
         val layout = calculateTextBoxChromeLayout(
             textBoundsPx = Rect(20f, 30f, 100f, 90f),

@@ -276,6 +276,48 @@ class PdfReaderSerializerTest {
     }
 
     @Test
+    fun `TextBoxSerializer round trips lock flag and omits it when unlocked`() {
+        val locked = TextBoxSerializer.toJson(
+            listOf(
+                PdfTextBox(
+                    id = "locked-box",
+                    pageIndex = 0,
+                    relativeBounds = Rect(0f, 0f, 0.5f, 0.25f),
+                    text = "Locked",
+                    color = Color.Black,
+                    backgroundColor = Color.Transparent,
+                    fontSize = 14f,
+                    isLocked = true,
+                )
+            )
+        )
+
+        // The flag is only written when true, so locked boxes round-trip and
+        // pre-lock sidecars stay byte-compatible.
+        assertTrue(locked.contains("\"isLocked\":true"))
+
+        val decodedLocked = TextBoxSerializer.fromJson(locked).single()
+        assertTrue(decodedLocked.isLocked)
+
+        // Unlocked boxes must stay byte-identical to pre-lock sidecars.
+        val unlockedJson = TextBoxSerializer.toJson(
+            listOf(
+                PdfTextBox(
+                    id = "shape",
+                    pageIndex = 1,
+                    relativeBounds = Rect(0f, 0.25f, 1f, 0.5f),
+                    text = "Text",
+                    color = Color.Black,
+                    backgroundColor = Color.Transparent,
+                    fontSize = 16f,
+                )
+            )
+        )
+        assertFalse(unlockedJson.contains("isLocked"))
+        assertFalse(TextBoxSerializer.fromJson(unlockedJson).single().isLocked)
+    }
+
+    @Test
     fun `TextBoxSerializer defaults missing optional style fields and rejects malformed json`() {
         val legacyJson = """
             [

@@ -30,6 +30,8 @@ data class SharedPdfLegacyTextBox(
     val fontPath: String? = null,
     val fontName: String? = null,
     val paragraphs: List<SharedPdfRichParagraph> = emptyList(),
+    /** Locked boxes keep text/style editing but drop move/resize chrome. */
+    val isLocked: Boolean = false,
 )
 
 /** Byte-compatible policy for Android's original PDF text-box sidecar. */
@@ -51,6 +53,8 @@ object SharedPdfLegacyTextBoxCodec {
                 put("isStrikeThrough", JsonPrimitive(box.isStrikeThrough))
                 box.fontPath?.let { put("fontPath", JsonPrimitive(it)) }
                 box.fontName?.let { put("fontName", JsonPrimitive(it)) }
+                // Only written when true so pre-lock sidecars stay byte-identical.
+                if (box.isLocked) put("isLocked", JsonPrimitive(true))
                 sharedPdfTextBoxParagraphsToJson(box.paragraphs)?.let { put("paragraphs", it) }
                 put("bounds", JsonObject(linkedMapOf(
                     "left" to JsonPrimitive(box.bounds.left.toDouble()),
@@ -95,6 +99,7 @@ object SharedPdfLegacyTextBoxCodec {
                     isStrikeThrough = obj.boolean("isStrikeThrough") ?: false,
                     fontPath = obj.string("fontPath"),
                     fontName = obj.string("fontName"),
+                    isLocked = obj.boolean("isLocked") ?: false,
                     paragraphs = sharedPdfTextBoxParagraphsFromJson(
                         obj["paragraphs"],
                         sharedPdfTextBoxParagraphCount(boxText),

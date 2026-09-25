@@ -271,6 +271,8 @@ import com.aryan.reader.pdf.data.PdfAnnotationRepository
 import com.aryan.reader.pdf.data.PdfHighlightRepository
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.PdfTextBoxRepository
+import com.aryan.reader.pdf.PdfTextBoxMenuAction
+import com.aryan.reader.pdf.PDF_TEXT_BOX_DUPLICATE_GAP_REL
 import com.aryan.reader.pdf.data.PdfTextRepository
 import com.aryan.reader.pdf.data.SmartSearchResult
 import com.aryan.reader.pdf.data.TextStyleConfig
@@ -1873,6 +1875,46 @@ private fun PdfViewerScreenContent(
                 "textBoxEditMode=$isDrawingActive selectedTextBoxId=${selectedTextBoxId ?: "none"}"
         )
         insertTextBoxAtPage(pageIndex, xRel, yRel)
+    }
+
+    val onTextBoxMenuAction = { action: PdfTextBoxMenuAction ->
+        val boxId = selectedTextBoxId
+        val source = boxId?.let { id -> textBoxes.find { it.id == id } }
+        if (source != null) {
+            when (action) {
+                PdfTextBoxMenuAction.DELETE -> {
+                    Timber.tag("PdfTextBoxDebug").i("Viewer: TextBox menu delete [ID: $boxId]")
+                    textBoxes.remove(source)
+                    selectedTextBoxId = null
+                }
+                PdfTextBoxMenuAction.DUPLICATE -> {
+                    // Offset below the original, clamped into the page; keeps
+                    // text, styles, paragraphs, and lock state (a locked
+                    // duplicate stays locked where it lands).
+                    val width = source.relativeBounds.width.coerceAtLeast(0f)
+                    val height = source.relativeBounds.height.coerceAtLeast(0f)
+                    val newLeft = (source.relativeBounds.left)
+                        .coerceIn(0f, (1f - width).coerceAtLeast(0f))
+                    val newTop = (source.relativeBounds.bottom + PDF_TEXT_BOX_DUPLICATE_GAP_REL)
+                        .coerceIn(0f, (1f - height).coerceAtLeast(0f))
+                    val duplicate = source.copy(
+                        id = generateShortId(),
+                        relativeBounds = Rect(newLeft, newTop, newLeft + width, newTop + height),
+                    )
+                    Timber.tag("PdfTextBoxDebug").i(
+                        "Viewer: TextBox menu duplicate [ID: $boxId -> ${duplicate.id}] bounds=${duplicate.relativeBounds}"
+                    )
+                    textBoxes.add(duplicate)
+                    selectedTextBoxId = duplicate.id
+                }
+                PdfTextBoxMenuAction.LOCK -> {
+                    val next = !source.isLocked
+                    Timber.tag("PdfTextBoxDebug").i("Viewer: TextBox menu lock [ID: $boxId] locked=$next")
+                    val idx = textBoxes.indexOfFirst { it.id == boxId }
+                    if (idx != -1) textBoxes[idx] = source.copy(isLocked = next)
+                }
+            }
+        }
     }
 
     val onSingleTapStable = remember {
@@ -4292,6 +4334,7 @@ private fun PdfViewerScreenContent(
         surfaceState.toolSettings = toolSettings
         surfaceState.onInsertTextBox = onInsertTextBox
         surfaceState.onTextBoxCreateAt = onTextBoxCreateAtTap
+        surfaceState.onTextBoxMenuAction = onTextBoxMenuAction
         surfaceState.customFonts = customFonts
         surfaceState.onSingleTapStable = onSingleTapStable
     }
@@ -6837,6 +6880,8 @@ private class PdfViewerSurfaceState {
      * the tap (page index + relative 0..1 coords). Bound in content scope.
      */
     lateinit var onTextBoxCreateAt: (pageIndex: Int, xRel: Float, yRel: Float) -> Unit
+    /** Compact text box menu (delete / duplicate / lock), bound in content scope. */
+    lateinit var onTextBoxMenuAction: (PdfTextBoxMenuAction) -> Unit
     lateinit var customFonts: List<CustomFontEntity>
     lateinit var ttsOverlaySize: PdfViewerMutableValue<ReaderTtsOverlaySize>
     lateinit var currentTtsMode: PdfViewerMutableValue<TtsPlaybackManager.TtsMode>
@@ -7900,6 +7945,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                     )
                                     if (idx != -1) textBoxes[idx] = updatedBox
                                 },
+                                onTextBoxMenuAction = surfaceState.onTextBoxMenuAction,
                                 onTextBoxParagraphUiStateChanged = { state, selection ->
                                     surfaceState.textBoxParagraphUiState = state
                                     surfaceState.textBoxSelection = selection
@@ -11619,6 +11665,7 @@ private fun PdfViewerPaginationPage(
             pdfRichLayoutDiag("exit.path=textBoxSelect path=pagination id=$id")
             richTextController?.clearSelection()
         },
+        onTextBoxMenuAction = surfaceState.onTextBoxMenuAction,
         onTextBoxParagraphUiStateChanged = { state, selection ->
             surfaceState.textBoxParagraphUiState = state
             surfaceState.textBoxSelection = selection
