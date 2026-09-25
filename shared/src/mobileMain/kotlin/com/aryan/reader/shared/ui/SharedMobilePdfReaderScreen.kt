@@ -113,7 +113,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Slider
@@ -165,6 +164,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -174,6 +175,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
+import com.aryan.reader.shared.SearchResult
+import com.aryan.reader.shared.ui.SharedReaderSearchResultsPanel
+import com.aryan.reader.shared.ui.formatAndroidString
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -202,7 +206,9 @@ import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.PdfDisplayMode
 import com.aryan.reader.shared.PdfReaderTool
+import com.aryan.reader.shared.pdf.SharedPdfOcrGate
 import com.aryan.reader.shared.pdf.SharedPdfOcrLanguage
+import com.aryan.reader.shared.pdf.SharedPdfOcrLanguageController
 import com.aryan.reader.shared.pdf.buildPdfAiHubRecapText
 import com.aryan.reader.shared.pdf.PDF_AI_HUB_MAX_CHARS
 import com.aryan.reader.shared.pdf.PDF_AI_HUB_RECAP_PAGE_WINDOW
@@ -359,6 +365,8 @@ fun SharedMobilePdfReaderScreen(
     onPdfToolbarPreferencesChange: (PdfToolbarPreferences) -> Unit = {},
     ocrLanguage: SharedPdfOcrLanguage = SharedPdfOcrLanguage.LATIN,
     onOcrLanguageChange: (SharedPdfOcrLanguage) -> Unit = {},
+    initialHasUserSelectedOcrLanguage: Boolean = false,
+    onOcrLanguageSelected: (SharedPdfOcrLanguage) -> Unit = {},
     readerBrightness: Float? = null,
     readerCustomBrightness: Float = com.aryan.reader.shared.DefaultReaderCustomBrightness,
     onReaderBrightnessChange: (Float?) -> Unit = {},
@@ -446,6 +454,8 @@ fun SharedMobilePdfReaderScreen(
         isPdfExportBusy = isPdfExportBusy,
         ocrLanguage = ocrLanguage,
         onOcrLanguageChange = onOcrLanguageChange,
+        initialHasUserSelectedOcrLanguage = initialHasUserSelectedOcrLanguage,
+        onOcrLanguageSelected = onOcrLanguageSelected,
         readerBrightness = readerBrightness,
         readerCustomBrightness = readerCustomBrightness,
         onReaderBrightnessChange = onReaderBrightnessChange,
@@ -534,6 +544,8 @@ fun SharedMobilePdfReaderHost(
     onPdfToolbarPreferencesChange: (PdfToolbarPreferences) -> Unit = {},
     ocrLanguage: SharedPdfOcrLanguage = SharedPdfOcrLanguage.LATIN,
     onOcrLanguageChange: (SharedPdfOcrLanguage) -> Unit = {},
+    initialHasUserSelectedOcrLanguage: Boolean = false,
+    onOcrLanguageSelected: (SharedPdfOcrLanguage) -> Unit = {},
     readerBrightness: Float? = null,
     readerCustomBrightness: Float = com.aryan.reader.shared.DefaultReaderCustomBrightness,
     onReaderBrightnessChange: (Float?) -> Unit = {},
@@ -650,6 +662,29 @@ fun SharedMobilePdfReaderHost(
     var showBrightnessSheet by remember(readerSessionKey) { mutableStateOf(false) }
     var showScreenOrientationSheet by remember(readerSessionKey) { mutableStateOf(false) }
     var showOcrLanguageDialog by remember(readerSessionKey) { mutableStateOf(false) }
+    // Android parity (PdfViewerScreen.hasSelectedOcrLanguage +
+    // pendingActionAfterOcrSelection): OCR-dependent actions open the language
+    // dialog once; the pending action runs only after an explicit selection.
+    var hasUserSelectedOcrLanguage by remember(readerSessionKey) {
+        mutableStateOf(initialHasUserSelectedOcrLanguage || SharedPdfOcrGate.hasUserSelectedLanguage())
+    }
+    var pendingOcrLanguageAction by remember(readerSessionKey) { mutableStateOf<(() -> Unit)?>(null) }
+    // Only engine-supported scripts are offered (iOS Vision has no Devanagari).
+    var availableOcrLanguages by remember(readerSessionKey) {
+        mutableStateOf(
+            SharedPdfOcrLanguageController(
+                loadStored = { SharedPdfOcrGate.loadLanguage() },
+                hasSelection = { SharedPdfOcrGate.hasUserSelectedLanguage() },
+            ).availableLanguages()
+        )
+    }
+    // Android parity (PdfViewerScreen onShowOcrLanguage): opening OCR Language
+    // from the menu counts as an explicit selection even if the user cancels,
+    // so the first-run gate stops prompting afterwards.
+    val markOcrLanguageMenuOpened: () -> Unit = {
+        hasUserSelectedOcrLanguage = true
+        showOcrLanguageDialog = true
+    }
     var showToolbarCustomization by remember(readerSessionKey) { mutableStateOf(false) }
     var showTtsSettingsSheet by remember(readerSessionKey) { mutableStateOf(false) }
     var showTtsReplacementsSheet by remember(readerSessionKey) { mutableStateOf(false) }
@@ -1240,6 +1275,21 @@ fun SharedMobilePdfReaderHost(
         navigationCenterFraction = centerFraction.coerceIn(0f, 1f)
         navigationReason = reason
         navigationRequestToken++
+    }
+
+    /**
+     * Android parity (PdfViewerScreen.executeWithOcrCheck): run an OCR-dependent
+     * action, or open the language dialog first and hold the action until the
+     * user picks a language. Dismissing the dialog cancels the action.
+     */
+    fun executeWithOcrGate(action: () -> Unit) {
+        if (!ownsGlobalModal) return
+        if (hasUserSelectedOcrLanguage) {
+            action()
+        } else {
+            pendingOcrLanguageAction = action
+            showOcrLanguageDialog = true
+        }
     }
 
     fun requestTts(
@@ -2159,7 +2209,7 @@ fun SharedMobilePdfReaderHost(
                             onBack = closeReader,
                             onOpenSplit = onOpenSplit,
                             onOpenDrawer = { scope.launch { drawerState.open() } },
-                            onSearch = { dispatch(SharedPdfReaderAction.SearchOpened) },
+                            onSearch = { executeWithOcrGate { dispatch(SharedPdfReaderAction.SearchOpened) } },
                             onSearchQueryChange = { query ->
                                 dispatch(SharedPdfReaderAction.SearchChanged(query))
                             },
@@ -2231,7 +2281,7 @@ fun SharedMobilePdfReaderHost(
                                 if (cloudTtsAvailable) {
                                     toggleCloudTts()
                                 } else if (ownsTts) when (pdfTts.state) {
-                                    SharedMobileEpubLocalTtsState.IDLE -> requestTts()
+                                    SharedMobileEpubLocalTtsState.IDLE -> executeWithOcrGate { requestTts() }
                                     SharedMobileEpubLocalTtsState.SPEAKING -> pdfTts.pause()
                                     SharedMobileEpubLocalTtsState.PAUSED -> pdfTts.resume()
                                 }
@@ -2277,7 +2327,7 @@ fun SharedMobilePdfReaderHost(
                             onOpenAiHub = { showAiHub = true; onOpenAiHub() },
                             aiAvailable = readerAiAvailable,
                             ocrLanguage = ocrLanguage,
-                            onOcrLanguage = { if (ownsGlobalModal) showOcrLanguageDialog = true },
+                            onOcrLanguage = { if (ownsGlobalModal) markOcrLanguageMenuOpened() },
                             isCurrentPageBlank = isCurrentPageBlank,
                             onInsertBlankPage = ::insertBlankPageAtCurrentPosition,
                             onDeleteBlankPage = ::deleteBlankPageAtCurrentPosition,
@@ -2332,7 +2382,7 @@ fun SharedMobilePdfReaderHost(
                             if (opening) showChrome = true
                         },
                         onOpenDrawer = { scope.launch { drawerState.open() } },
-                        onSearch = { dispatch(SharedPdfReaderAction.SearchOpened) },
+                        onSearch = { executeWithOcrGate { dispatch(SharedPdfReaderAction.SearchOpened) } },
                         onToolSelected = ::setTool,
                         editModeOpenTool = lastEditTool,
                         ttsState = if (cloudTtsAvailable) {
@@ -2345,7 +2395,7 @@ fun SharedMobilePdfReaderHost(
                             if (cloudTtsAvailable) {
                                 toggleCloudTts()
                             } else if (ownsTts) when (pdfTts.state) {
-                                SharedMobileEpubLocalTtsState.IDLE -> requestTts()
+                                SharedMobileEpubLocalTtsState.IDLE -> executeWithOcrGate { requestTts() }
                                 SharedMobileEpubLocalTtsState.SPEAKING -> pdfTts.pause()
                                 SharedMobileEpubLocalTtsState.PAUSED -> pdfTts.resume()
                             }
@@ -2575,11 +2625,13 @@ fun SharedMobilePdfReaderHost(
                         onExistingHighlightTap = { noteAnnotationId = it.id },
                         onHighlight = { page, range, text, bounds, color, style, note -> addTextHighlight(page, range, text, bounds, color, style, note) },
                         onAiDefine = if (readerAiAvailable) {
-                            { text -> onAiAction(ReaderAiFeature.DEFINE, text) }
+                            { text -> executeWithOcrGate { onAiAction(ReaderAiFeature.DEFINE, text) } }
                         } else null,
                         onOpenPaletteManager = { showHighlightPaletteEditor = true },
                         onClipboardError = onClipboardError,
-                        onReadAloud = { page, charIndex -> requestTts(sharedPdfDisplayIndexFor(virtualLayout, page), charIndex) },
+                        onReadAloud = { page, charIndex ->
+                            executeWithOcrGate { requestTts(sharedPdfDisplayIndexFor(virtualLayout, page), charIndex) }
+                        },
                         userScrollEnabled = !readerState.isScrollLocked,
                         isScrollLocked = readerState.isScrollLocked,
                         zoomCamera = pdfZoomCamera,
@@ -2651,11 +2703,13 @@ fun SharedMobilePdfReaderHost(
                         onExistingHighlightTap = { noteAnnotationId = it.id },
                         onHighlight = { page, range, text, bounds, color, style, note -> addTextHighlight(page, range, text, bounds, color, style, note) },
                         onAiDefine = if (readerAiAvailable) {
-                            { text -> onAiAction(ReaderAiFeature.DEFINE, text) }
+                            { text -> executeWithOcrGate { onAiAction(ReaderAiFeature.DEFINE, text) } }
                         } else null,
                         onOpenPaletteManager = { showHighlightPaletteEditor = true },
                         onClipboardError = onClipboardError,
-                        onReadAloud = { page, charIndex -> requestTts(sharedPdfDisplayIndexFor(virtualLayout, page), charIndex) },
+                        onReadAloud = { page, charIndex ->
+                            executeWithOcrGate { requestTts(sharedPdfDisplayIndexFor(virtualLayout, page), charIndex) }
+                        },
                         userScrollEnabled = !readerState.isScrollLocked,
                         isScrollLocked = readerState.isScrollLocked,
                         zoomCamera = pdfZoomCamera,
@@ -4270,38 +4324,44 @@ fun SharedMobilePdfReaderHost(
         )
     }
     if (showOcrLanguageDialog) {
-        AlertDialog(
-            onDismissRequest = { showOcrLanguageDialog = false },
-            title = { Text("OCR language") },
-            text = {
-                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    SharedPdfOcrLanguage.entries.forEach { language ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    onOcrLanguageChange(language)
-                                    showOcrLanguageDialog = false
-                                }
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(
-                                selected = language == ocrLanguage,
-                                onClick = {
-                                    onOcrLanguageChange(language)
-                                    showOcrLanguageDialog = false
-                                },
-                            )
-                            Text(language.displayName)
-                        }
-                    }
-                }
+        // Android parity (PdfViewerScreen SharedMobileSingleChoiceDialog block):
+        // same shared dialog, description, first-run note, and cancel behavior
+        // so both platforms present OCR language selection identically. Only
+        // engine-supported scripts are listed (iOS Vision cannot do Devanagari).
+        SharedMobileSingleChoiceDialog(
+            title = readerString("title_select_ocr_language", "Select OCR Language"),
+            description = readerString(
+                "desc_select_ocr_language",
+                "Choose the primary language/script of this document for better text recognition results.",
+            ),
+            cancelLabel = readerString("action_cancel", "Cancel"),
+            options = availableOcrLanguages.map { language ->
+                // Android parity (PdfHelper OcrLanguage displayNameRes): each
+                // row shows the language mix inside the model, e.g. "Hindi,
+                // Marathi, Sanskrit + English".
+                SharedMobileSingleChoiceOption(
+                    language,
+                    readerString(language.displayNameKey, language.displayName),
+                )
             },
-            confirmButton = {
-                TextButton(onClick = { showOcrLanguageDialog = false }) {
-                    Text("Cancel")
-                }
+            selectedValue = ocrLanguage,
+            firstRunMessage = if (!hasUserSelectedOcrLanguage) {
+                readerString(
+                    "desc_ocr_language_change_later",
+                    "You can change this later in More Options > OCR Language.",
+                )
+            } else null,
+            onDismiss = {
+                showOcrLanguageDialog = false
+                pendingOcrLanguageAction = null
+            },
+            onSelected = { selected ->
+                onOcrLanguageChange(selected)
+                onOcrLanguageSelected(selected)
+                hasUserSelectedOcrLanguage = true
+                showOcrLanguageDialog = false
+                pendingOcrLanguageAction?.invoke()
+                pendingOcrLanguageAction = null
             },
         )
     }
@@ -5962,71 +6022,43 @@ private fun SharedMobilePdfSearchResultsPanel(
     onResultClick: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .fillMaxHeight(),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 2.dp
-    ) {
-        when {
-            isSearching -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-
-            query.isBlank() -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                Text("Enter a search term", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-
-            results.isEmpty() -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                Text("No results for “${query.trim()}”", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-
-            else -> LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 24.dp)
-            ) {
-                item {
-                    Text(
-                        text = "${results.size} result${if (results.size == 1) "" else "s"}",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-                    )
-                }
-                items(results.size) { index ->
-                    val result = results[index]
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(
-                                if (index == activeResultIndex) MaterialTheme.colorScheme.primaryContainer
-                                else Color.Transparent
+    val oneResultLabel = readerString("search_results_count_one", "1 result")
+    val manyResultsTemplate = readerString("search_results_count_other", "%1\$d results")
+    // Android parity (AndroidSearchUi.SearchResultsPanel): both platforms render
+    // the shared SharedReaderSearchResultsPanel with "Page N" headline, a
+    // bolded preview snippet, and the localized plural results-count header.
+    SharedReaderSearchResultsPanel(
+        results = results.mapIndexed { index, result ->
+            SearchResult(
+                locationInSource = result.pageIndex,
+                locationTitle = readerString("pdf_page_short", "Page %1\$d", result.pageIndex + 1),
+                snippet = buildAnnotatedString {
+                    append(result.preview)
+                    if (result.matchLength > 0 && result.matchIndexInPreview >= 0) {
+                        val start = result.matchIndexInPreview
+                        val end = (start + result.matchLength).coerceAtMost(result.preview.length)
+                        if (end > start) {
+                            addStyle(
+                                SpanStyle(fontWeight = FontWeight.Bold, color = Color.Blue),
+                                start,
+                                end,
                             )
-                            .clickable { onResultClick(index) }
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text(
-                            text = "${result.pageIndex + 1}",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.widthIn(min = 28.dp)
-                        )
-                        Text(
-                            text = result.preview.ifBlank { "Match on page ${result.pageIndex + 1}" },
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
+                        }
                     }
-                    HorizontalDivider()
-                }
-            }
-        }
-    }
+                },
+                query = query,
+                occurrenceIndexInLocation = index,
+                chunkIndex = result.pageIndex,
+            )
+        },
+        isSearching = isSearching,
+        noResultsText = readerString("search_no_results_simple", "No results found."),
+        resultsCountText = { count ->
+            if (count == 1) oneResultLabel else formatAndroidString(manyResultsTemplate, listOf(count))
+        },
+        onResultClick = { result -> onResultClick(result.occurrenceIndexInLocation) },
+        modifier = modifier,
+    )
 }
 
 @Composable

@@ -2,6 +2,11 @@
 
 package com.aryan.reader.shared.ui
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -45,6 +50,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,6 +64,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
@@ -150,7 +157,6 @@ internal fun SharedMobilePdfTextSelectionOverlay(
 ) {
     if (canvasSize.width <= 0 || canvasSize.height <= 0) return
     val session = textSession
-    val linkBounds = remember(session) { session?.linkBoundsNormalized().orEmpty() }
     val scope = rememberCoroutineScope()
     val copiedTextLabel = readerString("clip_label_copied_text", "Copied Text")
     val clipboardErrorMessage = readerString("error_copy_to_clipboard", "Could not copy to clipboard")
@@ -172,6 +178,37 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     var state by remember(book.path, pageIndex, password) {
         mutableStateOf(SharedMobilePdfTextSelectionState())
     }
+
+    // Long-pressing a scanned (image-only) page performs Vision OCR before any
+    // word geometry exists. Android shows a pulsing ripple at the touch point
+    // for the same purpose (PdfPageRendering.OcrProcessingIndicator), so the
+    // shared overlay mirrors that behavior exactly.
+    var isPerformingOcr by remember(book.path, pageIndex, password) {
+        mutableStateOf(false)
+    }
+    var ocrRipplePosition by remember(book.path, pageIndex, password) {
+        mutableStateOf<Offset?>(null)
+    }
+    // The on-demand OCR session is held separately from the platform-provided
+    // one: once recognition succeeds it stays valid for the page (the iOS OCR
+    // page cache is bounded and retained), so later long-presses and drags
+    // reuse it without re-recognizing.
+    var ocrFallbackSession by remember(book.path, pageIndex, password) {
+        mutableStateOf<PdfTextPageSession?>(null)
+    }
+    DisposableEffect(book.path, pageIndex, password) {
+        onDispose {
+            ocrFallbackSession?.close()
+            ocrFallbackSession = null
+        }
+    }
+    val effectiveSession = session ?: ocrFallbackSession
+    // Always-current session reference: pointer handlers and the drag worker
+    // capture lambdas that outlive recomposition, so they must read the
+    // latest session (including the on-demand OCR fallback) at call time
+    // instead of the one captured when the gesture scope was created.
+    val latestSession by rememberUpdatedState(effectiveSession)
+    val linkBounds = remember(effectiveSession) { effectiveSession?.linkBoundsNormalized().orEmpty() }
 
     fun boundsToCanvas(bounds: PdfPageBounds): Rect {
         return Rect(
@@ -226,8 +263,8 @@ internal fun SharedMobilePdfTextSelectionOverlay(
         )
     }
 
-    suspend fun computeAndApply(range: PdfTextSelectionRange) {
-        val s = session ?: run {
+    suspend fun computeAndApply(range: PdfTextSelectionRange, sessionOverride: PdfTextPageSession? = null) {
+        val s = sessionOverride ?: latestSession ?: run {
             selLog { "computeAndApply: no session" }; return
         }
         val coerced = range.coerced(s.pageCharCount)
@@ -240,8 +277,8 @@ internal fun SharedMobilePdfTextSelectionOverlay(
         applyRangeUpdate(coerced, rects, text)
     }
 
-    suspend fun startNewSelectionAt(touchOffset: Offset): Boolean {
-        val s = session ?: run {
+    suspend fun startNewSelectionAt(touchOffset: Offset, sessionOverride: PdfTextPageSession? = null): Boolean {
+        val s = sessionOverride ?: latestSession ?: run {
             selLog { "startNewSelectionAt: no session" }; return false
         }
         val normX = (touchOffset.x / canvasSize.width).coerceIn(0f, 1f)
@@ -259,7 +296,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
             selLog { "startNewSelectionAt: wordBoundaries=null" }; return false
         }
         selLog { "startNewSelectionAt: word=${word.start}..${word.end}" }
-        computeAndApply(word)
+        computeAndApply(word, s)
         return true
     }
 
@@ -288,13 +325,36 @@ internal fun SharedMobilePdfTextSelectionOverlay(
         // No selection present: long-press starts a new selection; quick tap
         // resolves a PDF link at the finger (if any). If no link, the tap is
         // NOT consumed so the parent's chrome toggle / page-turn still fires.
-        Modifier.pointerInput(book.path, pageIndex, canvasSize, session, existingHighlights, teardropWidthPx, teardropHeightPx) {
+        Modifier.pointerInput(book.path, pageIndex, canvasSize, effectiveSession, existingHighlights, teardropWidthPx, teardropHeightPx) {
             var pendingLinkTarget: PdfLinkTarget? = null
             var pendingHighlight: SharedPdfAnnotation? = null
             detectTapOrLongPress(
                 onLongPress = { offset ->
                     selLog { "longPress at canvas=(${offset.x},${offset.y})" }
-                    scope.launch { startNewSelectionAt(offset) }
+                    scope.launch {
+                        // Android parity (PdfPageComposable long-press): when
+                        // the page has no text session yet, run OCR once with
+                        // the pulsing ripple indicator, then select through the
+                        // recognized text page.
+                        var openedOcrSession: PdfTextPageSession? = null
+                        if (latestSession == null) {
+                            isPerformingOcr = true
+                            ocrRipplePosition = offset
+                            try {
+                                openedOcrSession = openSharedMobilePdfOcrTextSession(
+                                    book, pageIndex, password
+                                )
+                                // rememberUpdatedState only refreshes on
+                                // recomposition, so the freshly opened session
+                                // is threaded explicitly into the selection
+                                // call below instead of waiting a frame.
+                                ocrFallbackSession = openedOcrSession
+                            } finally {
+                                isPerformingOcr = false
+                            }
+                        }
+                        startNewSelectionAt(offset, openedOcrSession)
+                    }
                 },
                 shouldReserveTap = { offset ->
                     val normX = (offset.x / canvasSize.width).coerceIn(0f, 1f)
@@ -308,7 +368,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                         pendingLinkTarget = null
                         true
                     } else {
-                    val s = session
+                    val s = latestSession
                     if (s == null) {
                         pdfLinkLog { "tap page=$pageIndex ignored reason=session-not-ready" }
                         selLog { "tap.noSession -> not consumed" }
@@ -398,7 +458,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                 overlayWindowRect = it.boundsInWindow()
             }
             .then(tapDetector)
-            .pointerInput(book.path, pageIndex, canvasSize, teardropWidthPx, teardropHeightPx, touchExpansionPx) {
+            .pointerInput(book.path, pageIndex, canvasSize, teardropWidthPx, teardropHeightPx, touchExpansionPx, effectiveSession) {
                 // Eager drag routed entirely in canvas coords. This matches
                 // Android's PdfPageComposable pattern: hit-test handle rects at
                 // down time; consume immediately in the Initial pass so the
@@ -481,7 +541,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                         pdfTextDragLog { "worker-start page=$pageIndex gen=$myGeneration" }
                         for (move in dragChannel) {
                             val recvMs = currentTimestamp()
-                            val s = session
+                            val s = latestSession
                             if (s == null) {
                                 pdfTextDragLog { "worker-recv page=$pageIndex gen=$myGeneration seq=${move.seq} result=no-session" }
                                 continue
@@ -677,6 +737,12 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                 }
             }
     ) {
+        // Android parity (PdfPageRendering.OcrProcessingIndicator): pulsing
+        // ripple at the touch point while selection OCR runs on a scanned page.
+        val ripplePosition = ocrRipplePosition
+        if (isPerformingOcr && ripplePosition != null) {
+            SharedMobilePdfOcrProcessingIndicator(position = ripplePosition)
+        }
         if (state.selectionRects.isNotEmpty()) {
             Canvas(Modifier.fillMaxSize()) {
                 state.selectionRects.forEach { rect ->
@@ -1118,5 +1184,44 @@ private fun SharedMobilePdfSelectionMenuAction(
         // Android parity: 2dp gap between icon and label.
         Spacer(modifier = Modifier.height(2.dp))
         Text(action.label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+    }
+}
+
+/**
+ * Android parity (PdfPageRendering.OcrProcessingIndicator): a pulsing primary
+ * ring at the touch point while selection OCR runs on a scanned page. The
+ * expanding stroke fades out so the reader can see recognition is happening
+ * without blocking the gesture.
+ */
+@Composable
+internal fun SharedMobilePdfOcrProcessingIndicator(position: Offset) {
+    val infiniteTransition = rememberInfiniteTransition(label = "ocr_indicator_transition")
+    val animatedRadius by infiniteTransition.animateFloat(
+        initialValue = 20f,
+        targetValue = 120f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "ocr_radius",
+    )
+    val animatedAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.8f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "ocr_alpha",
+    )
+    val color = MaterialTheme.colorScheme.primary
+
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        drawCircle(
+            color = color.copy(alpha = animatedAlpha),
+            radius = animatedRadius,
+            center = position,
+            style = Stroke(width = (4.dp * animatedAlpha).toPx()),
+        )
     }
 }

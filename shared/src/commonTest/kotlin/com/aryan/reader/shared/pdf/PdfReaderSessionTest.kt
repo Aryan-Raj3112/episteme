@@ -704,6 +704,62 @@ class PdfReaderSessionTest {
     }
 
     @Test
+    fun `search matches are anchored to word start like android fts pipeline`() {
+        // Android parity (PdfTextRepository.createPhraseRegex \b prefix):
+        // single-token queries must match at a word start only.
+        val index = SharedPdfSearchIndex(pageCount = 1)
+        index.putPage(0, "citation ionic cat")
+
+        val results = index.search("cat")
+
+        assertEquals(listOf(0), results.map { it.pageIndex })
+        assertEquals(1, results.size)
+        assertEquals(15, results.single().matchIndex)
+    }
+
+    @Test
+    fun `search results carry snippet offsets for bolded matches`() {
+        // Android parity (snippet <b> bolding): the result must expose where
+        // the matched span sits inside the rendered preview.
+        val results = SharedPdfSearchEngine.search(
+            pageTexts = listOf("lorem ipsum dolor sit amet, consectetur adipiscing"),
+            query = "dolor",
+            previewRadiusBefore = 10,
+            previewRadiusAfter = 10,
+        )
+
+        val result = results.single()
+        assertTrue(result.matchIndexInPreview >= 0)
+        assertEquals(
+            "dolor",
+            result.preview.substring(
+                result.matchIndexInPreview,
+                result.matchIndexInPreview + result.matchLength,
+            ),
+        )
+    }
+
+    @Test
+    fun `search snippet offset accounts for leading ellipsis and collapsed whitespace`() {
+        val results = SharedPdfSearchEngine.search(
+            pageTexts = listOf("intro sentence here.   and    the   matchable     token at the end"),
+            query = "matchable",
+            previewRadiusBefore = 12,
+            previewRadiusAfter = 12,
+        )
+
+        val result = results.single()
+        assertTrue(result.preview.startsWith("..."))
+        assertEquals(
+            "matchable",
+            result.preview.substring(
+                result.matchIndexInPreview,
+                result.matchIndexInPreview + result.matchLength,
+            ),
+        )
+    }
+
+    @Test
     fun `search index reuses indexed page text and preserves raw match ranges`() {
         val index = SharedPdfSearchIndex(pageCount = 3)
         index.putPage(0, "Alpha beta")

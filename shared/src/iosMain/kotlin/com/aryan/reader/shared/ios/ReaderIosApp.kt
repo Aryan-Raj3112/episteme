@@ -247,6 +247,7 @@ import com.aryan.reader.shared.pdf.SharedPdfCloudSidecarSnapshot
 import com.aryan.reader.shared.pdf.LegacyPdfPageBookmarkCodec
 import com.aryan.reader.shared.pdf.SharedPdfBookmark
 import com.aryan.reader.shared.pdf.IosPdfCloudSidecarStore
+import com.aryan.reader.shared.pdf.SharedPdfOcrGate
 import com.aryan.reader.shared.pdf.loadIosPdfOcrLanguage
 import com.aryan.reader.shared.pdf.persistIosPdfOcrLanguage
 import com.aryan.reader.shared.pdf.SharedPdfReaderHostConfig
@@ -4955,6 +4956,11 @@ private fun ReaderIosApp(
                 if (!acceptsCurrentHostCallback()) return@SharedMobilePdfReaderHost
                 pdfOcrLanguage = language
                 persistIosPdfOcrLanguage(language)
+            },
+            initialHasUserSelectedOcrLanguage = SharedPdfOcrGate.hasUserSelectedLanguage(),
+            onOcrLanguageSelected = { language ->
+                if (!acceptsCurrentHostCallback()) return@SharedMobilePdfReaderHost
+                SharedPdfOcrGate.persistLanguage(language)
             },
             readerBrightness = readerBrightness,
             readerCustomBrightness = readerCustomBrightness,
