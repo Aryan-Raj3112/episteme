@@ -44,5 +44,31 @@ class IosHomeOverflowParityTest {
         assertFalse(SharedMobileHomeOverflowAction.CLEAR_BOOK_CACHE in actions)
         assertFalse(SharedMobileHomeOverflowAction.TEST_PANEL_DETECTION in actions)
         assertFalse(SharedMobileHomeOverflowAction.TEST_SPEECH_BUBBLE_DETECTION in actions)
+        // FPS overlay stays hidden without the capability: it is debug-only
+        // and enabled per-build via bridge.isDebugBuild.
+        assertFalse(SharedMobileHomeOverflowAction.SHOW_FPS_OVERLAY in actions)
+    }
+
+    @Test
+    fun `ios debug builds expose fps overlay as checked`() {
+        val items = sharedMobileHomeOverflowItems(
+            state = SharedMobileHomeOverflowState(
+                tabsEnabled = false,
+                screenCaptureProtectionEnabled = false,
+                strictFileFilterEnabled = false,
+                usePdfFileNameAsDisplayName = false,
+                hideReaderAi = false,
+                fpsOverlayEnabled = true,
+            ),
+            capabilities = SharedMobileHomeOverflowCapabilities(
+                readerAi = true,
+                clearReflowCache = true,
+                exportLogs = true,
+                fpsOverlay = true,
+            ),
+        )
+
+        val fps = items.first { it.action == SharedMobileHomeOverflowAction.SHOW_FPS_OVERLAY }
+        assertEquals(true, fps.checked)
     }
 }

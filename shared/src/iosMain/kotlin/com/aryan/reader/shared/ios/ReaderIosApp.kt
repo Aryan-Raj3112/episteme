@@ -3140,6 +3140,9 @@ private fun ReaderIosApp(
         }
     }
     var showAppThemePanel by remember { mutableStateOf(false) }
+    // Debug-only FPS meter (Android DebugFpsOverlay parity): persisted toggle,
+    // shown on every route beneath the status bar when this is a debug build.
+    var fpsOverlayEnabled by remember { mutableStateOf(IosDebugFpsStore.isEnabled()) }
     var showRecentLimitDialog by remember { mutableStateOf(false) }
     var annotationExportBook by remember { mutableStateOf<BookItem?>(null) }
     var customSleepTimerMinutes by remember { mutableStateOf(loadIosCustomSleepTimerMinutes()) }
@@ -5539,7 +5542,28 @@ private fun ReaderIosApp(
                             hasGoogleDrivePermission = bridge.accountState.googleDriveAuthorized,
                             requiresGoogle = IosFeatureGating.REQUIRES_GOOGLE_DRIVE_FOR_SYNC,
                         )
-                        val settingsModel = sharedSettingsHubModel(
+                        // Model build allocates section/item lists; remember on its
+                        // real inputs so unrelated state emissions (progress,
+                        // sync ticks) skip it. Android SettingsScreen parity.
+                        // readerString is composable, so the summary resolves
+                        // outside remember; appLanguageTag keys it.
+                        val languageSummary = sharedAppLanguageOption(state.appLanguageTag).let { option ->
+                            readerString(option.labelKey, sharedAppLanguageLabel(state.appLanguageTag))
+                        }
+                        val settingsModel = remember(
+                            bridge.isDebugBuild,
+                            bridge.accountState.uid,
+                            state.isProUser,
+                            cloudSyncSetupIntent,
+                            state.isTabsEnabled,
+                            state.isSyncEnabled,
+                            state.isFolderSyncEnabled,
+                            state.useStrictFileFilter,
+                            state.usePdfFileNameAsDisplayName,
+                            state.hideReaderAi,
+                            state.appLanguageTag,
+                        ) {
+                            sharedSettingsHubModel(
                             SharedSettingsHubInput(
                                 platform = SharedSettingsPlatform.IOS,
                                 isDebugBuild = bridge.isDebugBuild,
@@ -5581,15 +5605,17 @@ private fun ReaderIosApp(
                                 hideReaderAi = state.hideReaderAi,
                                 // Android parity: the settings summary shows the
                                 // translated language name, not the English one.
-                                languageSummary = sharedAppLanguageOption(state.appLanguageTag).let { option ->
-                                    readerString(option.labelKey, sharedAppLanguageLabel(state.appLanguageTag))
-                                },
+                                languageSummary = languageSummary,
                             )
-                         )
+                          )
+                        }
+                        val settingsPage = remember(settingsModel, settingsDestination) {
+                            settingsModel.page(settingsDestination)
+                        }
                          Scaffold(
                              topBar = {
                                  SharedMobileTopAppBar(
-                                     title = { Text(readerLiteral(settingsModel.page(settingsDestination).title)) },
+                                     title = { Text(readerLiteral(settingsPage.title)) },
                                      navigationIcon = {
                                          IconButton(onClick = ::navigateIosSettingsUp) {
                                              Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = readerString("action_back", "Back"))
@@ -6206,7 +6232,14 @@ private fun ReaderIosApp(
                                     readerAi = true,
                                     clearReflowCache = true,
                                     exportLogs = true,
+                                    fpsOverlay = bridge.isDebugBuild,
                                 ),
+                                fpsOverlayEnabled = fpsOverlayEnabled,
+                                onFpsOverlayToggle = {
+                                    val next = !fpsOverlayEnabled
+                                    fpsOverlayEnabled = next
+                                    IosDebugFpsStore.setEnabled(next)
+                                },
                                 modifier = Modifier.fillMaxSize()
                             )
 
@@ -7118,6 +7151,18 @@ private fun ReaderIosApp(
                 },
             )
         }
+        }
+        // Debug-only global FPS meter: beneath the status bar, top-left,
+        // above every destination. Sibling of Surface (not inside it) so it
+        // never inherits screen-specific padding. Non-clickable; touches pass
+        // through. Gated on the debug flag so release builds pay nothing.
+        if (bridge.isDebugBuild && fpsOverlayEnabled) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.TopStart
+            ) {
+                IosDebugFpsGlobalOverlay(enabled = true)
+            }
         }
     }
 }
