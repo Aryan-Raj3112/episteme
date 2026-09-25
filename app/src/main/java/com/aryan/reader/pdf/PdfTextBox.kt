@@ -78,7 +78,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.shared.pdf.RichParagraphUiState
+import com.aryan.reader.shared.pdf.SharedPdfRichListType
 import com.aryan.reader.shared.pdf.SharedPdfRichParagraph
+import com.aryan.reader.shared.pdf.SharedPdfRichTextAlign
 import com.aryan.reader.shared.pdf.sharedPdfTextBoxAnnotatedString
 import com.aryan.reader.shared.pdf.sharedPdfTextBoxDockState
 import com.aryan.reader.shared.pdf.sharedPdfTextBoxKeystroke
@@ -608,10 +610,27 @@ fun ResizableTextBox(
                         val textSame = result.text == newValue.text
                         val selSame = result.selection == newValue.selection
                         val parasSame = newParagraphs == fieldParagraphs
-                        val needsRebuild = result.shifts.isNotEmpty() ||
+                        val structural = result.shifts.isNotEmpty() ||
                             !textSame ||
                             !selSame ||
                             !parasSame
+                        // Span authority: IME edits fragment or drop our
+                        // ParagraphStyle runs (typing at a run end falls
+                        // outside the style) and list tags. Until the next
+                        // sync the field then renders LEFT (flicker) and the
+                        // fragmented boundaries split MultiParagraph into
+                        // phantom lines. So boxes with any non-default
+                        // paragraph always rebuild from the normalized
+                        // result, restoring clean merged runs. Text and
+                        // selection are identical here, so the composition
+                        // offsets stay valid and the IME session survives.
+                        // Plain boxes have no paragraph spans to lose and
+                        // keep the untouched passthrough.
+                        val hasNonDefault = newParagraphs.any {
+                            it.alignment != SharedPdfRichTextAlign.LEFT ||
+                                it.listType != SharedPdfRichListType.NONE
+                        }
+                        val needsRebuild = structural || hasNonDefault
                         Timber.tag(TEXT_BOX_TRACE_TAG).d(
                             "value_change id=${box.id} newText=${pdfTextBoxTraceText(newValue.text)} " +
                                 "newSel=${newValue.selection} composition=${newValue.composition} " +
@@ -619,6 +638,8 @@ fun ResizableTextBox(
                                 "resultText=${pdfTextBoxTraceText(result.text)} resultSel=${result.selection} " +
                                 "shifts=${result.shifts.size} paras=${pdfTextBoxTraceParagraphs(newParagraphs)} " +
                                 "textSame=$textSame selSame=$selSame parasSame=$parasSame " +
+                                "inPStyles=${newValue.annotatedString.paragraphStyles.size} " +
+                                "structural=$structural spanFixup=${hasNonDefault && !structural} " +
                                 "rebuild=$needsRebuild"
                         )
                         fieldValue = if (needsRebuild) {
