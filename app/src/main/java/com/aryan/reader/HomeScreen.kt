@@ -442,6 +442,7 @@ fun HomeScreen(
                 snackbarHost = { SnackbarHost(snackbarHostState) },
                 topBar = {
                         if (!isContextualModeActive) {
+                            val debugFpsEnabled = rememberDebugFpsEnabled()
                             DefaultTopAppBar(
                                 uiState = uiState,
                                 onRenderModeChange = viewModel::setRenderMode,
@@ -488,6 +489,13 @@ fun HomeScreen(
                                         R.string.banner_screen_capture_protection_off
                                     }
                                     viewModel.showBanner(context.getString(messageRes))
+                                },
+                                showFpsOverlayOption = BuildConfig.DEBUG,
+                                fpsOverlayEnabled = debugFpsEnabled,
+                                onFpsOverlayToggle = {
+                                    if (BuildConfig.DEBUG) {
+                                        DebugFpsStore.setEnabled(context, !debugFpsEnabled)
+                                    }
                                 }
                             )
                         } else {
@@ -705,14 +713,6 @@ fun HomeScreen(
                 )
             }
             CustomTopBanner(bannerMessage = uiState.bannerMessage)
-
-            if (BuildConfig.DEBUG) {
-                FpsMonitor(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(top = 48.dp, start = 8.dp)
-                )
-            }
         }
     }
 }
@@ -904,6 +904,9 @@ fun DefaultTopAppBar(
     onExportLogsClick: () -> Unit,
     onToggleHideReaderAi: () -> Unit,
     onScreenCaptureProtectionChange: (Boolean) -> Unit,
+    showFpsOverlayOption: Boolean = BuildConfig.DEBUG,
+    fpsOverlayEnabled: Boolean = false,
+    onFpsOverlayToggle: () -> Unit = {},
 ) {
     val context = LocalContext.current
     com.aryan.reader.shared.ui.SharedAndroidHomeTopBar(
@@ -931,6 +934,7 @@ fun DefaultTopAppBar(
             testPanelDetection = stringResource(R.string.options_test_panel_ml_detection),
             testSpeechBubbleDetection = stringResource(R.string.options_test_speech_bubble_ml_detection),
             exportLogs = stringResource(R.string.options_export_logs_last_lines, 5000),
+            fpsOverlay = stringResource(R.string.debug_show_fps_overlay),
             showDeviceManagement = stringResource(R.string.debug_show_device_management),
             clearCloudAndLocalData = stringResource(R.string.debug_clear_cloud_local_data),
         ),
@@ -944,6 +948,9 @@ fun DefaultTopAppBar(
         showReaderAiOption = !BuildConfig.IS_OFFLINE,
         showDebugActions = BuildConfig.DEBUG,
         showDebugCloudActions = BuildConfig.DEBUG && BuildConfig.FLAVOR != "oss",
+        showFpsOverlayOption = showFpsOverlayOption && BuildConfig.DEBUG,
+        fpsOverlayEnabled = fpsOverlayEnabled,
+        onFpsOverlayToggle = onFpsOverlayToggle,
         onDrawer = onDrawerClick,
         onSettings = onSettingsClick,
         onAppTheme = onAppThemeClick,
@@ -1383,33 +1390,11 @@ fun ClearAllDataConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit)
         })
 }
 
+@Deprecated("Use DebugFpsOverlay (global, Choreographer-based). Kept for binary compat only.")
 @Composable
 fun FpsMonitor(modifier: Modifier = Modifier) {
-    var fps by remember { mutableLongStateOf(0L) }
-    var lastFrameTime by remember { mutableLongStateOf(0L) }
-    var frameCount by remember { mutableLongStateOf(0L) }
-
-    LaunchedEffect(Unit) {
-        while (true) {
-            withFrameNanos { currentFrameTime ->
-                frameCount++
-                if (currentFrameTime - lastFrameTime >= 1_000_000_000L) {
-                    fps = frameCount
-                    frameCount = 0
-                    lastFrameTime = currentFrameTime
-                }
-            }
-        }
-    }
-
-    Text(
-        text = stringResource(R.string.debug_fps, fps),
-        color = Color.Green,
-        style = MaterialTheme.typography.labelLarge,
-        modifier = modifier
-            .background(Color.Black.copy(alpha = 0.5f))
-            .padding(4.dp)
-    )
+    if (!BuildConfig.DEBUG) return
+    DebugFpsOverlay(modifier = modifier)
 }
 
 @Composable

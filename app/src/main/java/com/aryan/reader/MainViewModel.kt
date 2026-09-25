@@ -323,6 +323,38 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private var panelDetector: com.aryan.reader.ml.IPanelDetector? = null
     private var speechBubbleDetector: ISpeechBubbleDetector? = null
 
+    /**
+     * Cold-start gate: set once the library DB emits, so the splash can stay
+     * until the first projected library is available instead of flashing an
+     * empty Home. A timeout in init flips [startupGatePassed] regardless, so
+     * a slow DB can never pin the splash.
+     */
+    private val _libraryReady = MutableStateFlow(false)
+    val isLibraryReady: StateFlow<Boolean> = _libraryReady.asStateFlow()
+    private val _startupGatePassed = MutableStateFlow(false)
+    val startupGatePassed: StateFlow<Boolean> = _startupGatePassed.asStateFlow()
+
+    /**
+     * Runs [block] on IO after the library DB emits plus [delayMillis].
+     * Keeps folder-sync sweeps, cloud fan-out, and session restore off the
+     * first-frame critical path. Timing only — no work is skipped.
+     */
+    private fun launchPostLibraryReady(
+        delayMillis: Long = 2000,
+        block: suspend () -> Unit,
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                withTimeoutOrNull(10_000) {
+                    libraryFlow.map { it.first }.first()
+                }
+            }
+            delay(delayMillis)
+            runCatching { block() }
+                .onFailure { Timber.e(it, "Post-startup task failed") }
+        }
+    }
+
     private val mlDispatcher = newSingleThreadExecutor().asCoroutineDispatcher()
     private val speechBubbleCacheMutex = Mutex()
     private val speechBubbleCache = ConcurrentHashMap<SpeechBubbleCacheKey, List<CachedSpeechBubble>>()
@@ -1682,6 +1714,22 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     init {
         Timber.d("ViewModel instance created.")
 
+        // Library readiness drives the splash gate and defers heavy startup
+        // work. Timeout guarantees the gate passes even on a slow DB.
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                withTimeoutOrNull(10_000) {
+                    libraryFlow.map { it.first }.first()
+                }
+            }
+            _libraryReady.value = true
+            _startupGatePassed.value = true
+        }
+        viewModelScope.launch {
+            delay(3000)
+            _startupGatePassed.value = true
+        }
+
         // Durable split identities are only preferences. Reconcile them with
         // the live library and provider as soon as the inventory is available
         // so a deleted or revoked URI cannot remain a broken reader session.
@@ -1692,20 +1740,30 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 .collectLatest(::reconcilePdfSplitWorkspace)
         }
 
-        SafeWorkManager.cancelUniqueWork(application, FolderSyncWorker.WORK_NAME)
-        SafeWorkManager.pruneWork(application)
+        // WorkManager init touches its own Room DB + JobScheduler; keep it
+        // off the init critical path. Timing only.
+        viewModelScope.launch(Dispatchers.IO) {
+            SafeWorkManager.cancelUniqueWork(application, FolderSyncWorker.WORK_NAME)
+            SafeWorkManager.pruneWork(application)
+        }
 
         viewModelScope.launch(Dispatchers.IO) {
             FolderAnnotationExportWorker.scheduleAllPending(appContext)
         }
 
-        val locatorConverter = LocatorConverter(
-            bookCacheDao,
-            ProtoBuf { serializersModule = semanticBlockModule },
-            appContext
-        )
+        // BookCacheDatabase opens on first access; defer it to the collector
+        // thread (IO) instead of the init (Main) thread.
+        val locatorConverter by lazy {
+            LocatorConverter(
+                bookCacheDao,
+                ProtoBuf { serializersModule = semanticBlockModule },
+                appContext
+            )
+        }
 
-        viewModelScope.launch {
+        // TTS controller init (prefs read + engine setup) happens on first
+        // ttsState access; collect on IO so browsing never pays for it on Main.
+        viewModelScope.launch(Dispatchers.IO) {
             var wasSessionFinished = false
             ttsController.ttsState.collect { state ->
                 val isPlaying = state.isPlaying
@@ -1728,7 +1786,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 wasSessionFinished = sessionFinished
             }
         }
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             libraryStore.migrateLegacyShelves()
             if (!prefs.getBoolean(KEY_DEFAULT_TAGS_SEEDED, false)) {
                 libraryStore.seedTagsIfEmpty(buildDefaultTags())
@@ -1746,7 +1804,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
         prefs.registerOnSharedPreferenceChangeListener(prefsListener)
 
-        remoteConfigRepository.init()
+        // Firebase RemoteConfig init (disk + network) stays off Main; values
+        // arrive async. Remote-gated features use defaults for the first
+        // seconds after cold start.
+        viewModelScope.launch(Dispatchers.IO) {
+            delay(2000)
+            runCatching { remoteConfigRepository.init() }
+                .onFailure { Timber.e(it, "RemoteConfig init failed") }
+        }
 
         // Cloud-folder workers run outside the Compose tree and may discover
         // a new root while the user is on any screen.  Refresh repository
@@ -1793,13 +1858,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         if (_internalState.value.syncedFolders.any { it.localSyncEnabled }) {
-            triggerFolderSyncWorker(metadataOnly = false, showFeedback = false)
+            // SAF tree enumeration storms ContentResolver; run after first
+            // paint. Sync badges arrive ~2s later; no data loss.
+            launchPostLibraryReady { triggerFolderSyncWorker(metadataOnly = false, showFeedback = false) }
         }
 
         _internalState.value.currentUser?.uid?.trim()
             ?.takeIf { it.isNotBlank() }
             ?.let { accountId ->
-                viewModelScope.launch(Dispatchers.IO) {
+                launchPostLibraryReady {
                     registerLocalCloudFolders(accountId)
                     refreshCloudFolderSyncState()
                 }
@@ -1807,7 +1874,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 // even when the main sync switch is currently off.  Requeue
                 // it on process start so cancelling a worker during sign-out
                 // cannot strand the account's outbox.
-                viewModelScope.launch(Dispatchers.IO) {
+                launchPostLibraryReady {
                     if (cloudBookDeletePersistence.pending(accountId).isNotEmpty()) {
                         runCatching {
                             CloudBookDeleteWorker.enqueue(appContext, accountId)
@@ -1819,19 +1886,33 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 if (_internalState.value.isSyncEnabled) {
                     // Discovery is metadata-only for unbound roots and is
                     // safe to schedule on every app start.
-                    CloudFolderSyncWorker.enqueuePull(
-                        appContext,
-                        accountId = accountId,
-                        replace = false,
-                    )
+                    launchPostLibraryReady {
+                        CloudFolderSyncWorker.enqueuePull(
+                            appContext,
+                            accountId = accountId,
+                            replace = false,
+                        )
+                    }
                 }
             }
 
-        sweepOrphanedCache()
+        // Cache sweep does a full-table scan + cacheDir walk; pending-removal
+        // cleanup touches Room + files. Both wait for first paint.
+        launchPostLibraryReady { sweepOrphanedCache() }
         cleanupPendingExternalFileRemovals()
-        restoreReaderSessionIfNeeded()
+        // Last-book auto-restore does a full book parse (EPUB) and navigates
+        // to the reader. Still honored, but after the library is ready so
+        // Home paints first. If the splash times out first, Home may be
+        // visible briefly before the reader opens.
+        launchPostLibraryReady(delayMillis = 500) { restoreReaderSessionIfNeeded() }
 
-        viewModelScope.launch { billingClientWrapper.initializeConnection() }
+        // Play billing bind stays off the critical path; Pro status refresh
+        // arrives ~2s later than before.
+        viewModelScope.launch(Dispatchers.IO) {
+            delay(2000)
+            runCatching { billingClientWrapper.initializeConnection() }
+                .onFailure { Timber.e(it, "Billing init failed") }
+        }
 
         viewModelScope.launch {
             authRepository.observeAuthState().collect { newUserData ->

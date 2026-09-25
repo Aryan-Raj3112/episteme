@@ -2763,6 +2763,10 @@ private fun SharedMobileHomeTopBar(
             "Export Logs (Last 5000 lines)",
             5000,
         )
+        SharedMobileHomeOverflowAction.SHOW_FPS_OVERLAY -> readerString(
+            "debug_show_fps_overlay",
+            "Show FPS overlay",
+        )
         SharedMobileHomeOverflowAction.DEVICE_MANAGEMENT -> readerString(
             "debug_show_device_management",
             "Device management",
@@ -2788,6 +2792,7 @@ private fun SharedMobileHomeTopBar(
             SharedMobileHomeOverflowAction.TEST_PANEL_DETECTION -> Unit
             SharedMobileHomeOverflowAction.TEST_SPEECH_BUBBLE_DETECTION -> Unit
             SharedMobileHomeOverflowAction.EXPORT_LOGS -> onExportLogs()
+            SharedMobileHomeOverflowAction.SHOW_FPS_OVERLAY -> Unit
             SharedMobileHomeOverflowAction.DEVICE_MANAGEMENT -> Unit
             SharedMobileHomeOverflowAction.CLEAR_CLOUD_LOCAL_DATA -> Unit
         }

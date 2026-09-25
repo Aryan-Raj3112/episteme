@@ -572,6 +572,8 @@
     <string name="debug_show_device_management" translatable="false">[Debug] Show Device Management</string>
     <!-- Debug-only menu item, not shown to regular users. -->
     <string name="debug_clear_cloud_local_data" translatable="false">[Debug] Clear Cloud &amp; Local Data</string>
+    <!-- Debug-only menu item, not shown to regular users. -->
+    <string name="debug_show_fps_overlay" translatable="false">[Debug] Show FPS overlay</string>
     <!-- Debug overlay showing frames per second. %1$d = integer FPS value. Not shown to regular users. Example: "FPS: 60". -->
     <string name="debug_fps" translatable="false">FPS: %1$d</string>
     <string name="error_folder_selection_unsupported">Your device doesn\'t support folder selection. You can still import files individually.</string>
