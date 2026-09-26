@@ -152,6 +152,9 @@ fun SharedMobilePdfTextDock(
             onUnderlineClick = { update(spanStyle.copy(textDecoration = sharedPdfDockDecoration(!style.isUnderline, style.isStrikeThrough))) },
             onStrikethroughClick = { update(spanStyle.copy(textDecoration = sharedPdfDockDecoration(style.isUnderline, !style.isStrikeThrough))) },
             onInsertTextBox = onInsertTextBox,
+            // Android parity (TextAnnotationDock showInsertTextBox = false):
+            // boxes are created by tapping the page, so the insert icon is hidden.
+            showInsertTextBox = false,
             paragraphControls = paragraphState?.let { paragraph ->
                 SharedPdfTextDockParagraphControls(
                     state = paragraph,
@@ -191,7 +194,13 @@ fun SharedMobilePdfTextDock(
                 ) {
                     LazyColumn(Modifier.heightIn(max = 200.dp).width(80.dp).background(Color(0xFF1E1E1E), androidx.compose.foundation.shape.RoundedCornerShape(16.dp))) {
                         items(AndroidPdfTextDockFontSizes) { size -> SharedPdfTextDockFontSizeRow(size.value.toInt(), style.fontSize == size.value) {
-                            onStyleChange(style.copy(fontSize = size.value)); state.dismiss()
+                            // Must refresh the page-relative size too: the
+                            // renderer derives px from pageRelativeFontSize,
+                            // which shadows fontSize when present (Android
+                            // benchmark withSharedPdfTextFontSize). A raw copy
+                            // leaves the stale relative size, so the change
+                            // silently does nothing.
+                            onStyleChange(style.withSharedPdfTextFontSize(size.value)); state.dismiss()
                         } }
                     }
                 }

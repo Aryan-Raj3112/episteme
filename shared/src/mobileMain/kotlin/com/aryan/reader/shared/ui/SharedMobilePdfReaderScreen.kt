@@ -1401,6 +1401,7 @@ fun SharedMobilePdfReaderHost(
         textStyle = annotationStyle
         textDraftSelection = TextRange(annotation.text.length)
         textDraftPendingSelection = null
+        iosTextBoxProbe { "draft-open id=${annotation.id} page=${annotation.pageIndex} locked=${annotation.isLocked} bounds=${annotation.bounds}" }
         textDraft = SharedPdfTextDraft(
             id = annotation.id,
             pageIndex = annotation.pageIndex,
@@ -1473,6 +1474,7 @@ fun SharedMobilePdfReaderHost(
     fun dismissTextDraft() {
         val draft = textDraft ?: return
         textDraft = null
+        iosTextBoxProbe { "draft-dismiss id=${draft.id} blank=${SharedPdfTextAnnotationDefaults.normalizeTextDraft(draft.text).isBlank()}" }
         val isExisting = readerState.annotations.any { it.id == draft.id }
         if (SharedPdfTextAnnotationDefaults.normalizeTextDraft(draft.text).isBlank()) {
             if (isExisting) dispatch(SharedPdfReaderAction.AnnotationDeleted(draft.id))
@@ -1493,6 +1495,7 @@ fun SharedMobilePdfReaderHost(
     // text stays editable.
     fun onTextBoxMenuAction(action: SharedPdfTextBoxMenuAction) {
         val draft = textDraft ?: return
+        iosTextBoxProbe { "menu-action action=$action id=${draft.id} locked=${draft.isLocked}" }
         when (action) {
             SharedPdfTextBoxMenuAction.DELETE -> {
                 textDraft = null

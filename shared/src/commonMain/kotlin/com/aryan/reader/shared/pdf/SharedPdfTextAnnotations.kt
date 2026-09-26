@@ -38,6 +38,37 @@ enum class SharedPdfTextResizeHandle {
 }
 
 /**
+ * Center of a resize handle in page px, on the padded content frame
+ * (Android benchmark ResizableTextBox handle layout): the frame origin plus
+ * half a handle, plus the text size on the handle's axes.
+ */
+fun sharedPdfTextBoxHandleCenter(
+    handle: SharedPdfTextResizeHandle,
+    contentLeftPx: Float,
+    contentTopPx: Float,
+    halfHandlePx: Float,
+    widthPx: Float,
+    heightPx: Float,
+): Offset = when (handle) {
+    SharedPdfTextResizeHandle.TOP_LEFT ->
+        Offset(contentLeftPx + halfHandlePx, contentTopPx + halfHandlePx)
+    SharedPdfTextResizeHandle.TOP_CENTER ->
+        Offset(contentLeftPx + halfHandlePx + widthPx / 2f, contentTopPx + halfHandlePx)
+    SharedPdfTextResizeHandle.TOP_RIGHT ->
+        Offset(contentLeftPx + halfHandlePx + widthPx, contentTopPx + halfHandlePx)
+    SharedPdfTextResizeHandle.RIGHT_CENTER ->
+        Offset(contentLeftPx + halfHandlePx + widthPx, contentTopPx + halfHandlePx + heightPx / 2f)
+    SharedPdfTextResizeHandle.BOTTOM_RIGHT ->
+        Offset(contentLeftPx + halfHandlePx + widthPx, contentTopPx + halfHandlePx + heightPx)
+    SharedPdfTextResizeHandle.BOTTOM_CENTER ->
+        Offset(contentLeftPx + halfHandlePx + widthPx / 2f, contentTopPx + halfHandlePx + heightPx)
+    SharedPdfTextResizeHandle.BOTTOM_LEFT ->
+        Offset(contentLeftPx + halfHandlePx, contentTopPx + halfHandlePx + heightPx)
+    SharedPdfTextResizeHandle.LEFT_CENTER ->
+        Offset(contentLeftPx + halfHandlePx, contentTopPx + halfHandlePx + heightPx / 2f)
+}
+
+/**
  * Compact per-box action menu entries (Android benchmark:
  * PdfTextBoxMenuAction DELETE / DUPLICATE / LOCK). Shared-first so Android
  * and iOS stay in sync; the menu width is derived from the entry count so
@@ -58,6 +89,78 @@ fun sharedPdfTextBoxActionMenuWidthDp(): Float {
     if (count <= 0) return 0f
     return count * SharedPdfTextBoxActionButtonSizeDp +
         (count - 1) * SharedPdfTextBoxActionDividerWidthDp
+}
+
+/**
+ * Hit-test target for box-chrome gestures: every touch starting on chrome is
+ * classified once on down, then driven directly (resize / move / menu tap).
+ */
+sealed interface SharedPdfTextBoxChromeTarget {
+    data class Resize(val handle: SharedPdfTextResizeHandle) : SharedPdfTextBoxChromeTarget
+    data object Move : SharedPdfTextBoxChromeTarget
+    data class Menu(val action: SharedPdfTextBoxMenuAction) : SharedPdfTextBoxChromeTarget
+}
+
+/**
+ * Classifies a page-px touch against a selected text box's chrome, using the
+ * same numbers that position the visuals so touch always matches sight.
+ * Geometry (handles + pill) is skipped when [allowGeometry] is false
+ * (locked box); menu slots are tested only for [menuActions] (null hides).
+ */
+fun sharedPdfTextBoxChromeHitTest(
+    position: Offset,
+    contentLeftPx: Float,
+    contentTopPx: Float,
+    halfHandlePx: Float,
+    widthPx: Float,
+    heightPx: Float,
+    handleTouchPx: Float,
+    pillLeftPx: Float,
+    pillTopPx: Float,
+    pillTouchWidthPx: Float,
+    pillTouchHeightPx: Float,
+    menuLeftPx: Float,
+    menuTopPx: Float,
+    menuButtonPx: Float,
+    menuDividerPx: Float,
+    menuHeightPx: Float,
+    allowGeometry: Boolean,
+    menuActions: List<SharedPdfTextBoxMenuAction>?,
+): SharedPdfTextBoxChromeTarget? {
+    if (allowGeometry) {
+        SharedPdfTextResizeHandle.entries.forEach { handle ->
+            val center = sharedPdfTextBoxHandleCenter(
+                handle = handle,
+                contentLeftPx = contentLeftPx,
+                contentTopPx = contentTopPx,
+                halfHandlePx = halfHandlePx,
+                widthPx = widthPx,
+                heightPx = heightPx,
+            )
+            if (position.x in (center.x - handleTouchPx / 2f)..(center.x + handleTouchPx / 2f) &&
+                position.y in (center.y - handleTouchPx / 2f)..(center.y + handleTouchPx / 2f)
+            ) {
+                return SharedPdfTextBoxChromeTarget.Resize(handle)
+            }
+        }
+        if (position.x in pillLeftPx..(pillLeftPx + pillTouchWidthPx) &&
+            position.y in pillTopPx..(pillTopPx + pillTouchHeightPx)
+        ) {
+            return SharedPdfTextBoxChromeTarget.Move
+        }
+    }
+    if (menuActions != null) {
+        val stepPx = menuButtonPx + menuDividerPx
+        menuActions.forEachIndexed { index, action ->
+            val start = menuLeftPx + index * stepPx
+            if (position.x in start..(start + stepPx) &&
+                position.y in menuTopPx..(menuTopPx + menuHeightPx)
+            ) {
+                return SharedPdfTextBoxChromeTarget.Menu(action)
+            }
+        }
+    }
+    return null
 }
 
 @Serializable

@@ -6,8 +6,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -46,7 +44,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -84,12 +81,10 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.PointerInputChange
-import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.semantics.contentDescription
@@ -125,6 +120,7 @@ import com.aryan.reader.shared.pdf.SharedPdfTextDraft
 import com.aryan.reader.shared.pdf.SharedPdfTextResizeHandle
 import com.aryan.reader.shared.pdf.SharedPdfTextStyleConfig
 import com.aryan.reader.shared.pdf.sharedPdfTextBoxActionMenuWidthDp
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxHandleCenter
 import com.aryan.reader.shared.pdf.RichParagraphUiState
 import com.aryan.reader.shared.pdf.SharedPdfRichListType
 import com.aryan.reader.shared.pdf.SharedPdfRichParagraph
@@ -1584,52 +1580,19 @@ fun SharedPdfInlineTextEditorOverlay(
  * text (echo guard), idle fields adopt parent text.
  */
 /**
- * Eagerly consumes pointer events so parent scroll/pager/zoom gestures don't
- * steal an in-flight text-box resize or move (Android benchmark
- * PdfTextBox.detectEagerDragGestures: the down is consumed immediately in the
- * Initial pass instead of waiting for touch slop like detectDragGestures,
- * which is why move/resize never started on iOS).
+ * Temporary touch-diagnostics probe for the iOS text-box chrome
+ * investigation. Emits one line per gesture event with the common tag
+ * [IosTextBoxProbeTag]; filter the Xcode console / logcat for it and attach
+ * the output when reporting that resize/move/menu taps do nothing.
+ * TODO(textbox-probe): remove all iosTextBoxProbe call sites once diagnosed.
  */
-internal suspend fun PointerInputScope.sharedPdfTextBoxEagerDrag(
-    onDragStart: (Offset) -> Unit,
-    onDragEnd: () -> Unit,
-    onDragCancel: () -> Unit,
-    onDrag: (PointerInputChange, Offset) -> Unit,
-) {
-    awaitEachGesture {
-        var dragStarted = false
-        try {
-            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            down.consume() // Consume immediately
-            onDragStart(down.position)
-            dragStarted = true
-            val pointerId = down.id
-            var canceled = false
-            while (true) {
-                val event = awaitPointerEvent(PointerEventPass.Initial)
-                val change = event.changes.firstOrNull { it.id == pointerId }
-                if (change == null) {
-                    canceled = true
-                    break
-                }
-                if (change.changedToUp()) {
-                    change.consume()
-                    break
-                }
-                if (change.positionChanged()) {
-                    val dragAmount = change.position - change.previousPosition
-                    change.consume()
-                    onDrag(change, dragAmount)
-                }
-            }
-            if (canceled) onDragCancel() else onDragEnd()
-            dragStarted = false
-        } finally {
-            if (dragStarted) {
-                onDragCancel()
-            }
-        }
-    }
+internal const val IosTextBoxProbeTag = "IosTextBoxProbe"
+
+/** Bump every probe round so device logs prove which build produced them. */
+internal const val IosTextBoxProbeRev = 4
+
+internal fun iosTextBoxProbe(message: () -> String) {
+    println("[$IosTextBoxProbeTag] ${message()}")
 }
 
 @Composable
@@ -1809,7 +1772,12 @@ fun SharedPdfTextBoxEditorOverlay(
 
     val fontSizePx = style.sharedPdfTextFontSizePx(canvasSize)
 
-    Box(modifier = modifier.fillMaxSize().alpha(if (isDraggingGlobally) 0f else 1f)) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .alpha(if (isDraggingGlobally) 0f else 1f)
+            .onSizeChanged { iosTextBoxProbe { "overlay-root rev=$IosTextBoxProbeRev id=$id size=$it canvas=$canvasSize zoom=$zoomScale" } }
+    ) {
         BasicTextField(
             value = textFieldValue,
             onValueChange = { nextValue ->
@@ -1887,14 +1855,9 @@ fun SharedPdfTextBoxEditorOverlay(
                     height = with(density) { chromeLayout.contentHeightPx.toDp() }
                 )
                 .padding(handleSize / 2)
-                .background(
-                    color = if (style.backgroundColorArgb.isTransparentArgb()) {
-                        Color.Transparent
-                    } else {
-                        backgroundColor
-                    },
-                    shape = RoundedCornerShape(4.dp)
-                )
+                // No fill modifier: like Android's ResizableTextBox the fill
+                // comes from the text spans (markerFallbackStyle background),
+                // so it hugs the text lines instead of the whole box rect.
                 .border(
                     width = (1.5f / safeScale).dp,
                     color = borderColor,
@@ -1912,27 +1875,19 @@ fun SharedPdfTextBoxEditorOverlay(
             // plain theme-aware circles, eager drag so parents never steal.
             val contentLeftPx = chromeLayout.outerTranslationX + chromeLayout.contentOffsetX
             val contentTopPx = chromeLayout.outerTranslationY + chromeLayout.contentOffsetY
-            val resizeMinPx = 50f / safeScale
             SharedPdfTextResizeHandle.entries.forEach { handle ->
-                val center = when (handle) {
-                    SharedPdfTextResizeHandle.TOP_LEFT ->
-                        Offset(contentLeftPx + halfHandlePx, contentTopPx + halfHandlePx)
-                    SharedPdfTextResizeHandle.TOP_CENTER ->
-                        Offset(contentLeftPx + halfHandlePx + widthPx / 2f, contentTopPx + halfHandlePx)
-                    SharedPdfTextResizeHandle.TOP_RIGHT ->
-                        Offset(contentLeftPx + halfHandlePx + widthPx, contentTopPx + halfHandlePx)
-                    SharedPdfTextResizeHandle.RIGHT_CENTER ->
-                        Offset(contentLeftPx + halfHandlePx + widthPx, contentTopPx + halfHandlePx + heightPx / 2f)
-                    SharedPdfTextResizeHandle.BOTTOM_RIGHT ->
-                        Offset(contentLeftPx + halfHandlePx + widthPx, contentTopPx + halfHandlePx + heightPx)
-                    SharedPdfTextResizeHandle.BOTTOM_CENTER ->
-                        Offset(contentLeftPx + halfHandlePx + widthPx / 2f, contentTopPx + halfHandlePx + heightPx)
-                    SharedPdfTextResizeHandle.BOTTOM_LEFT ->
-                        Offset(contentLeftPx + halfHandlePx, contentTopPx + halfHandlePx + heightPx)
-                    SharedPdfTextResizeHandle.LEFT_CENTER ->
-                        Offset(contentLeftPx + halfHandlePx, contentTopPx + halfHandlePx + heightPx / 2f)
-                }
+                val center = sharedPdfTextBoxHandleCenter(
+                    handle = handle,
+                    contentLeftPx = contentLeftPx,
+                    contentTopPx = contentTopPx,
+                    halfHandlePx = halfHandlePx,
+                    widthPx = widthPx,
+                    heightPx = heightPx,
+                )
                 Box(
+                    // Visual only: the overlay-root gesture block owns all
+                    // chrome touches (hit-tested in page coordinates), so the
+                    // dots can never desync from their touch areas.
                     modifier = Modifier
                         .offset {
                             IntOffset(
@@ -1941,32 +1896,7 @@ fun SharedPdfTextBoxEditorOverlay(
                             )
                         }
                         .size(handleTouchSize)
-                        .zIndex(10f)
-                        .pointerInput(id, handle, canvasSize) {
-                            sharedPdfTextBoxEagerDrag(
-                                onDragStart = {
-                                    isResizing = true
-                                },
-                                onDragEnd = {
-                                    isResizing = false
-                                    onBoundsChange(liveBounds)
-                                },
-                                onDragCancel = {
-                                    isResizing = false
-                                    liveBounds = bounds
-                                },
-                                onDrag = { _, dragAmount ->
-                                    liveBounds = liveBounds.resizedBy(
-                                        handle = handle,
-                                        deltaXPx = dragAmount.x,
-                                        deltaYPx = dragAmount.y,
-                                        canvasSize = canvasSize,
-                                        minWidthPx = resizeMinPx,
-                                        minHeightPx = resizeMinPx
-                                    )
-                                }
-                            )
-                        },
+                        .zIndex(10f),
                     contentAlignment = Alignment.Center
                 ) {
                     Box(
@@ -1986,6 +1916,7 @@ fun SharedPdfTextBoxEditorOverlay(
             val dragPillTopPx = chromeLayout.outerTranslationY + chromeLayout.dragPillTopPx
             val dragLineColor = if (isDarkMode) Color.Black else Color.White
             Box(
+                // Visual only: touches owned by the overlay-root block above.
                 modifier = Modifier
                     .offset {
                         IntOffset(
@@ -1994,43 +1925,7 @@ fun SharedPdfTextBoxEditorOverlay(
                         )
                     }
                     .size(width = dragPillTouchWidth, height = dragPillTouchHeight)
-                    .zIndex(20f)
-                    .pointerInput(id, canvasSize, onGlobalDrag != null) {
-                        sharedPdfTextBoxEagerDrag(
-                            onDragStart = {
-                                isResizing = true
-                                if (onGlobalDrag == null) return@sharedPdfTextBoxEagerDrag
-                                onGlobalDragStart?.invoke()
-                            },
-                            onDragEnd = {
-                                isResizing = false
-                                if (onGlobalDrag != null) {
-                                    onGlobalDragEnd?.invoke()
-                                    return@sharedPdfTextBoxEagerDrag
-                                }
-                                onBoundsChange(liveBounds)
-                            },
-                            onDragCancel = {
-                                isResizing = false
-                                if (onGlobalDrag != null) {
-                                    onGlobalDragCancel?.invoke()
-                                    return@sharedPdfTextBoxEagerDrag
-                                }
-                                liveBounds = bounds
-                            },
-                            onDrag = { _, dragAmount ->
-                                if (onGlobalDrag != null) {
-                                    onGlobalDrag(dragAmount)
-                                    return@sharedPdfTextBoxEagerDrag
-                                }
-                                liveBounds = liveBounds.movedBy(
-                                    deltaXPx = dragAmount.x,
-                                    deltaYPx = dragAmount.y,
-                                    canvasSize = canvasSize
-                                )
-                            }
-                        )
-                    },
+                    .zIndex(20f),
                 contentAlignment = Alignment.Center
             ) {
                 Surface(
@@ -2129,9 +2024,12 @@ private fun SharedPdfTextBoxActionMenu(
                                 )
                         )
                     }
-                    IconButton(
-                        onClick = { onAction(action) },
-                        modifier = Modifier.size((SharedPdfTextBoxActionButtonSizeDp / safeScale).dp)
+                    // Visual only (no clickable): taps are owned by the
+                    // overlay-root block, which hit-tests the same button
+                    // slots — a clickable here would double-fire actions.
+                    Box(
+                        modifier = Modifier.size((SharedPdfTextBoxActionButtonSizeDp / safeScale).dp),
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = when (action) {

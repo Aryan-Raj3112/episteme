@@ -30,7 +30,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -53,6 +52,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -112,15 +112,10 @@ fun SharedPdfAnnotationOverlay(
                         SharedPdfInkRenderer.createRenderData(annotation, canvasSize)?.let(::drawInkRenderData)
                     }
                     PdfAnnotationKind.TEXT -> {
-                        val bounds = annotation.bounds ?: return@forEach
-                        if (!annotation.backgroundArgb.isTransparentArgb()) {
-                            drawRoundRect(
-                                color = Color(annotation.backgroundArgb),
-                                topLeft = bounds.topLeft(canvasSize),
-                                size = bounds.size(canvasSize),
-                                cornerRadius = CornerRadius(4f, 4f)
-                            )
-                        }
+                        // No canvas fill: like Android's ResizableTextBox (and
+                        // the selected editor overlay) the fill travels in the
+                        // text spans, so it hugs the glyphs instead of filling
+                        // the whole box rect. The Text below carries it.
                     }
                 }
             }
@@ -164,13 +159,28 @@ fun SharedPdfAnnotationOverlay(
                 val widthPx = ((bounds.right - bounds.left) * canvasSize.width).coerceAtLeast(24f)
                 val heightPx = ((bounds.bottom - bounds.top) * canvasSize.height).coerceAtLeast(18f)
                 val fontSizePx = annotation.sharedPdfTextFontSizePx(canvasSize)
+                // Android parity (ResizableTextBox boxSpanStyle): the fill
+                // travels in the spans so deselected boxes hug the text lines
+                // exactly like the selected editor — never the whole box rect.
+                val committedBaseStyle = SpanStyle(
+                    color = Color(annotation.colorArgb),
+                    background = Color(annotation.backgroundArgb),
+                    fontFamily = annotation.sharedPdfTextFontFamily(customFontFamilies),
+                    fontWeight = if (annotation.isBold) FontWeight.Bold else FontWeight.Normal,
+                    fontStyle = if (annotation.isItalic) FontStyle.Italic else FontStyle.Normal,
+                    textDecoration = annotation.textDecoration,
+                )
                 Text(
                     // Paragraph runs (alignment) travel in the annotated
-                    // value; box color/fonts stay on the Text params and the
-                    // background on the rect above (Android benchmark:
+                    // value; box color/fonts ride both the Text params and
+                    // the spans, background in the spans (Android benchmark:
                     // committed boxes render stored alignment). List markers
                     // live in the text itself.
-                    text = sharedPdfTextBoxAnnotatedString(annotation.text, annotation.paragraphs),
+                    text = sharedPdfTextBoxAnnotatedString(
+                        annotation.text,
+                        annotation.paragraphs,
+                        committedBaseStyle
+                    ),
                     color = Color(annotation.colorArgb),
                     fontSize = with(density) { fontSizePx.toSp() },
                     lineHeight = with(density) { (fontSizePx * 1.25f).toSp() },

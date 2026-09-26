@@ -12,7 +12,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -167,6 +166,7 @@ import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfInkRenderer
 import com.aryan.reader.pdf.resolveEraserStrokeWidth
+import com.aryan.reader.pdf.calculateTextBoxChromeLayout
 import com.aryan.reader.shared.pdf.sharedPdfInkStrokeConsumesMove
 import com.aryan.reader.shared.pdf.sharedPdfIsInkDownAllowed
 import com.aryan.reader.shared.pdf.sharedPdfIsEraserOverride
@@ -203,6 +203,10 @@ import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfTextDraft
 import com.aryan.reader.shared.pdf.RichParagraphUiState
 import com.aryan.reader.shared.pdf.SharedPdfTextBoxMenuAction
+import com.aryan.reader.shared.pdf.SharedPdfTextBoxActionMenuHeightDp
+import com.aryan.reader.shared.pdf.SharedPdfTextBoxChromeTarget
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxActionMenuWidthDp
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxChromeHitTest
 import com.aryan.reader.shared.pdf.SharedPdfTextBoxPendingSelection
 import com.aryan.reader.shared.pdf.withTextAndParagraphs
 import com.aryan.reader.shared.pdf.SharedPdfTextDragState
@@ -210,6 +214,8 @@ import com.aryan.reader.shared.pdf.sharedPdfTextDropBounds
 import com.aryan.reader.shared.pdf.containsNormalizedPoint
 import com.aryan.reader.shared.pdf.withBounds
 import com.aryan.reader.shared.pdf.withText
+import com.aryan.reader.shared.pdf.resizedBy
+import com.aryan.reader.shared.pdf.movedBy
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
@@ -1586,6 +1592,26 @@ internal fun SharedMobilePdfPaginatedPages(
     }
 }
 
+/**
+ * Box-chrome sizes in page px (mirror the overlay visuals so touch matches
+ * sight): resize handles, drag pill + gap, action menu + buttons, bottom
+ * space that flips pill/menu ends, resize minimum, menu-tap slop.
+ */
+private data class TextBoxChromeSizes(
+    val handleSizePx: Float,
+    val handleTouchPx: Float,
+    val pillTouchWidthPx: Float,
+    val pillTouchHeightPx: Float,
+    val gapPx: Float,
+    val menuWidthPx: Float,
+    val menuHeightPx: Float,
+    val menuButtonPx: Float,
+    val menuDividerPx: Float,
+    val bottomSpacePx: Float,
+    val resizeMinPx: Float,
+    val menuTapSlopPx: Float,
+)
+
 internal fun sharedMobilePdfSpreadStarts(
     pageCount: Int,
     useTwoPageSpread: Boolean,
@@ -2234,6 +2260,37 @@ internal fun SharedMobilePdfPageSurface(
     // unhittable until something restarts the block.
     val latestEffectiveAnnotations by rememberUpdatedState(effectiveAnnotations)
     val latestBaseAnnotations by rememberUpdatedState(annotations)
+    // Fresh reads for the chrome/tap gesture block below. That pointerInput
+    // block is keyed on page/canvas/display (NOT on data) so an in-flight
+    // drag survives recompositions; updated-state reads keep it calling the
+    // current handlers with current data.
+    val latestTextTapDraft by rememberUpdatedState(textDraft)
+    val latestTextTapAnnotations by rememberUpdatedState(annotations)
+    val latestPageSurfaceWindowRect by rememberUpdatedState(pageSurfaceWindowRect)
+    val latestContainerWindowRect by rememberUpdatedState(containerWindowRect)
+    val textDensity = LocalDensity.current
+    // Chrome sizes in page px (mirror the overlay visuals so touch matches
+    // sight). Recomputed on zoom/density change; the gesture block is keyed
+    // on zoom scale so it always captures fresh sizes.
+    val textChromeSizes = remember(textDensity, zoomCamera.scale) {
+        val s = zoomCamera.scale.takeIf { it.isFinite() && it > 0f } ?: 1f
+        with(textDensity) {
+            TextBoxChromeSizes(
+                handleSizePx = (10f / s).dp.toPx(),
+                handleTouchPx = (40f / s).dp.toPx(),
+                pillTouchWidthPx = (72f / s).dp.toPx(),
+                pillTouchHeightPx = (48f / s).dp.toPx(),
+                gapPx = (8f / s).dp.toPx(),
+                menuWidthPx = sharedPdfTextBoxActionMenuWidthDp().dp.toPx() / s,
+                menuHeightPx = SharedPdfTextBoxActionMenuHeightDp.dp.toPx() / s,
+                menuButtonPx = (24f / s).dp.toPx(),
+                menuDividerPx = (1f / s).dp.toPx(),
+                bottomSpacePx = 60.dp.toPx() / s,
+                resizeMinPx = 50f / s,
+                menuTapSlopPx = 12.dp.toPx(),
+            )
+        }
+    }
     // Window-geometry snapshot behind this page (transformed page rect, the
     // camera that produced it, viewport rect). Scroll/layout re-fires the
     // observer that records it; zoom/pinch only moves camera state, so the
@@ -2610,35 +2667,207 @@ internal fun SharedMobilePdfPageSurface(
                 }
             )
             .then(
-                if (selectedTool == PdfInkTool.TEXT) {
+                // Box-chrome + tap handling (TEXT mode, or any mode with a
+                // draft open): chrome touches drive resize/move/menu right
+                // here, on the page node proven live on iOS. Everything else
+                // falls through to the original tap flow below, preserved
+                // exactly (hit → select, draft open → dismiss, else create).
+                if (selectedTool == PdfInkTool.TEXT || textDraft != null) {
                     Modifier.pointerInput(
                         pageIndex,
                         localCanvasSize,
-                        annotations,
-                        textDraft,
+                        displayPageIndex,
                         richTextController,
                         isRichTextEditingEnabled,
-                        displayPageIndex
+                        zoomCamera.scale
                     ) {
-                        detectTapGestures { offset ->
-                            if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
-                                val point = offset.toSharedMobilePdfPoint(localCanvasSize)
-                                val hit = annotations.firstOrNull {
-                                    it.kind == PdfAnnotationKind.TEXT &&
-                                        it.bounds?.containsNormalizedPoint(point.x, point.y) == true
-                                }
-                                if (hit != null) {
-                                    onTextPageTap(hit, pageIndex, point.x, point.y, localCanvasSize)
-                                    return@detectTapGestures
-                                }
-                                if (textDraft != null) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown()
+                            val draft = latestTextTapDraft?.takeIf { it.pageIndex == pageIndex }
+                            val cw = localCanvasSize.width.toFloat()
+                            val ch = localCanvasSize.height.toFloat()
+                            val target = if (draft != null && cw > 0f && ch > 0f) {
+                                val sizes = textChromeSizes
+                                val leftPx = draft.bounds.left * cw
+                                val topPx = draft.bounds.top * ch
+                                val widthPx = ((draft.bounds.right - draft.bounds.left) * cw).coerceAtLeast(50f)
+                                val heightPx = ((draft.bounds.bottom - draft.bounds.top) * ch).coerceAtLeast(50f)
+                                val halfHandlePx = sizes.handleSizePx / 2f
+                                val handleAtTop = (ch - (topPx + heightPx)) < sizes.bottomSpacePx
+                                val layout = calculateTextBoxChromeLayout(
+                                    textBoundsPx = Rect(leftPx, topPx, leftPx + widthPx, topPx + heightPx),
+                                    isSelected = true,
+                                    isHandleAtTop = handleAtTop,
+                                    handleSizePx = sizes.handleSizePx,
+                                    dragPillWidthPx = sizes.pillTouchWidthPx,
+                                    dragPillHeightPx = sizes.pillTouchHeightPx,
+                                    dragPillGapPx = sizes.gapPx,
+                                    hasActionMenu = onTextBoxMenuAction != null,
+                                    actionMenuWidthPx = sizes.menuWidthPx,
+                                    actionMenuHeightPx = sizes.menuHeightPx,
+                                )
+                                sharedPdfTextBoxChromeHitTest(
+                                    position = down.position,
+                                    contentLeftPx = layout.outerTranslationX + layout.contentOffsetX,
+                                    contentTopPx = layout.outerTranslationY + layout.contentOffsetY,
+                                    halfHandlePx = halfHandlePx,
+                                    widthPx = widthPx,
+                                    heightPx = heightPx,
+                                    handleTouchPx = sizes.handleTouchPx,
+                                    pillLeftPx = layout.outerTranslationX + layout.dragPillLeftPx,
+                                    pillTopPx = layout.outerTranslationY + layout.dragPillTopPx,
+                                    pillTouchWidthPx = sizes.pillTouchWidthPx,
+                                    pillTouchHeightPx = sizes.pillTouchHeightPx,
+                                    menuLeftPx = layout.outerTranslationX + layout.actionMenuLeftPx,
+                                    menuTopPx = layout.outerTranslationY + layout.actionMenuTopPx,
+                                    menuButtonPx = sizes.menuButtonPx,
+                                    menuDividerPx = sizes.menuDividerPx,
+                                    menuHeightPx = sizes.menuHeightPx,
+                                    allowGeometry = !draft.isLocked,
+                                    menuActions = if (onTextBoxMenuAction != null) {
+                                        SharedPdfTextBoxMenuAction.entries
+                                    } else {
+                                        null
+                                    },
+                                )
+                            } else {
+                                null
+                            }
+                            if (target == null) {
+                                // Tap path (original behavior): wait for up;
+                                // moves don't cancel, matching detectTapGestures.
+                                val up = waitForUpOrCancellation() ?: return@awaitEachGesture
+                                val offset = up.position
+                                up.consume()
+                                if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
+                                    val point = offset.toSharedMobilePdfPoint(localCanvasSize)
+                                    val hit = latestTextTapAnnotations.firstOrNull {
+                                        it.kind == PdfAnnotationKind.TEXT &&
+                                            it.bounds?.containsNormalizedPoint(point.x, point.y) == true
+                                    }
+                                    iosTextBoxProbe { "tap page=$pageIndex offset=(${offset.x},${offset.y}) draft=${latestTextTapDraft?.id} hit=${hit?.id}" }
+                                    if (hit != null) {
+                                        onTextPageTap(hit, pageIndex, point.x, point.y, localCanvasSize)
+                                        return@awaitEachGesture
+                                    }
+                                    if (latestTextTapDraft != null) {
+                                        onTextPageTap(null, pageIndex, point.x, point.y, localCanvasSize)
+                                        return@awaitEachGesture
+                                    }
+                                    // No box under the tap: parent-side tap-to-create
+                                    // (page rich text is retired and never takes
+                                    // taps; see SharedMobilePdfReaderScreen).
                                     onTextPageTap(null, pageIndex, point.x, point.y, localCanvasSize)
-                                    return@detectTapGestures
                                 }
-                                // No box under the tap: parent-side tap-to-create
-                                // (page rich text is retired and never takes
-                                // taps; see SharedMobilePdfReaderScreen).
-                                onTextPageTap(null, pageIndex, point.x, point.y, localCanvasSize)
+                                return@awaitEachGesture
+                            }
+                            val draftId = draft?.id ?: return@awaitEachGesture
+                            down.consume()
+                            iosTextBoxProbe { "chrome-down id=$draftId target=$target bounds=${draft?.bounds}" }
+                            // Pagination drives cross-page moves through the
+                            // global drag ghost; vertical moves the draft
+                            // bounds directly. containerWindowRect is only set
+                            // in pagination, so it selects the path.
+                            val isGlobalMove = target is SharedPdfTextBoxChromeTarget.Move &&
+                                latestContainerWindowRect != null
+                            if (isGlobalMove) {
+                                val container = latestContainerWindowRect
+                                val surface = latestPageSurfaceWindowRect
+                                val scale = zoomCamera.scale.coerceAtLeast(0.1f)
+                                if (container != null && surface != Rect.Zero && draft != null) {
+                                    onTextDragStart(
+                                        Offset(
+                                            surface.left + draft.bounds.left * localCanvasSize.width * scale,
+                                            surface.top + draft.bounds.top * localCanvasSize.height * scale
+                                        ),
+                                        localCanvasSize,
+                                        displayPageIndex
+                                    )
+                                }
+                            }
+                            var menuArmed = target is SharedPdfTextBoxChromeTarget.Menu
+                            var traveled = 0f
+                            var canceled = false
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id }
+                                if (change == null) {
+                                    iosTextBoxProbe { "chrome-cancel id=$draftId target=$target reason=no-change" }
+                                    canceled = true
+                                    break
+                                }
+                                if (change.changedToUp()) {
+                                    iosTextBoxProbe { "chrome-up id=$draftId target=$target menuArmed=$menuArmed" }
+                                    change.consume()
+                                    break
+                                }
+                                if (change.positionChanged()) {
+                                    val delta = change.position - change.previousPosition
+                                    traveled += delta.getDistance()
+                                    if (traveled > textChromeSizes.menuTapSlopPx) menuArmed = false
+                                    iosTextBoxProbe { "chrome-move id=$draftId target=$target delta=(${delta.x},${delta.y})" }
+                                    change.consume()
+                                    val current = latestTextTapDraft?.takeIf { it.id == draftId }
+                                        ?: continue
+                                    when (target) {
+                                        is SharedPdfTextBoxChromeTarget.Resize -> {
+                                            onTextDraftChange(
+                                                current.withBounds(
+                                                    current.bounds.resizedBy(
+                                                        handle = target.handle,
+                                                        deltaXPx = delta.x,
+                                                        deltaYPx = delta.y,
+                                                        canvasSize = localCanvasSize,
+                                                        minWidthPx = textChromeSizes.resizeMinPx,
+                                                        minHeightPx = textChromeSizes.resizeMinPx
+                                                    )
+                                                )
+                                            )
+                                        }
+                                        is SharedPdfTextBoxChromeTarget.Move -> {
+                                            if (isGlobalMove) {
+                                                onTextDrag(
+                                                    Offset(
+                                                        delta.x * zoomCamera.scale,
+                                                        delta.y * zoomCamera.scale
+                                                    )
+                                                )
+                                            } else {
+                                                onTextDraftChange(
+                                                    current.withBounds(
+                                                        current.bounds.movedBy(
+                                                            deltaXPx = delta.x,
+                                                            deltaYPx = delta.y,
+                                                            canvasSize = localCanvasSize
+                                                        )
+                                                    )
+                                                )
+                                            }
+                                        }
+                                        is SharedPdfTextBoxChromeTarget.Menu -> Unit
+                                    }
+                                }
+                            }
+                            when {
+                                canceled -> {
+                                    if (isGlobalMove) {
+                                        onTextDragCancel()
+                                    } else if (target !is SharedPdfTextBoxChromeTarget.Menu) {
+                                        latestTextTapDraft?.takeIf { it.id == draftId }?.let { current ->
+                                            onTextDraftChange(current.withBounds(draft?.bounds ?: current.bounds))
+                                        }
+                                    }
+                                }
+                                target is SharedPdfTextBoxChromeTarget.Menu && menuArmed -> {
+                                    iosTextBoxProbe { "chrome-menu id=$draftId action=${target.action}" }
+                                    onTextBoxMenuAction?.invoke(target.action)
+                                }
+                                target is SharedPdfTextBoxChromeTarget.Move && isGlobalMove -> {
+                                    onTextDragEnd()
+                                }
+                                target !is SharedPdfTextBoxChromeTarget.Menu -> {
+                                    iosTextBoxProbe { "chrome-end id=$draftId target=$target" }
+                                }
                             }
                         }
                     }
@@ -2731,13 +2960,18 @@ internal fun SharedMobilePdfPageSurface(
                 )
             }
             SharedPdfAnnotationOverlay(
-                annotations = effectiveAnnotations,
+                // The open draft owns its box's pixels: the committed copy is
+                // hidden while editing so the editor never double-renders
+                // (ghost/offset text under the field, Android benchmark where
+                // ResizableTextBox IS the rendering).
+                annotations = effectiveAnnotations.filter {
+                    !(it.kind == PdfAnnotationKind.TEXT && it.id == textDraft?.id)
+                },
                 // The gesture always mutates the shared list object (captured
                 // at composition time), but only the owning page previews it:
                 // a non-empty list always implies an owner, so this shows the
                 // live stroke exactly once, on the page being drawn on.
-                activeStroke = if (isActiveStrokeOwner) activeStroke else emptyList(),
-                canvasSize = localCanvasSize,
+                activeStroke = if (isActiveStrokeOwner) activeStroke else emptyList(),                canvasSize = localCanvasSize,
                 customFontFamilies = customFontFamilies,
                 activeTool = if (isEraserOverrideActive) PdfInkTool.ERASER else selectedTool,
                 activeStrokeColorArgb = selectedColorArgb,

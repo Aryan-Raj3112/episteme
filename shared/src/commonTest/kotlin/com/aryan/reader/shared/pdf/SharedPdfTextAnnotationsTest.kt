@@ -422,4 +422,77 @@ class SharedPdfTextAnnotationsTest {
         assertTrue(annotation.isLocked)
         assertEquals("locked", annotation.text)
     }
+
+    @Test
+    fun `font size change refreshes rendered size despite stale relative size`() {
+        // Regression: the dock set fontSize via raw copy, leaving a stale
+        // pageRelativeFontSize that shadows fontSize in the renderer, so the
+        // change silently did nothing. withSharedPdfTextFontSize refreshes both.
+        val canvasSize = IntSize(1_000, 1_500)
+        val stale = SharedPdfTextStyleConfig(fontSize = 16f, pageRelativeFontSize = 0.032f)
+        assertEquals(48f, stale.sharedPdfTextFontSizePx(canvasSize), 0.0001f)
+
+        val updated = stale.withSharedPdfTextFontSize(24f)
+        assertEquals(24f, updated.fontSize, 0.0001f)
+        assertEquals(0.048f, updated.pageRelativeFontSize ?: 0f, 0.0001f)
+        assertEquals(72f, updated.sharedPdfTextFontSizePx(canvasSize), 0.0001f)
+    }
+
+    @Test
+    fun `chrome hit test classifies handles pill menu slots and misses`() {
+        // Box 200x100 at (100, 200); handles pad 5px with 40px touch;
+        // pill 72x48 at (264, 330); menu 3x24+2 at (213, 140), clear of handles.
+        fun hit(
+            x: Float,
+            y: Float,
+            allowGeometry: Boolean = true,
+            menu: List<SharedPdfTextBoxMenuAction>? = SharedPdfTextBoxMenuAction.entries,
+        ) = sharedPdfTextBoxChromeHitTest(
+            position = Offset(x, y),
+            contentLeftPx = 95f,
+            contentTopPx = 195f,
+            halfHandlePx = 5f,
+            widthPx = 200f,
+            heightPx = 100f,
+            handleTouchPx = 40f,
+            pillLeftPx = 264f,
+            pillTopPx = 330f,
+            pillTouchWidthPx = 72f,
+            pillTouchHeightPx = 48f,
+            menuLeftPx = 213f,
+            menuTopPx = 140f,
+            menuButtonPx = 24f,
+            menuDividerPx = 1f,
+            menuHeightPx = 24f,
+            allowGeometry = allowGeometry,
+            menuActions = menu,
+        )
+        assertEquals(
+            SharedPdfTextBoxChromeTarget.Resize(SharedPdfTextResizeHandle.TOP_LEFT),
+            hit(100f, 200f)
+        )
+        assertEquals(
+            SharedPdfTextBoxChromeTarget.Resize(SharedPdfTextResizeHandle.BOTTOM_RIGHT),
+            hit(300f, 300f)
+        )
+        assertEquals(SharedPdfTextBoxChromeTarget.Move, hit(300f, 350f))
+        assertEquals(
+            SharedPdfTextBoxChromeTarget.Menu(SharedPdfTextBoxMenuAction.DELETE),
+            hit(220f, 150f)
+        )
+        assertEquals(
+            SharedPdfTextBoxChromeTarget.Menu(SharedPdfTextBoxMenuAction.LOCK),
+            hit(275f, 150f)
+        )
+        assertEquals(null, hit(150f, 250f))
+        assertEquals(null, hit(0f, 0f))
+        // Locked: geometry dead, menu alive.
+        assertEquals(null, hit(100f, 200f, allowGeometry = false))
+        assertEquals(
+            SharedPdfTextBoxChromeTarget.Menu(SharedPdfTextBoxMenuAction.DELETE),
+            hit(220f, 150f, allowGeometry = false)
+        )
+        // Hidden menu: menu taps miss.
+        assertEquals(null, hit(220f, 150f, menu = null))
+    }
 }
