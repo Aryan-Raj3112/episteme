@@ -202,6 +202,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.toSize
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.createBitmap
 import androidx.core.view.WindowCompat
@@ -316,9 +317,13 @@ import com.aryan.reader.shared.pdf.isPdfTextDockSideDocked
 import com.aryan.reader.shared.pdf.isPdfTextDockTopAnchored
 import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockSide
 import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockSticky
+import com.aryan.reader.shared.pdf.launchSharedPdfDockGlide
 import com.aryan.reader.shared.pdf.SharedPdfSideWheelWidth
 import com.aryan.reader.shared.pdf.SharedPdfSideWheelHeight
+import com.aryan.reader.shared.pdf.resolveSharedPdfBarDropX
 import com.aryan.reader.shared.pdf.resolveSharedPdfDockSnapLocation
+import com.aryan.reader.shared.pdf.resolveSharedPdfSideWheelClearOfBarBand
+import com.aryan.reader.shared.pdf.resolveSharedPdfSideWheelDropY
 import com.aryan.reader.shared.pdf.pdfTextDockKeyboardLiftPx
 import com.aryan.reader.shared.pdf.pdfTextDockRestingBottomPadding
 import com.aryan.reader.shared.pdf.shouldShowPdfTextDock
@@ -6861,6 +6866,16 @@ private class PdfViewerSurfaceState {
     lateinit var textDockLocation: PdfViewerMutableValue<DockLocation>
     lateinit var textDockOffset: PdfViewerMutableValue<Offset>
     lateinit var isTextDockDragging: PdfViewerMutableValue<Boolean>
+    // Settle glides for the draggable docks, shared across chrome functions
+    // so a landing bar can nudge a side-hugging wheel clear with the same
+    // glide instead of overlapping it.
+    val annotationDockGlide = Animatable(Offset.Zero, Offset.VectorConverter)
+    val textDockGlide = Animatable(Offset.Zero, Offset.VectorConverter)
+    // Last measured root-space rects of both dock boxes (null while dragging
+    // or before first layout): the overlap solver uses them so a dropped
+    // dock never covers the other dock.
+    var annotationDockMeasuredRect: Rect? by androidx.compose.runtime.mutableStateOf(null)
+    var textDockMeasuredRect: Rect? by androidx.compose.runtime.mutableStateOf(null)
     var highlighterPalette: List<Color> by androidx.compose.runtime.mutableStateOf(emptyList())
     var penPalette: List<Color> by androidx.compose.runtime.mutableStateOf(emptyList())
     var activeToolThickness: Float by androidx.compose.runtime.mutableStateOf(0f)
@@ -9237,6 +9252,11 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         val isOss = surfaceState.isOss
         var dockLocation by surfaceState.dockLocation
         var dockOffset by surfaceState.dockOffset
+        // Text dock placement (the text dock UI lives in PdfViewerChromeTts,
+        // but overlap resolution needs its slot here when the pen dock lands).
+        var textDockLocation by surfaceState.textDockLocation
+        var textDockOffset by surfaceState.textDockOffset
+        var isTextDockDragging by surfaceState.isTextDockDragging
         val highlighterPalette = surfaceState.highlighterPalette
         val penPalette = surfaceState.penPalette
         val activeToolThickness = surfaceState.activeToolThickness
@@ -9458,6 +9478,13 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
 
         val (popupAlign, popupTopPad, popupBottomPad) = popupPlacementConfig
         val isAnnotationSideDocked = isSharedPdfAnnotationDockSide(dockLocation) && !isDockDragging
+        // Settle glides + measured rects live on the surface state so the
+        // text dock section (another chrome function) shares them: a landing
+        // bar can nudge a side-hugging wheel clear with the same glide.
+        val annotationGlide = surfaceState.annotationDockGlide
+        val textGlide = surfaceState.textDockGlide
+        // Overlap gap between two docks (stacking / nudges).
+        val dockOverlapGapPx = with(density) { 8.dp.toPx() }
         val annotationWheelWidthPx = with(density) { SharedPdfSideWheelWidth.toPx() }
         val annotationWheelHeightPx = with(density) { SharedPdfSideWheelHeight.toPx() }
         val annotationStatusTopPx = with(density) {
@@ -9474,13 +9501,9 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
             DockLocation.RIGHT -> boxMaxWidthFloat - annotationWheelWidthPx
             else -> 0f
         }
-        fun annotationSideClampedY(y: Float): Float = y.coerceIn(
-            annotationStatusTopPx,
-            (boxMaxHeightFloat - annotationWheelHeightPx - annotationNavBottomPx).coerceAtLeast(annotationStatusTopPx),
-        )
         // Settle glide: on every drop the dock eases from the release point
-        // into its slot instead of jumping.
-        val annotationGlide = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
+        // into its slot instead of jumping (hoisted above so a landing bar
+        // can nudge the other dock's wheel clear).
         // Live wheel geometry so the tool-settings popup rides beside the
         // wheel (top- or bottom-anchored to stay on screen).
         val annotationWheelYpx = (dockOffset.y + annotationGlide.value.y).coerceIn(
@@ -9596,6 +9619,16 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
             ) {
                 val isTopBottomSticky = (dockLocation == DockLocation.TOP || dockLocation == DockLocation.BOTTOM) && !isDockDragging
                 val isSideSticky = isSharedPdfAnnotationDockSide(dockLocation) && !isDockDragging
+                // While dragging, the dock renders as it will land (preview
+                // edge or floating): hovering the right edge flips the wheel
+                // to its right-edge appearance live.
+                val annotationDragPreview =
+                    if (isDockDragging) snapPreviewLocation else null
+                val annotationRenderLocation = annotationDragPreview ?: dockLocation
+                val renderSideWhileDragging = isDockDragging &&
+                    isSharedPdfAnnotationDockSide(annotationRenderLocation)
+                val renderTopBottomWhileDragging = isDockDragging &&
+                    (annotationRenderLocation == DockLocation.TOP || annotationRenderLocation == DockLocation.BOTTOM)
                 val dragModifier =
                     if (isDockDragging || dockLocation == DockLocation.FLOATING || isSideSticky) {
                         Modifier.offset {
@@ -9634,6 +9667,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                 val widthModifier = when {
                     isTopBottomSticky -> Modifier.fillMaxWidth()
                     isSideSticky -> Modifier
+                    renderTopBottomWhileDragging -> Modifier.fillMaxWidth()
+                    renderSideWhileDragging -> Modifier
                     else -> Modifier.padding(horizontal = 16.dp)
                 }
 
@@ -9644,6 +9679,11 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                         top = if (dockLocation == DockLocation.TOP && systemUiMode == SystemUiMode.DEFAULT) statusBarHeightDp else 0.dp
                     )
                     isSideSticky -> Modifier
+                    renderTopBottomWhileDragging -> Modifier.padding(
+                        bottom = if (annotationRenderLocation == DockLocation.BOTTOM) effectiveNavBarForDock else 0.dp,
+                        top = if (annotationRenderLocation == DockLocation.TOP && systemUiMode == SystemUiMode.DEFAULT) statusBarHeightDp else 0.dp
+                    )
+                    renderSideWhileDragging -> Modifier
                     else -> Modifier.padding(vertical = 16.dp)
                 }
 
@@ -9654,6 +9694,12 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                         .then(alignModifier)
                         .then(dragModifier)
                         .then(glideModifier)
+                        .onGloballyPositioned {
+                            if (!isDockDragging) {
+                                surfaceState.annotationDockMeasuredRect =
+                                    Rect(it.localToRoot(Offset.Zero), it.size.toSize())
+                            }
+                        }
                         .pointerInput(dockLocation, isDockMinimized) {
                             // Settles the drop with a glide: eases from the
                             // release point into the new slot.
@@ -9674,24 +9720,91 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 dockLocation = target
                                 // Docked slot for the glide: full-width bars
                                 // pin to the edge, side wheels keep their
-                                // drop Y (clamped clear of system bars).
+                                // drop Y — slid above or below the text dock
+                                // when they would overlap it (same-side
+                                // stacking or a top/bottom text bar).
                                 val docked = when (target) {
                                     DockLocation.TOP -> Offset(0f, 0f)
                                     DockLocation.BOTTOM -> Offset(
                                         0f,
                                         boxMaxHeightFloat - dockHeightPx - annotationNavBottomPx,
                                     )
-                                    DockLocation.LEFT, DockLocation.RIGHT -> Offset(
-                                        annotationSideSlotX(target),
-                                        annotationSideClampedY(dockOffset.y),
-                                    )
+                                    DockLocation.LEFT, DockLocation.RIGHT -> {
+                                        val slotX = annotationSideSlotX(target)
+                                        Offset(
+                                            slotX,
+                                            resolveSharedPdfSideWheelDropY(
+                                                proposedY = dockOffset.y,
+                                                ownLeftPx = slotX,
+                                                ownWidthPx = annotationWheelWidthPx,
+                                                ownHeightPx = annotationWheelHeightPx,
+                                                edgeTopPx = annotationStatusTopPx,
+                                                edgeBottomPx = boxMaxHeightFloat - annotationNavBottomPx,
+                                                gapPx = dockOverlapGapPx,
+                                                other = surfaceState.textDockMeasuredRect,
+                                            ),
+                                        )
+                                    }
                                     DockLocation.FLOATING -> Offset(
-                                        dockOffset.x.coerceIn(0f, boxMaxWidthFloat - 100f),
+                                        resolveSharedPdfBarDropX(
+                                            proposedX = dockOffset.x.coerceIn(0f, boxMaxWidthFloat - 100f),
+                                            ownTopPx = dockOffset.y,
+                                            ownWidthPx = size.width.toFloat(),
+                                            ownHeightPx = size.height.toFloat(),
+                                            rootWidthPx = boxMaxWidthFloat,
+                                            gapPx = dockOverlapGapPx,
+                                            sideWheel = surfaceState.textDockMeasuredRect
+                                                ?.takeIf {
+                                                    isPdfTextDockSideDocked(textDockLocation) &&
+                                                        !isTextDockDragging
+                                                },
+                                        ),
                                         dockOffset.y.coerceIn(0f, boxMaxHeightFloat - dockHeightPx),
                                     )
                                 }
                                 glideToDocked(docked)
                                 saveDockState(context, dockLocation, dockOffset)
+                                // A full-width bar cannot shift sideways, so
+                                // a side-hugging text wheel slides clear of
+                                // the landed bar instead (with a glide).
+                                if ((target == DockLocation.TOP || target == DockLocation.BOTTOM) &&
+                                    isPdfTextDockSideDocked(textDockLocation) && !isTextDockDragging
+                                ) {
+                                    val landedBarHeightPx = with(density) { dockHeight.toPx() }
+                                    val barFromY = if (target == DockLocation.TOP) {
+                                        0f
+                                    } else {
+                                        boxMaxHeightFloat - annotationNavBottomPx - landedBarHeightPx
+                                    }
+                                    val barToY = if (target == DockLocation.TOP) {
+                                        annotationStatusTopPx + landedBarHeightPx
+                                    } else {
+                                        boxMaxHeightFloat
+                                    }
+                                    val clearedY = resolveSharedPdfSideWheelClearOfBarBand(
+                                        wheelY = textDockOffset.y,
+                                        // Both wheels share the same geometry.
+                                        wheelHeightPx = annotationWheelHeightPx,
+                                        edgeTopPx = annotationStatusTopPx,
+                                        edgeBottomPx = boxMaxHeightFloat - annotationNavBottomPx,
+                                        gapPx = dockOverlapGapPx,
+                                        barFromYPx = barFromY,
+                                        barToYPx = barToY,
+                                    )
+                                    if (clearedY != textDockOffset.y) {
+                                        launchSharedPdfDockGlide(
+                                            scope = coroutineScope,
+                                            glide = textGlide,
+                                            current = textDockOffset,
+                                            docked = Offset(
+                                                annotationSideSlotX(textDockLocation),
+                                                clearedY,
+                                            ),
+                                            setOffset = { textDockOffset = it },
+                                        )
+                                        saveTextDockState(context, textDockLocation, textDockOffset)
+                                    }
+                                }
                             }
                             val onDragStart: (Offset) -> Unit = {
                                 isDockDragging = true
@@ -9957,7 +10070,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                             .then(paddingModifier),
                         isMinimized = isDockMinimized,
                         onToggleMinimize = { isDockMinimized = !isDockMinimized },
-                        dockLocation = dockLocation,
+                        dockLocation = annotationRenderLocation,
                     )
                 }
             }
@@ -10007,6 +10120,10 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         var isAutoPagingForTts by surfaceState.isAutoPagingForTts
         var dockLocation by surfaceState.dockLocation
         val isDockDragging by surfaceState.isDockDragging
+        // Pen dock offset (the pen dock UI lives in
+        // PdfViewerChromeBottomAndEditing, but overlap resolution needs its
+        // slot here when the text bar lands).
+        var dockOffset by surfaceState.dockOffset
         var textDockLocation by surfaceState.textDockLocation
         var textDockOffset by surfaceState.textDockOffset
         var isTextDockDragging by surfaceState.isTextDockDragging
@@ -10148,10 +10265,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
             DockLocation.RIGHT -> boxMaxWidthFloat - textWheelWidthPx
             else -> 0f
         }
-        fun textSideClampedY(y: Float): Float = y.coerceIn(
-            textStatusTopPx,
-            (boxMaxHeightFloat - textWheelHeightPx - textNavBottomPx).coerceAtLeast(textStatusTopPx),
-        )
+        // Overlap gap between two docks (stacking / nudges).
+        val textDockOverlapGapPx = with(density) { 8.dp.toPx() }
 
         val currentDensity = LocalDensity.current
         val textDockHeightPx = with(currentDensity) { PdfTextDockHeight.toPx() }
@@ -10306,6 +10421,16 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
             val isTextTopBottomSticky =
                 (textDockLocation == DockLocation.TOP || textDockLocation == DockLocation.BOTTOM) && !isTextDockDragging
             val isTextSideSticky = isPdfTextDockSideDocked(textDockLocation) && !isTextDockDragging
+            // While dragging, the bar renders as it will land (preview edge
+            // or floating): hovering a side edge flips it to the wheel
+            // appearance live.
+            val textDragPreview =
+                if (isTextDockDragging) textSnapPreview else null
+            val textRenderLocation = textDragPreview ?: textDockLocation
+            val renderTextSideWhileDragging = isTextDockDragging &&
+                isPdfTextDockSideDocked(textRenderLocation)
+            val renderTextTopBottomWhileDragging = isTextDockDragging &&
+                (textRenderLocation == DockLocation.TOP || textRenderLocation == DockLocation.BOTTOM)
             val dragModifier =
                 if (isTextFloating || isTextSideSticky) {
                     Modifier.offset {
@@ -10317,8 +10442,9 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                     Modifier
                 }
             // Settle glide applied under the live drag offset: the dock
-            // eases into its slot instead of jumping.
-            val textGlide = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
+            // eases into its slot instead of jumping (shared on the surface
+            // state so the pen dock section can nudge this wheel clear).
+            val textGlide = surfaceState.textDockGlide
             val textGlideModifier =
                 if (isTextDockDragging) {
                     Modifier
@@ -10346,6 +10472,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
             val widthModifier = when {
                 isTextTopBottomSticky -> Modifier.fillMaxWidth()
                 isTextSideSticky -> Modifier
+                renderTextTopBottomWhileDragging -> Modifier.fillMaxWidth()
+                renderTextSideWhileDragging -> Modifier
                 else -> Modifier.padding(horizontal = 16.dp)
             }
 
@@ -10359,30 +10487,19 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                     Modifier
                 }
 
-            val textSameSideClearanceTarget =
-                if (isTextSideSticky && textDockLocation == dockLocation &&
-                    (dockLocation == DockLocation.LEFT || dockLocation == DockLocation.RIGHT) &&
-                    !isDockDragging
-                ) {
-                    SharedPdfSideWheelWidth + 8.dp
-                } else {
-                    0.dp
-                }
-            // Animated so the text wheel slides aside elegantly when the
-            // pen wheel takes its edge.
-            val textSameSideClearance by animateDpAsState(
-                textSameSideClearanceTarget,
-                tween(durationMillis = 300),
-            )
+            // Same-side stacking replaced the old inward push-to-center: a
+            // text wheel dropped onto the pen wheel's edge slides above or
+            // below it at drop time (see settleTextTo), so both wheels stay
+            // flush to the edge.
             val paddingModifier = when {
                 isTextStickyBottom -> Modifier.padding(bottom = bottomPadding)
                 popupsBelowBar -> Modifier.padding(top = topPadding)
-                isTextSideSticky && textDockLocation == DockLocation.LEFT -> Modifier.padding(
-                    start = textSameSideClearance,
-                )
-                isTextSideSticky && textDockLocation == DockLocation.RIGHT -> Modifier.padding(
-                    end = textSameSideClearance,
-                )
+                isTextSideSticky -> Modifier
+                renderTextTopBottomWhileDragging && textRenderLocation == DockLocation.TOP ->
+                    Modifier.padding(top = topPadding)
+                renderTextTopBottomWhileDragging ->
+                    Modifier.padding(bottom = bottomPadding)
+                renderTextSideWhileDragging -> Modifier
                 else -> Modifier.padding(vertical = textDockFloatPad)
             }
 
@@ -10452,6 +10569,9 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                         fun settleTextTo(target: DockLocation) {
                             isTextDockDragging = false
                             textDockLocation = target
+                            // Side wheels keep their drop Y — slid above or
+                            // below the pen dock when they would overlap it
+                            // (same-side stacking or a top/bottom pen bar).
                             val docked = when (target) {
                                 DockLocation.TOP -> Offset(0f, 0f)
                                 DockLocation.BOTTOM -> Offset(
@@ -10460,17 +10580,83 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                         with(currentDensity) { bottomPadding.toPx() } -
                                         navBarHeight.toFloat(),
                                 )
-                                DockLocation.LEFT, DockLocation.RIGHT -> Offset(
-                                    textSideSlotX(target),
-                                    textSideClampedY(textDockOffset.y),
-                                )
+                                DockLocation.LEFT, DockLocation.RIGHT -> {
+                                    val slotX = textSideSlotX(target)
+                                    Offset(
+                                        slotX,
+                                        resolveSharedPdfSideWheelDropY(
+                                            proposedY = textDockOffset.y,
+                                            ownLeftPx = slotX,
+                                            ownWidthPx = textWheelWidthPx,
+                                            ownHeightPx = textWheelHeightPx,
+                                            edgeTopPx = textStatusTopPx,
+                                            edgeBottomPx = boxMaxHeightFloat - textNavBottomPx,
+                                            gapPx = textDockOverlapGapPx,
+                                            other = surfaceState.annotationDockMeasuredRect,
+                                        ),
+                                    )
+                                }
                                 DockLocation.FLOATING -> Offset(
-                                    textDockOffset.x.coerceIn(0f, boxMaxWidthFloat - 100f),
+                                    resolveSharedPdfBarDropX(
+                                        proposedX = textDockOffset.x.coerceIn(0f, boxMaxWidthFloat - 100f),
+                                        ownTopPx = textDockOffset.y,
+                                        ownWidthPx = size.width.toFloat(),
+                                        ownHeightPx = size.height.toFloat(),
+                                        rootWidthPx = boxMaxWidthFloat,
+                                        gapPx = textDockOverlapGapPx,
+                                        sideWheel = surfaceState.annotationDockMeasuredRect
+                                            ?.takeIf {
+                                                isSharedPdfAnnotationDockSide(dockLocation) &&
+                                                    !isDockDragging
+                                            },
+                                    ),
                                     textDockOffset.y.coerceIn(0f, boxMaxHeightFloat - textDockHeightPx),
                                 )
                             }
                             glideTextToDocked(docked)
                             saveTextDockState(context, textDockLocation, textDockOffset)
+                            // A full-width bar cannot shift sideways, so a
+                            // side-hugging pen wheel slides clear of the
+                            // landed bar instead (with a glide).
+                            if ((target == DockLocation.TOP || target == DockLocation.BOTTOM) &&
+                                isSharedPdfAnnotationDockSide(dockLocation) && !isDockDragging
+                            ) {
+                                val topPadPx = with(currentDensity) { topPadding.toPx() }
+                                val bottomPadPx = with(currentDensity) { bottomPadding.toPx() }
+                                val barFromY = if (target == DockLocation.TOP) {
+                                    0f
+                                } else {
+                                    boxMaxHeightFloat - navBarHeight.toFloat() - bottomPadPx - textDockHeightPx
+                                }
+                                val barToY = if (target == DockLocation.TOP) {
+                                    topPadPx + textDockHeightPx
+                                } else {
+                                    boxMaxHeightFloat
+                                }
+                                val clearedY = resolveSharedPdfSideWheelClearOfBarBand(
+                                    wheelY = dockOffset.y,
+                                    // Both wheels share the same geometry.
+                                    wheelHeightPx = textWheelHeightPx,
+                                    edgeTopPx = textStatusTopPx,
+                                    edgeBottomPx = boxMaxHeightFloat - textNavBottomPx,
+                                    gapPx = textDockOverlapGapPx,
+                                    barFromYPx = barFromY,
+                                    barToYPx = barToY,
+                                )
+                                if (clearedY != dockOffset.y) {
+                                    launchSharedPdfDockGlide(
+                                        scope = coroutineScope,
+                                        glide = surfaceState.annotationDockGlide,
+                                        current = dockOffset,
+                                        docked = Offset(
+                                            textSideSlotX(dockLocation),
+                                            clearedY,
+                                        ),
+                                        setOffset = { dockOffset = it },
+                                    )
+                                    saveDockState(context, dockLocation, dockOffset)
+                                }
+                            }
                         }
 
                         val onDrag: (
@@ -10569,7 +10755,11 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                     .then(dragModifier)
                     .then(textGlideModifier)
                     .onGloballyPositioned {
-                        if (!isTextDockDragging) textDockMeasuredOffset = it.positionInParent()
+                        if (!isTextDockDragging) {
+                            textDockMeasuredOffset = it.positionInParent()
+                            surfaceState.textDockMeasuredRect =
+                                Rect(it.localToRoot(Offset.Zero), it.size.toSize())
+                        }
                     }
                     .then(widthModifier)
                     .then(insetsModifier)
@@ -10667,7 +10857,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                     }
                 },
                 popupsBelowBar = popupsBelowBar,
-                dockLocation = textDockLocation,
+                dockLocation = textRenderLocation,
                 spinEnabled = !isTextDockDragging,
                 // Page rich text is retired: the paragraph row belongs to the
                 // selected text box only; hidden when nothing is selected.

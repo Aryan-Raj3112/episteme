@@ -116,7 +116,9 @@ fun SharedPdfTextDockBar(
         // only for the open draft, the insert cell only when requested.
         val paragraphItemCount = if (paragraphControls != null) 3 else 0
         val itemCount = 8 + (if (showInsertTextBox) 1 else 0) + paragraphItemCount
-        var wheelRotation by remember(dockLocation, showInsertTextBox, paragraphControls != null) {
+        // Unkeyed by edge so the spin position survives flips (e.g.
+        // previewing the right edge mid-drag).
+        var wheelRotation by remember(showInsertTextBox, paragraphControls != null) {
             mutableStateOf(0f)
         }
         SharedPdfSideWheelDock(

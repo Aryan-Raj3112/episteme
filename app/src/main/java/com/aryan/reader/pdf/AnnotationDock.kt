@@ -386,7 +386,9 @@ private fun AnnotationDockWheelContent(
     // Arc order matches the horizontal bar dock: chrome, tool groups,
     // history. The stylus toggle hides while minimized (same as the bar).
     val itemCount = if (isMinimized) 9 else 10
-    var wheelRotation by remember(dockLocation) { mutableStateOf(0f) }
+    // Unkeyed so the spin position survives edge flips (e.g. previewing the
+    // right edge mid-drag) and minimize toggles.
+    var wheelRotation by remember { mutableStateOf(0f) }
     SharedPdfSideWheelDock(
         dockLocation = dockLocation,
         backgroundColor = Color(0xFF1E1E1E),

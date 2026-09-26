@@ -50,17 +50,38 @@ fun sharedPdfWheelNormalizeDeg(angleDeg: Float): Float {
     return normalized - 180f
 }
 
+/**
+ * Effective angular step: the requested [stepDeg] while the tools fit on a
+ * partial arc, but an even full-circle distribution (360 / count) once the
+ * span would wrap around — otherwise the first and last tools land on the
+ * same spot and overlap (e.g. close over redo with 10 tools at 40 degrees).
+ */
+fun sharedPdfWheelEffectiveStepDeg(
+    itemCount: Int,
+    stepDeg: Float = SharedPdfSideWheelStepDeg,
+): Float {
+    if (itemCount <= 1 || stepDeg <= 0f) return stepDeg
+    return if ((itemCount - 1) * stepDeg > 360f - stepDeg) 360f / itemCount else stepDeg
+}
+
+/** True when the tools wrap the full circle (even distribution, no ends). */
+fun sharedPdfWheelIsFullCircle(
+    itemCount: Int,
+    stepDeg: Float = SharedPdfSideWheelStepDeg,
+): Boolean = sharedPdfWheelEffectiveStepDeg(itemCount, stepDeg) < stepDeg - 0.001f
+
 fun sharedPdfWheelBaseAngleDeg(
     index: Int,
     itemCount: Int,
     stepDeg: Float = SharedPdfSideWheelStepDeg,
-): Float = (index - (itemCount - 1) / 2f) * stepDeg
+): Float = (index - (itemCount - 1) / 2f) * sharedPdfWheelEffectiveStepDeg(itemCount, stepDeg)
 
 /**
  * Symmetric scroll range for [rotationDeg]: zero when every tool fits inside
  * the visible half-window, otherwise just enough to bring each end tool
  * onto the track (stopping [SharedPdfSideWheelEndInsetDeg] before the rim
- * so the first/last icon is never cut off).
+ * so the first/last icon is never cut off). A full circle has no ends, so
+ * it allows a half turn — every tool passes through the window.
  */
 fun sharedPdfWheelRotationRangeDeg(
     itemCount: Int,
@@ -69,6 +90,7 @@ fun sharedPdfWheelRotationRangeDeg(
     endInsetDeg: Float = SharedPdfSideWheelEndInsetDeg,
 ): Float {
     if (itemCount <= 1) return 0f
+    if (sharedPdfWheelIsFullCircle(itemCount, stepDeg)) return 180f
     val span = (itemCount - 1) * stepDeg
     if (span <= visibleHalfAngleDeg * 2f) return 0f
     return (span - visibleHalfAngleDeg * 2f) / 2f + endInsetDeg

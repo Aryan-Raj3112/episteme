@@ -264,34 +264,6 @@ fun SharedMobilePdfTextDock(
                 }
             },
         )
-        // Drag-handle affordance: straddles the bar's outer edge (top when
-        // bottom-docked/floating, bottom when top-docked, outer side when
-        // side-docked) so the bar reads as draggable. Touch-transparent; the
-        // dock container owns drag gestures.
-        if (isVertical) {
-            Box(
-                modifier = Modifier
-                    .align(
-                        if (dockLocation == DockLocation.LEFT) Alignment.CenterEnd
-                        else Alignment.CenterStart
-                    )
-                    .offset(x = if (dockLocation == DockLocation.LEFT) 2.dp else (-2).dp)
-                    .width(4.dp)
-                    .height(32.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(Color.Black.copy(alpha = 0.25f))
-            )
-        } else {
-            Box(
-                modifier = Modifier
-                    .align(if (popupsBelowBar) Alignment.BottomCenter else Alignment.TopCenter)
-                    .offset(y = if (popupsBelowBar) 2.dp else (-2).dp)
-                    .width(32.dp)
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(Color.Black.copy(alpha = 0.25f))
-            )
-        }
     }
 }
 
