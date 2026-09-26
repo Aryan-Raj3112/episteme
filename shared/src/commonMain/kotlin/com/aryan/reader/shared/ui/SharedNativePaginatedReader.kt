@@ -700,7 +700,8 @@ internal fun SharedNativePaginatedPagesContent(
                                     pageOffsetProvider = { turnSpec.offsetForSlot(0) },
                                     touchYProvider = { turnSpec.touchY },
                                     paperColor = renderPlan.background,
-                                    spreadGutterPx = gutterWidthPx
+                                    spreadGutterPx = gutterWidthPx,
+                                    rightToLeft = turnSpec.rightToLeft
                                 )
                         }
                     )
@@ -741,7 +742,8 @@ internal fun SharedNativePaginatedPagesContent(
                                     pageOffsetProvider = { turnSpec.offsetForSlot(turnSlot) },
                                     touchYProvider = { turnSpec.touchY },
                                     paperColor = renderPlan.background,
-                                    isDarkPaper = paperIsDark
+                                    isDarkPaper = paperIsDark,
+                                    rightToLeftPagination = turnSpec.rightToLeft
                                 )
                             }
                         )

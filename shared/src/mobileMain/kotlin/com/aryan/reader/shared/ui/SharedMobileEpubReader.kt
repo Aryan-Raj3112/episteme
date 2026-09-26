@@ -1463,10 +1463,13 @@ fun SharedMobileEpubReaderScreen(
                                     activePageTurn = null
                                     return@LaunchedEffect
                                 }
-                                val direction = sharedPaginatedTransitionDirection(
+                                // Curled turns stay in pager-index space: the outgoing sheet
+                                // always peels away and the fold mirrors for RTL (see
+                                // sharedPaginatedCurlTurnDirection). Only the flat slide
+                                // follows the physical pager direction.
+                                val direction = sharedPaginatedCurlTurnDirection(
                                     outgoingPages.minOf { it.pageIndex },
-                                    visiblePages.minOf { it.pageIndex },
-                                    settings.rightToLeftPagination
+                                    visiblePages.minOf { it.pageIndex }
                                 )
                                 lastTurnedPages = visiblePages
                                 activePageTurn = SharedMobileEpubActivePageTurn(
@@ -1659,7 +1662,8 @@ fun SharedMobileEpubReaderScreen(
                                             fraction = pageTurnFraction.value
                                         )
                                     },
-                                    touchY = turn.touchY
+                                    touchY = turn.touchY,
+                                    rightToLeft = settings.rightToLeftPagination
                                 )
                             }
                             val outgoingTurnSpec = activeTurn?.let { turn ->
@@ -1672,7 +1676,8 @@ fun SharedMobileEpubReaderScreen(
                                             fraction = pageTurnFraction.value
                                         )
                                     },
-                                    touchY = turn.touchY
+                                    touchY = turn.touchY,
+                                    rightToLeft = settings.rightToLeftPagination
                                 )
                             }
                             // Android only renders the curl while realistic page turns are
@@ -1701,7 +1706,8 @@ fun SharedMobileEpubReaderScreen(
                                         )
                                     },
                                     touchY = pageTurnTouchY,
-                                    curlEnabled = dragCurlEnabled
+                                    curlEnabled = dragCurlEnabled,
+                                    rightToLeft = settings.rightToLeftPagination
                                 )
                             } else {
                                 null
@@ -1717,7 +1723,8 @@ fun SharedMobileEpubReaderScreen(
                                         )
                                     },
                                     touchY = pageTurnTouchY,
-                                    curlEnabled = dragCurlEnabled
+                                    curlEnabled = dragCurlEnabled,
+                                    rightToLeft = settings.rightToLeftPagination
                                 )
                             } else {
                                 null

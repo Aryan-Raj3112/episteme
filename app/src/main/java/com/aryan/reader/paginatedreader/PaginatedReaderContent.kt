@@ -100,6 +100,7 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -114,6 +115,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toSize
@@ -135,6 +137,9 @@ import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
 import com.aryan.reader.shared.ui.drawSharedSpreadSpineCrease
+import com.aryan.reader.shared.ui.sharedPaginatedCurlTranslationX
+import com.aryan.reader.shared.ui.sharedPaginatedPagerRightToLeft
+import com.aryan.reader.shared.ui.spreadPageCurlFold
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -143,7 +148,6 @@ import timber.log.Timber
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
 
 @Suppress("unused")
@@ -2135,6 +2139,13 @@ internal fun PaginatedReaderContent(
 
             Box(modifier = Modifier.fillMaxSize().onGloballyPositioned { rootCoords = it }.then(magnifierModifier)) {
                 run {
+                    // The pager mirror the curl has to cancel: reverseLayout plus the
+                    // extra placeRelative flip an Rtl host applies. See
+                    // sharedPaginatedPagerRightToLeft.
+                    val pagerRightToLeft = sharedPaginatedPagerRightToLeft(
+                        reverseLayout = isRightToLeftPagination,
+                        layoutDirectionIsRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+                    )
                     HorizontalPager(
                         state = pagerState,
                         modifier = Modifier.fillMaxSize().onGloballyPositioned { coords ->
@@ -2168,7 +2179,8 @@ internal fun PaginatedReaderContent(
                                 pageTextureBitmap,
                                 pageTextureAlpha,
                                 spineCreaseEnabled = isTwoPageSpread,
-                                spreadGutterPx = with(LocalDensity.current) { spreadGutterDp.dp.toPx() }
+                                spreadGutterPx = with(LocalDensity.current) { spreadGutterDp.dp.toPx() },
+                                pagerRightToLeft = pagerRightToLeft
                             )
                         } else Modifier
 
@@ -3220,6 +3232,12 @@ internal fun RenderFlexChildBlock(
     }
 }
 
+/**
+ * Android benchmark realistic page curl for a pager slot: reads its continuous
+ * `pageIndex - pagerPosition` offset every frame, pins the sheet on screen with
+ * the counter-translation, and folds it with the shared
+ * [spreadPageCurlFold] geometry (mirrored for right-to-left pagination).
+ */
 @OptIn(ExperimentalFoundationApi::class)
 internal fun Modifier.realisticBookPage(
     pagerState: PagerState,
@@ -3230,7 +3248,13 @@ internal fun Modifier.realisticBookPage(
     textureBitmap: ImageBitmap? = null,
     textureAlpha: Float = 0f,
     spineCreaseEnabled: Boolean = false,
-    spreadGutterPx: Float = 0f
+    spreadGutterPx: Float = 0f,
+    /**
+     * The pager's real reading direction, not the raw RTL setting: hosts pass
+     * [sharedPaginatedPagerRightToLeft] so the fold and the counter-translation
+     * follow the placement the pager actually produced.
+     */
+    pagerRightToLeft: Boolean = false
 ): Modifier = composed {
 
     val frontPath = remember { Path() }
@@ -3241,12 +3265,16 @@ internal fun Modifier.realisticBookPage(
         .graphicsLayer {
             val pageOffset = (pageIndex - pagerState.currentPage) - pagerState.currentPageOffsetFraction
 
-            if (abs(pageOffset) > 0.001f && abs(pageOffset) < 0.999f) {
-                Timber.tag("PageTurnFixDiag").d("graphicsLayer: Page $pageIndex, Offset: $pageOffset")
-            }
-
+            // The pager mirrors its placement under reverseLayout, so the
+            // counter-translation that pins the curling page on screen flips
+            // sign for right-to-left pagination. See
+            // sharedPaginatedCurlTranslationX.
             if (pageOffset <= 1f && pageOffset > -1f) {
-                translationX = -pageOffset * size.width
+                translationX = sharedPaginatedCurlTranslationX(
+                    pageOffset = pageOffset,
+                    slotWidth = size.width,
+                    rightToLeftPagination = pagerRightToLeft
+                )
             }
 
             if (pageOffset != 0f) {
@@ -3292,57 +3320,24 @@ internal fun Modifier.realisticBookPage(
                 val w = size.width
                 val h = size.height
 
-                // Spread + realistic = book leaf hinged at the spine crease with
-                // a hint of corner curl toward the finger: the right leaf peels
-                // off and settles onto the left page. Single-page keeps the
-                // touch-driven diagonal corner peel.
-                // Blend 0.35 / sweep 1.0 mirror shared SpreadBookFlipCornerBlend
-                // and SpreadBookFlipSweep (internal to :shared): keep in sync.
-                val startY = if (spineCreaseEnabled) {
-                    val touchOrCenter = touchY ?: h / 2f
-                    h / 2f + (touchOrCenter - h / 2f) * 0.35f
-                } else {
-                    touchY ?: h
-                }
-                val rawCenterDist = ((startY - h / 2f) / (h / 2f)).coerceIn(-1f, 1f)
+                // One fold for every host: :shared owns the geometry (corner
+                // peel for single pages, spine-hinged book leaf for spreads)
+                // and mirrors it horizontally for right-to-left pagination, so
+                // Android and iOS can never drift apart.
+                val fold = spreadPageCurlFold(
+                    width = w,
+                    height = h,
+                    progress = progress,
+                    touchY = touchY,
+                    forceBookFlip = spineCreaseEnabled,
+                    rightToLeft = pagerRightToLeft
+                )
 
-                val flattenFactor = if (progress > 0.75f) {
-                    ((progress - 0.75f) / 0.25f).coerceIn(0f, 1f)
-                } else {
-                    0f
-                }
-                val centerDist = rawCenterDist * (1f - flattenFactor)
-
-                val cornerY = if (centerDist >= 0) h else 0f
-
-                // Book-flip sweep parks the fold at the spine at progress 1 so
-                // the leaf settles onto the left page; corner peels keep the
-                // longer pager-exit sweep. See shared SpreadBookFlipSweep.
-                val sweep = if (spineCreaseEnabled) 1.0f else 2.2f
-                val dragX = w - w * sweep * progress
-                val dragY = cornerY - h * 0.5f * progress * centerDist
-
-                val midX = (w + dragX) / 2f
-                val midY = (cornerY + dragY) / 2f
-
-                val dx = w - dragX
-                val dy = cornerY - dragY
-                val nLen = sqrt(dx * dx + dy * dy)
-
-                // CRITICAL GEOMETRY LOG
-                if (progress > 0.8f) { // Focus logs on the "end" of the turn where the stall happens
-                    Timber.tag("PageTurnFixDiag").i(
-                        "Geometry Page $pageIndex: progress=$progress, nLen=$nLen, cornerY=$cornerY, dragX=$dragX, midX=$midX"
-                    )
-                }
-
-                if (nLen > 0f) {
-                    val nx = dx / nLen
-                    val ny = dy / nLen
-
-                    if (nx.isNaN() || ny.isNaN()) {
-                        Timber.tag("PageTurnFixDiag").e("NAN DETECTED in Normal Vectors: nx=$nx, ny=$ny")
-                    }
+                if (fold.valid) {
+                    val midX = fold.midX
+                    val midY = fold.midY
+                    val nx = fold.nx
+                    val ny = fold.ny
 
                     val huge = w * 3f
                     val vx = -ny

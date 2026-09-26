@@ -150,9 +150,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalViewConfiguration
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.HighlightStyle
@@ -1349,16 +1351,27 @@ internal fun SharedMobilePdfPaginatedPages(
                 if (realisticTurnActive) pdfPagerTurnStackOrder(pageOffsetProvider()) else 0f
             }
         }
+        // The pager mirror the curl has to cancel: reverseLayout plus the extra
+        // placeRelative flip an Rtl host applies. See sharedPaginatedPagerRightToLeft.
+        val pagerRightToLeft = sharedPaginatedPagerRightToLeft(
+            reverseLayout = rightToLeftPagination,
+            layoutDirectionIsRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+        )
         // Pager natural position: the curl's counter-translation cancels the pager's
         // own translation while |offset| < 1, exactly like the Android benchmark, and
         // at |offset| >= 1 the page rests off-screen like a HorizontalPager slot.
+        // A right-to-left pager mirrors its placement, so the sign flips with it.
         val turnSlotModifier = if (realisticTurnActive) {
             Modifier
                 .zIndex(turnStackOrder)
                 .graphicsLayer {
                     val turnPageOffset = pageOffsetProvider()
                     if (turnPageOffset <= 1f && turnPageOffset > -1f) {
-                        translationX = -turnPageOffset * size.width
+                        translationX = sharedPaginatedCurlTranslationX(
+                            pageOffset = turnPageOffset,
+                            slotWidth = size.width,
+                            rightToLeftPagination = pagerRightToLeft
+                        )
                     }
                 }
         } else {
@@ -1376,7 +1389,8 @@ internal fun SharedMobilePdfPaginatedPages(
                 .realisticPageCurl(
                     pageOffsetProvider = pageOffsetProvider,
                     touchYProvider = { pageTurnTouchY },
-                    paperColor = pagePaperColor
+                    paperColor = pagePaperColor,
+                    rightToLeft = pagerRightToLeft
                 )
         } else {
             Modifier

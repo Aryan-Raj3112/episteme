@@ -50,7 +50,12 @@ data class SharedPaginatedPageTurnSpec(
      * otherwise just slides the pager. A slide-only spec keeps the offset
      * translation and draws the pages flat.
      */
-    val curlEnabled: Boolean = true
+    val curlEnabled: Boolean = true,
+    /**
+     * Right-to-left pagination mirrors the curl: the free edge is on the left,
+     * so a leaf lifts at x = 0 and sweeps right (see [spreadPageCurlFold]).
+     */
+    val rightToLeft: Boolean = false
 )
 
 /**
@@ -65,6 +70,55 @@ internal fun sharedPaginatedSlideDirection(
     indexDirection: Int,
     rightToLeftPagination: Boolean
 ): Int = if (rightToLeftPagination) -indexDirection else indexDirection
+
+/**
+ * Direction of a *curled* page turn, in pager-index space.
+ *
+ * The curl always peels the outgoing sheet away regardless of reading
+ * direction, and the fold itself mirrors (see [spreadPageCurlFold]), so a
+ * curled turn keeps the logical index direction. Only a flat slide follows the
+ * physical pager direction ([sharedPaginatedTransitionDirection]); mixing the
+ * two made right-to-left turns curl the incoming page instead of the outgoing
+ * one.
+ */
+internal fun sharedPaginatedCurlTurnDirection(
+    outgoingFirstPageIndex: Int,
+    incomingFirstPageIndex: Int
+): Int = if (incomingFirstPageIndex > outgoingFirstPageIndex) 1 else -1
+
+/**
+ * Whether a horizontal pager really lays its slots out right-to-left, i.e. the next
+ * page sits to the left and a rightward swipe advances.
+ *
+ * Compose mirrors a horizontal pager twice: `reverseLayout` mirrors the slot
+ * placement and the gesture direction, and an Rtl host mirrors the placement again
+ * through `placeRelative` (see `MeasuredPage.place`). The two flips cancel, so a
+ * reverse-layout pager inside an Rtl host lays its pages out left-to-right again.
+ * The curl has to cancel exactly the placement the pager produced and lift its free
+ * edge where the pages actually travel, so hosts pass this exclusive-or instead of
+ * the reverse-layout flag on its own.
+ */
+fun sharedPaginatedPagerRightToLeft(
+    reverseLayout: Boolean,
+    layoutDirectionIsRtl: Boolean
+): Boolean = reverseLayout != layoutDirectionIsRtl
+
+/**
+ * Counter-translation that keeps a curling pager slot at its on-screen position.
+ *
+ * A `HorizontalPager` places slot `i` at `pageOffset * width` in left-to-right
+ * pagination, but mirrors the placement to `-pageOffset * width` when it really
+ * reads right-to-left (see [sharedPaginatedPagerRightToLeft]). The curl supplies
+ * the whole motion, so the sign has to cancel the pager exactly: with the LTR sign
+ * on an RTL pager the slot moves twice as far, the outgoing page slides off early
+ * and the incoming page is pushed out of the viewport, which reads as skipped
+ * pages.
+ */
+fun sharedPaginatedCurlTranslationX(
+    pageOffset: Float,
+    slotWidth: Float,
+    rightToLeftPagination: Boolean
+): Float = if (rightToLeftPagination) pageOffset * slotWidth else -pageOffset * slotWidth
 
 /**
  * Continuous page offset for a page at [slotOffsetInSet] inside a page set whose
@@ -110,8 +164,8 @@ internal fun shouldDrawSpreadSpineCrease(
     isTwoPageSpread: Boolean
 ): Boolean = animationEnabled && isTwoPageSpread
 
-/** Fold-line geometry for the spread sheet curl, in sheet-local coordinates. */
-internal data class SpreadPageFoldGeometry(
+/** Fold-line geometry for the sheet curl, in sheet-local coordinates. */
+data class SpreadPageFoldGeometry(
     val valid: Boolean,
     val progress: Float,
     val cornerY: Float,
@@ -143,22 +197,29 @@ internal const val SpreadBookFlipSweep = 1.0f
 internal const val SpreadCornerPeelSweep = 2.2f
 
 /**
- * Same fold math as the single-page curl, with the sheet width equal to the
- * full spread (both pages + gutter) so the crease sweeps across the spine.
+ * Single source of truth for the realistic page-curl fold: the fold line, its
+ * normal, and the free-corner origin used by every host (Android, iOS, desktop)
+ * to build the front/back paper paths and their shading.
  *
  * Book-flip mode ([forceBookFlip] = true) blends the touch toward the vertical
  * center (see [SpreadBookFlipCornerBlend]) so the fold stays hinged at the
  * spine crease while the free corner still curls toward the finger, and parks
- * the fold at the spine at progress 1 ([SpreadBookFlipSweep]) so the right
- * leaf peels off and settles onto the left page. Spread hosts always use
- * book-flip; single-page keeps the touch-driven diagonal corner peel.
+ * the fold at the spine at progress 1 ([SpreadBookFlipSweep]) so the leaf peels
+ * off and settles onto the opposite page. Spread hosts always use book-flip;
+ * single-page keeps the touch-driven diagonal corner peel.
+ *
+ * [rightToLeft] mirrors the fold horizontally: the free edge of a right-to-left
+ * leaf is its left edge (the spine sits on the right), so the lift starts at
+ * x = 0 and sweeps right. Everything the caller derives from the returned
+ * geometry (front/back paths, reflections, shadows) mirrors with it.
  */
-internal fun spreadPageCurlFold(
+fun spreadPageCurlFold(
     width: Float,
     height: Float,
     progress: Float,
     touchY: Float?,
-    forceBookFlip: Boolean = false
+    forceBookFlip: Boolean = false,
+    rightToLeft: Boolean = false
 ): SpreadPageFoldGeometry {
     val startY = if (forceBookFlip) {
         val touchOrCenter = touchY ?: height / 2f
@@ -175,11 +236,19 @@ internal fun spreadPageCurlFold(
     val centerDist = rawCenterDist * (1f - flattenFactor)
     val cornerY = if (centerDist >= 0f) height else 0f
     val sweep = if (forceBookFlip) SpreadBookFlipSweep else SpreadCornerPeelSweep
-    val dragX = width - width * sweep * progress
+    // Free edge (and hinge of the sweep): right edge in LTR, left edge in RTL.
+    val hingeX = if (rightToLeft) 0f else width
+    val dragX = if (rightToLeft) {
+        width * sweep * progress
+    } else {
+        width - width * sweep * progress
+    }
     val dragY = cornerY - height * 0.5f * progress * centerDist
-    val midX = (width + dragX) / 2f
+    val midX = (hingeX + dragX) / 2f
     val midY = (cornerY + dragY) / 2f
-    val dx = width - dragX
+    // Normal points from the dragged (lifted) corner back to the fixed edge, so
+    // `dot(p - mid, n) <= 0` stays the front face on either reading direction.
+    val dx = hingeX - dragX
     val dy = cornerY - dragY
     val nLen = sqrt(dx * dx + dy * dy)
     return if (nLen > 0f && nLen == nLen) {
@@ -212,18 +281,20 @@ internal fun spreadPageCurlFold(
 /**
  * Book-like spread flip: fold hinged at the spine crease with a hint of the
  * finger's corner bias ([SpreadBookFlipCornerBlend]), parking at the spine at
- * progress 1 so the right leaf peels off and settles onto the left page.
+ * progress 1 so the leaf peels off and settles onto the opposite page.
  */
 internal fun spreadBookFlipFold(
     width: Float,
     height: Float,
-    progress: Float
+    progress: Float,
+    rightToLeft: Boolean = false
 ): SpreadPageFoldGeometry = spreadPageCurlFold(
     width = width,
     height = height,
     progress = progress,
     touchY = height / 2f,
-    forceBookFlip = true
+    forceBookFlip = true,
+    rightToLeft = rightToLeft
 )
 
 /**
@@ -328,14 +399,19 @@ internal fun Modifier.sharedRealisticBookPage(
     paperColor: Color,
     isDarkPaper: Boolean,
     textureBitmap: ImageBitmap? = null,
-    textureAlpha: Float = 0f
+    textureAlpha: Float = 0f,
+    rightToLeftPagination: Boolean = false
 ): Modifier {
     return this
         .graphicsLayer {
             val pageOffset = pageOffsetProvider()
 
             if (pageOffset <= 1f && pageOffset > -1f) {
-                translationX = -pageOffset * size.width
+                translationX = sharedPaginatedCurlTranslationX(
+                    pageOffset = pageOffset,
+                    slotWidth = size.width,
+                    rightToLeftPagination = rightToLeftPagination
+                )
             }
 
             if (pageOffset != 0f) {
@@ -349,7 +425,8 @@ internal fun Modifier.sharedRealisticBookPage(
             touchYProvider = touchYProvider,
             paperColor = paperColor,
             textureBitmap = textureBitmap,
-            textureAlpha = textureAlpha
+            textureAlpha = textureAlpha,
+            rightToLeft = rightToLeftPagination
         )
 }
 
@@ -365,6 +442,9 @@ internal fun Modifier.sharedRealisticBookPage(
  * the right leaf peels off and settles onto the left page. The spine crease,
  * fold line, and lift shading draw only mid-turn — settled spreads stay flat
  * like the iOS reader.
+ *
+ * [rightToLeft] mirrors the fold horizontally for right-to-left pagination: the
+ * leaf lifts at its left (free) edge and sweeps toward the right instead.
  */
 @Composable
 fun Modifier.realisticPageCurl(
@@ -374,7 +454,8 @@ fun Modifier.realisticPageCurl(
     textureBitmap: ImageBitmap? = null,
     textureAlpha: Float = 0f,
     spineCreaseEnabled: Boolean = false,
-    spreadGutterPx: Float = 0f
+    spreadGutterPx: Float = 0f,
+    rightToLeft: Boolean = false
 ): Modifier {
     val isDarkPaper = sharedReaderPaperIsDark(paperColor)
     val frontPath = remember { Path() }
@@ -419,9 +500,11 @@ fun Modifier.realisticPageCurl(
                     progress = progress,
                     touchY = touchYProvider(),
                     // Spread + realistic = book leaf hinged at the spine crease:
-                    // pin to vertical center so the sheet peels from the right
-                    // and settles on the left. Single-page keeps touch diagonal.
-                    forceBookFlip = spineCreaseEnabled
+                    // pin to vertical center so the sheet peels from the free
+                    // edge and settles on the opposite page. Single-page keeps
+                    // touch diagonal.
+                    forceBookFlip = spineCreaseEnabled,
+                    rightToLeft = rightToLeft
                 )
                 if (!fold.valid) {
                     drawPaperBackground()
@@ -578,9 +661,9 @@ fun Modifier.realisticPageCurl(
 
 /**
  * Spread-sheet book flip: fold hinged at the spine crease (with a hint of
- * corner curl) and the spine crease forced on mid-turn. Hosts apply this to
- * the whole spread Row (both pages + gutter). The right leaf peels off and
- * settles onto the left page; settled spreads stay flat.
+ * corner curl) and the spine crease forced on mid-turn. Hosts apply this to the
+ * whole spread Row (both pages + gutter). The leaf on the free edge peels off
+ * and settles onto the opposite page; settled spreads stay flat.
  */
 @Composable
 fun Modifier.realisticSpreadPageCurl(
@@ -589,7 +672,8 @@ fun Modifier.realisticSpreadPageCurl(
     paperColor: Color,
     textureBitmap: ImageBitmap? = null,
     textureAlpha: Float = 0f,
-    spreadGutterPx: Float = 0f
+    spreadGutterPx: Float = 0f,
+    rightToLeft: Boolean = false
 ): Modifier = realisticPageCurl(
     pageOffsetProvider = pageOffsetProvider,
     touchYProvider = touchYProvider,
@@ -597,7 +681,8 @@ fun Modifier.realisticSpreadPageCurl(
     textureBitmap = textureBitmap,
     textureAlpha = textureAlpha,
     spineCreaseEnabled = true,
-    spreadGutterPx = spreadGutterPx
+    spreadGutterPx = spreadGutterPx,
+    rightToLeft = rightToLeft
 )
 
 /**

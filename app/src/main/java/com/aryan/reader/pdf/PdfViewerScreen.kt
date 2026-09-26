@@ -181,6 +181,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalView
@@ -200,6 +201,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toSize
@@ -335,6 +337,8 @@ import com.aryan.reader.shared.pdf.animatesPagination
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.ui.ReaderMinimalSlider
 import com.aryan.reader.shared.ui.realisticPageCurl
+import com.aryan.reader.shared.ui.sharedPaginatedCurlTranslationX
+import com.aryan.reader.shared.ui.sharedPaginatedPagerRightToLeft
 import com.aryan.reader.shared.ui.SharedPdfRichTextHiddenInput
 import com.aryan.reader.shared.ui.SharedMobileReaderDrawer
 import com.aryan.reader.shared.ui.SharedMobileReaderScaffold
@@ -11282,9 +11286,16 @@ private fun PdfViewerPaginationPage(
     val spreadPageGapPx = with(density) { spreadPageGap.toPx() }
     val spreadPageCount = spreadPageIndices.size
     var spreadPanFlingJob by remember { mutableStateOf<Job?>(null) }
+    // The pager mirror the curl has to cancel: reverseLayout plus the extra
+    // placeRelative flip an Rtl host applies. See sharedPaginatedPagerRightToLeft.
+    val pagerRightToLeft = sharedPaginatedPagerRightToLeft(
+        reverseLayout = rightToLeftPagination,
+        layoutDirectionIsRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    )
     // Pager natural position: the curl's counter-translation cancels the pager's own
     // translation while |offset| < 1 (Android benchmark), and the curling page draws
-    // above the incoming one.
+    // above the incoming one. A right-to-left pager mirrors its placement, so the
+    // counter-translation flips sign with it.
     val turnPageOffset =
         if (realisticPageTurnActive) {
             (pagerPageIndex - pagerState.currentPage) - pagerState.currentPageOffsetFraction
@@ -11296,7 +11307,11 @@ private fun PdfViewerPaginationPage(
             .zIndex(-turnPageOffset)
             .graphicsLayer {
                 if (turnPageOffset <= 1f && turnPageOffset > -1f) {
-                    translationX = -turnPageOffset * size.width
+                    translationX = sharedPaginatedCurlTranslationX(
+                        pageOffset = turnPageOffset,
+                        slotWidth = size.width,
+                        rightToLeftPagination = pagerRightToLeft
+                    )
                 }
             }
     } else {
@@ -11314,7 +11329,8 @@ private fun PdfViewerPaginationPage(
             .realisticPageCurl(
                 pageOffsetProvider = { turnPageOffset },
                 touchYProvider = { pageTurnTouchY },
-                paperColor = pagePaperColor
+                paperColor = pagePaperColor,
+                rightToLeft = pagerRightToLeft
             )
     } else {
         Modifier
