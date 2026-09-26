@@ -274,6 +274,8 @@ import com.aryan.reader.shared.pdf.SharedPdfRichTextAlign
 import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
 import com.aryan.reader.shared.pdf.SharedPdfTextAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfTextBoxPendingSelection
+import com.aryan.reader.shared.pdf.SharedPdfTextBoxDuplicateGapRel
+import com.aryan.reader.shared.pdf.SharedPdfTextBoxMenuAction
 import com.aryan.reader.shared.pdf.SharedPdfTextDraft
 import com.aryan.reader.shared.pdf.SharedPdfTextStyleConfig
 import com.aryan.reader.shared.pdf.sharedPdfTextStyle
@@ -1407,7 +1409,8 @@ fun SharedMobilePdfReaderHost(
             style = annotationStyle,
             createdAt = annotation.createdAt,
             isManuallySized = true,
-            paragraphs = annotation.paragraphs.trimmedRichParagraphs()
+            paragraphs = annotation.paragraphs.trimmedRichParagraphs(),
+            isLocked = annotation.isLocked,
         )
     }
 
@@ -1480,6 +1483,51 @@ fun SharedMobilePdfReaderHost(
             dispatch(SharedPdfReaderAction.AnnotationUpdated(annotation))
         } else {
             dispatch(SharedPdfReaderAction.AnnotationAdded(annotation))
+        }
+    }
+
+    // Android benchmark (PdfViewerScreen onTextBoxMenuAction): the compact menu
+    // on the selected box. Delete drops the draft and the persisted box,
+    // duplicate persists the source then opens a copy below it (same text,
+    // styles, paragraphs and lock state), lock toggles geometry editing while
+    // text stays editable.
+    fun onTextBoxMenuAction(action: SharedPdfTextBoxMenuAction) {
+        val draft = textDraft ?: return
+        when (action) {
+            SharedPdfTextBoxMenuAction.DELETE -> {
+                textDraft = null
+                if (readerState.annotations.any { it.id == draft.id }) {
+                    dispatch(SharedPdfReaderAction.AnnotationDeleted(draft.id))
+                }
+            }
+            SharedPdfTextBoxMenuAction.DUPLICATE -> {
+                val source = draft.toAnnotation()
+                if (readerState.annotations.any { it.id == source.id }) {
+                    dispatch(SharedPdfReaderAction.AnnotationUpdated(source))
+                } else {
+                    dispatch(SharedPdfReaderAction.AnnotationAdded(source))
+                }
+                val srcBounds = source.bounds ?: draft.bounds
+                val width = (srcBounds.right - srcBounds.left).coerceAtLeast(0f)
+                val height = (srcBounds.bottom - srcBounds.top).coerceAtLeast(0f)
+                val newLeft = srcBounds.left.coerceIn(0f, (1f - width).coerceAtLeast(0f))
+                val newTop = (srcBounds.bottom + SharedPdfTextBoxDuplicateGapRel)
+                    .coerceIn(0f, (1f - height).coerceAtLeast(0f))
+                val duplicate = source.copy(
+                    id = "ios_pdf_textbox_${currentTimestamp()}_${readerState.annotations.size + 1}",
+                    bounds = PdfPageBounds(newLeft, newTop, newLeft + width, newTop + height),
+                    createdAt = currentTimestamp(),
+                )
+                dispatch(SharedPdfReaderAction.AnnotationAdded(duplicate))
+                startEditingTextBox(duplicate)
+            }
+            SharedPdfTextBoxMenuAction.LOCK -> {
+                val next = !draft.isLocked
+                textDraft = draft.copy(isLocked = next)
+                readerState.annotations.firstOrNull { it.id == draft.id }?.let {
+                    dispatch(SharedPdfReaderAction.AnnotationUpdated(it.copy(isLocked = next)))
+                }
+            }
         }
     }
 
@@ -2661,6 +2709,7 @@ fun SharedMobilePdfReaderHost(
                         onToggleChrome = {
                             if (!(autoScrollMusicianMode && autoScrollModeActive)) showChrome = !showChrome
                         },
+                        onTextBoxMenuAction = ::onTextBoxMenuAction,
                         modifier = Modifier.fillMaxSize().then(
                             if (pdfVerticalContentBelowStatusBar) {
                                 Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
@@ -2739,6 +2788,7 @@ fun SharedMobilePdfReaderHost(
                         onPageChanged = { dispatch(SharedPdfReaderAction.GoToPage(it)) },
                         onManualPageTurnStarted = ::stopPdfTtsForManualPagination,
                         onToggleChrome = { showChrome = !showChrome },
+                        onTextBoxMenuAction = ::onTextBoxMenuAction,
                         onCanvasSizeChanged = { canvasSize = it },
                         onFinishInkStroke = { page, eraserOverride -> finishInkStroke(page, eraserOverride) },
                         onInkStrokeEnd = ::onInkStrokeEnd,

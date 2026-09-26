@@ -86,4 +86,16 @@ class PdfTextBoxMenuLogicTest {
         assertFalse(unlockedAgain.isLocked)
         assertEquals(source, unlockedAgain)
     }
+
+    @Test
+    fun `action menu width tightly fits buttons plus dividers with no trailing space`() {
+        val count = PdfTextBoxMenuAction.entries.size
+        val width = pdfTextBoxActionMenuWidthDp()
+
+        val expected = count * 24f + (count - 1).coerceAtLeast(0) * 1f
+        assertEquals(expected, width, 1e-5f)
+        // 3 actions today: no leftover 4th slot.
+        assertEquals(3, count)
+        assertEquals(74f, width, 1e-5f)
+    }
 }

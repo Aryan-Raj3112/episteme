@@ -37,6 +37,29 @@ enum class SharedPdfTextResizeHandle {
     LEFT_CENTER
 }
 
+/**
+ * Compact per-box action menu entries (Android benchmark:
+ * PdfTextBoxMenuAction DELETE / DUPLICATE / LOCK). Shared-first so Android
+ * and iOS stay in sync; the menu width is derived from the entry count so
+ * adding/removing an action cannot leave trailing empty space.
+ */
+enum class SharedPdfTextBoxMenuAction { DELETE, DUPLICATE, LOCK }
+
+const val SharedPdfTextBoxActionButtonSizeDp = 24f
+const val SharedPdfTextBoxActionDividerWidthDp = 1f
+const val SharedPdfTextBoxActionMenuHeightDp = 24f
+
+/**
+ * Exact tight width of the compact text-box action menu: one fixed button
+ * slot per [SharedPdfTextBoxMenuAction] plus one divider between neighbours.
+ */
+fun sharedPdfTextBoxActionMenuWidthDp(): Float {
+    val count = SharedPdfTextBoxMenuAction.entries.size
+    if (count <= 0) return 0f
+    return count * SharedPdfTextBoxActionButtonSizeDp +
+        (count - 1) * SharedPdfTextBoxActionDividerWidthDp
+}
+
 @Serializable
 data class SharedPdfTextDraft(
     val id: String,
@@ -46,8 +69,17 @@ data class SharedPdfTextDraft(
     val style: SharedPdfTextStyleConfig = SharedPdfTextStyleConfig(),
     val createdAt: Long = 0L,
     val isManuallySized: Boolean = false,
-    val paragraphs: List<SharedPdfRichParagraph> = emptyList()
+    val paragraphs: List<SharedPdfRichParagraph> = emptyList(),
+    /**
+     * Position lock carried from the source annotation while editing
+     * (Android benchmark: locked boxes stay text-editable but hide resize
+     * handles and the drag pill). New drafts default to unlocked.
+     */
+    val isLocked: Boolean = false,
 )
+
+/** Vertical gap between a duplicated text box and its original (page-relative, Android benchmark). */
+const val SharedPdfTextBoxDuplicateGapRel = 0.04f
 
 object SharedPdfTextAnnotationDefaults {
     private const val AndroidTextBoxFontReferencePx = 500f
@@ -295,7 +327,8 @@ fun SharedPdfTextDraft.toAnnotation(): SharedPdfAnnotation {
         fontPath = style.fontPath,
         fontName = style.fontName,
         createdAt = createdAt,
-        paragraphs = paragraphs.trimmedRichParagraphs()
+        paragraphs = paragraphs.trimmedRichParagraphs(),
+        isLocked = isLocked,
     )
 }
 

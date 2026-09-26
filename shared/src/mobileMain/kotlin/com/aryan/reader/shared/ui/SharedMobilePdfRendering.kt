@@ -202,6 +202,7 @@ import com.aryan.reader.shared.pdf.sharedPdfSelectionTouchSlopPx
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfTextDraft
 import com.aryan.reader.shared.pdf.RichParagraphUiState
+import com.aryan.reader.shared.pdf.SharedPdfTextBoxMenuAction
 import com.aryan.reader.shared.pdf.SharedPdfTextBoxPendingSelection
 import com.aryan.reader.shared.pdf.withTextAndParagraphs
 import com.aryan.reader.shared.pdf.SharedPdfTextDragState
@@ -783,6 +784,11 @@ internal fun SharedMobilePdfVerticalPages(
      * map because blank pages shift display indices.
      */
     onPageSurfaceWindowRectChanged: (Int, Rect) -> Unit = { _, _ -> },
+    /**
+     * Compact text-box action menu handler (Android benchmark
+     * onTextBoxMenuAction: delete / duplicate / lock). Null hides the menu.
+     */
+    onTextBoxMenuAction: ((SharedPdfTextBoxMenuAction) -> Unit)? = null,
 ) {
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = state.pageIndex.coerceIn(0, pageCount - 1))
     val scope = rememberCoroutineScope()
@@ -963,6 +969,7 @@ internal fun SharedMobilePdfVerticalPages(
                             onInkStrokeEnd = onInkStrokeEnd,
                             selectionHost = selectionHost,
                             onSurfaceWindowRectChanged = { rect -> onPageSurfaceWindowRectChanged(pdfPage, rect) },
+                            onTextBoxMenuAction = onTextBoxMenuAction,
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -1152,6 +1159,11 @@ internal fun SharedMobilePdfPaginatedPages(
      * selection edit-bar anchor).
      */
     onPageSurfaceWindowRectChanged: (Int, Rect) -> Unit = { _, _ -> },
+    /**
+     * Compact text-box action menu handler (Android benchmark
+     * onTextBoxMenuAction: delete / duplicate / lock). Null hides the menu.
+     */
+    onTextBoxMenuAction: ((SharedPdfTextBoxMenuAction) -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     var paginationViewportSize by remember(book.id) { mutableStateOf(IntSize.Zero) }
@@ -1529,6 +1541,7 @@ internal fun SharedMobilePdfPaginatedPages(
                                         pageSurfaceWindowRects[displayPage] = rect
                                         onPageSurfaceWindowRectChanged(pdfPage, rect)
                                     },
+                                    onTextBoxMenuAction = onTextBoxMenuAction,
                                     modifier = Modifier.size(fittedWidth, fittedHeight).then(turnSheetModifier)
                                 )
                             }
@@ -2170,6 +2183,11 @@ internal fun SharedMobilePdfPageSurface(
      * stale owner can never block later strokes.
      */
     onInkStrokeEnd: (Int) -> Unit = {},
+    /**
+     * Compact text-box action menu handler (Android benchmark
+     * onTextBoxMenuAction: delete / duplicate / lock). Null hides the menu.
+     */
+    onTextBoxMenuAction: ((SharedPdfTextBoxMenuAction) -> Unit)? = null,
 ) {
     var localCanvasSize by remember(pageIndex) { mutableStateOf(IntSize.Zero) }
     var pageSurfaceWindowRect by remember(pageIndex) { mutableStateOf(Rect.Zero) }
@@ -2749,6 +2767,10 @@ internal fun SharedMobilePdfPageSurface(
                     onBoundsChange = { nextBounds ->
                         onTextDraftChange(draft.withBounds(nextBounds))
                     },
+                    isDarkMode = activeTheme.isDark,
+                    zoomScale = zoomCamera.scale,
+                    isLocked = draft.isLocked,
+                    onMenuAction = onTextBoxMenuAction,
                     onGlobalDragStart = {
                         val container = containerWindowRect ?: return@SharedPdfTextBoxEditorOverlay
                         val scale = zoomCamera.scale.coerceAtLeast(0.1f)

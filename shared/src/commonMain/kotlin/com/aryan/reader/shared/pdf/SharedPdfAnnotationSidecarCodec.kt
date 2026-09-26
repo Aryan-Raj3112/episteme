@@ -348,7 +348,8 @@ object SharedPdfAnnotationSidecarCodec {
                 paragraphs = sharedPdfTextBoxParagraphsFromJson(
                     obj["paragraphs"],
                     sharedPdfTextBoxParagraphCount(boxText),
-                )
+                ),
+                isLocked = obj.boolean("isLocked") ?: false,
             )
         }
     }
@@ -442,6 +443,7 @@ object SharedPdfAnnotationSidecarCodec {
                             annotation.fontPath?.let { put("fontPath", JsonPrimitive(it)) }
                             annotation.fontName?.let { put("fontName", JsonPrimitive(it)) }
                             sharedPdfTextBoxParagraphsToJson(annotation.paragraphs)?.let { put("paragraphs", it) }
+                            if (annotation.isLocked) put("isLocked", JsonPrimitive(true))
                             put("bounds", bounds.toJsonObject())
                         }
                     )

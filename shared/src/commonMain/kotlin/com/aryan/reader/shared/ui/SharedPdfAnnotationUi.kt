@@ -6,7 +6,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -34,7 +35,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -42,6 +46,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -76,10 +81,17 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.PointerInputScope
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.selected
@@ -105,9 +117,14 @@ import com.aryan.reader.shared.pdf.PdfToolConfig
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.pdf.SharedPdfTextAnnotationDefaults
+import com.aryan.reader.shared.pdf.SharedPdfTextBoxActionDividerWidthDp
+import com.aryan.reader.shared.pdf.SharedPdfTextBoxActionButtonSizeDp
+import com.aryan.reader.shared.pdf.SharedPdfTextBoxActionMenuHeightDp
+import com.aryan.reader.shared.pdf.SharedPdfTextBoxMenuAction
 import com.aryan.reader.shared.pdf.SharedPdfTextDraft
 import com.aryan.reader.shared.pdf.SharedPdfTextResizeHandle
 import com.aryan.reader.shared.pdf.SharedPdfTextStyleConfig
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxActionMenuWidthDp
 import com.aryan.reader.shared.pdf.RichParagraphUiState
 import com.aryan.reader.shared.pdf.SharedPdfRichListType
 import com.aryan.reader.shared.pdf.SharedPdfRichParagraph
@@ -124,6 +141,7 @@ import com.aryan.reader.shared.pdf.sharedPdfStrokeWidthRange
 import com.aryan.reader.shared.pdf.toComposeTextAlign
 import com.aryan.reader.shared.pdf.trimmedRichParagraphs
 import com.aryan.reader.shared.pdf.withSharedPdfTextFontSize
+import com.aryan.reader.pdf.calculateTextBoxChromeLayout
 import kotlin.math.roundToInt
 
 val SharedPdfAnnotationDefaultTools: List<PdfInkTool> = listOf(
@@ -1565,6 +1583,55 @@ fun SharedPdfInlineTextEditorOverlay(
  * tokens are adopted once, focused fields never adopt lagging parent
  * text (echo guard), idle fields adopt parent text.
  */
+/**
+ * Eagerly consumes pointer events so parent scroll/pager/zoom gestures don't
+ * steal an in-flight text-box resize or move (Android benchmark
+ * PdfTextBox.detectEagerDragGestures: the down is consumed immediately in the
+ * Initial pass instead of waiting for touch slop like detectDragGestures,
+ * which is why move/resize never started on iOS).
+ */
+internal suspend fun PointerInputScope.sharedPdfTextBoxEagerDrag(
+    onDragStart: (Offset) -> Unit,
+    onDragEnd: () -> Unit,
+    onDragCancel: () -> Unit,
+    onDrag: (PointerInputChange, Offset) -> Unit,
+) {
+    awaitEachGesture {
+        var dragStarted = false
+        try {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            down.consume() // Consume immediately
+            onDragStart(down.position)
+            dragStarted = true
+            val pointerId = down.id
+            var canceled = false
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                val change = event.changes.firstOrNull { it.id == pointerId }
+                if (change == null) {
+                    canceled = true
+                    break
+                }
+                if (change.changedToUp()) {
+                    change.consume()
+                    break
+                }
+                if (change.positionChanged()) {
+                    val dragAmount = change.position - change.previousPosition
+                    change.consume()
+                    onDrag(change, dragAmount)
+                }
+            }
+            if (canceled) onDragCancel() else onDragEnd()
+            dragStarted = false
+        } finally {
+            if (dragStarted) {
+                onDragCancel()
+            }
+        }
+    }
+}
+
 @Composable
 fun SharedPdfTextBoxEditorOverlay(
     id: String,
@@ -1583,11 +1650,21 @@ fun SharedPdfTextBoxEditorOverlay(
     onGlobalDragEnd: (() -> Unit)? = null,
     onGlobalDragCancel: (() -> Unit)? = null,
     isDraggingGlobally: Boolean = false,
+    // Android parity (ResizableTextBox isDarkMode/scale/isLocked/
+    // onTextBoxMenuAction): chrome uses theme-aware black/white instead of
+    // blue, stays constant on-screen size across zoom, hides resize handles
+    // and the drag pill while locked, and shows the compact
+    // delete/duplicate/lock menu opposite the drag pill. Null hides the menu.
+    isDarkMode: Boolean = false,
+    zoomScale: Float = 1f,
+    isLocked: Boolean = false,
+    onMenuAction: ((SharedPdfTextBoxMenuAction) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     if (canvasSize.width <= 0 || canvasSize.height <= 0) return
 
     val density = LocalDensity.current
+    val safeScale = zoomScale.takeIf { it.isFinite() && it > 0f } ?: 1f
     val focusRequester = remember(id) { FocusRequester() }
     var liveBounds by remember(id) { mutableStateOf(bounds) }
     var isResizing by remember(id) { mutableStateOf(false) }
@@ -1605,14 +1682,54 @@ fun SharedPdfTextBoxEditorOverlay(
     val heightPx = ((liveBounds.bottom - liveBounds.top) * canvasSize.height).coerceAtLeast(50f)
     val textColor = Color(style.colorArgb)
     val backgroundColor = Color(style.backgroundColorArgb)
-    val handleSize = 10.dp
-    val handleTouchSize = 38.dp
+    // Counter-scale fixed sizes so chrome renders constant on-screen size
+    // regardless of zoom (Android benchmark).
+    val handleSize = (10f / safeScale).dp
+    val handleTouchSize = (40f / safeScale).dp
+    val handleSizePx = with(density) { handleSize.toPx() }
+    val halfHandlePx = handleSizePx / 2f
     val handleTouchSizePx = with(density) { handleTouchSize.toPx() }
-    val moveHandleWidth = 54.dp
-    val moveHandleHeight = 24.dp
-    val moveHandleWidthPx = with(density) { moveHandleWidth.toPx() }
-    val moveHandleHeightPx = with(density) { moveHandleHeight.toPx() }
-    val moveHandleBelow = topPx + heightPx + moveHandleHeightPx + 10f <= canvasSize.height
+    val borderColor = if (isDarkMode) Color.White else Color.Black
+    val dragPillTouchWidth = (72f / safeScale).dp
+    val dragPillTouchHeight = (48f / safeScale).dp
+    val dragPillWidthPx = with(density) { dragPillTouchWidth.toPx() }
+    val dragPillHeightPx = with(density) { dragPillTouchHeight.toPx() }
+    val dragPillGapPx = with(density) { (8f / safeScale).dp.toPx() }
+    // Compact action menu: constant on-screen size, opposite end from the
+    // pill. Tight width derived from the entry count (no trailing space).
+    val showActionMenu = onMenuAction != null
+    val actionMenuWidthPx = with(density) { sharedPdfTextBoxActionMenuWidthDp().dp.toPx() / safeScale }
+    val actionMenuHeightPx = with(density) { SharedPdfTextBoxActionMenuHeightDp.dp.toPx() / safeScale }
+    val textBoundsPx = Rect(
+        left = leftPx,
+        top = topPx,
+        right = leftPx + widthPx,
+        bottom = topPx + heightPx,
+    )
+    // Freeze the pill/menu ends while dragging so chrome never jumps sides.
+    var isHandleAtTop by remember(id) { mutableStateOf(false) }
+    val requiredBottomSpacePx = with(density) { 60.dp.toPx() } / safeScale
+    LaunchedEffect(textBoundsPx, canvasSize, isResizing) {
+        if (!isResizing) {
+            isHandleAtTop = if (canvasSize.height <= 0) {
+                false
+            } else {
+                (canvasSize.height - textBoundsPx.bottom) < requiredBottomSpacePx
+            }
+        }
+    }
+    val chromeLayout = calculateTextBoxChromeLayout(
+        textBoundsPx = textBoundsPx,
+        isSelected = true,
+        isHandleAtTop = isHandleAtTop,
+        handleSizePx = handleSizePx,
+        dragPillWidthPx = dragPillWidthPx,
+        dragPillHeightPx = dragPillHeightPx,
+        dragPillGapPx = dragPillGapPx,
+        hasActionMenu = showActionMenu,
+        actionMenuWidthPx = actionMenuWidthPx,
+        actionMenuHeightPx = actionMenuHeightPx,
+    )
     // Box-level style as the AnnotatedString base; per-paragraph alignment
     // and list tags come from shared helpers (same model as Android).
     // Font size stays on the TextStyle (like Android) so display scaling
@@ -1757,11 +1874,19 @@ fun SharedPdfTextBoxEditorOverlay(
                     TextAlign.Unspecified
                 }
             ),
-            cursorBrush = SolidColor(textColor),
+            cursorBrush = SolidColor(if (isDarkMode) Color.White else MaterialTheme.colorScheme.primary),
             modifier = Modifier
-                .offset { IntOffset(leftPx.roundToInt(), topPx.roundToInt()) }
-                .width(with(density) { widthPx.toDp() })
-                .height(with(density) { heightPx.toDp() })
+                .offset {
+                    IntOffset(
+                        (chromeLayout.outerTranslationX + chromeLayout.contentOffsetX).roundToInt(),
+                        (chromeLayout.outerTranslationY + chromeLayout.contentOffsetY).roundToInt()
+                    )
+                }
+                .size(
+                    width = with(density) { chromeLayout.contentWidthPx.toDp() },
+                    height = with(density) { chromeLayout.contentHeightPx.toDp() }
+                )
+                .padding(handleSize / 2)
                 .background(
                     color = if (style.backgroundColorArgb.isTransparentArgb()) {
                         Color.Transparent
@@ -1771,49 +1896,134 @@ fun SharedPdfTextBoxEditorOverlay(
                     shape = RoundedCornerShape(4.dp)
                 )
                 .border(
-                    width = 1.dp,
-                    color = Color(0xFF64B5F6),
+                    width = (1.5f / safeScale).dp,
+                    color = borderColor,
                     shape = RoundedCornerShape(4.dp)
                 )
-                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .padding(8.dp)
                 .verticalScroll(rememberScrollState())
                 .focusRequester(focusRequester)
                 .onFocusChanged { isTextFieldFocused = it.isFocused }
         )
 
-        SharedPdfTextResizeHandle.entries.forEach { handle ->
-            val center = handle.centerOffset(
-                leftPx = leftPx,
-                topPx = topPx,
-                widthPx = widthPx,
-                heightPx = heightPx
-            )
+        if (!isLocked) {
+            // Resize handles sit on the padded content frame (Android
+            // benchmark): centers offset by half a handle from the text rect,
+            // plain theme-aware circles, eager drag so parents never steal.
+            val contentLeftPx = chromeLayout.outerTranslationX + chromeLayout.contentOffsetX
+            val contentTopPx = chromeLayout.outerTranslationY + chromeLayout.contentOffsetY
+            val resizeMinPx = 50f / safeScale
+            SharedPdfTextResizeHandle.entries.forEach { handle ->
+                val center = when (handle) {
+                    SharedPdfTextResizeHandle.TOP_LEFT ->
+                        Offset(contentLeftPx + halfHandlePx, contentTopPx + halfHandlePx)
+                    SharedPdfTextResizeHandle.TOP_CENTER ->
+                        Offset(contentLeftPx + halfHandlePx + widthPx / 2f, contentTopPx + halfHandlePx)
+                    SharedPdfTextResizeHandle.TOP_RIGHT ->
+                        Offset(contentLeftPx + halfHandlePx + widthPx, contentTopPx + halfHandlePx)
+                    SharedPdfTextResizeHandle.RIGHT_CENTER ->
+                        Offset(contentLeftPx + halfHandlePx + widthPx, contentTopPx + halfHandlePx + heightPx / 2f)
+                    SharedPdfTextResizeHandle.BOTTOM_RIGHT ->
+                        Offset(contentLeftPx + halfHandlePx + widthPx, contentTopPx + halfHandlePx + heightPx)
+                    SharedPdfTextResizeHandle.BOTTOM_CENTER ->
+                        Offset(contentLeftPx + halfHandlePx + widthPx / 2f, contentTopPx + halfHandlePx + heightPx)
+                    SharedPdfTextResizeHandle.BOTTOM_LEFT ->
+                        Offset(contentLeftPx + halfHandlePx, contentTopPx + halfHandlePx + heightPx)
+                    SharedPdfTextResizeHandle.LEFT_CENTER ->
+                        Offset(contentLeftPx + halfHandlePx, contentTopPx + halfHandlePx + heightPx / 2f)
+                }
+                Box(
+                    modifier = Modifier
+                        .offset {
+                            IntOffset(
+                                (center.x - handleTouchSizePx / 2f).roundToInt(),
+                                (center.y - handleTouchSizePx / 2f).roundToInt()
+                            )
+                        }
+                        .size(handleTouchSize)
+                        .zIndex(10f)
+                        .pointerInput(id, handle, canvasSize) {
+                            sharedPdfTextBoxEagerDrag(
+                                onDragStart = {
+                                    isResizing = true
+                                },
+                                onDragEnd = {
+                                    isResizing = false
+                                    onBoundsChange(liveBounds)
+                                },
+                                onDragCancel = {
+                                    isResizing = false
+                                    liveBounds = bounds
+                                },
+                                onDrag = { _, dragAmount ->
+                                    liveBounds = liveBounds.resizedBy(
+                                        handle = handle,
+                                        deltaXPx = dragAmount.x,
+                                        deltaYPx = dragAmount.y,
+                                        canvasSize = canvasSize,
+                                        minWidthPx = resizeMinPx,
+                                        minHeightPx = resizeMinPx
+                                    )
+                                }
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(handleSize)
+                            .background(borderColor, CircleShape)
+                    )
+                }
+            }
+        }
+
+        if (!isLocked) {
+            // Drag pill on the end opposite the action menu (Android benchmark
+            // chromeLayout): constant on-screen size, theme-aware, eager drag
+            // so parents never steal the move.
+            val dragPillLeftPx = chromeLayout.outerTranslationX + chromeLayout.dragPillLeftPx
+            val dragPillTopPx = chromeLayout.outerTranslationY + chromeLayout.dragPillTopPx
+            val dragLineColor = if (isDarkMode) Color.Black else Color.White
             Box(
                 modifier = Modifier
                     .offset {
                         IntOffset(
-                            (center.x - handleTouchSizePx / 2f).roundToInt(),
-                            (center.y - handleTouchSizePx / 2f).roundToInt()
+                            dragPillLeftPx.roundToInt(),
+                            dragPillTopPx.roundToInt()
                         )
                     }
-                    .size(handleTouchSize)
-                    .pointerInput(id, handle, canvasSize) {
-                        detectDragGestures(
+                    .size(width = dragPillTouchWidth, height = dragPillTouchHeight)
+                    .zIndex(20f)
+                    .pointerInput(id, canvasSize, onGlobalDrag != null) {
+                        sharedPdfTextBoxEagerDrag(
                             onDragStart = {
                                 isResizing = true
+                                if (onGlobalDrag == null) return@sharedPdfTextBoxEagerDrag
+                                onGlobalDragStart?.invoke()
                             },
                             onDragEnd = {
                                 isResizing = false
+                                if (onGlobalDrag != null) {
+                                    onGlobalDragEnd?.invoke()
+                                    return@sharedPdfTextBoxEagerDrag
+                                }
                                 onBoundsChange(liveBounds)
                             },
                             onDragCancel = {
                                 isResizing = false
+                                if (onGlobalDrag != null) {
+                                    onGlobalDragCancel?.invoke()
+                                    return@sharedPdfTextBoxEagerDrag
+                                }
                                 liveBounds = bounds
                             },
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                liveBounds = liveBounds.resizedBy(
-                                    handle = handle,
+                            onDrag = { _, dragAmount ->
+                                if (onGlobalDrag != null) {
+                                    onGlobalDrag(dragAmount)
+                                    return@sharedPdfTextBoxEagerDrag
+                                }
+                                liveBounds = liveBounds.movedBy(
                                     deltaXPx = dragAmount.x,
                                     deltaYPx = dragAmount.y,
                                     canvasSize = canvasSize
@@ -1823,84 +2033,134 @@ fun SharedPdfTextBoxEditorOverlay(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(handleSize)
-                        .background(Color(0xFF64B5F6), CircleShape)
-                        .border(1.dp, Color.White.copy(alpha = 0.92f), CircleShape)
-                )
+                Surface(
+                    modifier = Modifier.size(
+                        width = (48f / safeScale).dp,
+                        height = (24f / safeScale).dp
+                    ),
+                    shape = CircleShape,
+                    color = borderColor,
+                    contentColor = dragLineColor,
+                    shadowElevation = (4f / safeScale).dp
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Canvas(
+                            Modifier.size(
+                                width = (24f / safeScale).dp,
+                                height = (10f / safeScale).dp
+                            )
+                        ) {
+                            drawLine(
+                                color = dragLineColor,
+                                start = Offset(size.width * 0.2f, size.height * 0.25f),
+                                end = Offset(size.width * 0.8f, size.height * 0.25f),
+                                strokeWidth = 2f
+                            )
+                            drawLine(
+                                color = dragLineColor,
+                                start = Offset(size.width * 0.2f, size.height * 0.75f),
+                                end = Offset(size.width * 0.8f, size.height * 0.75f),
+                                strokeWidth = 2f
+                            )
+                        }
+                    }
+                }
             }
         }
 
-        Box(
-            modifier = Modifier
-                .offset {
-                    IntOffset(
-                        (leftPx + (widthPx / 2f) - (moveHandleWidthPx / 2f)).roundToInt(),
-                        if (moveHandleBelow) {
-                            (topPx + heightPx + 8f).roundToInt()
-                        } else {
-                            (topPx - moveHandleHeightPx - 8f).roundToInt()
-                        }
-                    )
-                }
-                .size(width = moveHandleWidth, height = moveHandleHeight)
-                .clip(CircleShape)
-                .background(Color(0xFF64B5F6))
-                .border(1.dp, Color.White.copy(alpha = 0.92f), CircleShape)
-                .pointerInput(id, canvasSize, onGlobalDrag != null) {
-                    detectDragGestures(
-                        onDragStart = {
-                            isResizing = true
-                            if (onGlobalDrag == null) return@detectDragGestures
-                            onGlobalDragStart?.invoke()
-                        },
-                        onDragEnd = {
-                            isResizing = false
-                            if (onGlobalDrag != null) {
-                                onGlobalDragEnd?.invoke()
-                                return@detectDragGestures
-                            }
-                            onBoundsChange(liveBounds)
-                        },
-                        onDragCancel = {
-                            isResizing = false
-                            if (onGlobalDrag != null) {
-                                onGlobalDragCancel?.invoke()
-                                return@detectDragGestures
-                            }
-                            liveBounds = bounds
-                        },
-                        onDrag = { change, dragAmount ->
-                            change.consume()
-                            if (onGlobalDrag != null) {
-                                onGlobalDrag(dragAmount)
-                                return@detectDragGestures
-                            }
-                            liveBounds = liveBounds.movedBy(
-                                deltaXPx = dragAmount.x,
-                                deltaYPx = dragAmount.y,
-                                canvasSize = canvasSize
-                            )
-                        }
-                    )
-                },
-            contentAlignment = Alignment.Center
+        onMenuAction?.let { menuAction ->
+            SharedPdfTextBoxActionMenu(
+                isLocked = isLocked,
+                isDarkMode = isDarkMode,
+                zoomScale = safeScale,
+                onAction = menuAction,
+                modifier = Modifier
+                    .offset {
+                        IntOffset(
+                            (chromeLayout.outerTranslationX + chromeLayout.actionMenuLeftPx).roundToInt(),
+                            (chromeLayout.outerTranslationY + chromeLayout.actionMenuTopPx).roundToInt()
+                        )
+                    }
+                    .zIndex(20f)
+            )
+        }
+    }
+}
+
+/**
+ * Compact action menu floating at the end of a selected text box opposite the
+ * drag pill: delete, duplicate, and lock/unlock (Android benchmark
+ * TextBoxActionMenu). Constant on-screen size across zoom, tight width
+ * derived from the entry count so there is no trailing empty space,
+ * destructive action tinted with the theme error color.
+ */
+@Composable
+private fun SharedPdfTextBoxActionMenu(
+    isLocked: Boolean,
+    isDarkMode: Boolean,
+    zoomScale: Float,
+    onAction: (SharedPdfTextBoxMenuAction) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val safeScale = zoomScale.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val menuWidth = (sharedPdfTextBoxActionMenuWidthDp() / safeScale).dp
+    val menuHeight = (SharedPdfTextBoxActionMenuHeightDp / safeScale).dp
+    Row(
+        modifier = modifier.width(menuWidth).height(menuHeight),
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape((12f / safeScale).dp),
+            color = if (isDarkMode) Color(0xFF2A2A2A) else Color.White,
+            contentColor = if (isDarkMode) Color.White else Color.Black,
+            tonalElevation = (3f / safeScale).dp,
+            shadowElevation = (4f / safeScale).dp,
+            modifier = Modifier.fillMaxSize()
         ) {
-            Canvas(Modifier.size(width = 24.dp, height = 10.dp)) {
-                val lineColor = Color.White.copy(alpha = 0.92f)
-                drawLine(
-                    color = lineColor,
-                    start = Offset(size.width * 0.2f, size.height * 0.25f),
-                    end = Offset(size.width * 0.8f, size.height * 0.25f),
-                    strokeWidth = 2f
-                )
-                drawLine(
-                    color = lineColor,
-                    start = Offset(size.width * 0.2f, size.height * 0.75f),
-                    end = Offset(size.width * 0.8f, size.height * 0.75f),
-                    strokeWidth = 2f
-                )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SharedPdfTextBoxMenuAction.entries.forEachIndexed { index, action ->
+                    if (index > 0) {
+                        Box(
+                            Modifier
+                                .width((SharedPdfTextBoxActionDividerWidthDp / safeScale).dp)
+                                .height((16f / safeScale).dp)
+                                .background(
+                                    (if (isDarkMode) Color.White else Color.Black).copy(alpha = 0.15f)
+                                )
+                        )
+                    }
+                    IconButton(
+                        onClick = { onAction(action) },
+                        modifier = Modifier.size((SharedPdfTextBoxActionButtonSizeDp / safeScale).dp)
+                    ) {
+                        Icon(
+                            imageVector = when (action) {
+                                SharedPdfTextBoxMenuAction.DELETE -> Icons.Default.Delete
+                                SharedPdfTextBoxMenuAction.DUPLICATE -> Icons.Default.ContentCopy
+                                SharedPdfTextBoxMenuAction.LOCK ->
+                                    if (isLocked) Icons.Default.LockOpen else Icons.Default.Lock
+                            },
+                            contentDescription = when (action) {
+                                SharedPdfTextBoxMenuAction.DELETE ->
+                                    readerString("textbox_menu_delete", "Delete")
+                                SharedPdfTextBoxMenuAction.DUPLICATE ->
+                                    readerString("textbox_menu_duplicate", "Duplicate")
+                                SharedPdfTextBoxMenuAction.LOCK ->
+                                    if (isLocked) {
+                                        readerString("textbox_menu_unlock", "Unlock")
+                                    } else {
+                                        readerString("textbox_menu_lock", "Lock")
+                                    }
+                            },
+                            tint = if (action == SharedPdfTextBoxMenuAction.DELETE) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                Color.Unspecified
+                            },
+                            modifier = Modifier.size((13f / safeScale).dp)
+                        )
+                    }
+                }
             }
         }
     }

@@ -148,7 +148,14 @@ data class SharedPdfAnnotation(
      * Same model as rich text, sparse: empty = all LEFT/NONE. Defaults keep
      * old payloads byte-compatible; old readers ignore the field.
      */
-    val paragraphs: List<SharedPdfRichParagraph> = emptyList()
+    val paragraphs: List<SharedPdfRichParagraph> = emptyList(),
+    /**
+     * Position lock for TEXT boxes (Android benchmark PdfTextBox.isLocked):
+     * locked boxes keep text/styles editable but hide resize handles and the
+     * drag pill; the action menu stays so the box can be unlocked. Defaults
+     * to false so old payloads stay byte-compatible; old readers ignore it.
+     */
+    val isLocked: Boolean = false,
 )
 
 fun sharedPdfHighlightAnnotation(

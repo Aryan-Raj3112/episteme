@@ -76,7 +76,6 @@ import com.aryan.reader.shared.pdf.SharedPdfInkRenderData
 import com.aryan.reader.shared.pdf.SharedPdfInkRenderer
 import com.aryan.reader.shared.pdf.SharedPdfTextAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfTextFontPreset
-import com.aryan.reader.shared.pdf.SharedPdfTextResizeHandle
 import com.aryan.reader.shared.pdf.SharedPdfTextStyleConfig
 import com.aryan.reader.shared.pdf.sharedPdfTextFontSizePx
 import kotlin.math.roundToInt
@@ -1315,24 +1314,6 @@ internal fun SharedPdfAnnotation.sharedPdfTextFontFamily(
 ): FontFamily? {
     return sharedPdfFontFamily(fontPath, customFontFamilies)
         ?: sharedPdfFontFamily(fontName, customFontFamilies)
-}
-
-internal fun SharedPdfTextResizeHandle.centerOffset(
-    leftPx: Float,
-    topPx: Float,
-    widthPx: Float,
-    heightPx: Float
-): Offset {
-    return when (this) {
-        SharedPdfTextResizeHandle.TOP_LEFT -> Offset(leftPx, topPx)
-        SharedPdfTextResizeHandle.TOP_CENTER -> Offset(leftPx + widthPx / 2f, topPx)
-        SharedPdfTextResizeHandle.TOP_RIGHT -> Offset(leftPx + widthPx, topPx)
-        SharedPdfTextResizeHandle.RIGHT_CENTER -> Offset(leftPx + widthPx, topPx + heightPx / 2f)
-        SharedPdfTextResizeHandle.BOTTOM_RIGHT -> Offset(leftPx + widthPx, topPx + heightPx)
-        SharedPdfTextResizeHandle.BOTTOM_CENTER -> Offset(leftPx + widthPx / 2f, topPx + heightPx)
-        SharedPdfTextResizeHandle.BOTTOM_LEFT -> Offset(leftPx, topPx + heightPx)
-        SharedPdfTextResizeHandle.LEFT_CENTER -> Offset(leftPx, topPx + heightPx / 2f)
-    }
 }
 
 internal fun SharedPdfTextStyleConfig.withFontPreset(preset: SharedPdfTextFontPreset): SharedPdfTextStyleConfig {

@@ -398,4 +398,28 @@ class SharedPdfTextAnnotationsTest {
         assertEquals(1f, bounds.right)
         assertEquals(1f, bounds.bottom)
     }
+
+    @Test
+    fun `action menu width tightly fits buttons plus dividers with no trailing space`() {
+        val count = SharedPdfTextBoxMenuAction.entries.size
+        assertEquals(3, count)
+        assertEquals(count * 24f + (count - 1) * 1f, sharedPdfTextBoxActionMenuWidthDp(), 0.0001f)
+        assertEquals(74f, sharedPdfTextBoxActionMenuWidthDp(), 0.0001f)
+    }
+
+    @Test
+    fun `draft lock survives bounds edits and commits to annotation`() {
+        val draft = SharedPdfTextDraft(
+            id = "locked-1",
+            pageIndex = 0,
+            bounds = PdfPageBounds(0.2f, 0.2f, 0.5f, 0.4f),
+            text = "locked",
+            isManuallySized = true,
+            isLocked = true,
+        )
+        assertTrue(draft.withBounds(PdfPageBounds(0.1f, 0.1f, 0.4f, 0.3f)).isLocked)
+        val annotation = draft.toAnnotation()
+        assertTrue(annotation.isLocked)
+        assertEquals("locked", annotation.text)
+    }
 }

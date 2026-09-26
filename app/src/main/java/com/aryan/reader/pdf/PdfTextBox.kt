@@ -158,6 +158,23 @@ internal fun pdfTextBoxTraceDockState(state: RichParagraphUiState): String =
 /** Compact per-box action menu entries shown above a selected text box. */
 enum class PdfTextBoxMenuAction { DELETE, DUPLICATE, LOCK }
 
+private const val TEXT_BOX_ACTION_BUTTON_SIZE_DP = 24f
+private const val TEXT_BOX_ACTION_DIVIDER_WIDTH_DP = 1f
+private const val TEXT_BOX_ACTION_MENU_HEIGHT_DP = 24f
+
+/**
+ * Exact tight width of the compact text-box action menu: one fixed button
+ * slot per [PdfTextBoxMenuAction] plus one divider between neighbours.
+ * Derived from the entry count (not hardcoded) so adding/removing an action
+ * cannot leave trailing empty space again.
+ */
+internal fun pdfTextBoxActionMenuWidthDp(): Float {
+    val count = PdfTextBoxMenuAction.entries.size
+    if (count <= 0) return 0f
+    return count * TEXT_BOX_ACTION_BUTTON_SIZE_DP +
+        (count - 1) * TEXT_BOX_ACTION_DIVIDER_WIDTH_DP
+}
+
 /**
  * One-shot post-toggle cursor for a text box (Android only).
  *
@@ -537,8 +554,8 @@ fun ResizableTextBox(
     val dragPillGapPx = with(density) { (TEXT_BOX_DRAG_PILL_GAP_DP / scale).dp.toPx() }
     // Compact action menu: constant on-screen size, opposite end from the pill.
     val showActionMenu = isSelected && onTextBoxMenuAction != null
-    val actionMenuWidthDp = 100.dp
-    val actionMenuHeightDp = 24.dp
+    val actionMenuWidthDp = pdfTextBoxActionMenuWidthDp().dp
+    val actionMenuHeightDp = TEXT_BOX_ACTION_MENU_HEIGHT_DP.dp
     val actionMenuWidthPx = with(density) { actionMenuWidthDp.toPx() / scale }
     val actionMenuHeightPx = with(density) { actionMenuHeightDp.toPx() / scale }
     val chromeLayout = calculateTextBoxChromeLayout(
@@ -922,8 +939,8 @@ private fun TextBoxActionMenu(
     modifier: Modifier = Modifier,
 ) {
     val safeScale = scale.takeIf { it.isFinite() && it > 0f } ?: 1f
-    val menuWidth = (100f / safeScale).dp
-    val menuHeight = (24f / safeScale).dp
+    val menuWidth = (pdfTextBoxActionMenuWidthDp() / safeScale).dp
+    val menuHeight = (TEXT_BOX_ACTION_MENU_HEIGHT_DP / safeScale).dp
     Row(
         modifier = modifier.width(menuWidth).height(menuHeight),
         horizontalArrangement = Arrangement.Center
@@ -941,7 +958,7 @@ private fun TextBoxActionMenu(
                     if (index > 0) {
                         Box(
                             Modifier
-                                .width(1.dp)
+                                .width((TEXT_BOX_ACTION_DIVIDER_WIDTH_DP / safeScale).dp)
                                 .height((16f / safeScale).dp)
                                 .background(
                                     (if (isDarkMode) Color.White else Color.Black).copy(alpha = 0.15f)
@@ -950,7 +967,7 @@ private fun TextBoxActionMenu(
                     }
                     IconButton(
                         onClick = { onAction(action) },
-                        modifier = Modifier.size((24f / safeScale).dp)
+                        modifier = Modifier.size((TEXT_BOX_ACTION_BUTTON_SIZE_DP / safeScale).dp)
                     ) {
                         Icon(
                             imageVector = when (action) {
