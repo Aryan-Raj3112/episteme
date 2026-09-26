@@ -2,6 +2,18 @@ package com.aryan.reader.pdf
 
 import androidx.compose.ui.geometry.Rect
 
+/**
+ * Outer handle size for the text-box content frame (Android benchmark
+ * ResizableTextBox): the frame pads half a handle around the bounds, and the
+ * field pads [SharedPdfTextBoxInnerPaddingDp] inside it. The committed
+ * (deselected) rendering must use this exact frame, otherwise the text visibly
+ * jumps when selection toggles.
+ */
+const val SharedPdfTextBoxHandleSizeDp = 10f
+
+/** Inner field padding inside the padded content frame (same benchmark). */
+const val SharedPdfTextBoxInnerPaddingDp = 8f
+
 data class TextBoxChromeLayout(
     val containerWidthPx: Float,
     val containerHeightPx: Float,

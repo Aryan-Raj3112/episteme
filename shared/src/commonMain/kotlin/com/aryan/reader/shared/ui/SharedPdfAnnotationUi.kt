@@ -138,6 +138,8 @@ import com.aryan.reader.shared.pdf.toComposeTextAlign
 import com.aryan.reader.shared.pdf.trimmedRichParagraphs
 import com.aryan.reader.shared.pdf.withSharedPdfTextFontSize
 import com.aryan.reader.pdf.calculateTextBoxChromeLayout
+import com.aryan.reader.pdf.SharedPdfTextBoxHandleSizeDp
+import com.aryan.reader.pdf.SharedPdfTextBoxInnerPaddingDp
 import kotlin.math.roundToInt
 
 val SharedPdfAnnotationDefaultTools: List<PdfInkTool> = listOf(
@@ -1647,7 +1649,7 @@ fun SharedPdfTextBoxEditorOverlay(
     val backgroundColor = Color(style.backgroundColorArgb)
     // Counter-scale fixed sizes so chrome renders constant on-screen size
     // regardless of zoom (Android benchmark).
-    val handleSize = (10f / safeScale).dp
+    val handleSize = (SharedPdfTextBoxHandleSizeDp / safeScale).dp
     val handleTouchSize = (40f / safeScale).dp
     val handleSizePx = with(density) { handleSize.toPx() }
     val halfHandlePx = handleSizePx / 2f
@@ -1863,7 +1865,10 @@ fun SharedPdfTextBoxEditorOverlay(
                     color = borderColor,
                     shape = RoundedCornerShape(4.dp)
                 )
-                .padding(8.dp)
+                // Same inner padding as the committed rendering
+                // (SharedPdfAnnotationOverlay): any deviation shifts the text
+                // on select/deselect.
+                .padding(SharedPdfTextBoxInnerPaddingDp.dp)
                 .verticalScroll(rememberScrollState())
                 .focusRequester(focusRequester)
                 .onFocusChanged { isTextFieldFocused = it.isFocused }

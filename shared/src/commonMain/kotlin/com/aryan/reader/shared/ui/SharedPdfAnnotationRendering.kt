@@ -75,6 +75,8 @@ import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfInkRenderData
 import com.aryan.reader.shared.pdf.SharedPdfInkRenderer
 import com.aryan.reader.shared.pdf.SharedPdfTextAnnotationDefaults
+import com.aryan.reader.pdf.SharedPdfTextBoxHandleSizeDp
+import com.aryan.reader.pdf.SharedPdfTextBoxInnerPaddingDp
 import com.aryan.reader.shared.pdf.SharedPdfTextFontPreset
 import com.aryan.reader.shared.pdf.SharedPdfTextStyleConfig
 import com.aryan.reader.shared.pdf.sharedPdfTextFontSizePx
@@ -92,7 +94,11 @@ fun SharedPdfAnnotationOverlay(
     selectedAnnotationId: String? = null,
     eraserPosition: Offset? = null,
     showEraserIndicator: Boolean = false,
-    eraserStrokeWidth: Float = SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER).strokeWidth
+    eraserStrokeWidth: Float = SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER).strokeWidth,
+    // Counter-scales the text-box content frame exactly like the selected
+    // editor overlay (Android benchmark), so toggling selection never shifts
+    // the text.
+    zoomScale: Float = 1f,
 ) {
     if (canvasSize.width <= 0 || canvasSize.height <= 0) return
     val density = LocalDensity.current
@@ -159,6 +165,14 @@ fun SharedPdfAnnotationOverlay(
                 val widthPx = ((bounds.right - bounds.left) * canvasSize.width).coerceAtLeast(24f)
                 val heightPx = ((bounds.bottom - bounds.top) * canvasSize.height).coerceAtLeast(18f)
                 val fontSizePx = annotation.sharedPdfTextFontSizePx(canvasSize)
+                // Same content frame as the selected editor overlay (Android
+                // benchmark ResizableTextBox): the frame starts half a handle
+                // outside the bounds, pads half a handle, then the inner
+                // field padding. Any deviation shifts the text on
+                // select/deselect.
+                val safeScale = zoomScale.takeIf { it.isFinite() && it > 0f } ?: 1f
+                val halfHandlePad = (SharedPdfTextBoxHandleSizeDp / 2f / safeScale).dp
+                val halfHandlePx = with(density) { halfHandlePad.toPx() }
                 // Android parity (ResizableTextBox boxSpanStyle): the fill
                 // travels in the spans so deselected boxes hug the text lines
                 // exactly like the selected editor — never the whole box rect.
@@ -191,13 +205,19 @@ fun SharedPdfAnnotationOverlay(
                     overflow = TextOverflow.Ellipsis,
                     maxLines = SharedPdfTextAnnotationDefaults.estimateLineCount(annotation.text, fontSizePx, widthPx),
                     modifier = Modifier
-                        .offset { IntOffset(leftPx.roundToInt(), topPx.roundToInt()) }
-                        .width(with(density) { widthPx.toDp() })
+                        .offset {
+                            IntOffset(
+                                (leftPx - halfHandlePx).roundToInt(),
+                                (topPx - halfHandlePx).roundToInt()
+                            )
+                        }
+                        .width(with(density) { (widthPx + halfHandlePx * 2f).toDp() })
                         .heightIn(
-                            min = with(density) { heightPx.toDp() },
-                            max = with(density) { heightPx.toDp() }
+                            min = with(density) { (heightPx + halfHandlePx * 2f).toDp() },
+                            max = with(density) { (heightPx + halfHandlePx * 2f).toDp() }
                         )
-                        .padding(horizontal = 6.dp, vertical = 4.dp)
+                        .padding(halfHandlePad)
+                        .padding(SharedPdfTextBoxInnerPaddingDp.dp)
                 )
             }
     }

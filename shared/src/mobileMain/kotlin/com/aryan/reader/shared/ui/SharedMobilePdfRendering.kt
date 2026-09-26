@@ -2973,6 +2973,7 @@ internal fun SharedMobilePdfPageSurface(
                 // live stroke exactly once, on the page being drawn on.
                 activeStroke = if (isActiveStrokeOwner) activeStroke else emptyList(),                canvasSize = localCanvasSize,
                 customFontFamilies = customFontFamilies,
+                zoomScale = zoomCamera.scale,
                 activeTool = if (isEraserOverrideActive) PdfInkTool.ERASER else selectedTool,
                 activeStrokeColorArgb = selectedColorArgb,
                 activeStrokeWidth = strokeWidth,
