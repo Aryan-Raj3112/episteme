@@ -9,21 +9,29 @@ import kotlin.test.assertTrue
 class SharedPdfWheelDockPolicyTest {
     @Test
     fun `base angles center the arc on the inward normal`() {
-        // 5 tools at 25 degrees: -50, -25, 0, 25, 50.
-        assertEquals(-50f, sharedPdfWheelBaseAngleDeg(0, 5))
+        // 5 tools at 40 degrees: -80, -40, 0, 40, 80.
+        assertEquals(-80f, sharedPdfWheelBaseAngleDeg(0, 5))
         assertEquals(0f, sharedPdfWheelBaseAngleDeg(2, 5))
-        assertEquals(50f, sharedPdfWheelBaseAngleDeg(4, 5))
+        assertEquals(80f, sharedPdfWheelBaseAngleDeg(4, 5))
     }
 
     @Test
     fun `small arcs do not scroll, large arcs scroll end to end`() {
-        // 7 tools span 150 degrees: fits, no scroll.
-        assertEquals(0f, sharedPdfWheelRotationRangeDeg(7))
-        // 10 tools span 225 degrees: 22.5 degrees each way.
-        assertEquals(22.5f, sharedPdfWheelRotationRangeDeg(10))
-        assertEquals(22.5f, sharedPdfWheelClampRotationDeg(100f, 10))
-        assertEquals(-22.5f, sharedPdfWheelClampRotationDeg(-100f, 10))
+        // 4 tools span 120 degrees: fits, no scroll.
+        assertEquals(0f, sharedPdfWheelRotationRangeDeg(4))
+        // 10 tools span 360 degrees: 106 degrees each way (ends stop 16
+        // degrees before the rim so icons are never cut off).
+        assertEquals(106f, sharedPdfWheelRotationRangeDeg(10))
+        assertEquals(106f, sharedPdfWheelClampRotationDeg(200f, 10))
+        assertEquals(-106f, sharedPdfWheelClampRotationDeg(-200f, 10))
         assertEquals(10f, sharedPdfWheelClampRotationDeg(10f, 10))
+    }
+
+    @Test
+    fun `angles wrap so full-circle tools stay placeable`() {
+        assertEquals(-74f, sharedPdfWheelNormalizeDeg(286f))
+        assertEquals(170f, sharedPdfWheelNormalizeDeg(-190f))
+        assertEquals(0f, sharedPdfWheelNormalizeDeg(360f))
     }
 
     @Test

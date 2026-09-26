@@ -20,12 +20,35 @@ val SharedPdfSideWheelWidth: Dp = 96.dp
 val SharedPdfSideWheelHeight: Dp = 192.dp
 val SharedPdfSideWheelOrbitRadius: Dp = 64.dp
 val SharedPdfSideWheelButtonSize: Dp = 36.dp
+/**
+ * Track thickness: the wheel background is a thin arc band barely taller
+ * than the icons (like the straight bar curved into an arc), not a bulky
+ * filled half-disc.
+ */
+val SharedPdfSideWheelTrackThickness: Dp = 52.dp
 
-/** Angular step between adjacent tools on the wheel. */
-const val SharedPdfSideWheelStepDeg: Float = 25f
+/**
+ * Angular step between adjacent tools: 180 / 40 shows 4-5 tools at a time,
+ * the rest scroll into view as the wheel spins.
+ */
+const val SharedPdfSideWheelStepDeg: Float = 40f
 
 /** Half of the visible window: tools with |angle| <= this sit on the arc. */
 const val SharedPdfSideWheelVisibleHalfAngleDeg: Float = 90f
+
+/**
+ * End inset: scrolling stops while the first/last tool is still fully on
+ * the track instead of hanging half-clipped off the rim (roughly the
+ * angular half-size of a 36dp button on the 64dp orbit).
+ */
+const val SharedPdfSideWheelEndInsetDeg: Float = 16f
+
+/** Normalizes any angle into [-180, 180] so wrapped positions stay correct. */
+fun sharedPdfWheelNormalizeDeg(angleDeg: Float): Float {
+    var normalized = (angleDeg + 180f) % 360f
+    if (normalized < 0f) normalized += 360f
+    return normalized - 180f
+}
 
 fun sharedPdfWheelBaseAngleDeg(
     index: Int,
@@ -35,16 +58,20 @@ fun sharedPdfWheelBaseAngleDeg(
 
 /**
  * Symmetric scroll range for [rotationDeg]: zero when every tool fits inside
- * the visible half-window, otherwise just enough to scroll each end into view.
+ * the visible half-window, otherwise just enough to bring each end tool
+ * onto the track (stopping [SharedPdfSideWheelEndInsetDeg] before the rim
+ * so the first/last icon is never cut off).
  */
 fun sharedPdfWheelRotationRangeDeg(
     itemCount: Int,
     stepDeg: Float = SharedPdfSideWheelStepDeg,
     visibleHalfAngleDeg: Float = SharedPdfSideWheelVisibleHalfAngleDeg,
+    endInsetDeg: Float = SharedPdfSideWheelEndInsetDeg,
 ): Float {
     if (itemCount <= 1) return 0f
     val span = (itemCount - 1) * stepDeg
-    return ((span - visibleHalfAngleDeg * 2f) / 2f).coerceAtLeast(0f)
+    if (span <= visibleHalfAngleDeg * 2f) return 0f
+    return (span - visibleHalfAngleDeg * 2f) / 2f + endInsetDeg
 }
 
 fun sharedPdfWheelClampRotationDeg(
@@ -52,8 +79,9 @@ fun sharedPdfWheelClampRotationDeg(
     itemCount: Int,
     stepDeg: Float = SharedPdfSideWheelStepDeg,
     visibleHalfAngleDeg: Float = SharedPdfSideWheelVisibleHalfAngleDeg,
+    endInsetDeg: Float = SharedPdfSideWheelEndInsetDeg,
 ): Float {
-    val range = sharedPdfWheelRotationRangeDeg(itemCount, stepDeg, visibleHalfAngleDeg)
+    val range = sharedPdfWheelRotationRangeDeg(itemCount, stepDeg, visibleHalfAngleDeg, endInsetDeg)
     return rotationDeg.coerceIn(-range, range)
 }
 
@@ -68,6 +96,7 @@ fun sharedPdfWheelRotationForDragDy(
     itemCount: Int,
     stepDeg: Float = SharedPdfSideWheelStepDeg,
     visibleHalfAngleDeg: Float = SharedPdfSideWheelVisibleHalfAngleDeg,
+    endInsetDeg: Float = SharedPdfSideWheelEndInsetDeg,
 ): Float {
     if (orbitRadiusPx <= 0f) return rotationDeg
     val deltaDeg = dragDyPx / orbitRadiusPx * (180f / PI.toFloat())
@@ -76,6 +105,7 @@ fun sharedPdfWheelRotationForDragDy(
         itemCount,
         stepDeg,
         visibleHalfAngleDeg,
+        endInsetDeg,
     )
 }
 

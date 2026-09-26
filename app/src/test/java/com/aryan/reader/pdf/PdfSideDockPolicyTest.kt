@@ -10,6 +10,7 @@ import com.aryan.reader.shared.pdf.resolveSharedPdfDockSnapLocation
 import com.aryan.reader.shared.pdf.sharedPdfAnnotationDockLeftXPx
 import com.aryan.reader.shared.pdf.sharedPdfWheelBaseAngleDeg
 import com.aryan.reader.shared.pdf.sharedPdfWheelClampRotationDeg
+import com.aryan.reader.shared.pdf.sharedPdfWheelNormalizeDeg
 import com.aryan.reader.shared.pdf.sharedPdfWheelRotationForDragDy
 import com.aryan.reader.shared.pdf.sharedPdfWheelRotationRangeDeg
 import com.aryan.reader.shared.pdf.sharedPdfWheelToolCenterPx
@@ -117,15 +118,19 @@ class PdfSideDockPolicyTest {
 
     @Test
     fun `wheel arc centers tools and scrolls large arcs end to end`() {
-        assertEquals(-50f, sharedPdfWheelBaseAngleDeg(0, 5))
+        assertEquals(-80f, sharedPdfWheelBaseAngleDeg(0, 5))
         assertEquals(0f, sharedPdfWheelBaseAngleDeg(2, 5))
-        assertEquals(50f, sharedPdfWheelBaseAngleDeg(4, 5))
-        // 7 tools span 150 degrees: fits, no scroll.
-        assertEquals(0f, sharedPdfWheelRotationRangeDeg(7))
-        // 10 tools span 225 degrees: 22.5 degrees each way, clamped.
-        assertEquals(22.5f, sharedPdfWheelRotationRangeDeg(10))
-        assertEquals(22.5f, sharedPdfWheelClampRotationDeg(100f, 10))
-        assertEquals(-22.5f, sharedPdfWheelClampRotationDeg(-100f, 10))
+        assertEquals(80f, sharedPdfWheelBaseAngleDeg(4, 5))
+        // 4 tools span 120 degrees: fits, no scroll.
+        assertEquals(0f, sharedPdfWheelRotationRangeDeg(4))
+        // 10 tools span 360 degrees: 106 degrees each way (ends stop 16
+        // degrees before the rim so icons are never cut off), clamped.
+        assertEquals(106f, sharedPdfWheelRotationRangeDeg(10))
+        assertEquals(106f, sharedPdfWheelClampRotationDeg(200f, 10))
+        assertEquals(-106f, sharedPdfWheelClampRotationDeg(-200f, 10))
+        // Angles wrap so full-circle tools stay placeable.
+        assertEquals(-74f, sharedPdfWheelNormalizeDeg(286f))
+        assertEquals(170f, sharedPdfWheelNormalizeDeg(-190f))
         // Dragging down spins tools downward.
         assertTrue(sharedPdfWheelRotationForDragDy(0f, 64f, 64f, 10) > 0f)
         // 0 degrees points inward, mirrored across edges.
