@@ -214,6 +214,7 @@ import com.aryan.reader.shared.pdf.withTextAndParagraphs
 import com.aryan.reader.shared.pdf.SharedPdfTextDragState
 import com.aryan.reader.shared.pdf.sharedPdfTextDropBounds
 import com.aryan.reader.shared.pdf.containsNormalizedPoint
+import com.aryan.reader.shared.pdf.isSharedPdfTextBoxTapHit
 import com.aryan.reader.shared.pdf.withBounds
 import com.aryan.reader.shared.pdf.withText
 import com.aryan.reader.shared.pdf.resizedBy
@@ -231,6 +232,7 @@ import com.aryan.reader.shared.pdf.sharedPdfHighlightAllColors
 import com.aryan.reader.shared.pdf.sharedPdfMergeRectsIntoLines
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.sharedReaderViewportFlippedOrientation
 import com.aryan.reader.shared.generated.resources.Res
 import com.aryan.reader.shared.generated.resources.classy_fabric
 import com.aryan.reader.shared.generated.resources.ep_naturalwhite
@@ -836,7 +838,13 @@ internal fun SharedMobilePdfVerticalPages(
         reverseColorMode = reverseColorMode,
         preserveImageColors = preserveImageColors,
     )
-    LaunchedEffect(navigationRequestToken, pageCount, viewportSize, navigationRender.aspectRatio) {
+    // Keyed on "is the viewport measured yet" rather than its exact size: a
+    // rotation used to re-run this scroll and yank the reader back to whatever
+    // page was last *requested* (a TOC entry from minutes ago, say) instead of
+    // the page the reader was on. Android never re-navigates on a layout change.
+    // Rotation position is owned by the orientation re-anchor below.
+    val hasMeasuredViewport = viewportSize.height > 0
+    LaunchedEffect(navigationRequestToken, pageCount, hasMeasuredViewport, navigationRender.aspectRatio) {
         if (viewportSize.height <= 0) return@LaunchedEffect
         val target = navigationRequestPage.coerceIn(0, pageCount - 1)
         val pageHeight = (viewportSize.width / navigationRender.aspectRatio.coerceIn(0.1f, 10f)).roundToInt()
@@ -867,6 +875,40 @@ internal fun SharedMobilePdfVerticalPages(
             .collect { visiblePage ->
                 onVisiblePageChanged(visiblePage.coerceIn(0, pageCount - 1))
             }
+    }
+    // Android parity (PdfVerticalReader viewport resize): rotating reflows every
+    // page — their height follows the new width — so the retained pixel offset
+    // points inside a different page. Android keeps the page that owned the
+    // viewport pinned to the top and follows the same camera rules: a locked
+    // pane refits to the page, an unlocked one keeps the user's zoom.
+    val latestZoomCamera by rememberUpdatedState(zoomCamera)
+    val latestIsScrollLocked by rememberUpdatedState(isScrollLocked)
+    val latestOnZoomCameraChanged by rememberUpdatedState(onZoomCameraChanged)
+    var previousViewportSize by remember(book.id) { mutableStateOf(IntSize.Zero) }
+    LaunchedEffect(viewportSize) {
+        val previous = previousViewportSize
+        previousViewportSize = viewportSize
+        if (!sharedReaderViewportFlippedOrientation(
+                previousWidthPx = previous.width,
+                previousHeightPx = previous.height,
+                currentWidthPx = viewportSize.width,
+                currentHeightPx = viewportSize.height,
+            )
+        ) {
+            return@LaunchedEffect
+        }
+        // Same anchor Android keeps: the page that owned the viewport when the
+        // flip landed (`targetPageDuringResize` is captured the same way).
+        val anchor = state.pageIndex.coerceIn(0, pageCount - 1)
+        val camera = latestZoomCamera
+        val viewport = PdfZoomSize(viewportSize.width.toFloat(), viewportSize.height.toFloat())
+        when {
+            latestIsScrollLocked -> latestOnZoomCameraChanged(PdfZoomCamera())
+            camera.isZoomed() -> latestOnZoomCameraChanged(
+                camera.normalized(viewport, viewport, maxScale = PDF_MAX_ZOOM_SCALE)
+            )
+        }
+        listState.scrollToItem(index = anchor, scrollOffset = 0)
     }
     Box(modifier) {
         SharedMobilePdfZoomViewport(
@@ -2755,9 +2797,21 @@ internal fun SharedMobilePdfPageSurface(
                                 up.consume()
                                 if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
                                     val point = offset.toSharedMobilePdfPoint(localCanvasSize)
+                                    // Android parity: a tap anywhere on a text
+                                    // box selects it — the padded content frame
+                                    // and blank space inside the bounds count,
+                                    // not just painted text. Strict interior
+                                    // hits sent those taps to tap-to-create and
+                                    // stacked a new box on the tapped one.
                                     val hit = latestTextTapAnnotations.firstOrNull {
                                         it.kind == PdfAnnotationKind.TEXT &&
-                                            it.bounds?.containsNormalizedPoint(point.x, point.y) == true
+                                            it.bounds?.isSharedPdfTextBoxTapHit(
+                                                x = point.x,
+                                                y = point.y,
+                                                pageWidthPx = localCanvasSize.width.toFloat(),
+                                                pageHeightPx = localCanvasSize.height.toFloat(),
+                                                zoomScale = zoomCamera.scale,
+                                            ) == true
                                     }
                                     iosTextBoxProbe { "tap page=$pageIndex offset=(${offset.x},${offset.y}) draft=${latestTextTapDraft?.id} hit=${hit?.id}" }
                                     if (hit != null) {

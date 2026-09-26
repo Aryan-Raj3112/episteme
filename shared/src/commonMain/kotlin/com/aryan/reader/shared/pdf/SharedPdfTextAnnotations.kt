@@ -81,6 +81,14 @@ const val SharedPdfTextBoxActionDividerWidthDp = 1f
 const val SharedPdfTextBoxActionMenuHeightDp = 24f
 
 /**
+ * Extra finger tolerance for committed text-box tap hits, in screen px at
+ * zoom 1 (see [PdfPageBounds.isSharedPdfTextBoxTapHit]): half the editor
+ * handle (5dp) plus a 4dp finger margin. The call site converts it to a
+ * normalized pad per axis with page px and the live zoom.
+ */
+const val SharedPdfTextBoxTapHitSlopPx = 9f
+
+/**
  * Exact tight width of the compact text-box action menu: one fixed button
  * slot per [SharedPdfTextBoxMenuAction] plus one divider between neighbours.
  */
@@ -495,6 +503,38 @@ fun PdfPageBounds.resizedBy(
 /** True when the normalized point (0..1 page coordinates) falls inside this bounds rect. */
 fun PdfPageBounds.containsNormalizedPoint(x: Float, y: Float): Boolean {
     return x in left..right && y in top..bottom
+}
+
+/**
+ * True when a normalized point is inside the tap target of a committed text
+ * box. Android is the benchmark: a tap on ANY part of the box — the padded
+ * content frame, empty space around the text, the stored bounds — selects the
+ * box (PdfTextBox's content-body `detectTapGestures` covers the whole frame;
+ * the legacy-paginated fallback checks raw `relativeBounds`). Before this the
+ * shared tap flow only tested strict bounds containment, so taps in the
+ * padding or blank regions inside a box missed and the host fell through to
+ * tap-to-create, stacking a new box on top of the tapped one.
+ *
+ * A small finger-slop pad is added around the bounds so edge taps land on
+ * the box instead of spawning a fresh one right next to it. [tapSlopPx] is
+ * fixed in SCREEN px, so the normalized pad divides by [zoomScale] as well —
+ * one page px renders as `zoom` screen px, the same conversion the
+ * counter-scaled editor chrome uses to stay constant on screen.
+ */
+fun PdfPageBounds.isSharedPdfTextBoxTapHit(
+    x: Float,
+    y: Float,
+    pageWidthPx: Float,
+    pageHeightPx: Float,
+    zoomScale: Float = 1f,
+    tapSlopPx: Float = SharedPdfTextBoxTapHitSlopPx,
+): Boolean {
+    if (pageWidthPx <= 0f || pageHeightPx <= 0f) return containsNormalizedPoint(x, y)
+    val safeScale = zoomScale.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val safeSlopPx = tapSlopPx.takeIf { it.isFinite() && it >= 0f } ?: 0f
+    val padX = safeSlopPx / (safeScale * pageWidthPx)
+    val padY = safeSlopPx / (safeScale * pageHeightPx)
+    return x in (left - padX)..(right + padX) && y in (top - padY)..(bottom + padY)
 }
 
 fun PdfPageBounds.movedBy(

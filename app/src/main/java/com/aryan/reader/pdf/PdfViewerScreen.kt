@@ -297,8 +297,10 @@ import com.aryan.reader.scaledToCanvasLimit
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.HighlightStyle
 import androidx.compose.ui.text.TextRange
+import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
 import com.aryan.reader.shared.pdf.RichParagraphUiState
+import com.aryan.reader.shared.pdf.isSharedPdfTextBoxTapHit
 import com.aryan.reader.shared.pdf.SharedPdfRichDocument
 import com.aryan.reader.shared.pdf.SharedPdfRichListType
 import com.aryan.reader.shared.pdf.sharedPdfRichPagesToTextBoxes
@@ -11952,34 +11954,46 @@ private fun PdfViewerPaginationPage(
 
     // Page rich text is retired: taps in TEXT mode (no box selected) create a
     // text box at the tap. Mirrors the vertical reader's tap lambda.
+    // Box-area taps select the box instead (Android benchmark ResizableTextBox:
+    // the whole padded content frame is the select target). The legacy bounds
+    // check missed the half-handle frame band and finger slop around a box,
+    // so taps there fell through to create-at-tap and stacked a new box on
+    // top of the tapped one.
     val onRichTextTapForBoxes = { tappedIndex: Int, xBitmap: Float, yBitmap: Float, bitmapW: Float, bitmapH: Float ->
-        if (!isEditMode || selectedTool != InkType.TEXT || selectedTextBoxId != null) {
-            false
-        } else if (visibleTextBoxesByPage[tappedIndex].orEmpty().any { box ->
-                xBitmap >= box.relativeBounds.left * bitmapW &&
-                    xBitmap <= box.relativeBounds.right * bitmapW &&
-                    yBitmap >= box.relativeBounds.top * bitmapH &&
-                    yBitmap <= box.relativeBounds.bottom * bitmapH
-            }
-        ) {
+        if (!isEditMode || selectedTool != InkType.TEXT || selectedTextBoxId != null || bitmapW <= 0f || bitmapH <= 0f) {
             false
         } else {
-            val marginX = bitmapW * 0.1f
-            val marginY = bitmapH * 0.08f
-            val editorX = xBitmap - marginX
-            val editorY = yBitmap - marginY
-            if (editorX < 0f || editorY < 0f ||
-                editorX > bitmapW - marginX * 2f ||
-                editorY > bitmapH - marginY * 2f
-            ) {
-                false
-            } else {
-                onTextBoxCreateAt(
-                    tappedIndex,
-                    (xBitmap / bitmapW).coerceIn(0f, 1f),
-                    (yBitmap / bitmapH).coerceIn(0f, 1f)
+            val hitBox = visibleTextBoxesByPage[tappedIndex].orEmpty().firstOrNull { box ->
+                val rb = box.relativeBounds
+                PdfPageBounds(rb.left, rb.top, rb.right, rb.bottom).isSharedPdfTextBoxTapHit(
+                    x = xBitmap / bitmapW,
+                    y = yBitmap / bitmapH,
+                    pageWidthPx = bitmapW,
+                    pageHeightPx = bitmapH,
                 )
+            }
+            if (hitBox != null) {
+                selectedTextBoxId = hitBox.id
+                richTextController?.clearSelection()
                 true
+            } else {
+                val marginX = bitmapW * 0.1f
+                val marginY = bitmapH * 0.08f
+                val editorX = xBitmap - marginX
+                val editorY = yBitmap - marginY
+                if (editorX < 0f || editorY < 0f ||
+                    editorX > bitmapW - marginX * 2f ||
+                    editorY > bitmapH - marginY * 2f
+                ) {
+                    false
+                } else {
+                    onTextBoxCreateAt(
+                        tappedIndex,
+                        (xBitmap / bitmapW).coerceIn(0f, 1f),
+                        (yBitmap / bitmapH).coerceIn(0f, 1f)
+                    )
+                    true
+                }
             }
         }
     }

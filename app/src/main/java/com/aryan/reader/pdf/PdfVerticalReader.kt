@@ -122,7 +122,9 @@ import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.shared.pdf.calculatePdfVerticalPageLayoutPx
+import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
+import com.aryan.reader.shared.pdf.isSharedPdfTextBoxTapHit
 import com.aryan.reader.shared.pdf.RichParagraphUiState
 import com.aryan.reader.shared.pdf.finitePdfZoomValue
 import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
@@ -2678,52 +2680,68 @@ internal fun PdfVerticalReader(
                             // retired, so a tap inside the editor rect creates
                             // a text box at the tap. bitmap space maps 1:1 to
                             // relative page coords; only the 10%/8% margins
-                            // come off. Box taps and out-of-editor taps fall
-                            // through to the normal single-tap behavior.
+                            // come off. A tap on a text box (full padded frame
+                            // plus finger slop, shared isSharedPdfTextBoxTapHit)
+                            // selects that box instead — the old raw-bounds skip
+                            // let frame-band taps fall through and create a new
+                            // box stacked on the tapped one. Out-of-editor taps
+                            // fall through to the normal single-tap behavior.
                             val onRichTextTapLambda = remember(
                                 isEditMode,
                                 selectedTool,
                                 selectedTextBoxId,
                                 onTextBoxCreateAt,
+                                onTextBoxSelect,
                                 textBoxes
                             ) {
                                 { tappedIndex: Int, xBitmap: Float, yBitmap: Float, bitmapW: Float, bitmapH: Float ->
                                     if (!isEditMode || selectedTool != InkType.TEXT ||
-                                        selectedTextBoxId != null
+                                        selectedTextBoxId != null ||
+                                        bitmapW <= 0f || bitmapH <= 0f
                                     ) {
-                                        false
-                                    } else if (textBoxes.any { box ->
-                                            box.pageIndex == tappedIndex &&
-                                                xBitmap >= box.relativeBounds.left * bitmapW &&
-                                                xBitmap <= box.relativeBounds.right * bitmapW &&
-                                                yBitmap >= box.relativeBounds.top * bitmapH &&
-                                                yBitmap <= box.relativeBounds.bottom * bitmapH
-                                        }
-                                    ) {
-                                        pdfRichCursorTrace("tap page=$tappedIndex inBox skip")
                                         false
                                     } else {
-                                        val marginX = bitmapW * 0.1f
-                                        val marginY = bitmapH * 0.08f
-                                        val editorX = xBitmap - marginX
-                                        val editorY = yBitmap - marginY
-                                        if (editorX < 0f || editorY < 0f ||
-                                            editorX > bitmapW - marginX * 2f ||
-                                            editorY > bitmapH - marginY * 2f
-                                        ) {
-                                            pdfRichCursorTrace("tap page=$tappedIndex outsideEditor skip")
-                                            false
-                                        } else {
-                                            pdfRichCursorTrace(
-                                                "tap page=$tappedIndex bitmap=(${xBitmap.roundToInt()},${yBitmap.roundToInt()}) " +
-                                                    "editor=(${editorX.roundToInt()},${editorY.roundToInt()})"
-                                            )
-                                            onTextBoxCreateAt(
-                                                tappedIndex,
-                                                (xBitmap / bitmapW).coerceIn(0f, 1f),
-                                                (yBitmap / bitmapH).coerceIn(0f, 1f)
-                                            )
+                                        val hitBox = textBoxes.firstOrNull { box ->
+                                            box.pageIndex == tappedIndex &&
+                                                PdfPageBounds(
+                                                    box.relativeBounds.left,
+                                                    box.relativeBounds.top,
+                                                    box.relativeBounds.right,
+                                                    box.relativeBounds.bottom,
+                                                ).isSharedPdfTextBoxTapHit(
+                                                    x = xBitmap / bitmapW,
+                                                    y = yBitmap / bitmapH,
+                                                    pageWidthPx = bitmapW,
+                                                    pageHeightPx = bitmapH,
+                                                )
+                                        }
+                                        if (hitBox != null) {
+                                            pdfRichCursorTrace("tap page=$tappedIndex selectBox=${hitBox.id}")
+                                            onTextBoxSelect(hitBox.id)
                                             true
+                                        } else {
+                                            val marginX = bitmapW * 0.1f
+                                            val marginY = bitmapH * 0.08f
+                                            val editorX = xBitmap - marginX
+                                            val editorY = yBitmap - marginY
+                                            if (editorX < 0f || editorY < 0f ||
+                                                editorX > bitmapW - marginX * 2f ||
+                                                editorY > bitmapH - marginY * 2f
+                                            ) {
+                                                pdfRichCursorTrace("tap page=$tappedIndex outsideEditor skip")
+                                                false
+                                            } else {
+                                                pdfRichCursorTrace(
+                                                    "tap page=$tappedIndex bitmap=(${xBitmap.roundToInt()},${yBitmap.roundToInt()}) " +
+                                                        "editor=(${editorX.roundToInt()},${editorY.roundToInt()})"
+                                                )
+                                                onTextBoxCreateAt(
+                                                    tappedIndex,
+                                                    (xBitmap / bitmapW).coerceIn(0f, 1f),
+                                                    (yBitmap / bitmapH).coerceIn(0f, 1f)
+                                                )
+                                                true
+                                            }
                                         }
                                     }
                                 }

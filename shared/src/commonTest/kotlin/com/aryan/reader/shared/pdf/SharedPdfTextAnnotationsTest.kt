@@ -308,6 +308,61 @@ class SharedPdfTextAnnotationsTest {
     }
 
     @Test
+    fun `text box tap hit covers full bounds plus finger slop`() {
+        // 300x120 box on a 1000x1500 page (0.3/0.08/0.3/0.08 normalized).
+        val bounds = PdfPageBounds(left = 0.3f, top = 0.08f, right = 0.6f, bottom = 0.16f)
+        val pageW = 1000f
+        val pageH = 1500f
+
+        // Interior hits — including blank space away from painted text.
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.45f, 0.12f, pageW, pageH))
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.31f, 0.155f, pageW, pageH))
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.595f, 0.085f, pageW, pageH))
+
+        // Edges still hit (inclusive), inside and just outside the bounds.
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.3f, 0.12f, pageW, pageH))
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.298f, 0.12f, pageW, pageH))
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.603f, 0.12f, pageW, pageH))
+
+        // Sloppy taps near the box also hit (slop 9 screen px at zoom 1 ->
+        // 9/1000 = 0.009 x-pad, 9/1500 = 0.006 y-pad).
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.2915f, 0.12f, pageW, pageH))
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.5f, 0.0745f, pageW, pageH))
+
+        // Beyond the slop misses: creation stays possible nearby.
+        assertTrue(!bounds.isSharedPdfTextBoxTapHit(0.29f, 0.12f, pageW, pageH))
+        assertTrue(!bounds.isSharedPdfTextBoxTapHit(0.5f, 0.07f, pageW, pageH))
+        assertTrue(!bounds.isSharedPdfTextBoxTapHit(0.5f, 0.18f, pageW, pageH))
+    }
+
+    @Test
+    fun `text box tap hit narrows with zoom so the slop stays fixed on screen`() {
+        val bounds = PdfPageBounds(left = 0.3f, top = 0.08f, right = 0.6f, bottom = 0.16f)
+        val pageW = 1000f
+        val pageH = 1500f
+
+        // At zoom 4 one page px renders as 4 screen px, so the same 9 screen
+        // px of tolerance spans a quarter of the normalized distance
+        // (x-pad = 9/4000 = 0.00225 -> hit boundary 0.29775).
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.298f, 0.12f, pageW, pageH, zoomScale = 4f))
+        assertTrue(!bounds.isSharedPdfTextBoxTapHit(0.296f, 0.12f, pageW, pageH, zoomScale = 4f))
+        // Unzoomed, that miss point was inside the slop (x-pad = 0.009).
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.296f, 0.12f, pageW, pageH, zoomScale = 1f))
+    }
+
+    @Test
+    fun `text box tap hit falls back to bounds when page size is unknown`() {
+        val bounds = PdfPageBounds(left = 0.3f, top = 0.08f, right = 0.6f, bottom = 0.16f)
+
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.5f, 0.12f, 0f, 0f))
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.3f, 0.16f, 0f, 0f))
+        assertTrue(!bounds.isSharedPdfTextBoxTapHit(0.29f, 0.12f, 0f, 0f))
+        // Invalid zoom degrades to zoom-1 tolerance, never throws.
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.2915f, 0.12f, 1000f, 1500f, zoomScale = 0f))
+        assertTrue(!bounds.isSharedPdfTextBoxTapHit(0.29f, 0.12f, 1000f, 1500f, zoomScale = 0f))
+    }
+
+    @Test
     fun `Android default insert box lands at fixed relative bounds`() {
         val style = SharedPdfTextStyleConfig(fontSize = 16f)
         val draft = SharedPdfTextDraft(

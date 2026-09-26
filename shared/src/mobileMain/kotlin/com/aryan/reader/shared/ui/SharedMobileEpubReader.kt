@@ -128,6 +128,8 @@ import com.aryan.reader.shared.reader.sharedReaderPageInfo
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
+import com.aryan.reader.shared.reader.SharedReaderOrientationRestoreDelayMillis
+import com.aryan.reader.shared.reader.sharedReaderViewportFlippedOrientation
 import com.aryan.reader.shared.reader.ReaderSearchOptions
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSpreadLayout
@@ -695,6 +697,45 @@ fun SharedMobileEpubReaderScreen(
             ?: currentPageIndex.coerceIn(0, measuredPages.lastIndex.coerceAtLeast(0))
         pages = measuredPages
         currentPageIndex = targetIndex
+    }
+
+    // Android parity (EpubReaderScreen LaunchedEffect(configuration.orientation)):
+    // a rotation reflows the vertical document, so the retained pixel scroll
+    // offset lands somewhere else. Android waits 300 ms for that relayout and
+    // then scrolls the WebView back to the position it held — and it does this
+    // only for the WebView branch; the native vertical flow keeps its position
+    // through LazyListState index retention on both platforms. The shared
+    // readers take the same anchor as a fresh position request: the WebView
+    // re-runs its scroll-to-locator script (which also engages the document's
+    // pending-restore guard while WebKit reflows).
+    var previousVerticalViewport by remember(book.id) { mutableStateOf(ReaderViewportSpec(0, 0)) }
+    LaunchedEffect(readerViewport, settings.readingMode, useNativeVerticalRenderer) {
+        val previous = previousVerticalViewport
+        previousVerticalViewport = readerViewport
+        if (settings.readingMode != ReaderReadingMode.VERTICAL) return@LaunchedEffect
+        if (useNativeVerticalRenderer) return@LaunchedEffect
+        if (!sharedReaderViewportFlippedOrientation(
+                previousWidthPx = previous.widthPx,
+                previousHeightPx = previous.heightPx,
+                currentWidthPx = readerViewport.widthPx,
+                currentHeightPx = readerViewport.heightPx,
+            )
+        ) {
+            return@LaunchedEffect
+        }
+        // Capture before the wait: the reflowed document reports a drifted
+        // position, and the pre-rotation anchor is the one to restore.
+        val anchor = currentLocator ?: return@LaunchedEffect
+        val requestIdAtFlip = navigationRequestId
+        delay(SharedReaderOrientationRestoreDelayMillis)
+        // A jump, page turn, or TTS follow during the wait owns the reader now.
+        if (navigationRequestId != requestIdAtFlip) return@LaunchedEffect
+        explicitNavigationLocator = anchor
+        explicitNavigationFragment = null
+        explicitNavigationChunkIndex = null
+        explicitNavigationChunkHtml = null
+        currentLocator = anchor
+        navigationRequestId++
     }
 
     LaunchedEffect(keepScreenOn) { onKeepScreenOnChange(keepScreenOn) }
