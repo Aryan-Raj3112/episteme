@@ -14,38 +14,62 @@ import kotlin.test.assertTrue
 class SharedEpubPackageLoaderTest {
     @Test
     fun `secure package and present malformed ncx failures match Android`() {
+        // Benign DOCTYPEs (no entity references) load like Android: its parser
+        // tolerates the declaration and never fetches the external DTD.
+        val doctypeContainer = SharedEpubPackageLoader.load(
+            MapEpubArchive(
+                mapOf(
+                    "META-INF/container.xml" to """
+                        <!DOCTYPE container>
+                        <container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>
+                    """.trimIndent().encodeToByteArray(),
+                    "book.opf" to "<package><metadata/><manifest/><spine/></package>".encodeToByteArray()
+                )
+            ),
+            "doctype",
+            "doctype.epub"
+        )
+        assertEquals(emptyList(), doctypeContainer.chapters)
+
+        // A DOCTYPE with an internal entity subset is still skipped without
+        // expanding anything: referencing the defined entity fails closed.
         assertFailsWith<IllegalStateException> {
             SharedEpubPackageLoader.load(
                 MapEpubArchive(
                     mapOf(
                         "META-INF/container.xml" to """
                             <!DOCTYPE container [<!ENTITY unsafe "value">]>
-                            <container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>
+                            <container><rootfiles><rootfile full-path="&unsafe;"/></rootfiles></container>
                         """.trimIndent().encodeToByteArray(),
                         "book.opf" to "<package><metadata/><manifest/><spine/></package>".encodeToByteArray()
                     )
                 ),
-                "doctype",
-                "doctype.epub"
+                "doctype-entity",
+                "doctype-entity.epub"
             )
         }
 
-        val malformedNcx = MapEpubArchive(
-            mapOf(
-                "META-INF/container.xml" to "<container><rootfiles><rootfile full-path=\"book.opf\"/></rootfiles></container>".encodeToByteArray(),
-                "book.opf" to """
-                    <package><metadata/><manifest>
-                      <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
-                      <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
-                    </manifest><spine toc="ncx"><itemref idref="chapter"/></spine></package>
-                """.trimIndent().encodeToByteArray(),
-                "chapter.xhtml" to "<!DOCTYPE html><html><body><p>HTML remains valid</p></body></html>".encodeToByteArray(),
-                "toc.ncx" to "<!DOCTYPE ncx><ncx><navMap/></ncx>".encodeToByteArray()
-            )
+        // An NCX carrying only a DOCTYPE parses to an empty TOC like Android
+        // (warning + spine fallback) instead of failing the whole book.
+        val doctypeNcx = SharedEpubPackageLoader.load(
+            MapEpubArchive(
+                mapOf(
+                    "META-INF/container.xml" to "<container><rootfiles><rootfile full-path=\"book.opf\"/></rootfiles></container>".encodeToByteArray(),
+                    "book.opf" to """
+                        <package><metadata/><manifest>
+                          <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+                          <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+                        </manifest><spine toc="ncx"><itemref idref="chapter"/></spine></package>
+                    """.trimIndent().encodeToByteArray(),
+                    "chapter.xhtml" to "<!DOCTYPE html><html><body><p>HTML remains valid</p></body></html>".encodeToByteArray(),
+                    "toc.ncx" to "<!DOCTYPE ncx><ncx><navMap/></ncx>".encodeToByteArray()
+                )
+            ),
+            "ncx-doctype",
+            "ncx.epub"
         )
-        assertFailsWith<IllegalStateException> {
-            SharedEpubPackageLoader.load(malformedNcx, "ncx-doctype", "ncx.epub")
-        }
+        assertEquals(1, doctypeNcx.chapters.size)
+        assertEquals(emptyList(), doctypeNcx.tableOfContents)
 
         assertFailsWith<IllegalStateException> {
             SharedEpubPackageLoader.load(
@@ -91,6 +115,63 @@ class SharedEpubPackageLoaderTest {
             "unicode-extension.epub"
         )
         assertEquals(emptyList(), unicodeExtension.chapters)
+    }
+
+    @Test
+    fun `ncx with canonical epub2 doctype parses hierarchy like Android`() {
+        // Verbatim header shape from a real-world EPUB 2 NCX (Little Prince):
+        // XML declaration + multiline PUBLIC doctype with an external DTD that
+        // must never be fetched, followed by nested navPoints.
+        val archive = MapEpubArchive(
+            mapOf(
+                "META-INF/container.xml" to "<container><rootfiles><rootfile full-path=\"OEBPS/content.opf\"/></rootfiles></container>".encodeToByteArray(),
+                "OEBPS/content.opf" to """
+                    <package unique-identifier="BookID" version="2.0"><metadata>
+                      <title>The Little Prince</title>
+                    </metadata><manifest>
+                      <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+                      <item id="home" href="Text/framehome.html" media-type="application/xhtml+xml"/>
+                      <item id="ch1" href="Text/framechapter1.html" media-type="application/xhtml+xml"/>
+                      <item id="ch2" href="Text/framechapter2.html" media-type="application/xhtml+xml"/>
+                    </manifest><spine toc="ncx"><itemref idref="home"/><itemref idref="ch1"/><itemref idref="ch2"/></spine></package>
+                """.trimIndent().encodeToByteArray(),
+                "OEBPS/toc.ncx" to """
+                    <?xml version="1.0" encoding="UTF-8"?>
+                    <!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN"
+                       "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">
+                    <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+                        <head><meta name="dtb:uid" content="a5abd6d1-887f-4afd-b6c3-a3f6539e27c6"/></head>
+                        <docTitle><text>The Little Prince</text></docTitle>
+                        <navMap>
+                            <navPoint id="navPoint-1" playOrder="1">
+                                <navLabel><text>The Little Prince</text></navLabel>
+                                <content src="Text/framehome.html"/>
+                                <navPoint id="navPoint-2" playOrder="2">
+                                    <navLabel><text>1</text></navLabel>
+                                    <content src="Text/framechapter1.html"/>
+                                </navPoint>
+                                <navPoint id="navPoint-3" playOrder="3">
+                                    <navLabel><text>2</text></navLabel>
+                                    <content src="Text/framechapter2.html"/>
+                                </navPoint>
+                            </navPoint>
+                        </navMap>
+                    </ncx>
+                """.trimIndent().encodeToByteArray(),
+                "OEBPS/Text/framehome.html" to "<html><body><h1>Home</h1></body></html>".encodeToByteArray(),
+                "OEBPS/Text/framechapter1.html" to "<html><body><h1>One</h1></body></html>".encodeToByteArray(),
+                "OEBPS/Text/framechapter2.html" to "<html><body><h1>Two</h1></body></html>".encodeToByteArray()
+            )
+        )
+
+        val book = SharedEpubPackageLoader.load(archive, "little-prince", "little-prince.epub")
+
+        assertEquals(3, book.chapters.size)
+        assertEquals(
+            listOf("The Little Prince", "1", "2"),
+            book.tableOfContents.map { it.label }
+        )
+        assertEquals(listOf(0, 1, 1), book.tableOfContents.map { it.depth })
     }
 
     @Test

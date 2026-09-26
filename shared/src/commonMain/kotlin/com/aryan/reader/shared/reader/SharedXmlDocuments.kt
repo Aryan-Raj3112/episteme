@@ -5,6 +5,14 @@ package com.aryan.reader.shared.reader
  * generated-document parsers (FB2/ODT/DOCX). Parsing is intentionally strict:
  * invalid entities, mismatched tags, or stray root text reject the document so
  * callers can fall back instead of rendering corrupted markup.
+ *
+ * `DOCTYPE` declarations are skipped, not rejected: classic EPUB 2 packages
+ * (notably `toc.ncx`) routinely carry the canonical
+ * `<!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN" ...>` header, and the
+ * Android benchmark parser tolerates it. Skipping stays XXE-safe because this
+ * parser never fetches external DTDs/entities and never expands internally
+ * defined entities, so any reference to a non-predefined entity still rejects
+ * the document.
  */
 internal data class SharedXmlDocumentNode(
     val name: String,
@@ -81,9 +89,6 @@ internal sealed interface SharedXmlDocumentContent {
 
 internal fun parseSharedXmlDocument(raw: String): SharedXmlDocumentNode? {
     val tokens = sharedEpubXmlTokens(raw).toList()
-    if (tokens.any { it.value.startsWith("<!DOCTYPE", ignoreCase = true) }) {
-        return null
-    }
     val root = SharedXmlDocumentNode("#document")
     val stack = ArrayDeque<SharedXmlDocumentNode>().apply { addLast(root) }
     var cursor = 0
