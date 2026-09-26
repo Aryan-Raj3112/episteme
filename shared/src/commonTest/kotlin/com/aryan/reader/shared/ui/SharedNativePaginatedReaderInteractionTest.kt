@@ -113,6 +113,17 @@ class SharedNativePaginatedReaderInteractionTest {
     }
 
     @Test
+    fun `text tap fraction feeds the paginated zone router`() {
+        // Body-text taps report a text-relative fraction so edge zones turn
+        // pages instead of toggling chrome; out-of-bounds taps clamp.
+        assertEquals(0.1f, sharedNativeTapHorizontalFraction(36f, 360f))
+        assertEquals(0.9f, sharedNativeTapHorizontalFraction(324f, 360f))
+        assertEquals(0f, sharedNativeTapHorizontalFraction(-12f, 360f))
+        assertEquals(1f, sharedNativeTapHorizontalFraction(400f, 360f))
+        assertEquals(0.5f, sharedNativeTapHorizontalFraction(10f, 0f))
+    }
+
+    @Test
     fun `page transition direction follows pagination direction`() {
         assertEquals(1, sharedPaginatedTransitionDirection(2, 3, false))
         assertEquals(-1, sharedPaginatedTransitionDirection(3, 2, false))

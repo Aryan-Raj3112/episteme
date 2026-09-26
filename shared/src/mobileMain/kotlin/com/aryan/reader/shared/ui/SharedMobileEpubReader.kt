@@ -116,7 +116,6 @@ import com.aryan.reader.shared.shouldFollowReaderTtsChunk
 import com.aryan.reader.shared.pageInfoBarBottomReserve
 import com.aryan.reader.shared.shouldReserveEpubPageInfoBarSpace
 import com.aryan.reader.shared.shouldShowEpubPageInfoBar
-import com.aryan.reader.shared.toSharedReaderFontFamily
 import com.aryan.reader.shared.withTtsReplacements
 import com.aryan.reader.shared.withReaderFormatFrom
 import com.aryan.reader.shared.reader.ReaderBookmark
@@ -352,6 +351,9 @@ fun SharedMobileEpubReaderScreen(
     // instead of letterboxing at the persisted/desktop pageWidth (760 default).
     // Pagination and rendering share this instance so they stay identical.
     val paginatedSettings = remember(settings) { settings.withUncappedPageWidth() }
+    // Measurement and rendering must share one real typeface (notably the
+    // bundled Lato/Lexend files) or pagination drifts from what is drawn.
+    val readerFontFamily = rememberSharedReaderFontFamily(settings.fontFamily)
     var pages by remember(book.id) { mutableStateOf<List<ReaderPage>>(emptyList()) }
     var measuredPagesApplied by remember(book.id) { mutableStateOf(false) }
     var currentLocator by remember(book.id) { mutableStateOf(book.readerPosition) }
@@ -483,13 +485,14 @@ fun SharedMobileEpubReaderScreen(
         readerDensity,
         settings.fontFamily,
         settings.customFontPath,
+        readerFontFamily,
         epubPaginationCache,
         paginationCacheWriteScope
     ) {
         SharedMeasuredEpubPaginator(
             textMeasurer = readerTextMeasurer,
             density = readerDensity,
-            fontFamily = settings.toSharedReaderFontFamily(),
+            fontFamily = readerFontFamily,
             pageCache = epubPaginationCache,
             cacheWriteScope = paginationCacheWriteScope
         )
@@ -1767,7 +1770,7 @@ fun SharedMobileEpubReaderScreen(
                                 if (overlayPlan != null && overlaySpec != null) {
                                     SharedNativePaginatedPageTurnOverlay(
                                         renderPlan = overlayPlan,
-                                        readerFontFamily = settings.toSharedReaderFontFamily(),
+                                        readerFontFamily = readerFontFamily,
                                         searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
                                         selectionHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
                                         pageTurn = overlaySpec,
@@ -1803,7 +1806,7 @@ fun SharedMobileEpubReaderScreen(
                                 }
                                 SharedNativePaginatedReader(
                                     renderPlan = paginatedRenderPlan,
-                                    readerFontFamily = settings.toSharedReaderFontFamily(),
+                                    readerFontFamily = readerFontFamily,
                                     searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
                                     onVisiblePageChanged = { pageIndex, locator ->
                                         currentPageIndex = pageIndex.coerceIn(0, pageCount - 1)
@@ -1867,6 +1870,10 @@ fun SharedMobileEpubReaderScreen(
                                     // Android benchmark parity: flat spread
                                     // pages with the gutter crease only.
                                     pageChromeEnabled = false,
+                                    // Android benchmark parity: selection
+                                    // starts on long-press/handles only, so
+                                    // taps report positions for page turns.
+                                    immediateDragSelectEnabled = false,
                                     // Native-vertical parity (:1809): without this the paginated
                                     // reader falls back to alt-text/file-name labels.
                                     imageContent = { image, imageModifier ->
@@ -1928,7 +1935,7 @@ fun SharedMobileEpubReaderScreen(
                                     highlights + chunk.toHighlight(localTts.progress.sessionId)
                                 } ?: highlights
                             ),
-                            readerFontFamily = settings.toSharedReaderFontFamily(),
+                            readerFontFamily = readerFontFamily,
                             searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
                             onVisiblePageChanged = { pageIndex, locator ->
                                 currentPageIndex = pageIndex.coerceIn(0, pageCount - 1)
@@ -1972,6 +1979,10 @@ fun SharedMobileEpubReaderScreen(
                             onReaderTap = {
                                 if (!(autoScrollMusicianMode && autoScrollModeActive)) showChrome = !showChrome
                             },
+                            // Android benchmark parity: selection starts on
+                            // long-press/handles only so scroll gestures
+                            // reach the LazyColumn instead of selecting text.
+                            immediateDragSelectEnabled = false,
                             imageContent = { image, imageModifier ->
                                 if (!settings.hideImages) {
                                     SharedMobileEpubNativeImage(

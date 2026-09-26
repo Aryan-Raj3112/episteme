@@ -90,6 +90,8 @@ internal fun SharedNativePaginatedPage(
     onHighlightSelected: (String) -> Unit,
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit,
     onReaderTap: () -> Unit,
+    onReaderHorizontalTap: ((horizontalFraction: Float, touchY: Float) -> Unit)? = null,
+    immediateDragSelectEnabled: Boolean = true,
     selectionLayouts: MutableMap<String, SharedNativeTextLayoutInfo>,
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?,
     modifier: Modifier = Modifier,
@@ -277,6 +279,8 @@ internal fun SharedNativePaginatedPage(
                     ).withAndroidPaginationTextMetrics(settings.letterSpacing),
                     activeSelection = activeSelection,
                     onReaderTap = onReaderTap,
+                    onReaderHorizontalTap = onReaderHorizontalTap,
+                    immediateDragSelectEnabled = immediateDragSelectEnabled,
                     onSelectionChange = onSelectionChange,
                     onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                     onHighlightSelected = onHighlightSelected,
@@ -312,6 +316,8 @@ internal fun SharedNativePaginatedPage(
                     settings = settings,
                     includeTrailingBottomMargin = false,
                     onReaderTap = onReaderTap,
+                    onReaderHorizontalTap = onReaderHorizontalTap,
+                    immediateDragSelectEnabled = immediateDragSelectEnabled,
                     onSelectionChange = onSelectionChange,
                     onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                     onHighlightSelected = onHighlightSelected,
@@ -685,9 +691,18 @@ internal fun SharedNativeSelectionHandleView(
     }
 }
 
+/**
+ * Text-relative horizontal tap fraction for the paginated zone router
+ * ([sharedPaginatedTapAction]). Taps inside body text must still drive
+ * page turns: the outer router stays silent once the text consumes the
+ * gesture, so the text reports the position itself (Android parity: text
+ * forwards tap position, the host does zone math).
+ */
+internal fun sharedNativeTapHorizontalFraction(tapX: Float, widthPx: Float): Float =
+    if (widthPx > 0) (tapX / widthPx).coerceIn(0f, 1f) else 0.5f
+
 @Composable
-internal fun SharedNativeInteractiveText(
-    text: AnnotatedString,
+internal fun SharedNativeInteractiveText(    text: AnnotatedString,
     page: ReaderPage,
     textBlock: SharedNativeTextBlockDescriptor,
     textStartOffset: Int,
@@ -697,6 +712,12 @@ internal fun SharedNativeInteractiveText(
     inlineContent: Map<String, androidx.compose.foundation.text.InlineTextContent> = emptyMap(),
     activeSelection: SharedNativeReaderTextSelection?,
     onReaderTap: () -> Unit,
+    onReaderHorizontalTap: ((horizontalFraction: Float, touchY: Float) -> Unit)? = null,
+    // Android benchmark parity: selection starts on long-press (or handles)
+    // only. Immediate drag-to-select steals scroll gestures from a parent
+    // LazyColumn, so scrollable hosts (mobile vertical reader) disable it
+    // while desktop keeps mouse drag selection.
+    immediateDragSelectEnabled: Boolean = true,
     onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
     onSelectionGestureActiveChange: (Boolean) -> Unit,
     onHighlightSelected: (String) -> Unit,
@@ -821,7 +842,20 @@ internal fun SharedNativeInteractiveText(
                             return@detectTapGestures
                         }
                         if (currentActiveSelection == null) {
-                            onReaderTap()
+                            // Position-aware tap: the outer tap router runs on
+                            // the Final pass and stays silent once this child
+                            // consumes the gesture, so report the horizontal
+                            // fraction here (Android parity: text forwards tap
+                            // position, the host does zone math for page turns).
+                            val tapWidth = textCoordinates?.size?.width ?: 0
+                            if (onReaderHorizontalTap != null && tapWidth > 0) {
+                                onReaderHorizontalTap(
+                                    sharedNativeTapHorizontalFraction(offset.x, tapWidth.toFloat()),
+                                    offset.y
+                                )
+                            } else {
+                                onReaderTap()
+                            }
                         }
                         onSelectionChange(null)
                     }
@@ -889,9 +923,14 @@ internal fun SharedNativeInteractiveText(
                     }
                 )
             }
-            .pointerInput(selectionGestureKey) {
+            .pointerInput(selectionGestureKey, immediateDragSelectEnabled) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
+                    // Scrollable hosts (mobile vertical reader) disable
+                    // immediate drag-to-select so the gesture reaches the
+                    // parent scroll instead of starting a selection here.
+                    // Selection remains available via long-press and handles.
+                    if (!immediateDragSelectEnabled) return@awaitEachGesture
                     val layout = textLayoutResult ?: return@awaitEachGesture
                     val coordinates = textCoordinates ?: return@awaitEachGesture
                     val plainText = currentText.text
