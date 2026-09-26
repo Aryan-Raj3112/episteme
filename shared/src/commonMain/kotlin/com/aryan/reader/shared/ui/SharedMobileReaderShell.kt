@@ -1,12 +1,21 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerState
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
@@ -86,17 +95,39 @@ fun SharedMobileReaderRecoveryGate(
     recovering: Boolean,
     isError: Boolean,
     modifier: Modifier = Modifier,
+    onBack: (() -> Unit)? = null,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
-        if (recovering) {
-            CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+        if (onBack != null) {
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.safeDrawing),
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = readerString("action_back", "Back"),
+                )
+            }
         }
-        Text(
-            text = message,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(24.dp),
-            color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-        )
+        Column(
+            modifier = Modifier.align(Alignment.Center).padding(28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (recovering) {
+                CircularProgressIndicator()
+            }
+            Text(
+                text = message,
+                color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            if (onBack != null && isError && !recovering) {
+                Button(onClick = onBack) {
+                    Text(readerString("action_go_back", "Go Back"))
+                }
+            }
+        }
     }
 }
 

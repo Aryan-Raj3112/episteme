@@ -64,6 +64,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -132,8 +133,22 @@ internal fun SharedMobileEpubLoading(label: String) {
 }
 
 @Composable
-internal fun SharedMobileEpubError(message: String) {
+internal fun SharedMobileEpubError(
+    message: String,
+    onBack: (() -> Unit)? = null,
+) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        if (onBack != null) {
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.safeDrawing),
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = readerString("action_back", "Back"),
+                )
+            }
+        }
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -142,6 +157,12 @@ internal fun SharedMobileEpubError(message: String) {
             Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(48.dp))
             Text(readerString("epub_open_failed", "Could not open EPUB"), style = MaterialTheme.typography.titleMedium)
             Text(message, color = MaterialTheme.colorScheme.error)
+            if (onBack != null) {
+                Spacer(Modifier.height(6.dp))
+                Button(onClick = onBack) {
+                    Text(readerString("action_go_back", "Go Back"))
+                }
+            }
         }
     }
 }

@@ -1408,7 +1408,7 @@ fun SharedMobileEpubReaderScreen(
             ) {
                 when {
                     loadState.isLoading -> SharedMobileEpubLoading("Opening EPUB…")
-                    loadState.errorMessage != null -> SharedMobileEpubError(loadState.errorMessage)
+                    loadState.errorMessage != null -> SharedMobileEpubError(loadState.errorMessage, onBack = ::closeReader)
                     loadedBook != null && pages.isEmpty() -> SharedMobileEpubLoading("Preparing book layout…")
                     loadedBook != null -> {
                         if (paginatedSettings.readingMode == ReaderReadingMode.PAGINATED) {

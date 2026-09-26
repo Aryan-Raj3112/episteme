@@ -355,6 +355,7 @@ fun EpubReaderScreen(
             message = message,
             recovering = isRecovering,
             isError = uiState.errorMessage != null,
+            onBack = onNavigateBack,
         )
         return
     }
