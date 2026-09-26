@@ -13,6 +13,8 @@ enum class SearchHighlightMode {
 enum class DockLocation {
     TOP,
     BOTTOM,
+    LEFT,
+    RIGHT,
     FLOATING
 }
 

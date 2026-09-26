@@ -52,7 +52,18 @@ fun SharedPdfTextDockPopup(
     focusable: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    Popup(alignment = alignment, offset = IntOffset(0, offsetYPixels), onDismissRequest = onDismissRequest,
+    SharedPdfTextDockPopupOffset(onDismissRequest, alignment, IntOffset(0, offsetYPixels), focusable, content)
+}
+
+@Composable
+fun SharedPdfTextDockPopupOffset(
+    onDismissRequest: () -> Unit,
+    alignment: Alignment = Alignment.TopCenter,
+    offset: IntOffset = IntOffset.Zero,
+    focusable: Boolean = false,
+    content: @Composable () -> Unit,
+) {
+    Popup(alignment = alignment, offset = offset, onDismissRequest = onDismissRequest,
         properties = PopupProperties(focusable = focusable, dismissOnBackPress = true, dismissOnClickOutside = true)) { content() }
 }
 
@@ -64,8 +75,21 @@ fun SharedPdfTextDockPopupDp(
     focusable: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    val pixels = with(LocalDensity.current) { offsetY.roundToPx() }
-    SharedPdfTextDockPopup(onDismissRequest, alignment, pixels, focusable, content)
+    SharedPdfTextDockPopupOffsetDp(onDismissRequest, alignment, offsetX = 0.dp, offsetY = offsetY, focusable = focusable, content = content)
+}
+
+@Composable
+fun SharedPdfTextDockPopupOffsetDp(
+    onDismissRequest: () -> Unit,
+    alignment: Alignment = Alignment.TopCenter,
+    offsetX: Dp = 0.dp,
+    offsetY: Dp = 0.dp,
+    focusable: Boolean = false,
+    content: @Composable () -> Unit,
+) {
+    val density = LocalDensity.current
+    val offset = with(density) { IntOffset(offsetX.roundToPx(), offsetY.roundToPx()) }
+    SharedPdfTextDockPopupOffset(onDismissRequest, alignment, offset, focusable, content)
 }
 
 @Composable

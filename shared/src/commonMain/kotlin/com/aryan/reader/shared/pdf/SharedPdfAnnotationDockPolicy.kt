@@ -36,7 +36,19 @@ fun isSharedPdfAnnotationDockFullBar(
 fun isSharedPdfAnnotationDockSticky(
     dockLocation: DockLocation,
     isDragging: Boolean,
-): Boolean = (dockLocation == DockLocation.TOP || dockLocation == DockLocation.BOTTOM) && !isDragging
+): Boolean = (dockLocation == DockLocation.TOP || dockLocation == DockLocation.BOTTOM ||
+    dockLocation == DockLocation.LEFT || dockLocation == DockLocation.RIGHT) && !isDragging
+
+/**
+ * Whether the dock hugs a vertical screen edge. Side docks render as a
+ * vertical bar with semi-circle caps (half-pill flush to the edge) instead
+ * of the horizontal top/bottom bar.
+ */
+fun isSharedPdfAnnotationDockSide(dockLocation: DockLocation): Boolean =
+    dockLocation == DockLocation.LEFT || dockLocation == DockLocation.RIGHT
+
+fun isSharedPdfAnnotationDockVertical(dockLocation: DockLocation): Boolean =
+    isSharedPdfAnnotationDockSide(dockLocation)
 
 fun isSharedPdfAnnotationDrawingActive(
     selectedTool: PdfInkTool,
@@ -121,7 +133,94 @@ fun sharedPdfAnnotationDockTopYPx(
 ): Float = when (dockLocation) {
     DockLocation.TOP -> 0f
     DockLocation.BOTTOM -> boxHeightPx - dockHeightPx
+    DockLocation.LEFT, DockLocation.RIGHT -> dockOffsetYPx
     DockLocation.FLOATING -> dockOffsetYPx
+}
+
+/**
+ * Left-edge X for a side-docked bar. TOP/BOTTOM are full-width so X is 0;
+ * FLOATING uses the drag offset.
+ */
+fun sharedPdfAnnotationDockLeftXPx(
+    dockLocation: DockLocation,
+    dockOffsetXPx: Float,
+    boxWidthPx: Float,
+    dockWidthPx: Float,
+): Float = when (dockLocation) {
+    DockLocation.LEFT -> 0f
+    DockLocation.RIGHT -> boxWidthPx - dockWidthPx
+    DockLocation.FLOATING -> dockOffsetXPx
+    DockLocation.TOP, DockLocation.BOTTOM -> dockOffsetXPx
+}
+
+fun isSharedPdfAnnotationDockInLeftHalf(
+    dockLeftXPx: Float,
+    dockWidthPx: Float,
+    boxWidthPx: Float,
+): Boolean {
+    if (boxWidthPx <= 0f) return true
+    val dockCenterX = dockLeftXPx + (dockWidthPx / 2f)
+    return dockCenterX <= (boxWidthPx / 2f)
+}
+
+/**
+ * Shared snap resolver for draggable docks (annotation + text).
+ *
+ * Snaps to whichever edge the dock touches *most*: the contact length with
+ * each edge (visible dock height for LEFT/RIGHT, visible dock width for
+ * TOP/BOTTOM) decides, so a wide horizontal bar in the bottom-left corner
+ * snaps BOTTOM (long bottom contact) rather than LEFT (short side contact),
+ * and a tall side wheel in the same corner snaps LEFT. Returns null when no
+ * edge is touched and the drop point should stay floating.
+ *
+ * When the dock size is unknown ([dockWidthPx]/[dockHeightPx] <= 0) it falls
+ * back to the drag-point rule (sides first), preserving the old behavior.
+ */
+fun resolveSharedPdfDockSnapLocation(
+    dockOffsetX: Float,
+    dockOffsetY: Float,
+    boxWidthPx: Float,
+    boxHeightPx: Float,
+    sideEdgeThresholdPx: Float = 150f,
+    topSnapThresholdPx: Float = 150f,
+    bottomSnapThresholdOffsetPx: Float = 250f,
+    dockWidthPx: Float = 0f,
+    dockHeightPx: Float = 0f,
+): DockLocation? {
+    if (dockWidthPx <= 0f || dockHeightPx <= 0f) {
+        return when {
+            dockOffsetX < sideEdgeThresholdPx -> DockLocation.LEFT
+            dockOffsetX > boxWidthPx - sideEdgeThresholdPx -> DockLocation.RIGHT
+            dockOffsetY < topSnapThresholdPx -> DockLocation.TOP
+            dockOffsetY > boxHeightPx - bottomSnapThresholdOffsetPx -> DockLocation.BOTTOM
+            else -> null
+        }
+    }
+    val dockRight = dockOffsetX + dockWidthPx
+    val dockBottom = dockOffsetY + dockHeightPx
+    val touchesLeft = dockOffsetX <= sideEdgeThresholdPx
+    val touchesRight = dockRight >= boxWidthPx - sideEdgeThresholdPx
+    val touchesTop = dockOffsetY <= topSnapThresholdPx
+    val touchesBottom = dockBottom >= boxHeightPx - bottomSnapThresholdOffsetPx
+    if (!touchesLeft && !touchesRight && !touchesTop && !touchesBottom) return null
+    // Visible span along each axis = contact length with that edge.
+    val visibleWidth = (minOf(dockRight, boxWidthPx) - maxOf(dockOffsetX, 0f)).coerceAtLeast(0f)
+    val visibleHeight = (minOf(dockBottom, boxHeightPx) - maxOf(dockOffsetY, 0f)).coerceAtLeast(0f)
+    // Candidates in tie-break order (TOP first): maxByOrNull keeps the first
+    // maximum, so exact ties favor the top/bottom bars.
+    val candidates = listOfNotNull(
+        DockLocation.TOP.takeIf { touchesTop },
+        DockLocation.BOTTOM.takeIf { touchesBottom },
+        DockLocation.LEFT.takeIf { touchesLeft },
+        DockLocation.RIGHT.takeIf { touchesRight },
+    )
+    return candidates.maxByOrNull { location ->
+        when (location) {
+            DockLocation.TOP, DockLocation.BOTTOM -> visibleWidth
+            DockLocation.LEFT, DockLocation.RIGHT -> visibleHeight
+            DockLocation.FLOATING -> 0f
+        }
+    }
 }
 
 /**

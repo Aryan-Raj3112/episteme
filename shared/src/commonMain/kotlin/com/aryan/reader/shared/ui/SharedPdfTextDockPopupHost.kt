@@ -33,8 +33,11 @@ fun SharedPdfTextDockPopupHost(
     fontFamilyContent: @Composable () -> Unit,
     // Bottom-docked bars anchor popups above the bar; a top-docked bar passes
     // TopCenter with a positive offset so popups open below it instead.
+    // Side-docked bars pass CenterStart/CenterEnd with a horizontal offset so
+    // popups open beside the vertical bar instead.
     popupAlignment: Alignment = Alignment.BottomCenter,
     popupOffsetY: Dp? = null,
+    popupOffsetX: Dp? = null,
 ) {
     if (state.popup == PdfTextDockPopup.NONE ||
         state.popup == PdfTextDockPopup.FONT_SIZE ||
@@ -47,10 +50,12 @@ fun SharedPdfTextDockPopupHost(
     // dropping the dock on phones and tablets. Inner controls (palette taps,
     // spectrum sliders, font rows) still receive touch; the hex field can still
     // gain focus on demand without a focusable window.
-    SharedPdfTextDockPopupDp(
+    val resolvedOffsetY = popupOffsetY ?: -(bottomDockPadding + 48.dp + 8.dp)
+    SharedPdfTextDockPopupOffsetDp(
         onDismissRequest = state::dismiss,
         alignment = popupAlignment,
-        offsetY = popupOffsetY ?: -(bottomDockPadding + 48.dp + 8.dp),
+        offsetX = popupOffsetX ?: 0.dp,
+        offsetY = resolvedOffsetY,
         focusable = false,
     ) {
         when (state.popup) {

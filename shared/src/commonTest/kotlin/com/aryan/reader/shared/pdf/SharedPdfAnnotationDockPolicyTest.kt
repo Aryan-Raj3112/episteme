@@ -19,8 +19,21 @@ class SharedPdfAnnotationDockPolicyTest {
     fun `sticky only for docked locations when not dragging`() {
         assertTrue(isSharedPdfAnnotationDockSticky(DockLocation.TOP, isDragging = false))
         assertTrue(isSharedPdfAnnotationDockSticky(DockLocation.BOTTOM, isDragging = false))
+        assertTrue(isSharedPdfAnnotationDockSticky(DockLocation.LEFT, isDragging = false))
+        assertTrue(isSharedPdfAnnotationDockSticky(DockLocation.RIGHT, isDragging = false))
         assertFalse(isSharedPdfAnnotationDockSticky(DockLocation.TOP, isDragging = true))
+        assertFalse(isSharedPdfAnnotationDockSticky(DockLocation.LEFT, isDragging = true))
         assertFalse(isSharedPdfAnnotationDockSticky(DockLocation.FLOATING, isDragging = false))
+    }
+
+    @Test
+    fun `side docks are vertical`() {
+        assertTrue(isSharedPdfAnnotationDockSide(DockLocation.LEFT))
+        assertTrue(isSharedPdfAnnotationDockSide(DockLocation.RIGHT))
+        assertTrue(isSharedPdfAnnotationDockVertical(DockLocation.LEFT))
+        assertFalse(isSharedPdfAnnotationDockSide(DockLocation.TOP))
+        assertFalse(isSharedPdfAnnotationDockSide(DockLocation.BOTTOM))
+        assertFalse(isSharedPdfAnnotationDockSide(DockLocation.FLOATING))
     }
 
     @Test
@@ -75,6 +88,92 @@ class SharedPdfAnnotationDockPolicyTest {
         assertEquals(400f, sharedPdfAnnotationDockTopYPx(DockLocation.FLOATING, 400f, 1000f, 56f))
     }
 
+    @Test
+    fun `side dock left x hugs the edge`() {
+        assertEquals(0f, sharedPdfAnnotationDockLeftXPx(DockLocation.LEFT, 400f, 1000f, 56f))
+        assertEquals(944f, sharedPdfAnnotationDockLeftXPx(DockLocation.RIGHT, 400f, 1000f, 56f))
+        assertEquals(400f, sharedPdfAnnotationDockLeftXPx(DockLocation.FLOATING, 400f, 1000f, 56f))
+        // Left-half detection drives popup placement for floating bars.
+        assertTrue(isSharedPdfAnnotationDockInLeftHalf(0f, 56f, 1000f))
+        assertFalse(isSharedPdfAnnotationDockInLeftHalf(944f, 56f, 1000f))
+    }
+
+    @Test
+    fun `snap resolver prefers side edges over top and bottom`() {
+        // 1000x1000 box: parked against the left/right edge snaps sideways
+        // even when also near the top.
+        assertEquals(
+            DockLocation.LEFT,
+            resolveSharedPdfDockSnapLocation(50f, 50f, 1000f, 1000f),
+        )
+        assertEquals(
+            DockLocation.RIGHT,
+            resolveSharedPdfDockSnapLocation(900f, 50f, 1000f, 1000f),
+        )
+        assertEquals(
+            DockLocation.TOP,
+            resolveSharedPdfDockSnapLocation(500f, 50f, 1000f, 1000f),
+        )
+        assertEquals(
+            DockLocation.BOTTOM,
+            resolveSharedPdfDockSnapLocation(500f, 900f, 1000f, 1000f),
+        )
+        assertEquals(
+            null,
+            resolveSharedPdfDockSnapLocation(500f, 500f, 1000f, 1000f),
+        )
+    }
+
+    @Test
+    fun `snap resolver docks where the dock touches most`() {
+        // Wide horizontal bar (400x56) in the top-left corner touches the
+        // top along 400px but the side along 56px -> TOP.
+        assertEquals(
+            DockLocation.TOP,
+            resolveSharedPdfDockSnapLocation(
+                dockOffsetX = 50f, dockOffsetY = 50f,
+                boxWidthPx = 1000f, boxHeightPx = 1000f,
+                dockWidthPx = 400f, dockHeightPx = 56f,
+            ),
+        )
+        // Same bar in the bottom-left corner -> BOTTOM.
+        assertEquals(
+            DockLocation.BOTTOM,
+            resolveSharedPdfDockSnapLocation(
+                dockOffsetX = 50f, dockOffsetY = 900f,
+                boxWidthPx = 1000f, boxHeightPx = 1000f,
+                dockWidthPx = 400f, dockHeightPx = 56f,
+            ),
+        )
+        // Tall side wheel (96x192) in the top-left corner touches the side
+        // along 192px but the top along 96px -> LEFT.
+        assertEquals(
+            DockLocation.LEFT,
+            resolveSharedPdfDockSnapLocation(
+                dockOffsetX = 50f, dockOffsetY = 50f,
+                boxWidthPx = 1000f, boxHeightPx = 1000f,
+                dockWidthPx = 96f, dockHeightPx = 192f,
+            ),
+        )
+        // Mid-height against the right edge stays reachable -> RIGHT.
+        assertEquals(
+            DockLocation.RIGHT,
+            resolveSharedPdfDockSnapLocation(
+                dockOffsetX = 850f, dockOffsetY = 500f,
+                boxWidthPx = 1000f, boxHeightPx = 1000f,
+                dockWidthPx = 96f, dockHeightPx = 192f,
+            ),
+        )
+        // Center touches nothing -> floating.
+        assertEquals(
+            null,
+            resolveSharedPdfDockSnapLocation(
+                dockOffsetX = 400f, dockOffsetY = 500f,
+                boxWidthPx = 1000f, boxHeightPx = 1000f,
+                dockWidthPx = 200f, dockHeightPx = 56f,
+            ),
+        )
+    }
     @Test
     fun `popup max height matches android modal sizing`() {
         // Android ToolSettingsPopup call: fraction 0.8, margin 64, min 240.

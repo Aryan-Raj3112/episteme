@@ -188,6 +188,7 @@ import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.platform.LocalDensity
@@ -245,8 +246,12 @@ import com.aryan.reader.shared.pdf.PdfZoomPoint
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationHighlighterTools
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationPenTools
+import com.aryan.reader.shared.pdf.SharedPdfSideWheelWidth
+import com.aryan.reader.shared.pdf.isPdfTextDockSideDocked
 import com.aryan.reader.shared.pdf.isPdfTextDockTopAnchored
 import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockInBottomHalf
+import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockSide
+import com.aryan.reader.shared.pdf.resolveSharedPdfDockSnapLocation
 import com.aryan.reader.shared.pdf.sharedPdfPopupMaxHeightDp
 import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockSticky
 import com.aryan.reader.shared.pdf.pdfTextDockKeyboardLiftPx
@@ -3448,10 +3453,12 @@ fun SharedMobilePdfReaderHost(
                         val boxMaxHeightPx = with(density) { maxHeight.toPx() }
                         val annotationDockHeight = 56.dp
                         val annotationDockHeightPx = with(density) { annotationDockHeight.toPx() }
+                        val annotationDockWidth = SharedPdfSideWheelWidth
                         val isSticky = isSharedPdfAnnotationDockSticky(
                             annotationDockLocation,
                             isAnnotationDockDragging,
                         )
+                        val isAnnotationSideDocked = isSharedPdfAnnotationDockSide(annotationDockLocation) && !isAnnotationDockDragging
                         val dockTopYPx = sharedPdfAnnotationDockTopYPx(
                             annotationDockLocation,
                             annotationDockOffset.y,
@@ -3463,7 +3470,12 @@ fun SharedMobilePdfReaderHost(
                             annotationDockHeightPx,
                             boxMaxHeightPx,
                         )
-                        val popupAlign = if (popupAboveDock) Alignment.BottomCenter else Alignment.TopCenter
+                        val popupAlign = when {
+                            isAnnotationSideDocked && annotationDockLocation == DockLocation.LEFT -> Alignment.CenterStart
+                            isAnnotationSideDocked && annotationDockLocation == DockLocation.RIGHT -> Alignment.CenterEnd
+                            popupAboveDock -> Alignment.BottomCenter
+                            else -> Alignment.TopCenter
+                        }
                         val popupMargin = 16.dp
                         // Android parity: the sticky dock carries system-inset
                         // padding (home-indicator / status bar) below/above its
@@ -3473,17 +3485,37 @@ fun SharedMobilePdfReaderHost(
                         val statusTopDp = with(density) {
                             WindowInsets.safeDrawing.getTop(density).toDp()
                         }
+                        val safeLeftDp = with(density) {
+                            WindowInsets.safeDrawing.getLeft(density, LayoutDirection.Ltr).toDp()
+                        }
+                        val safeRightDp = with(density) {
+                            WindowInsets.safeDrawing.getRight(density, LayoutDirection.Ltr).toDp()
+                        }
                         val popupDockBottomInset =
                             if (isSticky && annotationDockLocation == DockLocation.BOTTOM) effectiveBottomSystemInset else 0.dp
                         val popupDockTopInset =
                             if (isSticky && annotationDockLocation == DockLocation.TOP) statusTopDp else 0.dp
-                        val popupTopPad = if (!popupAboveDock) {
+                        val popupDockStartInset =
+                            if (isAnnotationSideDocked && annotationDockLocation == DockLocation.LEFT) safeLeftDp else 0.dp
+                        val popupDockEndInset =
+                            if (isAnnotationSideDocked && annotationDockLocation == DockLocation.RIGHT) safeRightDp else 0.dp
+                        val popupTopPad = if (!popupAboveDock && !isAnnotationSideDocked) {
                             with(density) { (dockTopYPx + annotationDockHeightPx).toDp() } + popupDockTopInset + popupMargin
                         } else {
                             0.dp
                         }
-                        val popupBottomPad = if (popupAboveDock) {
+                        val popupBottomPad = if (popupAboveDock && !isAnnotationSideDocked) {
                             with(density) { (boxMaxHeightPx - dockTopYPx).toDp() } + popupDockBottomInset + popupMargin
+                        } else {
+                            0.dp
+                        }
+                        val popupStartPad = if (isAnnotationSideDocked && annotationDockLocation == DockLocation.LEFT) {
+                            annotationDockWidth + popupDockStartInset + popupMargin
+                        } else {
+                            0.dp
+                        }
+                        val popupEndPad = if (isAnnotationSideDocked && annotationDockLocation == DockLocation.RIGHT) {
+                            annotationDockWidth + popupDockEndInset + popupMargin
                         } else {
                             0.dp
                         }
@@ -3498,7 +3530,7 @@ fun SharedMobilePdfReaderHost(
                                 exit = fadeOut(),
                                 modifier = Modifier
                                     .align(popupAlign)
-                                    .padding(top = popupTopPad, bottom = popupBottomPad)
+                                    .padding(top = popupTopPad, bottom = popupBottomPad, start = popupStartPad, end = popupEndPad)
                                     .testTag("ToolSettingsPopup"),
                             ) {
                                 SharedPdfAndroidToolSettingsPopup(
@@ -3531,16 +3563,32 @@ fun SharedMobilePdfReaderHost(
                             }
 
                             annotationSnapPreview?.let { location ->
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(annotationDockHeight)
-                                        .align(
-                                            if (location == DockLocation.TOP) Alignment.TopCenter
-                                            else Alignment.BottomCenter,
-                                        )
-                                        .background(Color.Black),
-                                )
+                                when (location) {
+                                    DockLocation.LEFT -> Box(
+                                        modifier = Modifier
+                                            .fillMaxHeight()
+                                            .width(annotationDockWidth)
+                                            .align(Alignment.CenterStart)
+                                            .background(Color.Black),
+                                    )
+                                    DockLocation.RIGHT -> Box(
+                                        modifier = Modifier
+                                            .fillMaxHeight()
+                                            .width(annotationDockWidth)
+                                            .align(Alignment.CenterEnd)
+                                            .background(Color.Black),
+                                    )
+                                    else -> Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(annotationDockHeight)
+                                            .align(
+                                                if (location == DockLocation.TOP) Alignment.TopCenter
+                                                else Alignment.BottomCenter,
+                                            )
+                                            .background(Color.Black),
+                                    )
+                                }
                             }
 
                             Box(
@@ -3561,23 +3609,33 @@ fun SharedMobilePdfReaderHost(
                                     isAnnotationDockDragging || annotationDockLocation == DockLocation.FLOATING -> Modifier
                                     annotationDockLocation == DockLocation.TOP -> Modifier.align(Alignment.TopCenter)
                                     annotationDockLocation == DockLocation.BOTTOM -> Modifier.align(Alignment.BottomCenter)
+                                    annotationDockLocation == DockLocation.LEFT -> Modifier.align(Alignment.CenterStart)
+                                    annotationDockLocation == DockLocation.RIGHT -> Modifier.align(Alignment.CenterEnd)
                                     else -> Modifier
                                 }
-                                val widthModifier =
-                                    if ((annotationDockLocation == DockLocation.TOP || annotationDockLocation == DockLocation.BOTTOM) && !isAnnotationDockDragging) {
-                                        Modifier.fillMaxWidth()
-                                    } else {
-                                        Modifier.padding(horizontal = 16.dp)
-                                    }
-                                val paddingModifier =
-                                    if ((annotationDockLocation == DockLocation.TOP || annotationDockLocation == DockLocation.BOTTOM) && !isAnnotationDockDragging) {
-                                        Modifier.padding(
-                                            bottom = if (annotationDockLocation == DockLocation.BOTTOM) effectiveBottomSystemInset else 0.dp,
-                                            top = if (annotationDockLocation == DockLocation.TOP) statusTopDp else 0.dp,
-                                        )
-                                    } else {
-                                        Modifier.padding(vertical = 16.dp)
-                                    }
+                                val isTopBottomSticky =
+                                    (annotationDockLocation == DockLocation.TOP || annotationDockLocation == DockLocation.BOTTOM) && !isAnnotationDockDragging
+                                val isSideSticky = isAnnotationSideDocked
+                                val widthModifier = when {
+                                    isTopBottomSticky -> Modifier.fillMaxWidth()
+                                    isSideSticky -> Modifier
+                                    else -> Modifier.padding(horizontal = 16.dp)
+                                }
+                                val paddingModifier = when {
+                                    isTopBottomSticky -> Modifier.padding(
+                                        bottom = if (annotationDockLocation == DockLocation.BOTTOM) effectiveBottomSystemInset else 0.dp,
+                                        top = if (annotationDockLocation == DockLocation.TOP) statusTopDp else 0.dp,
+                                    )
+                                    isSideSticky -> Modifier.padding(
+                                        // Flush to the edge with the
+                                        // semi-circle caps facing inward:
+                                        // only the safe-area inset offsets
+                                        // the bar so gestures stay reachable.
+                                        start = if (annotationDockLocation == DockLocation.LEFT) safeLeftDp else 0.dp,
+                                        end = if (annotationDockLocation == DockLocation.RIGHT) safeRightDp else 0.dp,
+                                    )
+                                    else -> Modifier.padding(vertical = 16.dp)
+                                }
                                 Box(
                                     modifier = Modifier
                                         .then(alignModifier)
@@ -3593,6 +3651,16 @@ fun SharedMobilePdfReaderHost(
                                                     )
                                                 } else if (annotationDockLocation == DockLocation.TOP) {
                                                     annotationDockOffset = androidx.compose.ui.geometry.Offset(startX, 50f)
+                                                } else if (annotationDockLocation == DockLocation.LEFT) {
+                                                    annotationDockOffset = androidx.compose.ui.geometry.Offset(
+                                                        50f,
+                                                        (boxMaxHeightPx / 2) - (size.height / 2),
+                                                    )
+                                                } else if (annotationDockLocation == DockLocation.RIGHT) {
+                                                    annotationDockOffset = androidx.compose.ui.geometry.Offset(
+                                                        boxMaxWidthPx - size.width - 50f,
+                                                        (boxMaxHeightPx / 2) - (size.height / 2),
+                                                    )
                                                 }
                                             }
                                             val onDrag: (
@@ -3601,13 +3669,18 @@ fun SharedMobilePdfReaderHost(
                                             ) -> Unit = { change, dragAmount ->
                                                 change.consume()
                                                 annotationDockOffset += dragAmount
-                                                val topSnapThreshold = 150f
-                                                val bottomSnapThreshold = boxMaxHeightPx - 250f
-                                                annotationSnapPreview = when {
-                                                    annotationDockOffset.y < topSnapThreshold -> DockLocation.TOP
-                                                    annotationDockOffset.y > bottomSnapThreshold -> DockLocation.BOTTOM
-                                                    else -> null
-                                                }
+                                                // Contact-based: snaps to the edge
+                                                // the dock touches most (a wide
+                                                // bar in the corner snaps to
+                                                // the bottom, not the side).
+                                                annotationSnapPreview = resolveSharedPdfDockSnapLocation(
+                                                    dockOffsetX = annotationDockOffset.x,
+                                                    dockOffsetY = annotationDockOffset.y,
+                                                    boxWidthPx = boxMaxWidthPx,
+                                                    boxHeightPx = boxMaxHeightPx,
+                                                    dockWidthPx = size.width.toFloat(),
+                                                    dockHeightPx = size.height.toFloat(),
+                                                )
                                             }
                                             val onDragEnd: () -> Unit = {
                                                 isAnnotationDockDragging = false
@@ -3673,6 +3746,7 @@ fun SharedMobilePdfReaderHost(
                                             .then(paddingModifier),
                                         isMinimized = isAnnotationDockMinimized,
                                         onToggleMinimize = { isAnnotationDockMinimized = !isAnnotationDockMinimized },
+                                        dockLocation = annotationDockLocation,
                                     )
                                 }
                             }
@@ -3705,6 +3779,7 @@ fun SharedMobilePdfReaderHost(
                         )
                         val textPopupsBelowBar = isPdfTextDockTopAnchored(textDockLocation, isTextDockDragging)
                         val isTextStickyBottom = textDockLocation == DockLocation.BOTTOM && !isTextDockDragging
+                        val isTextSideDocked = isPdfTextDockSideDocked(textDockLocation) && !isTextDockDragging
                         val isTextFloating = isTextDockDragging || textDockLocation == DockLocation.FLOATING
                         // A floating (or in-drag) bar parked where the keyboard
                         // opens rides up to sit just above it, like bottom-dock.
@@ -3729,14 +3804,17 @@ fun SharedMobilePdfReaderHost(
                             val textAlignModifier = when {
                                 isTextFloating -> Modifier
                                 textPopupsBelowBar -> Modifier.align(Alignment.TopCenter)
+                                isTextSideDocked && textDockLocation == DockLocation.LEFT -> Modifier.align(Alignment.CenterStart)
+                                isTextSideDocked && textDockLocation == DockLocation.RIGHT -> Modifier.align(Alignment.CenterEnd)
                                 else -> Modifier.align(Alignment.BottomCenter)
                             }
-                            val textWidthModifier =
-                                if ((textDockLocation == DockLocation.TOP || textDockLocation == DockLocation.BOTTOM) && !isTextDockDragging) {
-                                    Modifier.fillMaxWidth()
-                                } else {
-                                    Modifier.padding(horizontal = 16.dp)
-                                }
+                            val isTextTopBottomSticky =
+                                (textDockLocation == DockLocation.TOP || textDockLocation == DockLocation.BOTTOM) && !isTextDockDragging
+                            val textWidthModifier = when {
+                                isTextTopBottomSticky -> Modifier.fillMaxWidth()
+                                isTextSideDocked -> Modifier
+                                else -> Modifier.padding(horizontal = 16.dp)
+                            }
                             val textInsetsModifier =
                                 if (isTextStickyBottom) {
                                     Modifier.windowInsetsPadding(
@@ -3749,13 +3827,37 @@ fun SharedMobilePdfReaderHost(
                             // A top-docked text bar stacks below a top-docked
                             // pen dock (shared 56.dp dock height), mirroring
                             // how the bottom bar clears it via resting padding.
+                            // A side-docked text bar stacks inward of a
+                            // same-side pen dock so the two semi-circle bars
+                            // never overlap.
                             val textStatusTopDp = with(density) {
                                 WindowInsets.safeDrawing.getTop(density).toDp()
                             }
+                            val textSafeLeftDp = with(density) {
+                                WindowInsets.safeDrawing.getLeft(density, LayoutDirection.Ltr).toDp()
+                            }
+                            val textSafeRightDp = with(density) {
+                                WindowInsets.safeDrawing.getRight(density, LayoutDirection.Ltr).toDp()
+                            }
+                            val textPenSideClearance =
+                                if (isTextSideDocked && textDockLocation == annotationDockLocation &&
+                                    (annotationDockLocation == DockLocation.LEFT || annotationDockLocation == DockLocation.RIGHT) &&
+                                    !isAnnotationDockDragging
+                                ) {
+                                    SharedPdfSideWheelWidth + 8.dp
+                                } else {
+                                    0.dp
+                                }
                             val textPaddingModifier = when {
                                 isTextStickyBottom -> Modifier.padding(bottom = textBottomPadding)
                                 textPopupsBelowBar -> Modifier.padding(
                                     top = (if (annotationDockLocation == DockLocation.TOP && !isAnnotationDockDragging) 56.dp else 0.dp) + textStatusTopDp
+                                )
+                                isTextSideDocked && textDockLocation == DockLocation.LEFT -> Modifier.padding(
+                                    start = textSafeLeftDp + textPenSideClearance,
+                                )
+                                isTextSideDocked && textDockLocation == DockLocation.RIGHT -> Modifier.padding(
+                                    end = textSafeRightDp + textPenSideClearance,
                                 )
                                 else -> Modifier.padding(vertical = textDockFloatPad)
                             }
@@ -3777,6 +3879,15 @@ fun SharedMobilePdfReaderHost(
                                             )
                                         } else if (textDockLocation == DockLocation.TOP) {
                                             textDockOffset = Offset(startX, 50f)
+                                        } else if (textDockLocation == DockLocation.LEFT) {
+                                            textDockOffset = Offset(
+                                                50f, (textBoxMaxHeightPx / 2) - (size.height / 2)
+                                            )
+                                        } else if (textDockLocation == DockLocation.RIGHT) {
+                                            textDockOffset = Offset(
+                                                textBoxMaxWidthPx - size.width - 50f,
+                                                (textBoxMaxHeightPx / 2) - (size.height / 2),
+                                            )
                                         }
                                     }
                                 }
@@ -3799,7 +3910,22 @@ fun SharedMobilePdfReaderHost(
                                         with(density) { textBottomPadding.toPx() } -
                                         textDockHeightPx -
                                         with(density) { 24.dp.toPx() }
+                                    // Side edges snap first so the new
+                                    // LEFT/RIGHT targets stay reachable on
+                                    // narrow phones even near the top; the
+                                    // contact rule picks the edge the bar
+                                    // touches most (a wide bar in the corner
+                                    // snaps top/bottom, not sideways).
+                                    val sideSnap = resolveSharedPdfDockSnapLocation(
+                                        dockOffsetX = textDockOffset.x,
+                                        dockOffsetY = textDockOffset.y,
+                                        boxWidthPx = textBoxMaxWidthPx,
+                                        boxHeightPx = textBoxMaxHeightPx,
+                                        dockWidthPx = size.width.toFloat(),
+                                        dockHeightPx = size.height.toFloat(),
+                                    )
                                     textDockLocation = when {
+                                        sideSnap == DockLocation.LEFT || sideSnap == DockLocation.RIGHT -> sideSnap!!
                                         textDockOffset.y < topSnapThreshold -> DockLocation.TOP
                                         textDockOffset.y > bottomSnapThreshold -> DockLocation.BOTTOM
                                         else -> DockLocation.FLOATING
@@ -3866,6 +3992,8 @@ fun SharedMobilePdfReaderHost(
                                     onImportFont = onImportFont,
                                     dragGestureModifier = textDockDragGesture,
                                     popupsBelowBar = textPopupsBelowBar,
+                                    dockLocation = textDockLocation,
+                                    spinEnabled = !isTextDockDragging,
                                     onPopupStateChange = { richTextController.showCursorOverride = !it },
                                     // Retired rich text: the paragraph row
                                     // belongs to the open draft only (Android
