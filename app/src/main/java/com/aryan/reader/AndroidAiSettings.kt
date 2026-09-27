@@ -4,6 +4,8 @@ package com.aryan.reader
 
 import com.aryan.reader.shared.ReaderAiByokSettings as AiByokSettings
 
+import com.aryan.reader.shared.hasByokModel
+
 import com.aryan.reader.shared.ReaderAiModelOption as AiModelOption
 
 import com.aryan.reader.shared.ReaderAiFeature as AiFeature
@@ -231,6 +233,14 @@ fun saveHideReaderAiFeatures(context: Context, hidden: Boolean) {
 fun hasAiByokKey(context: Context): Boolean {
     val settings = loadAiByokSettings(context)
     return settings.geminiKey.isNotBlank() || settings.groqKey.isNotBlank() || settings.fishKey.isNotBlank()
+}
+
+/**
+ * iOS parity: a configured BYOK model+key overrides the credited worker
+ * for that feature, even on Pro builds.
+ */
+internal fun isByokModelReady(context: Context, feature: AiFeature): Boolean {
+    return loadAiByokSettings(context).hasByokModel(feature)
 }
 
 @Suppress("KotlinConstantConditions")

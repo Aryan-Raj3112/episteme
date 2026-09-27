@@ -250,6 +250,7 @@ import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.areReaderAiFeaturesEnabled
 import com.aryan.reader.callByokGeminiInlineAi
+import com.aryan.reader.isByokModelReady
 import com.aryan.reader.cardTitle
 import com.aryan.reader.epubreader.AutoScrollControls
 import com.aryan.reader.epubreader.DictionarySettingsDialog
@@ -2859,6 +2860,25 @@ private fun PdfViewerScreenContent(
             "Starting summarization for PDF page: $pdfPageIndex (Display Page: $currentPageIndex)"
         )
 
+        suspend fun summarizeImageViaByok(base64: String) {
+            val fullText = StringBuilder()
+            callByokGeminiInlineAi(
+                context = context,
+                feature = AiFeature.SUMMARIZE,
+                mimeType = "image/jpeg",
+                base64Data = base64,
+                systemInstruction = "You are an expert in analyzing visual content. You will be given an image of a page. Describe what is happening, identify key information, and summarize the text. Do not add a preamble.",
+                temperature = 0.2,
+                maxTokens = 8192,
+                onUpdate = {
+                    fullText.append(it)
+                    onUpdate(SummarizationResult(summary = fullText.toString()))
+                },
+                onError = { onUpdate(SummarizationResult(error = it)) }
+            )
+            onFinish()
+        }
+
         withContext(Dispatchers.IO) {
             var pageBitmap: Bitmap? = null
             var connection: HttpURLConnection? = null
@@ -2877,22 +2897,14 @@ private fun PdfViewerScreenContent(
 
                 @Suppress("KotlinConstantConditions")
                 if (BuildConfig.FLAVOR == "oss") {
-                    val fullText = StringBuilder()
-                    callByokGeminiInlineAi(
-                        context = context,
-                        feature = AiFeature.SUMMARIZE,
-                        mimeType = "image/jpeg",
-                        base64Data = base64Image,
-                        systemInstruction = "You are an expert in analyzing visual content. You will be given an image of a page. Describe what is happening, identify key information, and summarize the text. Do not add a preamble.",
-                        temperature = 0.2,
-                        maxTokens = 8192,
-                        onUpdate = {
-                            fullText.append(it)
-                            onUpdate(SummarizationResult(summary = fullText.toString()))
-                        },
-                        onError = { onUpdate(SummarizationResult(error = it)) }
-                    )
-                    onFinish()
+                    summarizeImageViaByok(base64Image)
+                    return@withContext
+                }
+
+                // Pro parity with iOS: a configured BYOK model+key for
+                // summaries bypasses the credited worker for this request.
+                if (isByokModelReady(context, AiFeature.SUMMARIZE)) {
+                    summarizeImageViaByok(base64Image)
                     return@withContext
                 }
 

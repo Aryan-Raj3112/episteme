@@ -331,6 +331,17 @@ fun readerAiModelById(id: String): ReaderAiModelOption? {
     return ReaderAiModelOptions.firstOrNull { it.id == id }
 }
 
+/**
+ * True when the user picked a known model for [feature] and saved that
+ * provider's key, so BYOK overrides the credited worker for the feature
+ * (Pro parity with iOS, whose adapter gates on the same condition).
+ */
+fun ReaderAiByokSettings.hasByokModel(feature: ReaderAiFeature): Boolean {
+    val sanitized = sanitized()
+    val model = readerAiModelById(sanitized.modelIdFor(feature)) ?: return false
+    return sanitized.apiKeyFor(model.provider).isNotBlank()
+}
+
 fun maskedReaderAiKey(value: String): String {
     val trimmed = value.trim()
     return when {

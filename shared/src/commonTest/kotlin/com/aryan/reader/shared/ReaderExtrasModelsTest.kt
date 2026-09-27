@@ -130,6 +130,44 @@ class ReaderExtrasModelsTest {
     }
 
     @Test
+    fun `hasByokModel is true only with known model and matching provider key`() {
+        assertFalse(ReaderAiByokSettings().hasByokModel(ReaderAiFeature.DEFINE))
+        assertFalse(
+            ReaderAiByokSettings(groqKey = "gsk_test").hasByokModel(ReaderAiFeature.DEFINE)
+        )
+        assertFalse(
+            ReaderAiByokSettings(modelForAll = "groq:qwen/qwen3-32b").hasByokModel(ReaderAiFeature.DEFINE)
+        )
+        assertFalse(
+            ReaderAiByokSettings(
+                geminiKey = "gemini_test",
+                modelForAll = "groq:qwen/qwen3-32b"
+            ).hasByokModel(ReaderAiFeature.DEFINE)
+        )
+        assertTrue(
+            ReaderAiByokSettings(
+                groqKey = "gsk_test",
+                modelForAll = "groq:qwen/qwen3-32b"
+            ).hasByokModel(ReaderAiFeature.DEFINE)
+        )
+        // Per-feature selection is honored when "one model" is off.
+        assertFalse(
+            ReaderAiByokSettings(
+                useOneModel = false,
+                groqKey = "gsk_test",
+                modelForAll = "groq:qwen/qwen3-32b"
+            ).hasByokModel(ReaderAiFeature.SUMMARIZE)
+        )
+        assertTrue(
+            ReaderAiByokSettings(
+                useOneModel = false,
+                geminiKey = "gemini_test",
+                summarizeModel = "gemini:gemini-flash-lite-latest"
+            ).hasByokModel(ReaderAiFeature.SUMMARIZE)
+        )
+    }
+
+    @Test
     fun `reader ai one model setting matches Android model selection logic`() {
         val oneModel = ReaderByokTextRequests.build(
             settings = ReaderAiByokSettings(

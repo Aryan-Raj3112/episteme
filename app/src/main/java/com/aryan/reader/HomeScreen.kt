@@ -1171,7 +1171,7 @@ internal fun AppDrawerContent(
                 )
             }
 
-            if (showAiSettings && isOss && !BuildConfig.IS_OFFLINE) {
+            if (showAiSettings && !BuildConfig.IS_OFFLINE) {
                 NavigationDrawerItem(
                     icon = { Icon(painterResource(id = R.drawable.ai), contentDescription = null) },
                     label = { Text(stringResource(R.string.ai_settings_title)) },

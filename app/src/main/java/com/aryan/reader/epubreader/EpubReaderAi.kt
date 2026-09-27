@@ -43,6 +43,7 @@ import com.aryan.reader.R
 import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.callByokTextAi
+import com.aryan.reader.isByokModelReady
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.contentFilePath
 import com.aryan.reader.fetchRecap
@@ -60,6 +61,8 @@ import java.net.URL
 /**
  * Handles the raw network streaming for book content summarization.
  */
+private const val SUMMARIZE_SYSTEM_INSTRUCTION = "You are an expert in analyzing written content. Provide a concise, easy-to-read summary of the provided chapter. Identify the main ideas, plot points, and themes. Do not add a preamble like 'Here is the summary:'"
+
 suspend fun summarizeBookContent(
     content: String,
     context: Context,
@@ -86,7 +89,24 @@ suspend fun summarizeBookContent(
         callByokTextAi(
             context = context,
             feature = AiFeature.SUMMARIZE,
-            systemInstruction = "You are an expert in analyzing written content. Provide a concise, easy-to-read summary of the provided chapter. Identify the main ideas, plot points, and themes. Do not add a preamble like 'Here is the summary:'",
+            systemInstruction = SUMMARIZE_SYSTEM_INSTRUCTION,
+            userPrompt = content,
+            temperature = 0.2,
+            maxTokens = 8192,
+            onUpdate = onUpdate,
+            onError = onError
+        )
+        onFinish()
+        return
+    }
+
+    // Pro parity with iOS: a configured BYOK model+key for summaries
+    // bypasses the credited worker for this request.
+    if (isByokModelReady(context, AiFeature.SUMMARIZE)) {
+        callByokTextAi(
+            context = context,
+            feature = AiFeature.SUMMARIZE,
+            systemInstruction = SUMMARIZE_SYSTEM_INSTRUCTION,
             userPrompt = content,
             temperature = 0.2,
             maxTokens = 8192,

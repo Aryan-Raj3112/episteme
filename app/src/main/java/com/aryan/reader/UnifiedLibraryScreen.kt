@@ -923,7 +923,7 @@ private fun UnifiedLibraryDrawer(
             val drawerModel = mobileUnifiedLibraryDrawerModel(
                 MobileUnifiedLibraryDrawerCapabilities(
                     catalogsAvailable = !BuildConfig.IS_OFFLINE,
-                    aiSettingsAvailable = BuildConfig.FLAVOR == "oss" && !BuildConfig.IS_OFFLINE,
+                    aiSettingsAvailable = !BuildConfig.IS_OFFLINE,
                 ),
             )
             drawerModel.destinations.forEach { destination ->

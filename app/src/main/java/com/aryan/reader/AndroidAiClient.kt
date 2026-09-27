@@ -39,6 +39,8 @@ import timber.log.Timber
 import java.net.HttpURLConnection
 import java.net.URL
 
+private const val AI_DEFINE_SYSTEM_INSTRUCTION = "You are an AI-powered dictionary. Your goal is to provide a concise and easy-to-understand definition for the given word, phrase or paragraphs. Keep the explanation brief. Respond only with the definition text, without any preamble. Do not send your thoughts, only the final definition you arrived on. no emoji."
+
 suspend fun fetchAiDefinition(
     text: String,
     context: Context,
@@ -61,11 +63,28 @@ suspend fun fetchAiDefinition(
             onFinish()
             return
         }
-        val systemInstruction = "You are an AI-powered dictionary. Your goal is to provide a concise and easy-to-understand definition for the given word, phrase or paragraphs. Keep the explanation brief. Respond only with the definition text, without any preamble. Do not send your thoughts, only the final definition you arrived on. no emoji."
+        val systemInstruction = AI_DEFINE_SYSTEM_INSTRUCTION
         callByokTextAi(
             context = context,
             feature = AiFeature.DEFINE,
             systemInstruction = systemInstruction,
+            userPrompt = "Define: \"$text\"",
+            temperature = 0.1,
+            maxTokens = 256,
+            onUpdate = onUpdate,
+            onError = onError
+        )
+        onFinish()
+        return
+    }
+
+    // Pro parity with iOS: a configured BYOK model+key for definitions
+    // bypasses the credited worker for this request.
+    if (isByokModelReady(context, AiFeature.DEFINE)) {
+        callByokTextAi(
+            context = context,
+            feature = AiFeature.DEFINE,
+            systemInstruction = AI_DEFINE_SYSTEM_INSTRUCTION,
             userPrompt = "Define: \"$text\"",
             temperature = 0.1,
             maxTokens = 256,
@@ -555,6 +574,24 @@ object MarkdownParser {
     }
 }
 
+private fun recapByokPrompts(pastSummaries: List<String>, currentText: String): Pair<String, String> {
+    val systemInstruction = "You are a sophisticated reading assistant. You have to create a recap. Synthesize the provided past context and current chapter text into a cohesive summary of the reading session so far. Conclude exactly where the user is positioned currently. Do not add a preamble. Also Avoid including or mentioning text from administrative or boilerplate sections such as the introduction, copyright pages, preface, or table of contents; focus strictly on the core story or informative content. If the the book has multiple different short stories that came before then summarize them too, its a recap of the whole book up to this point."
+    val promptContext = buildString {
+        append("--- PREVIOUS CONTEXT (Summaries of read chapters) ---\n")
+        if (pastSummaries.isEmpty()) {
+            append("(None - User is in the first chapter)\n")
+        } else {
+            pastSummaries.forEachIndexed { index, summary ->
+                append("Chapter ${index + 1}: $summary\n\n")
+            }
+        }
+        append("\n--- CURRENT SESSION (Text read in current chapter) ---\n")
+        append(currentText)
+        append("\n\nBased strictly on the above, provide a recap of the content read so far.")
+    }
+    return systemInstruction to promptContext
+}
+
 suspend fun fetchRecap(
     pastSummaries: List<String>,
     currentText: String,
@@ -578,20 +615,25 @@ suspend fun fetchRecap(
             onFinish()
             return
         }
-        val systemInstruction = "You are a sophisticated reading assistant. You have to create a recap. Synthesize the provided past context and current chapter text into a cohesive summary of the reading session so far. Conclude exactly where the user is positioned currently. Do not add a preamble. Also Avoid including or mentioning text from administrative or boilerplate sections such as the introduction, copyright pages, preface, or table of contents; focus strictly on the core story or informative content. If the the book has multiple different short stories that came before then summarize them too, its a recap of the whole book up to this point."
-        val promptContext = buildString {
-            append("--- PREVIOUS CONTEXT (Summaries of read chapters) ---\n")
-            if (pastSummaries.isEmpty()) {
-                append("(None - User is in the first chapter)\n")
-            } else {
-                pastSummaries.forEachIndexed { index, summary ->
-                    append("Chapter ${index + 1}: $summary\n\n")
-                }
-            }
-            append("\n--- CURRENT SESSION (Text read in current chapter) ---\n")
-            append(currentText)
-            append("\n\nBased strictly on the above, provide a recap of the content read so far.")
-        }
+        val (systemInstruction, promptContext) = recapByokPrompts(pastSummaries, currentText)
+        callByokTextAi(
+            context = context,
+            feature = AiFeature.RECAP,
+            systemInstruction = systemInstruction,
+            userPrompt = promptContext,
+            temperature = 0.3,
+            maxTokens = 4096,
+            onUpdate = onUpdate,
+            onError = onError
+        )
+        onFinish()
+        return
+    }
+
+    // Pro parity with iOS: a configured BYOK model+key for recaps
+    // bypasses the credited worker for this request.
+    if (isByokModelReady(context, AiFeature.RECAP)) {
+        val (systemInstruction, promptContext) = recapByokPrompts(pastSummaries, currentText)
         callByokTextAi(
             context = context,
             feature = AiFeature.RECAP,

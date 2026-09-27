@@ -73,7 +73,7 @@ class AndroidSettingsHubModelsTest {
     }
 
     @Test
-    fun `non oss settings do not expose oss ai key settings`() {
+    fun `non oss settings expose ai keys and models like ios`() {
         val model = sharedSettingsHubModel(
             androidSettingsHubInput(
                 uiState = ReaderScreenState(isProUser = true),
@@ -84,12 +84,12 @@ class AndroidSettingsHubModelsTest {
         )
         val actions = model.visibleNestedActions()
 
-        assertFalse(SharedSettingsAction.AI_SETTINGS in actions)
+        assertTrue(SharedSettingsAction.AI_SETTINGS in actions)
         assertTrue(SharedSettingsAction.HIDE_READER_AI in actions)
         assertTrue(SharedSettingsAction.CLOUD_SYNC in actions)
         assertFalse(SharedSettingsAction.SUPPORT in actions)
         assertEquals(
-            "TTS",
+            "TTS & AI",
             model.rootCategories.single { it.destination == SharedSettingsDestination.TTS_AI }.title
         )
     }
