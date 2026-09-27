@@ -1270,7 +1270,10 @@ data class ReaderCloudTtsState(
     val statusMessage: String? = null,
     val errorMessage: String? = null,
     val progress: ReaderTtsProgress = ReaderTtsProgress(),
-    val cacheSummary: ReaderTtsCacheSummary = ReaderTtsCacheSummary()
+    val cacheSummary: ReaderTtsCacheSummary = ReaderTtsCacheSummary(),
+    // USD session spend in micro-dollars (credited Fish path only; the worker
+    // reports it per chunk via X-Tts-Cost-Micros). Android benchmark parity.
+    val cloudSessionSpendMicros: Long = 0L
 )
 
 data class ReaderCloudTtsControlsModel(

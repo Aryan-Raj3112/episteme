@@ -78,6 +78,7 @@ fun SharedMobileAiResultContent(
      * `aiCredits != null`.
      */
     showUsageBadge: Boolean = true,
+    walletMigrated: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val popupTts = rememberSharedMobileEpubLocalTts()
@@ -117,7 +118,8 @@ fun SharedMobileAiResultContent(
                     cost = cost,
                     freeRemaining = freeRemaining,
                     isCacheHit = isCacheHit,
-                    isLoading = isLoading
+                    isLoading = isLoading,
+                    walletMigrated = walletMigrated
                 )
             }
         }
@@ -228,7 +230,8 @@ internal fun SharedAiUsageBadge(
     cost: Double?,
     freeRemaining: Int?,
     isCacheHit: Boolean,
-    isLoading: Boolean
+    isLoading: Boolean,
+    walletMigrated: Boolean = false,
 ) {
     val isFreeGenerated = cost == 0.0 && freeRemaining != null
     val highlighted = isCacheHit || isFreeGenerated
@@ -245,7 +248,7 @@ internal fun SharedAiUsageBadge(
                     "Generated · %1\$d free left",
                     freeRemaining
                 )
-                cost != null -> readerString("ai_generated_cost", "Cost: %1\$s", cost.toString())
+                cost != null -> readerString("ai_generated_cost", "Cost: %1\$s", com.aryan.reader.shared.formatAiCostDeducted(cost, walletMigrated))
                 else -> readerString("ai_generating_cost_calculating", "Calculating cost…")
             },
             style = MaterialTheme.typography.labelSmall,
@@ -298,6 +301,7 @@ fun SharedMobileAiTextResultSheet(
     ttsBookTitle: String,
     onDismiss: () -> Unit,
     showUsageBadge: Boolean = true,
+    walletMigrated: Boolean = false,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -324,6 +328,7 @@ fun SharedMobileAiTextResultSheet(
                 ttsBookTitle = ttsBookTitle,
                 ttsChapterTitle = result.title.orEmpty(),
                 showUsageBadge = showUsageBadge,
+                walletMigrated = walletMigrated,
             )
         }
     }

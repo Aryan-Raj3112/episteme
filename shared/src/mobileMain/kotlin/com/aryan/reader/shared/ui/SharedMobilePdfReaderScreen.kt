@@ -437,6 +437,8 @@ fun SharedMobilePdfReaderScreen(
     modifier: Modifier = Modifier,
     summaryCache: SharedSummaryCache? = null,
     aiCredits: Int? = null,
+    walletMicros: Long = 0L,
+    walletMigrated: Boolean = false,
     initialShowTopToolbar: Boolean = true,
     onShowTopToolbarChange: (Boolean) -> Unit = {},
     initialShowBottomToolbar: Boolean = true,
@@ -625,6 +627,8 @@ fun SharedMobilePdfReaderHost(
     isSplitPane: Boolean = false,
     summaryCache: SharedSummaryCache? = null,
     aiCredits: Int? = null,
+    walletMicros: Long = 0L,
+    walletMigrated: Boolean = false,
     /**
      * Android parity (PdfToolbars includeDebugActions = BuildConfig.DEBUG):
      * debug builds expose the "Try Episteme" demo artwork action.
@@ -4674,6 +4678,7 @@ fun SharedMobilePdfReaderHost(
                     ttsBookTitle = book.title?.takeIf { it.isNotBlank() } ?: book.displayName,
                     onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
                     showUsageBadge = aiCredits != null,
+                    walletMigrated = walletMigrated,
                 )
             }
         }
@@ -4755,6 +4760,8 @@ fun SharedMobilePdfReaderHost(
             cacheEntries = hubCacheEntries,
             showCacheTab = summaryCache != null,
             credits = aiCredits,
+            walletMicros = walletMicros,
+            walletMigrated = walletMigrated,
             aiResult = readerExtrasState.aiResult,
             isMainTtsActive = isPdfTtsPlayingOrLoading,
             onGenerateSummary = {

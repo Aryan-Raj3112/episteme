@@ -365,6 +365,10 @@ data class SharedReaderScreenState(
     val isAuthMenuExpanded: Boolean = false,
     val isProUser: Boolean = false,
     val credits: Int = 0,
+    // USD wallet (micro-dollars), Android benchmark parity. iOS reads these
+    // from the same users/{uid} document (balance_micros/credits_migrated).
+    val walletMicros: Long = 0L,
+    val walletMigrated: Boolean = false,
     val isSyncEnabled: Boolean = false,
     val isFolderSyncEnabled: Boolean = false,
     val bannerMessage: BannerMessage? = null,

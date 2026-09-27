@@ -68,6 +68,8 @@ fun SharedMobileAiHubSheet(
     cacheEntries: List<CachedSummary>,
     showCacheTab: Boolean,
     credits: Int?,
+    walletMicros: Long = 0L,
+    walletMigrated: Boolean = false,
     aiResult: ReaderAiResultState,
     isMainTtsActive: Boolean,
     onGenerateSummary: () -> Unit,
@@ -108,7 +110,7 @@ fun SharedMobileAiHubSheet(
                             shape = MaterialTheme.shapes.small,
                         ) {
                             Text(
-                                text = "⭐ $credits",
+                                text = com.aryan.reader.shared.spendableDisplayText(credits ?: 0, walletMicros, walletMigrated),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
@@ -166,10 +168,8 @@ fun SharedMobileAiHubSheet(
                                 isMainTtsActive = isMainTtsActive,
                                 ttsBookTitle = bookTitle,
                                 ttsChapterTitle = cachedSummary.sectionTitle,
-                                // iOS parity (IosFeatureGating.SHOW_CREDITS_PURCHASE):
-                                // no credits UI until credits launch; the badge
-                                // lights up automatically once credits flow.
-                                showUsageBadge = credits != null,
+showUsageBadge = credits != null,
+                                walletMigrated = walletMigrated,
                             )
                         } else {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -227,6 +227,7 @@ fun SharedMobileAiHubSheet(
                             ttsBookTitle = bookTitle,
                             ttsChapterTitle = sectionTitle,
                             showUsageBadge = credits != null,
+                            walletMigrated = walletMigrated,
                         )
                     }
                 }
@@ -286,6 +287,7 @@ fun SharedMobileAiHubSheet(
                             ttsBookTitle = bookTitle,
                             ttsChapterTitle = readerString("ai_output_title", "AI Output"),
                             showUsageBadge = credits != null,
+                            walletMigrated = walletMigrated,
                         )
                     }
                 }

@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Feedback
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -488,7 +489,7 @@ class ReaderIosBridge internal constructor(
     private var restorePurchasesHandler: (() -> Unit)? = null
     private var authHandler: ((String) -> Unit)? = null
     private var signOutHandler: (() -> Unit)? = null
-    private var liveEntitlementsHandler: ((Boolean, Int) -> Unit)? = null
+    private var liveEntitlementsHandler: ((Boolean, Int, Long, Boolean) -> Unit)? = null
     private var currentDeviceRevokedHandler: (() -> Unit)? = null
     private var cloudSyncHandler: ((String) -> Unit)? = null
     private var cloudUploadHandler: ((String) -> Unit)? = null
@@ -1249,6 +1250,11 @@ class ReaderIosBridge internal constructor(
         credits100Description: String? = null,
         credits300Description: String? = null,
         credits750Description: String? = null,
+        topupPrices: Map<String, String> = emptyMap(),
+        topupNames: Map<String, String> = emptyMap(),
+        topupDescriptions: Map<String, String> = emptyMap(),
+        walletMicros: Long = 0L,
+        walletMigrated: Boolean = false,
         isVerifying: Boolean = false,
         hasAccountConflict: Boolean = false,
         status: String?,
@@ -1275,6 +1281,11 @@ class ReaderIosBridge internal constructor(
                 IosStoreKitProductIds.CREDITS_300 to credits300Description,
                 IosStoreKitProductIds.CREDITS_750 to credits750Description,
             ).filterValues { it != null }.mapValues { it.value!! },
+            topupPrices = topupPrices,
+            topupNames = topupNames,
+            topupDescriptions = topupDescriptions,
+            walletMicros = walletMicros,
+            walletMigrated = walletMigrated,
             isVerifying = isVerifying,
             hasAccountConflict = hasAccountConflict,
             status = status,
@@ -1296,7 +1307,7 @@ class ReaderIosBridge internal constructor(
      * snapshot through this handler so a Pro downgrade or credit change is
      * reflected while the app is open — not only at sign-in/purchase.
      */
-    fun setLiveEntitlementsHandler(handler: ((isPro: Boolean, credits: Int) -> Unit)?) {
+    fun setLiveEntitlementsHandler(handler: ((isPro: Boolean, credits: Int, walletMicros: Long, walletMigrated: Boolean) -> Unit)?) {
         liveEntitlementsHandler = handler
     }
 
@@ -1312,8 +1323,8 @@ class ReaderIosBridge internal constructor(
     }
 
     /** Pushes a live entitlement snapshot from the Firestore profile listener. */
-    fun updateLiveAccountEntitlements(isPro: Boolean, credits: Int) {
-        liveEntitlementsHandler?.invoke(isPro, credits)
+    fun updateLiveAccountEntitlements(isPro: Boolean, credits: Int, walletMicros: Long = 0L, walletMigrated: Boolean = false) {
+        liveEntitlementsHandler?.invoke(isPro, credits, walletMicros, walletMigrated)
     }
 
     /** Notifies the shared app that this installation was revoked remotely. */
@@ -1687,6 +1698,13 @@ internal object IosStoreKitProductIds {
     const val CREDITS_100 = "credits_100"
     const val CREDITS_300 = "credits_300"
     const val CREDITS_750 = "credits_750"
+    // USD wallet top-ups (micro-dollars), Android benchmark parity. Legacy
+    // credits_* stay valid server-side for old versions; the app offers
+    // top-ups only.
+    const val TOPUP_1 = "topup_1"
+    const val TOPUP_5 = "topup_5"
+    const val TOPUP_10 = "topup_10"
+    const val TOPUP_20 = "topup_20"
 }
 
 internal data class IosLocalStoreKitState(
@@ -1699,6 +1717,13 @@ internal data class IosLocalStoreKitState(
     val creditPrices: Map<String, String> = emptyMap(),
     val creditNames: Map<String, String> = emptyMap(),
     val creditDescriptions: Map<String, String> = emptyMap(),
+    // USD wallet (Android benchmark parity): App Store top-up catalog by
+    // product id + ledger from users/{uid} (balance_micros/credits_migrated).
+    val topupPrices: Map<String, String> = emptyMap(),
+    val topupNames: Map<String, String> = emptyMap(),
+    val topupDescriptions: Map<String, String> = emptyMap(),
+    val walletMicros: Long = 0L,
+    val walletMigrated: Boolean = false,
     val isVerifying: Boolean = false,
     val hasAccountConflict: Boolean = false,
     val status: String? = null,
@@ -2845,6 +2870,8 @@ private fun ReaderIosApp(
                     isSignedIn = bridge.accountState.uid != null,
                     isProUser = state.isProUser,
                     credits = state.credits,
+                    walletMicros = state.walletMicros,
+                    walletMigrated = state.walletMigrated,
                 )
             },
             authTokenProvider = { bridge.accountState.authToken },
@@ -2877,6 +2904,8 @@ private fun ReaderIosApp(
         bridge.accountState.authToken,
         state.isProUser,
         state.credits,
+        state.walletMicros,
+        state.walletMigrated,
     ) {
         readerCloudTts.configure(
             settings = effectiveReaderAiSettings,
@@ -2885,6 +2914,8 @@ private fun ReaderIosApp(
             credits = state.credits,
             authToken = bridge.accountState.authToken,
             workerUrl = IOS_READER_AI_WORKER_URL,
+            walletMicros = state.walletMicros,
+            walletMigrated = state.walletMigrated,
         )
     }
     var readerExtrasState by remember { mutableStateOf(com.aryan.reader.shared.ReaderExtrasState()) }
@@ -3001,10 +3032,12 @@ private fun ReaderIosApp(
     // (cloudSyncEligible() reads state.isProUser) instead of surviving until
     // the next sign-in, and credits stay current while the app is open.
     DisposableEffect(Unit) {
-        bridge.setLiveEntitlementsHandler { isPro, credits ->
+        bridge.setLiveEntitlementsHandler { isPro, credits, walletMicros, walletMigrated ->
             state = state.copy(
                 isProUser = isPro,
                 credits = credits.coerceAtLeast(0),
+                walletMicros = walletMicros.coerceAtLeast(0L),
+                walletMigrated = walletMigrated,
             )
         }
         onDispose { bridge.setLiveEntitlementsHandler(null) }
@@ -3015,7 +3048,7 @@ private fun ReaderIosApp(
     DisposableEffect(Unit) {
         bridge.setCurrentDeviceRevokedHandler {
             state = state
-                .copy(isProUser = false, credits = 0, isSyncEnabled = false)
+                .copy(isProUser = false, credits = 0, walletMicros = 0L, walletMigrated = false, isSyncEnabled = false)
                 .withMessage(IosDeviceRemovedMessage)
             bridge.recordNativeEvent(IosDeviceRemovedMessage)
         }
@@ -3059,10 +3092,15 @@ private fun ReaderIosApp(
     LaunchedEffect(bridge.localStoreKitState) {
         val store = bridge.localStoreKitState
         // Product catalog loading is independent from durable account grants.
-        // Keep server-projected Pro/credits visible even when StoreKit prices
-        // are unavailable or still loading.
-        if (store.entitlementsLoaded && (state.isProUser != store.proUnlocked || state.credits != store.credits)) {
-            state = state.copy(isProUser = store.proUnlocked, credits = store.credits)
+        // Keep server-projected Pro/credits/wallet visible even when StoreKit
+        // prices are unavailable or still loading.
+        if (store.entitlementsLoaded && (state.isProUser != store.proUnlocked || state.credits != store.credits || state.walletMicros != store.walletMicros || state.walletMigrated != store.walletMigrated)) {
+            state = state.copy(
+                isProUser = store.proUnlocked,
+                credits = store.credits,
+                walletMicros = store.walletMicros,
+                walletMigrated = store.walletMigrated,
+            )
         }
     }
     LaunchedEffect(bridge.accountState) {
@@ -3076,6 +3114,8 @@ private fun ReaderIosApp(
                 currentUser = null,
                 isProUser = false,
                 credits = 0,
+                walletMicros = 0L,
+                walletMigrated = false,
                 isSyncEnabled = if (account.hasLoaded) false else state.isSyncEnabled,
             )
         } else {
@@ -3088,6 +3128,8 @@ private fun ReaderIosApp(
                 ),
                 isProUser = if (previousUid != account.uid) false else state.isProUser,
                 credits = if (previousUid != account.uid) 0 else state.credits,
+                walletMicros = if (previousUid != account.uid) 0L else state.walletMicros,
+                walletMigrated = if (previousUid != account.uid) false else state.walletMigrated,
                 isSyncEnabled = if (account.hasLoaded) {
                     state.isSyncEnabled && account.canSync
                 } else {
@@ -4120,6 +4162,8 @@ private fun ReaderIosApp(
                 ),
                 isProUser = state.isProUser,
                 credits = state.credits,
+                walletMicros = state.walletMicros,
+                walletMigrated = state.walletMigrated,
                 // StoreKit catalog availability is transient service state,
                 // not an edition signal. Keep edition unknown until the
                 // host exposes a real build-time capability.
@@ -4157,9 +4201,8 @@ private fun ReaderIosApp(
             // hidden until that backend is ported (IosFeatureGating).
             showSyncControls = IosFeatureGating.SHOW_CLOUD_SYNC,
             showFolderSyncControls = IosFeatureGating.SHOW_DRIVE_FOLDER_SYNC,
-            // Intentional temporary iOS scope: credits badge hidden in favor
-            // of Pro status while credits purchase is hidden.
-            showCreditsBalance = IosFeatureGating.SHOW_CREDITS_PURCHASE,
+            // Wallet balance badge next to Pro status.
+            showCreditsBalance = IosFeatureGating.SHOW_WALLET_TOPUP,
             isSyncEnabled = state.isSyncEnabled,
             isFolderSyncEnabled = state.isFolderSyncEnabled,
             isCloudSyncing = bridge.isCloudSyncing,
@@ -4771,8 +4814,6 @@ private fun ReaderIosApp(
             onOpenSplit = onOpenSplit,
             readerAiAvailable = readerAiAvailable,
             readerExtrasState = readerExtrasState.copy(cloudTts = readerCloudTts.state),
-            // Intentional temporary iOS scope: hide cloud TTS UI by passing
-            // null while keeping readerCloudTts logic/configured for later.
             cloudTts = if (IosFeatureGating.SHOW_CLOUD_TTS) readerCloudTts else null,
             cloudTtsModeEnabled = effectiveReaderAiSettings.ttsModel == com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID,
             onCloudTtsModeChange = ::updateCloudTtsMode,
@@ -4785,9 +4826,9 @@ private fun ReaderIosApp(
             },
             onOpenAiHub = { utilityScreen = IosUtilityScreen.AI_SETTINGS },
             summaryCache = remember { SharedSummaryCache() },
-            // Intentional temporary iOS scope: hide credits balance while
-            // keeping state.credits data for later.
-            aiCredits = if (IosFeatureGating.SHOW_CREDITS_PURCHASE) state.credits else null,
+            aiCredits = if (IosFeatureGating.SHOW_WALLET_TOPUP) state.credits else null,
+            walletMicros = state.walletMicros,
+            walletMigrated = state.walletMigrated,
             pdfReflowUiState = SharedMobilePdfReflowUiState(
                 isGenerating = pdfReflowProgress != null,
                 progress = pdfReflowProgress ?: 0f,
@@ -5370,8 +5411,6 @@ private fun ReaderIosApp(
                             onOpenDictionarySettings = { showDictionarySettingsSheet = true },
                             readerAiAvailable = readerAiAvailable,
                             readerExtrasState = readerExtrasState.copy(cloudTts = readerCloudTts.state),
-                            // Intentional temporary iOS scope: hide cloud TTS UI
-                            // by passing null while keeping the controller for later.
                             cloudTts = if (IosFeatureGating.SHOW_CLOUD_TTS) readerCloudTts else null,
                             cloudTtsModeEnabled = effectiveReaderAiSettings.ttsModel == com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID,
                             onCloudTtsModeChange = ::updateCloudTtsMode,
@@ -5386,9 +5425,9 @@ private fun ReaderIosApp(
                             },
                             onOpenAiHub = {},
                             summaryCache = remember { SharedSummaryCache() },
-                            // Intentional temporary iOS scope: hide credits
-                            // balance while keeping state.credits data.
-                            aiCredits = if (IosFeatureGating.SHOW_CREDITS_PURCHASE) state.credits else null,
+                            aiCredits = if (IosFeatureGating.SHOW_WALLET_TOPUP) state.credits else null,
+                            walletMicros = state.walletMicros,
+                            walletMigrated = state.walletMigrated,
                             externalLocalTts = readerTtsEngine,
                             onReaderTtsSessionChange = {
                                 readerTtsMiniBarState = it
@@ -5882,12 +5921,27 @@ private fun ReaderIosApp(
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
-                    IosUtilityScreen.AI_SETTINGS -> SharedAiSettingsScreen(
+                    IosUtilityScreen.AI_SETTINGS -> {
+                        var iosFishVoices by remember { mutableStateOf(emptyList<com.aryan.reader.shared.ReaderFishVoice>()) }
+                        var iosFishVoicesLoading by remember { mutableStateOf(false) }
+                        LaunchedEffect(
+                            effectiveReaderAiSettings.fishKey,
+                            bridge.accountState.uid,
+                            bridge.accountState.authToken,
+                        ) {
+                            iosFishVoicesLoading = true
+                            iosFishVoices = iosFetchFishVoices(
+                                fishKey = effectiveReaderAiSettings.fishKey,
+                                workerBaseUrl = IOS_TTS_WORKER_URL,
+                                authToken = bridge.accountState.authToken,
+                            )
+                            iosFishVoicesLoading = false
+                        }
+                        SharedAiSettingsScreen(
                         settings = effectiveReaderAiSettings,
                         maskedKeys = readerAiSettingsStore.maskedKeys(),
                         strings = SharedAiSettingsStrings(
-                            // Intentional temporary iOS scope: cloud TTS is
-                            // hidden, so the title stays Pro/AI-only for now.
+                            // Cloud TTS ships on iOS now, so the full title applies.
                             title = if (IosFeatureGating.SHOW_CLOUD_TTS) {
                                 readerString("ai_settings_title", "AI and cloud TTS")
                             } else {
@@ -5919,8 +5973,7 @@ private fun ReaderIosApp(
                             cloudTts = readerString("credits_cloud_tts_title", "Cloud TTS"),
                             cloudTtsDescription = readerString(
                                 "ai_settings_cloud_tts_desc",
-                                "Use %1\$s for natural reading aloud when signed in or using your own Gemini key.",
-                                com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL,
+                                "Natural reading aloud via the wallet when signed in, or your own Gemini/Fish key.",
                             ),
                             modelLabel = readerString("label_model", "Model"),
                             noModelSelected = readerString("ai_settings_no_model_selected", "No model selected"),
@@ -5935,7 +5988,7 @@ private fun ReaderIosApp(
                             saveAction = readerString("action_save", "Save"),
                             deleteAction = readerString("action_delete", "Delete"),
                             cancelAction = readerString("action_cancel", "Cancel"),
-                            providerLabels = mapOf("gemini" to "Gemini", "groq" to "Groq"),
+                            providerLabels = mapOf("gemini" to "Gemini", "groq" to "Groq", "fish" to "Fish Audio"),
                             saveDialogTitle = { provider ->
                                 stringResolver.string("dialog_save_provider_key", "Save %1\$s key?", provider)
                             },
@@ -5961,11 +6014,12 @@ private fun ReaderIosApp(
                         },
                         cloudCacheSummary = readerCloudTts.state.cacheSummary,
                         onClearCloudTtsCache = readerCloudTts::clearCache,
-                        // Intentional temporary iOS scope: cloud TTS controls
-                        // hidden (controller logic kept for later).
                         showCloudTts = IosFeatureGating.SHOW_CLOUD_TTS,
+                        fishVoices = iosFishVoices,
+                        fishVoicesLoading = iosFishVoicesLoading,
                         modifier = Modifier.fillMaxSize().statusBarsPadding(),
                     )
+                    }
                     IosUtilityScreen.LANGUAGE -> IosUtilityPage(title = readerString("options_language", "Language"), onBack = { utilityScreen = languageReturnScreen }) {
                         // Android parity: the same search-filtered, radio-buttoned
                         // list as HomeScreen's LanguageSelectionDialog, with the
@@ -7797,10 +7851,8 @@ private fun IosLocalStoreKitScreen(
     // Intentional temporary iOS scope: empty title matches Android's
     // `TopAppBar(title = { })`.
     IosUtilityPage(title = "", onBack = onBack) {
-        // Intentional temporary iOS scope: single Pro tab while credits
-        // purchase is hidden. Flip SHOW_CREDITS_PURCHASE to restore the
-        // second tab (matches Android's `pro` flavor tabCount).
-        val tabCount = if (IosFeatureGating.SHOW_CREDITS_PURCHASE) 2 else 1
+        // Android parity (`ProScreen`): Pro tab + Wallet tab.
+        val tabCount = 2
         val pagerState = rememberPagerState(initialPage = 0) { tabCount }
         var selectedTabIndex by remember { mutableStateOf(0) }
         val scope = rememberCoroutineScope()
@@ -7817,9 +7869,7 @@ private fun IosLocalStoreKitScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Spacer(modifier = Modifier.height(16.dp))
-            // Single-tab scope: the star/Episteme Pro tab button is hidden while
-            // credits purchase is gated. The TabRow returns with the credits tab
-            // when SHOW_CREDITS_PURCHASE flips back on.
+            // Pro + Wallet tabs (Android `ProScreen` parity).
             if (tabCount > 1) {
             TabRow(
                 selectedTabIndex = selectedTabIndex,
@@ -7872,8 +7922,8 @@ private fun IosLocalStoreKitScreen(
                     unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 // Intentional temporary iOS scope: credits tab hidden with
-                // credits purchase (kept for later).
-                if (IosFeatureGating.SHOW_CREDITS_PURCHASE) {
+                // Wallet tab (Android `ProScreen` parity).
+                if (IosFeatureGating.SHOW_WALLET_TOPUP) {
                     Tab(
                         selected = selectedTabIndex == 1,
                         onClick = { selectedTabIndex = 1 },
@@ -7890,7 +7940,7 @@ private fun IosLocalStoreKitScreen(
                             ),
                         text = {
                             Text(
-                                readerString("credits_tab", "Credits"),
+                                readerString("credits_tab", "Wallet"),
                                 color = if (selectedTabIndex == 1) {
                                     MaterialTheme.colorScheme.primary
                                 } else {
@@ -7919,11 +7969,9 @@ private fun IosLocalStoreKitScreen(
                         onShowExistingPurchaseDialog = { showExistingPurchaseDialog = true },
                         onSignInRequiredClick = { showSignInRequiredDialog = true },
                     )
-                    // Intentional temporary iOS scope: unreachable while
-                    // credits purchase is hidden; kept so re-enabling is a
-                    // flag flip.
-                    1 -> if (IosFeatureGating.SHOW_CREDITS_PURCHASE) {
-                        IosCreditTierCard(
+                    // Wallet tab (Android `ProScreen` parity).
+                    1 -> if (IosFeatureGating.SHOW_WALLET_TOPUP) {
+                        IosWalletTierCard(
                             store = store,
                             isSignedIn = account.uid != null,
                             onBuyCredits = onPurchase,
@@ -7960,10 +8008,7 @@ private fun IosLocalStoreKitScreen(
  * anchor price, one-time/lifetime pill, feature list, gated CTA, footer.
  * The crown drawable has no iOS counterpart; a tinted star carries the same
  * visual role. Feature icons map Android drawables to Material icons
- * (summarize -> Ai, dictionary -> Book, priority/chat -> Feedback).
- * Intentional temporary iOS scope: the Cloud Sync feature row is removed
- * while cloud sync logic is kept (see IosFeatureGating). Re-add it with the
- * other rows when cloud sync returns.
+ * (sync -> Sync, summarize -> Ai, dictionary -> Book, priority/chat -> Feedback).
  */
 @Composable
 private fun IosProTierCard(
@@ -8057,9 +8102,17 @@ private fun IosProTierCard(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
-                // Intentional temporary iOS scope: Cloud Sync row removed
-                // (Android `feature_cloud_sync` parity kept in strings for
-                // later). Only non-sync Pro features remain for now.
+                // Android parity (`ProScreen`): Cloud Sync ships in the
+                // feature list now that the offerings match. iOS syncs via
+                // iCloud (CloudKit backend); copy stays close to Android's.
+                IosProFeatureItem(
+                    icon = Icons.Default.Sync,
+                    title = readerString("feature_cloud_sync", "Cloud Sync Across Devices"),
+                    description = readerString(
+                        "feature_cloud_sync_desc",
+                        "Keep your library and reading progress synced across your Apple devices via iCloud.",
+                    ),
+                )
                 IosProFeatureItem(
                     icon = Icons.Default.Ai,
                     title = readerString("feature_summarize", "Summarization"),
@@ -8261,14 +8314,11 @@ private fun IosProFeatureItem(
 }
 
 /**
- * Android parity (`ProScreen.CreditTierCard` + `CostBreakdownItem`): credit
- * balance, per-product cards with App Store names/descriptions, estimated
- * cost breakdown.
- * Intentional temporary iOS scope: currently unreachable (no credits tab
- * while SHOW_CREDITS_PURCHASE is false). Kept intact for later.
+ * Android parity (`ProScreen.CreditTierCard`): USD wallet balance, per-product
+ * top-up cards with App Store names/descriptions, estimated cost breakdown.
  */
 @Composable
-private fun IosCreditTierCard(
+private fun IosWalletTierCard(
     store: IosLocalStoreKitState,
     isSignedIn: Boolean,
     onBuyCredits: (String) -> Unit,
@@ -8285,19 +8335,19 @@ private fun IosCreditTierCard(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                readerString("credits_title", "AI & Cloud Credits"),
+                readerString("credits_title", "Wallet"),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "${store.credits}",
+                text = com.aryan.reader.shared.formatMicrosUsd(store.walletMicros),
                 style = MaterialTheme.typography.displaySmall.copy(fontSize = 48.sp),
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
             )
             Text(
-                readerString("credits_available", "Credits Available"),
+                readerString("credits_available", "Balance Available"),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -8308,17 +8358,18 @@ private fun IosCreditTierCard(
                     readerString("verifying_purchase", "Verifying purchase…"),
                     style = MaterialTheme.typography.bodySmall,
                 )
-            } else if (store.creditPrices.isEmpty()) {
+            } else if (store.topupPrices.isEmpty()) {
                 Text(
                     readerString("loading_price", "Loading price…"),
                     modifier = Modifier.padding(16.dp),
                 )
             } else {
                 listOf(
-                    IosStoreKitProductIds.CREDITS_100,
-                    IosStoreKitProductIds.CREDITS_300,
-                    IosStoreKitProductIds.CREDITS_750,
-                ).filter { store.creditPrices.containsKey(it) }.forEach { productId ->
+                    IosStoreKitProductIds.TOPUP_1,
+                    IosStoreKitProductIds.TOPUP_5,
+                    IosStoreKitProductIds.TOPUP_10,
+                    IosStoreKitProductIds.TOPUP_20,
+                ).filter { store.topupPrices.containsKey(it) }.forEach { productId ->
                     OutlinedCard(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
@@ -8330,11 +8381,11 @@ private fun IosCreditTierCard(
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                                 Text(
-                                    store.creditNames[productId] ?: productId,
+                                    store.topupNames[productId] ?: productId,
                                     fontWeight = FontWeight.Bold,
                                     style = MaterialTheme.typography.bodyLarge,
                                 )
-                                store.creditDescriptions[productId]?.takeIf { it.isNotBlank() }?.let { desc ->
+                                store.topupDescriptions[productId]?.takeIf { it.isNotBlank() }?.let { desc ->
                                     Text(
                                         desc,
                                         style = MaterialTheme.typography.bodySmall,
@@ -8348,7 +8399,7 @@ private fun IosCreditTierCard(
                                 },
                                 modifier = Modifier.wrapContentWidth(),
                             ) {
-                                Text(store.creditPrices[productId].orEmpty())
+                                Text(store.topupPrices[productId].orEmpty())
                             }
                         }
                     }
@@ -8359,7 +8410,7 @@ private fun IosCreditTierCard(
                 Text(
                     readerString(
                         "sign_in_to_purchase_credits",
-                        "Please sign in to your Episteme account to purchase credits.",
+                        "Please sign in to your Episteme account to top up.",
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,
@@ -8381,7 +8432,7 @@ private fun IosCreditTierCard(
                 title = readerString("credits_cloud_tts_title", "Cloud TTS"),
                 description = readerString(
                     "credits_cloud_tts_desc",
-                    "Cost: ~3–4 credits per minute of audio generated.",
+                    "Cost: ~$0.04 per minute of audio generated.",
                 ),
             )
             IosCostBreakdownItem(
@@ -8389,7 +8440,7 @@ private fun IosCreditTierCard(
                 title = readerString("credits_ai_summaries_title", "AI Summaries & Recap"),
                 description = readerString(
                     "credits_ai_summaries_desc",
-                    "Cost: ~1–4 credits per request based on chapter length.\nPro Users get 10 free summaries daily.",
+                    "Cost: up to $0.05 per request based on chapter length.\nPro Users get 10 free summaries daily.",
                 ),
             )
             Spacer(modifier = Modifier.height(24.dp))

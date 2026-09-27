@@ -16,15 +16,15 @@ import kotlin.test.assertTrue
 class IosFeatureGatingTest {
 
     @Test
-    fun `ios shows cloudkit library sync but hides google folder-drive-clear-credits-tts`() {
+    fun `ios shows cloudkit library sync but hides google folder-drive-clear`() {
         assertFalse(IosFeatureGating.SHOW_GOOGLE_SIGN_IN)
         assertTrue(IosFeatureGating.SHOW_CLOUD_SYNC)
         // CloudKit authenticates with iCloud; Google/Drive must not gate sync.
         assertFalse(IosFeatureGating.REQUIRES_GOOGLE_DRIVE_FOR_SYNC)
         assertFalse(IosFeatureGating.SHOW_DRIVE_FOLDER_SYNC)
         assertFalse(IosFeatureGating.SHOW_CLOUD_DATA_CLEAR)
-        assertFalse(IosFeatureGating.SHOW_CREDITS_PURCHASE)
-        assertFalse(IosFeatureGating.SHOW_CLOUD_TTS)
+        assertTrue(IosFeatureGating.SHOW_WALLET_TOPUP)
+        assertTrue(IosFeatureGating.SHOW_CLOUD_TTS)
     }
 
     @Test

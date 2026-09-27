@@ -230,6 +230,8 @@ fun SharedMobileEpubReaderScreen(
     onOpenAiHub: () -> Unit = {},
     summaryCache: SharedSummaryCache? = null,
     aiCredits: Int? = null,
+    walletMicros: Long = 0L,
+    walletMigrated: Boolean = false,
     readerBrightness: Float? = null,
     readerCustomBrightness: Float = com.aryan.reader.shared.DefaultReaderCustomBrightness,
     readerBrightnessSupported: Boolean = false,
@@ -3106,6 +3108,7 @@ fun SharedMobileEpubReaderScreen(
                 ttsBookTitle = book.displayName,
                 onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
                 showUsageBadge = aiCredits != null,
+                walletMigrated = walletMigrated,
             )
         }
     }
@@ -3125,6 +3128,8 @@ fun SharedMobileEpubReaderScreen(
             cacheEntries = hubCacheEntries,
             showCacheTab = summaryCache != null,
             credits = aiCredits,
+            walletMicros = walletMicros,
+            walletMigrated = walletMigrated,
             aiResult = readerExtrasState.aiResult,
             isMainTtsActive = localTts.isSessionActive,
             onGenerateSummary = {

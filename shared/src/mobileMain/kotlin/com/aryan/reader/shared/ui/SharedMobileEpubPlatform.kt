@@ -289,6 +289,10 @@ interface SharedMobileEpubCloudTts {
         credits: Int,
         authToken: String?,
         workerUrl: String,
+        // USD wallet (Android benchmark parity). Defaulted so existing
+        // call sites keep compiling; iOS passes live values.
+        walletMicros: Long = 0L,
+        walletMigrated: Boolean = false,
     )
 
     fun start(

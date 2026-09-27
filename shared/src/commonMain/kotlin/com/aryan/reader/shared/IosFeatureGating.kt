@@ -1,13 +1,10 @@
 package com.aryan.reader.shared
 
 /**
- * Intentional temporary iOS launch scope.
- *
- * For now iOS hides Google sign-in, cloud sync (library + folder backup),
- * credits purchase, and cloud TTS from the UI. The underlying logic, data
- * models, sync executors, StoreKit products, and auth handlers are kept
- * intact so the features can be re-enabled later by flipping these flags
- * back to `true` and restoring the gated UI call sites in `ReaderIosApp`.
+ * iOS launch scope. Google sign-in, Drive folder mirror, and the
+ * destructive cloud-data clear stay hidden; wallet top-ups, Cloud TTS, and
+ * CloudKit library sync are visible. Android remains the benchmark and is
+ * unaffected: these flags are only read by iOS surfaces.
  *
  * Android remains the benchmark and is unaffected: these flags are only
  * read by iOS surfaces. Do not reuse them to gate Android behavior.
@@ -45,9 +42,9 @@ object IosFeatureGating {
      */
     const val SHOW_CLOUD_DATA_CLEAR = false
 
-    /** Credits purchase cards and credits-balance upsell. Pro purchase remains. */
-    const val SHOW_CREDITS_PURCHASE = false
+    /** USD wallet top-up cards and wallet-balance upsell. Pro purchase remains. */
+    const val SHOW_WALLET_TOPUP = true
 
-    /** Cloud TTS model/voice/cache controls. Local/device TTS remains. */
-    const val SHOW_CLOUD_TTS = false
+    /** Cloud TTS (Fish via worker + BYOK). Local/device TTS remains. */
+    const val SHOW_CLOUD_TTS = true
 }

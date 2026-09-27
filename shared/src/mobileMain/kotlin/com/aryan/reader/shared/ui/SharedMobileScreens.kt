@@ -94,9 +94,7 @@ fun SharedMobileAppDrawerContent(
      * while its Drive-based folder sync remains hidden.
      */
     showFolderSyncControls: Boolean = showSyncControls,
-    // Temporary iOS launch scope (see IosFeatureGating): iOS passes false to
-    // hide the credits balance badge and show Pro status instead, while the
-    // credits data and purchase logic stay intact. Defaults stay true.
+    // Wallet/spendable-balance badge next to Pro status. Defaults stay true.
     showCreditsBalance: Boolean = true,
     modifier: Modifier = Modifier
 ) {
@@ -105,6 +103,8 @@ fun SharedMobileAppDrawerContent(
             val currentUser = account.currentUser
             val isProUser = account.isProUser
             val credits = account.credits
+            val walletMicros = account.walletMicros
+            val walletMigrated = account.walletMigrated
             val edition = account.edition
             if (currentUser != null) {
                 Column(
@@ -145,16 +145,14 @@ fun SharedMobileAppDrawerContent(
                                     edition == MobileAppEdition.STANDARD -> {
                                         readerString("drawer_standard_version", "Standard version")
                                     }
-                                    // Intentional temporary iOS scope: hide credits
-                                    // balance and emphasize Pro status instead.
-                                    // Credits data/logic is kept for later.
+                                    // No balance badge: emphasize Pro status instead.
                                     !showCreditsBalance -> if (isProUser) {
                                         readerString("drawer_pro_unlocked", "Pro unlocked")
                                     } else {
                                         readerString("drawer_upgrade_pro", "Upgrade to Pro")
                                     }
                                     else -> {
-                                        readerString("credits_count", "%1\$d Credits", credits)
+                                        com.aryan.reader.shared.spendableDisplayText(credits, walletMicros, walletMigrated)
                                     }
                                 },
                                 style = MaterialTheme.typography.labelMedium

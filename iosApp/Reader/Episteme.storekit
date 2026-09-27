@@ -63,6 +63,66 @@
       "productID" : "credits_750",
       "referenceName" : "750 Credits",
       "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "1.00",
+      "familyShareable" : false,
+      "internalID" : "B3A7C2D1-4F5A-4B6C-8D9E-0F1A2B3C4D51",
+      "localizations" : [
+        {
+          "description" : "Adds $1.00 to your wallet for Cloud TTS (~24 min) and AI summaries.",
+          "displayName" : "Starter Top-Up",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "topup_1",
+      "referenceName" : "Starter Top-Up",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "5.00",
+      "familyShareable" : false,
+      "internalID" : "C4B8D3E2-5A6B-4C7D-9E0F-1A2B3C4D5E62",
+      "localizations" : [
+        {
+          "description" : "Adds $5.00 to your wallet - about 2 hours of Cloud TTS, plus AI summaries and recaps.",
+          "displayName" : "Wallet Top-Up $5",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "topup_5",
+      "referenceName" : "Wallet Top-Up $5",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "10.00",
+      "familyShareable" : false,
+      "internalID" : "D5C9E4F3-6B7C-4D8E-0F1A-2B3C4D5E6F73",
+      "localizations" : [
+        {
+          "description" : "Adds $10.00 to your wallet - about 4 hours of Cloud TTS, plus AI summaries and recaps.",
+          "displayName" : "Wallet Top-Up $10",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "topup_10",
+      "referenceName" : "Wallet Top-Up $10",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "20.00",
+      "familyShareable" : false,
+      "internalID" : "E6DAC5A4-7C8D-4E9F-1A2B-3C4D5E6F7084",
+      "localizations" : [
+        {
+          "description" : "Adds $20.00 to your wallet - about 8 hours of Cloud TTS, plus AI summaries and recaps.",
+          "displayName" : "Wallet Top-Up $20",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "topup_20",
+      "referenceName" : "Wallet Top-Up $20",
+      "type" : "Consumable"
     }
   ],
   "settings" : {
