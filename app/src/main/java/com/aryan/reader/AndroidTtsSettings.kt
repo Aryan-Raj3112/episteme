@@ -86,6 +86,7 @@ import com.aryan.reader.tts.TtsPlaybackManager
 import com.aryan.reader.tts.effectiveTtsPreviewSampleText
 import com.aryan.reader.tts.formatBytes
 import com.aryan.reader.tts.googleCloudWorkerTtsUrl
+import com.aryan.reader.tts.saveTtsSpeakerName
 import com.aryan.reader.tts.loadTtsFavoriteVoices
 import com.aryan.reader.tts.loadTtsPreviewSampleText
 import com.aryan.reader.tts.saveTtsFavoriteVoices
@@ -324,7 +325,10 @@ fun AiVoicesTab(
                         }
                     }
                 },
-                modifier = Modifier.clickable(enabled = !isTtsActive && isCloudMode) { onSpeakerChange(voice.id) },
+                modifier = Modifier.clickable(enabled = !isTtsActive && isCloudMode) {
+                    saveTtsSpeakerName(context, voice.name)
+                    onSpeakerChange(voice.id)
+                },
                 colors = ListItemDefaults.colors(
                     containerColor = if (isSelected && isCloudMode) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f) else Color.Transparent
                 )

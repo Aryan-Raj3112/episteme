@@ -132,6 +132,10 @@ import com.aryan.reader.loadNativeVoice
 import com.aryan.reader.readerSliderStepPage
 import com.aryan.reader.shared.ui.ReaderMinimalSlider
 import com.aryan.reader.tts.GEMINI_TTS_SPEAKERS
+import com.aryan.reader.tts.isFishReferenceId
+import com.aryan.reader.tts.loadTtsSpeaker
+import com.aryan.reader.tts.loadTtsSpeakerName
+import com.aryan.reader.tts.normalizeTtsSpeakerId
 import com.aryan.reader.tts.ReaderTtsOverlaySize
 import com.aryan.reader.tts.TtsPlaybackManager.TtsState
 import com.aryan.reader.tts.formatReaderTtsChunkLabel
@@ -1947,7 +1951,8 @@ fun TtsOverlayControls(
                     ) {
                         Row(
                             modifier = Modifier.weight(1f),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Surface(
                                 color = MaterialTheme.colorScheme.primaryContainer,
@@ -1966,11 +1971,22 @@ fun TtsOverlayControls(
                             }
 
                             Surface(
+                                modifier = Modifier.weight(1f, fill = false),
                                 color = MaterialTheme.colorScheme.secondaryContainer,
                                 shape = RoundedCornerShape(8.dp)
                             ) {
                                 val voiceName = if (activeMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
-                                    GEMINI_TTS_SPEAKERS.find { it.id == ttsState.speakerId }?.name ?: ttsState.speakerId
+                                    val speakerId = ttsState.speakerId
+                                    val savedName =
+                                        // Saved at pick time; guarded by id so a stale name
+                                        // never labels a different voice.
+                                        if (normalizeTtsSpeakerId(loadTtsSpeaker(context)) == normalizeTtsSpeakerId(speakerId)) {
+                                            loadTtsSpeakerName(context)
+                                        } else null
+                                    GEMINI_TTS_SPEAKERS.find { it.id == speakerId }?.name
+                                        ?: savedName
+                                        // Last resort: short id, never a raw 32-hex wall.
+                                        ?: if (isFishReferenceId(speakerId)) speakerId.trim().take(6) + "…" else speakerId
                                 } else loadNativeVoice(context)?.split("-")?.lastOrNull() ?: stringResource(R.string.label_default)
 
                                 Text(
@@ -1979,7 +1995,7 @@ fun TtsOverlayControls(
                                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).widthIn(max = 100.dp)
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).widthIn(max = 90.dp)
                                 )
                             }
 
@@ -2000,42 +2016,12 @@ fun TtsOverlayControls(
 
                         Spacer(Modifier.width(8.dp))
 
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            IconButton(onClick = onLocateCurrentChunk, modifier = Modifier.size(48.dp)) {
-                                Icon(
-                                    painterResource(R.drawable.pin_drop),
-                                    "Locate current chunk",
-                                    modifier = Modifier.size(18.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(
-                                onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.MEDIUM) },
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.KeyboardArrowDown,
-                                    stringResource(R.string.content_desc_collapse),
-                                    modifier = Modifier.size(18.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(
-                                onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.SMALL) },
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.KeyboardArrowRight,
-                                    stringResource(R.string.content_desc_collapse),
-                                    modifier = Modifier.size(18.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(onClick = onClose, modifier = Modifier.size(48.dp)) {
-                                Icon(Icons.Default.Close, stringResource(R.string.content_desc_stop_tts), tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
-                            }
+                        IconButton(onClick = onClose, modifier = Modifier.size(40.dp)) {
+                            Icon(Icons.Default.Close, stringResource(R.string.content_desc_stop_tts), tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                         }
                     }
+
+                    Spacer(Modifier.height(6.dp))
 
                     // Spend-guard notice (rate-limit countdown / daily cap) and the
                     // live session-spend line for the USD wallet. Compact by design:
@@ -2073,32 +2059,65 @@ fun TtsOverlayControls(
                         Spacer(Modifier.height(8.dp))
                     }
 
-                    if (chapterLabel != null || progressPercent != null || chunkLabel != null) {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    chapterLabel ?: "Reading",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f).padding(end = 8.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (chapterLabel != null || progressPercent != null || chunkLabel != null) {
+                            Text(
+                                chapterLabel ?: "Reading",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f).padding(end = 8.dp)
+                            )
+                            Text(
+                                listOfNotNull(progressPercent?.let { "$it%" }, chunkLabel).joinToString(" - "),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(end = 8.dp)
+                            )
+                        } else {
+                            Spacer(Modifier.weight(1f))
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            IconButton(onClick = onLocateCurrentChunk, modifier = Modifier.size(36.dp)) {
+                                Icon(
+                                    painterResource(R.drawable.pin_drop),
+                                    "Locate current chunk",
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                Text(
-                                    listOfNotNull(progressPercent?.let { "$it%" }, chunkLabel).joinToString(" - "),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1
+                            }
+                            IconButton(
+                                onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.MEDIUM) },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.KeyboardArrowDown,
+                                    stringResource(R.string.content_desc_collapse),
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(
+                                onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.SMALL) },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.KeyboardArrowRight,
+                                    stringResource(R.string.content_desc_collapse),
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
-
-                        Spacer(Modifier.height(8.dp))
                     }
+
+                    Spacer(Modifier.height(8.dp))
 
                     // Middle Section: Controls
                     Row(
@@ -2160,8 +2179,8 @@ fun TtsOverlayControls(
                         Spacer(Modifier.width(12.dp))
 
                         // Unified Sliders Block
-                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -2171,14 +2190,14 @@ fun TtsOverlayControls(
                                         stringResource(R.string.tts_speed_short, "%.1f".format(rate)),
                                         style = MaterialTheme.typography.labelMedium
                                     )
-                                    IconButton(onClick = { rate = 1.0f; saveAndApply() }, modifier = Modifier.size(48.dp)) {
+                                    IconButton(onClick = { rate = 1.0f; saveAndApply() }, modifier = Modifier.size(40.dp)) {
                                         Icon(Icons.Default.Refresh, stringResource(R.string.content_desc_reset_speed), modifier = Modifier.size(16.dp))
                                     }
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     IconButton(
                                         onClick = { rate = ((rate * 10f).roundToInt() / 10f - 0.1f).coerceAtLeast(0.5f); saveAndApply() },
-                                        modifier = Modifier.size(48.dp)
+                                        modifier = Modifier.size(40.dp)
                                     ) {
                                         Icon(Icons.Default.Remove, contentDescription = null, modifier = Modifier.size(18.dp))
                                     }
@@ -2224,13 +2243,13 @@ fun TtsOverlayControls(
                                     )
                                     IconButton(
                                         onClick = { rate = ((rate * 10f).roundToInt() / 10f + 0.1f).coerceAtMost(3.0f); saveAndApply() },
-                                        modifier = Modifier.size(48.dp)
+                                        modifier = Modifier.size(40.dp)
                                     ) {
                                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                                     }
                                 }
                             }
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -2240,14 +2259,14 @@ fun TtsOverlayControls(
                                         stringResource(R.string.tts_pitch_short, "%.1f".format(pitch)),
                                         style = MaterialTheme.typography.labelMedium
                                     )
-                                    IconButton(onClick = { pitch = 1.0f; saveAndApply() }, modifier = Modifier.size(48.dp)) {
+                                    IconButton(onClick = { pitch = 1.0f; saveAndApply() }, modifier = Modifier.size(40.dp)) {
                                         Icon(Icons.Default.Refresh, stringResource(R.string.content_desc_reset_pitch), modifier = Modifier.size(16.dp))
                                     }
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     IconButton(
                                         onClick = { pitch = ((pitch * 10f).roundToInt() / 10f - 0.1f).coerceAtLeast(0.5f); saveAndApply() },
-                                        modifier = Modifier.size(48.dp)
+                                        modifier = Modifier.size(40.dp)
                                     ) {
                                         Icon(Icons.Default.Remove, contentDescription = null, modifier = Modifier.size(18.dp))
                                     }
@@ -2293,7 +2312,7 @@ fun TtsOverlayControls(
                                     )
                                     IconButton(
                                         onClick = { pitch = ((pitch * 10f).roundToInt() / 10f + 0.1f).coerceAtMost(2.0f); saveAndApply() },
-                                        modifier = Modifier.size(48.dp)
+                                        modifier = Modifier.size(40.dp)
                                     ) {
                                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                                     }

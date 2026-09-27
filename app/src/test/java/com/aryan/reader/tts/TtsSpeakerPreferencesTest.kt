@@ -53,4 +53,15 @@ class TtsSpeakerPreferencesTest {
         saveTtsSpeaker(context, "fish-voice-a")
         assertEquals("fish-voice-a", loadTtsSpeaker(context))
     }
+
+    @Test
+    fun `tts speaker name preference round-trips and defaults to null`() {
+        assertEquals(null, loadTtsSpeakerName(context))
+
+        saveTtsSpeakerName(context, "Ava")
+        assertEquals("Ava", loadTtsSpeakerName(context))
+
+        saveTtsSpeakerName(context, "   ")
+        assertEquals(null, loadTtsSpeakerName(context))
+    }
 }

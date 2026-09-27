@@ -56,6 +56,7 @@ const val TTS_CHUNK_MAX_LENGTH = 250
 const val DEFAULT_SPEAKER_ID = "Aoede"
 internal const val TTS_SETTINGS_PREFS_NAME = "epub_reader_settings"
 internal const val TTS_SPEAKER_KEY = "tts_speaker"
+internal const val TTS_SPEAKER_NAME_KEY = "tts_speaker_name"
 
 data class GeminiVoice(val id: String, val name: String, val description: String)
 
@@ -121,6 +122,21 @@ internal fun saveTtsSpeaker(context: Context, speakerId: String) {
 internal fun loadTtsSpeaker(context: Context): String {
     val prefs = context.getSharedPreferences(TTS_SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     return normalizeTtsSpeakerId(prefs.getString(TTS_SPEAKER_KEY, DEFAULT_SPEAKER_ID))
+}
+
+/**
+ * Display name of the selected cloud voice, saved alongside the speaker id at
+ * pick time so surfaces like the TTS overlay can show "Ava" instead of a raw
+ * Fish reference id. Null when the selection predates name tracking.
+ */
+internal fun saveTtsSpeakerName(context: Context, name: String) {
+    val prefs = context.getSharedPreferences(TTS_SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putString(TTS_SPEAKER_NAME_KEY, name.trim().take(80)) }
+}
+
+internal fun loadTtsSpeakerName(context: Context): String? {
+    val prefs = context.getSharedPreferences(TTS_SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getString(TTS_SPEAKER_NAME_KEY, null)?.takeIf { it.isNotBlank() }
 }
 
 /**

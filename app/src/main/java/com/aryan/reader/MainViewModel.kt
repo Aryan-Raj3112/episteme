@@ -287,6 +287,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val cloudflareRepository = appGraph.cloudflareRepository
     private val remoteConfigRepository = appGraph.remoteConfigRepository
     private var userProfileListener: Any? = null
+    // Uid last offered an eager legacy->USD migration (POST /v2/migrate).
+    // One attempt per sign-in; the worker is idempotent so a retry is safe,
+    // and the lazy paths still convert as a backstop.
+    private var migrationAttemptedForUid: String? = null
     private val _prefsUpdateFlow = MutableStateFlow(0L)
     private val prefsListener: SharedPreferences.OnSharedPreferenceChangeListener
     private val feedbackRepository = appGraph.feedbackRepository
@@ -1951,6 +1955,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     userProfileListener = firestoreRepository.listenToUserProfile(newUserData.uid) { isProFromBackend, creditsFromBackend, walletMicrosFromBackend, walletMigratedFromBackend ->
                         _internalState.update { it.copy(isProUser = isProFromBackend, credits = creditsFromBackend, walletMicros = walletMicrosFromBackend, walletMigrated = walletMigratedFromBackend) }
 
+                            // Eager migration: legacy credits used to convert only
+                            // lazily on first TTS/AI use (or on top-up), so credit
+                            // holders saw a $0 wallet until then. Migrate once at
+                            // sign-in; the profile listener delivers the balance.
+                            if (creditsFromBackend > 0 && !walletMigratedFromBackend && migrationAttemptedForUid != newUserData.uid) {
+                                migrationAttemptedForUid = newUserData.uid
+                                runLegacyMigration()
+                            }
+
                             if (!isProFromBackend) {
                                 // A profile downgrade can arrive while cloud
                                 // work is queued or while the persisted sync
@@ -2579,6 +2592,40 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun isTopupProduct(productId: String): Boolean {
         return productId.startsWith("topup_")
+    }
+
+    /**
+     * One-time legacy credit -> USD wallet conversion at sign-in
+     * (POST /v2/migrate on the TTS worker). Fire-and-forget: the worker is
+     * idempotent, the profile listener picks up the new balance, and the
+     * lazy worker paths / top-up grant convert anyway as a backstop.
+     */
+    private fun runLegacyMigration() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val token = getAuthToken() ?: return@launch
+                val base = com.aryan.reader.tts.googleCloudWorkerTtsUrl.trim().removeSuffix("/")
+                if (base.isBlank()) return@launch
+                val connection = java.net.URL("$base/v2/migrate").openConnection() as java.net.HttpURLConnection
+                try {
+                    connection.requestMethod = "POST"
+                    connection.setRequestProperty("Authorization", "Bearer $token")
+                    connection.connectTimeout = 15000
+                    connection.readTimeout = 15000
+                    val code = connection.responseCode
+                    if (code == 200) {
+                        val body = connection.inputStream.bufferedReader().use { it.readText() }
+                        Timber.i("Legacy migration done: $body")
+                    } else {
+                        Timber.w("Legacy migration HTTP $code; lazy paths still apply")
+                    }
+                } finally {
+                    connection.disconnect()
+                }
+            } catch (e: Exception) {
+                Timber.w(e, "Legacy migration failed; lazy paths still apply")
+            }
+        }
     }
 
     private fun verifyPurchaseWithBackend(
