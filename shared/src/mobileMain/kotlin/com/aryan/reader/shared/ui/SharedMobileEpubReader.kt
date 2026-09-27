@@ -40,7 +40,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
@@ -1333,7 +1332,12 @@ fun SharedMobileEpubReaderScreen(
         drawerState = drawerState,
         gesturesEnabled = drawerState.isOpen,
         drawerContent = {
-            ModalDrawerSheet(Modifier.fillMaxWidth(0.86f)) {
+            // SharedReaderDrawerSheet sizes the sheet from the measured window
+            // (fraction of width, capped): CMP's ModalDrawerSheet caps at 360.dp
+            // internally, so a fractional constraint fights the cap on wide
+            // screens — landscape phones/tablets rendered a squeezed, clipped
+            // sheet. Android's benchmark passes no width modifier at all.
+            SharedReaderDrawerSheet {
                 val drawerScope = rememberCoroutineScope()
                 Text(
                     loadedBook?.title ?: book.displayName,

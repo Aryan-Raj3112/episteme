@@ -1846,6 +1846,18 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `selection clears on resume only when the platform opts in`() {
+        val annotation = readerHtmlAnnotationScript()
+        assertTrue(annotation.contains("readerIosClearsSelectionOnResume"))
+        assertTrue(annotation.contains("visibilitychange"))
+        // The clear runs unconditionally on becoming visible so stale WebKit
+        // selection paint (model already empty after resume) is dismissed too.
+        assertTrue(annotation.contains("if (selection) selection.removeAllRanges();"))
+        assertTrue(annotation.contains("savedRange = null;"))
+        assertTrue(annotation.contains("hideMenu();"))
+    }
+
+    @Test
     fun `highlight inline style declarations never carry box padding`() {
         val argb = 0xFF123456.toInt()
         assertFalse(highlightStyleDeclarations(HighlightStyle.BACKGROUND, argb).contains("padding"))

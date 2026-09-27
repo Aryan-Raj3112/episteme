@@ -111,7 +111,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
@@ -6024,7 +6023,10 @@ private fun SharedMobilePdfReaderDrawer(
         val maxPage = sections.size - 1
         if (pagerState.currentPage > maxPage) pagerState.scrollToPage(maxPage.coerceAtLeast(0))
     }
-    ModalDrawerSheet(modifier = Modifier.width(348.dp)) {
+    // SharedReaderDrawerSheet sizes from the measured window with the same
+    // material cap awareness as the EPUB drawer: a fixed 348.dp width ignores
+    // the 240.dp floor on narrow windows and wastes width on tablets.
+    SharedReaderDrawerSheet {
         Column(Modifier.fillMaxSize()) {
             // Android parity (PdfNavigationDrawerContent): scrollable tabs with
             // single-line labels so long titles (Chapters/Bookmarks/Highlights)

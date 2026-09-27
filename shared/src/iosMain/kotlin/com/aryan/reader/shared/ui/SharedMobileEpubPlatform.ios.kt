@@ -1520,6 +1520,10 @@ private val IosEpubBridgeBootstrapScript = """
       // custom teardrop handles on top would double them. The shared selection
       // script checks this flag and leaves handle display/drag to WebKit.
       window.readerIosNativeSelectionHandles = true;
+      // WKWebView keeps a selection across backgrounding (Android WebView does
+      // not — its host clears it at interruption points), so the shared script
+      // clears it when the document becomes visible again.
+      window.readerIosClearsSelectionOnResume = true;
       if (!window.readerIosPointerBridgeInstalled) {
         window.readerIosPointerBridgeInstalled = true;
         var start = null;

@@ -11998,6 +11998,46 @@ private fun PdfViewerPaginationPage(
         }
     }
 
+    // 2-page spread: report the shared Row camera plus this slot's placement
+    // so the page's high-res tiles track the real viewport under pan/zoom.
+    // The zoom transform lives on the Row's graphicsLayer (scale about the Row
+    // center + translation); slot geometry mirrors the Row's
+    // spacedBy(gap, CenterHorizontally) layout, and the slot fills the Row
+    // height so pageTopInRow = 0. A provider on purpose: the camera state is
+    // read inside the page's tile snapshotFlow instead of recomposing the page
+    // on every pan/zoom frame.
+    val spreadSlotIndex = spreadPageIndices.indexOf(pageIndex)
+    val spreadCameraProvider: (() -> PdfSpreadCameraContext?)? =
+        if (useSharedSpreadZoom && spreadSlotIndex >= 0) {
+            {
+                val slotWidths = spreadPageIndices.map { displayIndex ->
+                    pdfSpreadPageSlotWidth(
+                        containerWidth = boxMaxWidthFloat,
+                        containerHeight = boxMaxHeightFloat,
+                        pageGap = spreadPageGapPx,
+                        spreadPageCount = spreadPageCount,
+                        pageAspectRatio = displayPageRatios.getOrElse(displayIndex) { 1f }
+                    )
+                }
+                val contentLeft = (
+                    boxMaxWidthFloat -
+                        (slotWidths.sum() + spreadPageGapPx * (spreadPageCount - 1))
+                    ) / 2f
+                PdfSpreadCameraContext(
+                    scale = currentActiveScale,
+                    offset = currentActiveOffset,
+                    rowWidth = boxMaxWidthFloat,
+                    rowHeight = boxMaxHeightFloat,
+                    pageLeftInRow = contentLeft +
+                        slotWidths.take(spreadSlotIndex).sum() +
+                        spreadPageGapPx * spreadSlotIndex,
+                    pageTopInRow = 0f,
+                )
+            }
+        } else {
+            null
+        }
+
     PdfPageComposable(
         pdfDocument = stablePdfDocument,
         documentKey = activeDocumentRenderKey,
@@ -12011,6 +12051,7 @@ private fun PdfViewerPaginationPage(
         isScrollLocked = if (useSharedSpreadZoom) false else isScrollLocked,
         customHighlightColors = customHighlightColors,
         externalScale = if (useSharedSpreadZoom) currentActiveScale else 1f,
+        spreadCameraProvider = spreadCameraProvider,
         onPaletteClick = {
             highlightColorPickerInitialSlot = PdfHighlightColor.YELLOW
             showHighlightColorPicker = true
