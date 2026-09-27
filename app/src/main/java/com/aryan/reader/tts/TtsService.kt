@@ -90,7 +90,8 @@ data class TtsAudioData(
     val serverText: String?,
     val wordTimings: List<WordTimingInfo>?,
     val error: String? = null,
-    val streamUri: String? = null
+    val streamUri: String? = null,
+    val costMicros: Long = 0L
 )
 
 /** Carries a stable cloud error (e.g. INSUFFICIENT_CREDITS) through catch blocks. */
@@ -987,22 +988,59 @@ class TtsService : MediaSessionService() {
      * Returns raw mp3 bytes; callers run on Dispatchers.IO (blocking calls).
      */
     class FishRestTtsClient(private val client: OkHttpClient) {
-        data class Synthesis(val audioBytes: ByteArray?, val error: String?)
+        data class Synthesis(
+            val audioBytes: ByteArray?,
+            val error: String?,
+            val costMicros: Long = 0L,
+            val retryAfterSeconds: Int = 0
+        )
+
+        private fun spendGuardSynthesis(code: Int, body: String): Synthesis {
+            val parsed = com.aryan.reader.shared.parseSpendGuardError(body)
+            if (parsed != null) {
+                return Synthesis(
+                    null,
+                    com.aryan.reader.shared.spendGuardSentinel(parsed.first, parsed.second),
+                    retryAfterSeconds = parsed.second
+                )
+            }
+            return Synthesis(null, "Fish TTS error $code")
+        }
 
         private fun post(url: String, json: String, headers: Map<String, String>): Synthesis {
             val body = json.toRequestBody("application/json".toMediaType())
             val builder = Request.Builder().url(url).post(body)
             headers.forEach { (name, value) -> builder.header(name, value) }
             client.newCall(builder.build()).execute().use { response ->
-                if (response.code == 402) return Synthesis(null, "INSUFFICIENT_CREDITS")
+                if (response.code == 402) {
+                    val detail = runCatching { response.body?.string().orEmpty() }.getOrDefault("")
+                    if (detail.isBlank()) return Synthesis(null, "INSUFFICIENT_CREDITS")
+                    // 402 is either an empty wallet (legacy INSUFFICIENT_CREDITS)
+                    // or the daily spend fraud cap (DAILY_SPEND_LIMIT).
+                    val parsed = com.aryan.reader.shared.parseSpendGuardError(detail)
+                    if (parsed != null && parsed.first == "DAILY_SPEND_LIMIT") {
+                        return Synthesis(
+                            null,
+                            com.aryan.reader.shared.spendGuardSentinel(parsed.first, parsed.second),
+                            retryAfterSeconds = parsed.second
+                        )
+                    }
+                    return Synthesis(null, "INSUFFICIENT_CREDITS")
+                }
+                if (response.code == 429) {
+                    val detail = runCatching { response.body?.string().orEmpty() }.getOrDefault("")
+                    return spendGuardSynthesis(429, detail.ifBlank { "{\"error\":\"RATE_LIMITED\",\"retry_after_seconds\":30}" })
+                }
                 if (!response.isSuccessful) {
                     val detail = runCatching { response.body?.string().orEmpty().take(300) }.getOrDefault("")
                     Timber.tag("TTS_CLOUD_DIAG").e("Fish TTS failed HTTP ${response.code}: $detail")
                     return Synthesis(null, "Fish TTS error ${response.code}")
                 }
+                // Per-chunk USD cost for the overlay session-spend line.
+                val costMicros = response.header("X-Tts-Cost-Micros")?.toLongOrNull() ?: 0L
                 val bytes = response.body?.bytes()
                 if (bytes == null || bytes.isEmpty()) return Synthesis(null, "Empty audio response")
-                return Synthesis(bytes, null)
+                return Synthesis(bytes, null, costMicros = costMicros)
             }
         }
 
@@ -1430,6 +1468,7 @@ class TtsService : MediaSessionService() {
                             if (!useByokFish && !useByokGemini && !hasCreditBackend) {
                                 TtsAudioData(audioFile = null, serverText = null, wordTimings = null, error = getString(R.string.tts_error_cloud_not_configured))
                             } else {
+                                var chunkCostMicros = 0L
                                 val synthesisBytes: ByteArray? = withContext(Dispatchers.IO) {
                                     when {
                                         useByokFish -> {
@@ -1453,6 +1492,7 @@ class TtsService : MediaSessionService() {
                                                 text, effectiveVoice
                                             )
                                             if (result.error != null) throw TtsCloudException(result.error)
+                                            chunkCostMicros = result.costMicros
                                             result.audioBytes
                                         }
                                     }
@@ -1472,7 +1512,7 @@ class TtsService : MediaSessionService() {
                                     if (tempFile.renameTo(cachedFile)) {
                                         Timber.tag("TTS_CLOUD_DIAG").d("Cached chunk $chunkIndex to ${cachedFile.name}")
                                     }
-                                    TtsAudioData(audioFile = cachedFile, serverText = text, wordTimings = emptyList(), error = null, streamUri = null)
+                                    TtsAudioData(audioFile = cachedFile, serverText = text, wordTimings = emptyList(), error = null, streamUri = null, costMicros = chunkCostMicros)
                                 }
                             }
                         } catch (e: Exception) {

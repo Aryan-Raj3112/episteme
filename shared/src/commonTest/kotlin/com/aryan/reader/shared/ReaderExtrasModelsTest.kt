@@ -232,6 +232,24 @@ class ReaderExtrasModelsTest {
     }
 
     @Test
+    fun `micros wallet formats as usd`() {
+        assertEquals("$10.00", formatMicrosUsd(10_000_000L))
+        assertEquals("$5.25", formatMicrosUsd(5_250_000L))
+        assertEquals("$0.04", formatMicrosUsd(41_670L))
+        assertEquals("$0.00", formatMicrosUsd(7_500L))
+        assertEquals("$0.00", formatMicrosUsd(0L))
+    }
+
+    @Test
+    fun `spendable balance covers legacy credits and usd wallet`() {
+        assertTrue(hasSpendableBalance(10, 0L))
+        assertTrue(hasSpendableBalance(0, 5_000L))
+        assertFalse(hasSpendableBalance(0, 0L))
+        assertEquals("⭐ 10", spendableDisplayText(10, 0L, false))
+        assertEquals("$5.00", spendableDisplayText(0, 5_000_000L, true))
+    }
+
+    @Test
     fun `cloud tts mode and voice settings keep canonical android ids`() {
         val settings = ReaderAiByokSettings(
             ttsModel = GEMINI_CLOUD_TTS_MODEL_ID,
@@ -851,5 +869,45 @@ class ReaderExtrasModelsTest {
         assertEquals("Chapter 1", readerTtsCacheDisplayLabel("Chapter_1_a1b2c3d4e5f60718"))
         assertEquals("Pride and Prejudice", readerTtsCacheDisplayLabel("Pride_and_Prejudice_0123456789abcdef"))
         assertEquals("plain", readerTtsCacheDisplayLabel("plain"))
+    }
+
+    @Test
+    fun `spend guard error body parses kind and retry`() {
+        assertEquals(
+            Pair("RATE_LIMITED", 42),
+            parseSpendGuardError("""{"error":"RATE_LIMITED","retry_after_seconds":42}""")
+        )
+        assertEquals(
+            Pair("DAILY_SPEND_LIMIT", 3600),
+            parseSpendGuardError("""{"error": "DAILY_SPEND_LIMIT", "retry_after_seconds": 3600}""")
+        )
+        assertNull(parseSpendGuardError("""{"error":"INSUFFICIENT_CREDITS"}"""))
+        assertNull(parseSpendGuardError(""))
+        assertNull(parseSpendGuardError(null))
+        assertNull(parseSpendGuardError("not json"))
+    }
+
+    @Test
+    fun `spend guard sentinel round-trips`() {
+        assertEquals(Pair("RATE_LIMITED", 30), parseSpendGuardSentinel(spendGuardSentinel("RATE_LIMITED", 30)))
+        assertEquals(Pair("DAILY_SPEND_LIMIT", 0), parseSpendGuardSentinel("DAILY_SPEND_LIMIT:0"))
+        assertNull(parseSpendGuardSentinel("INSUFFICIENT_CREDITS"))
+        assertNull(parseSpendGuardSentinel(null))
+        assertEquals(Pair("RATE_LIMITED", 0), parseSpendGuardSentinel("RATE_LIMITED"))
+    }
+
+    @Test
+    fun `ai cost deducted formats dollars for wallet and credits for legacy`() {
+        assertEquals("$0.03", formatAiCostDeducted(0.03, true))
+        assertEquals("$0.05", formatAiCostDeducted(0.049, true))
+        assertEquals("2 credits", formatAiCostDeducted(2.0, false))
+        assertEquals("0.5 credits", formatAiCostDeducted(0.5, false))
+    }
+
+    @Test
+    fun `spend guard countdown formats seconds minutes hours`() {
+        assertEquals("45s", formatSpendGuardCountdown(45))
+        assertEquals("3m 20s", formatSpendGuardCountdown(200))
+        assertEquals("11h 05m", formatSpendGuardCountdown(39900))
     }
 }

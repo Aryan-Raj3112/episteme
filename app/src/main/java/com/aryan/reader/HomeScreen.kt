@@ -146,6 +146,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.shared.AnnotationExportFormat
+import com.aryan.reader.shared.formatMicrosUsd
 import com.aryan.reader.shared.ui.SharedAnnotationExportFormatDialog
 import com.aryan.reader.shared.ui.SharedMobileAppDestination
 import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
@@ -1029,7 +1030,7 @@ internal fun AppDrawerContent(
                                 Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Default.FormatListNumbered, contentDescription = stringResource(R.string.credits_tab), modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onTertiaryContainer)
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text(safeStringResource(R.string.credits_count, uiState.credits), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onTertiaryContainer)
+                                    Text(safeStringResource(R.string.wallet_balance, formatMicrosUsd(uiState.walletMicros)), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onTertiaryContainer)
                                 }
                             }
                         }

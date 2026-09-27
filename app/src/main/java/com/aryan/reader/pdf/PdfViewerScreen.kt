@@ -239,6 +239,10 @@ import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.shared.ReaderSearchState
 import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.SummarizationResult
+import com.aryan.reader.shared.formatSpendGuardCountdown
+import com.aryan.reader.shared.hasSpendableBalance
+import com.aryan.reader.shared.parseSpendGuardSentinel
+import com.aryan.reader.shared.spendableDisplayText
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.TtsWordReplacementsSheet
@@ -2694,7 +2698,7 @@ private fun PdfViewerScreenContent(
         }
     }
 
-    val onDictionaryLookupStable = remember(executeWithOcrCheck, useOnlineDictionary, selectedDictPackage, uiState.credits, isProUser, ownsPaneGlobals) {
+    val onDictionaryLookupStable = remember(executeWithOcrCheck, useOnlineDictionary, selectedDictPackage, uiState.credits, uiState.walletMicros, isProUser, ownsPaneGlobals) {
         { text: String ->
             if (ownsPaneGlobals) {
                 executeWithOcrCheck {
@@ -2724,7 +2728,24 @@ private fun PdfViewerScreenContent(
                                             showAiDefinitionPopup = false
                                             isAiDefinitionLoading = false
                                         } else {
-                                            aiDefinitionResult = AiDefinitionResult(error = error)
+                                            val guard = parseSpendGuardSentinel(error)
+                                            if (guard != null) {
+                                                surfaceState.spendNotice = guard
+                                                isAiDefinitionLoading = false
+                                                if (guard.first == "DAILY_SPEND_LIMIT") {
+                                                    showAiDefinitionPopup = false
+                                                } else {
+                                                    surfaceState.showBanner(
+                                                        context.getString(
+                                                            R.string.snackbar_rate_limited_retry,
+                                                            formatSpendGuardCountdown(guard.second)
+                                                        ),
+                                                        isError = true
+                                                    )
+                                                }
+                                            } else {
+                                                aiDefinitionResult = AiDefinitionResult(error = error)
+                                            }
                                         }
                                     },
                                     onFinish = { isAiDefinitionLoading = false },
@@ -2898,8 +2919,16 @@ private fun PdfViewerScreenContent(
 
                 val responseCode = connection.responseCode
                 Timber.d("Summarization API response code: $responseCode")
-                if (responseCode == 402) {
-                    onUpdate(SummarizationResult(error = "INSUFFICIENT_CREDITS"))
+                if (responseCode == 402 || responseCode == 429) {
+                    val errorBody = try {
+                        connection.errorStream?.bufferedReader()?.use { it.readText() }
+                    } catch (_: Exception) { null }
+                    onUpdate(
+                        SummarizationResult(
+                            error = com.aryan.reader.epubreader.mapAiHttpError(responseCode, errorBody)
+                                ?: "INSUFFICIENT_CREDITS"
+                        )
+                    )
                     onFinish()
                     return@withContext
                 }
@@ -2932,7 +2961,7 @@ private fun PdfViewerScreenContent(
                                     onUpdate(lastResult!!)
                                 }
                                 jsonResponse.optString("error").takeIf { it.isNotEmpty() }?.let {
-                                    lastResult = SummarizationResult(error = it, cost = currentCost, freeRemaining = currentFreeRemaining)
+                                    lastResult = SummarizationResult(error = com.aryan.reader.epubreader.mapAiStreamError(jsonResponse), cost = currentCost, freeRemaining = currentFreeRemaining)
                                     onUpdate(lastResult)
                                 }
                             } catch (e: Exception) {
@@ -3062,7 +3091,7 @@ private fun PdfViewerScreenContent(
         if (isSplitPane && !isPaneFocused) {
             return
         }
-        if (BuildConfig.FLAVOR != "oss" && currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && uiState.credits <= 0) {
+        if (BuildConfig.FLAVOR != "oss" && currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && !hasSpendableBalance(uiState.credits, uiState.walletMicros)) {
             showInsufficientCreditsDialog = true
             return
         }
@@ -4654,7 +4683,7 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
             isSummarizationLoading = isSummarizationLoading,
             onClearSummary = { summarizationResult = null },
             onGenerateSummary = { force ->
-                if (BuildConfig.FLAVOR != "oss" && !isProUser && uiState.credits <= 0) {
+                if (BuildConfig.FLAVOR != "oss" && !isProUser && !hasSpendableBalance(uiState.credits, uiState.walletMicros)) {
                     showInsufficientCreditsDialog = true
                     showAiHubSheet = false
                 } else {
@@ -4678,7 +4707,23 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                                     showAiHubSheet = false
                                     isSummarizationLoading = false
                                 } else {
-                                    summarizationResult = result
+                                    val guard = parseSpendGuardSentinel(result.error)
+                                    if (guard != null) {
+                                        surfaceState.spendNotice = guard
+                                        showAiHubSheet = false
+                                        isSummarizationLoading = false
+                                        if (guard.first == "RATE_LIMITED") {
+                                            surfaceState.showBanner(
+                                                context.getString(
+                                                    R.string.snackbar_rate_limited_retry,
+                                                    formatSpendGuardCountdown(guard.second)
+                                                ),
+                                                isError = true
+                                            )
+                                        }
+                                    } else {
+                                        summarizationResult = result
+                                    }
                                 }
                             },
                             {
@@ -4704,6 +4749,8 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
             isMainTtsActive = isTtsSessionActive,
             getAuthToken = { viewModel.getAuthToken() },
             credits = uiState.credits,
+            walletMicros = uiState.walletMicros,
+            walletMigrated = uiState.walletMigrated,
             isProUser = isProUser
         )
     }
@@ -4754,6 +4801,23 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                 onNavigateToPro()
             },
             onDismiss = { showInsufficientCreditsDialog = false },
+        )
+    }
+
+    if (surfaceState.spendNotice?.first == "DAILY_SPEND_LIMIT") {
+        val retryAfter = surfaceState.spendNotice?.second ?: 0
+        SharedMobileInfoConfirmationDialog(
+            title = stringResource(R.string.dialog_daily_spend_limit_title),
+            body = stringResource(
+                R.string.dialog_daily_spend_limit_desc,
+                spendableDisplayText(uiState.credits, uiState.walletMicros, uiState.walletMigrated),
+                formatSpendGuardCountdown(retryAfter)
+            ),
+            confirmLabel = stringResource(R.string.action_ok),
+            dismissLabel = stringResource(R.string.action_cancel),
+            icon = { Icon(painterResource(id = R.drawable.crown), contentDescription = null) },
+            onConfirm = { surfaceState.spendNotice = null },
+            onDismiss = { surfaceState.spendNotice = null },
         )
     }
 
@@ -6006,7 +6070,15 @@ private fun PdfViewerDocumentSetup(
                 showInsufficientCreditsDialog = true
                 ttsController.stop()
             } else {
-                showBanner(message, isError = true)
+                val guard = parseSpendGuardSentinel(message)
+                if (guard != null) {
+                    surfaceState.spendNotice = guard
+                    // Spend cap halts like an empty wallet; rate limit auto-retries
+                    // once in the playback manager and shows in the TTS overlay.
+                    if (guard.first == "DAILY_SPEND_LIMIT") ttsController.stop()
+                } else {
+                    showBanner(message, isError = true)
+                }
             }
         }
     }
@@ -6649,6 +6721,9 @@ private class PdfViewerSurfaceState {
     lateinit var bookId: String
     lateinit var ttsController: TtsController
     var isTtsPlayingOrLoading: Boolean by androidx.compose.runtime.mutableStateOf(false)
+    // Worker spend-guard notice: ("RATE_LIMITED"|"DAILY_SPEND_LIMIT", retryAfterSeconds).
+    // Single source of truth for the PDF AI/TTS surfaces; cleared on dismiss.
+    var spendNotice: Pair<String, Int>? by androidx.compose.runtime.mutableStateOf(null)
     lateinit var context: Context
     var totalDisplayPages: Int by androidx.compose.runtime.mutableStateOf(0)
     lateinit var paginationSpreadStarts: List<Int>
@@ -10977,7 +11052,9 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                 ttsController.stop()
                 isAutoPagingForTts = false
             },
-            credits = uiState.credits
+            credits = uiState.credits,
+            walletMicros = uiState.walletMicros,
+            walletMigrated = uiState.walletMigrated
         )
     }
 

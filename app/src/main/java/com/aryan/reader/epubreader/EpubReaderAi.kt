@@ -21,6 +21,9 @@ package com.aryan.reader.epubreader
 
 import android.content.Context
 import androidx.compose.foundation.layout.fillMaxWidth
+import com.aryan.reader.shared.parseSpendGuardError
+import com.aryan.reader.shared.parseSpendGuardSentinel
+import com.aryan.reader.shared.spendGuardSentinel
 import timber.log.Timber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -120,8 +123,11 @@ suspend fun summarizeBookContent(
 
             val responseCode = connection.responseCode
 
-            if (responseCode == 402) {
-                onError("INSUFFICIENT_CREDITS")
+            if (responseCode == 402 || responseCode == 429) {
+                val errorBody = try {
+                    connection.errorStream?.bufferedReader()?.use { it.readText() }
+                } catch (_: Exception) { null }
+                onError(mapAiHttpError(responseCode, errorBody) ?: "INSUFFICIENT_CREDITS")
                 onFinish()
                 return@withContext
             }
@@ -147,7 +153,7 @@ suspend fun summarizeBookContent(
                                 hasReceivedData = true
                             }
                             jsonResponse.optString("error").takeIf { it.isNotEmpty() }?.let {
-                                onError(it)
+                                onError(mapAiStreamError(jsonResponse))
                             }
                         } catch (e: Exception) {
                             Timber.w(e, "Could not parse stream line: $line")
@@ -298,6 +304,65 @@ suspend fun executeRecapLogic(
 }
 
 /**
+ * Maps worker spend-guard HTTP failures to client sentinels. 402 is either an
+ * empty wallet (legacy INSUFFICIENT_CREDITS) or the daily spend fraud cap;
+ * 429 is the velocity throttle. Returns null for anything else.
+ */
+internal fun mapAiHttpError(responseCode: Int, errorBody: String?): String? {
+    if (responseCode == 402) {
+        val parsed = parseSpendGuardError(errorBody)
+        return if (parsed?.first == "DAILY_SPEND_LIMIT") {
+            spendGuardSentinel(parsed.first, parsed.second)
+        } else {
+            "INSUFFICIENT_CREDITS"
+        }
+    }
+    if (responseCode == 429) {
+        val parsed = parseSpendGuardError(errorBody)
+        return spendGuardSentinel("RATE_LIMITED", parsed?.second ?: 30)
+    }
+    return null
+}
+
+/**
+ * Maps a worker stream error payload to a client sentinel, preserving the
+ * retry window for the concurrency-slot path ({error, retry_after_seconds}).
+ */
+internal fun mapAiStreamError(json: org.json.JSONObject): String {
+    val err = json.optString("error")
+    if ((err == "RATE_LIMITED" || err == "DAILY_SPEND_LIMIT") && json.has("retry_after_seconds")) {
+        return spendGuardSentinel(err, json.optInt("retry_after_seconds", 0))
+    }
+    return err
+}
+
+/**
+ * Routes an AI onError string: empty wallet -> legacy dialog path, spend-guard
+ * sentinel -> shared notice (banner for rate limit, dialog with balance for
+ * the daily cap, rendered next to the insufficient-credits dialog),
+ * anything else -> caller's generic error path.
+ */
+internal fun handleAiRequestError(
+    error: String,
+    navigation: EpubReaderNavigationState,
+    onInsufficientCredits: () -> Unit,
+    onGuardNotice: () -> Unit,
+    onOtherError: () -> Unit
+) {
+    if (error == "INSUFFICIENT_CREDITS") {
+        onInsufficientCredits()
+        return
+    }
+    val guard = parseSpendGuardSentinel(error)
+    if (guard != null) {
+        navigation.aiSpendNotice = guard
+        onGuardNotice()
+        return
+    }
+    onOtherError()
+}
+
+/**
  * Container for all AI-related popups and dialogs (Summary, Recap, Definition, Upsells).
  */
 @Composable
@@ -330,6 +395,8 @@ fun EpubReaderAiOverlays(
     onOpenExternalDictionary: (String) -> Unit,
     getAuthToken: suspend () -> String?,
     credits: Int,
+    walletMicros: Long = 0L,
+    walletMigrated: Boolean = false,
     isProUser: Boolean
 ) {
     if (showAiHubSheet) {
@@ -350,6 +417,8 @@ fun EpubReaderAiOverlays(
             isMainTtsActive = isTtsSessionActive,
             getAuthToken = getAuthToken,
             credits = credits,
+            walletMicros = walletMicros,
+            walletMigrated = walletMigrated,
             isProUser = isProUser
         )
     }

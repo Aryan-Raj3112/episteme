@@ -130,8 +130,8 @@ class FirestoreRepository {
         // No-op
     }
 
-    fun listenToUserProfile(userId: String, onUpdate: (isPro: Boolean, credits: Int) -> Unit): Any? {
-        onUpdate(false, 0)
+    fun listenToUserProfile(userId: String, onUpdate: (isPro: Boolean, credits: Int, walletMicros: Long, walletMigrated: Boolean) -> Unit): Any? {
+        onUpdate(false, 0, 0L, false)
         return null
     }
 

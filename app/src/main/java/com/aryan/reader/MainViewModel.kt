@@ -1948,8 +1948,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             _internalState.update { it.copy(hasUnreadFeedback = hasUnread) }
                         }
 
-                    userProfileListener = firestoreRepository.listenToUserProfile(newUserData.uid) { isProFromBackend, creditsFromBackend ->
-                        _internalState.update { it.copy(isProUser = isProFromBackend, credits = creditsFromBackend) }
+                    userProfileListener = firestoreRepository.listenToUserProfile(newUserData.uid) { isProFromBackend, creditsFromBackend, walletMicrosFromBackend, walletMigratedFromBackend ->
+                        _internalState.update { it.copy(isProUser = isProFromBackend, credits = creditsFromBackend, walletMicros = walletMicrosFromBackend, walletMigrated = walletMigratedFromBackend) }
 
                             if (!isProFromBackend) {
                                 // A profile downgrade can arrive while cloud
@@ -2001,7 +2001,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     _cloudFolderBindings.value = emptyMap()
                     _cloudFolderConflicts.value = emptyList()
                     _incomingCloudFolderPrompt.value = null
-                    _internalState.update { it.copy(isProUser = false, credits = 0, isSyncEnabled = false, hasUnreadFeedback = false) }
+                    _internalState.update { it.copy(isProUser = false, credits = 0, walletMicros = 0L, walletMigrated = false, isSyncEnabled = false, hasUnreadFeedback = false) }
                 }
             }
         }
@@ -2577,13 +2577,16 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         showBanner(appContext.getString(R.string.error_sync_drive_permission), isError = true)
     }
 
+    private fun isTopupProduct(productId: String): Boolean {
+        return productId.startsWith("topup_")
+    }
+
     private fun verifyPurchaseWithBackend(
         purchase: PurchaseEntity, isSilentMigrationCheck: Boolean = false
-    ) {
-        viewModelScope.launch {
+    ) {        viewModelScope.launch {
             val productId = purchase.products.firstOrNull()
 
-            if (productId == null || (!productId.startsWith("credits_") && productId != BillingClientWrapper.PRO_LIFETIME_PRODUCT_ID)) {
+            if (productId == null || (!isTopupProduct(productId) && !productId.startsWith("credits_") && productId != BillingClientWrapper.PRO_LIFETIME_PRODUCT_ID)) {
                 Timber.e("Purchase verification failed: Incorrect product ID.")
                 if (!isSilentMigrationCheck) {
                     _internalState.update { it.copy(bannerMessage = BannerMessage(appContext.getString(R.string.error_purchase_general), isError = true)) }
@@ -2605,10 +2608,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 Timber.i("Backend verification successful. Firestore will update the app.")
                 billingClientWrapper.clearAccountConflict()
 
-                if (productId.startsWith("credits_")) {
+                if (isTopupProduct(productId) || productId.startsWith("credits_")) {
                     billingClientWrapper.consumePurchase(purchase.purchaseToken)
                     if (!isSilentMigrationCheck) {
-                        _internalState.update { it.copy(bannerMessage = BannerMessage("Credits successfully added!")) }
+                        val addedMessage = if (isTopupProduct(productId)) {
+                            appContext.getString(R.string.banner_balance_added)
+                        } else {
+                            "Credits successfully added!"
+                        }
+                        _internalState.update { it.copy(bannerMessage = BannerMessage(addedMessage)) }
                     }
                 } else {
                     if (!isSilentMigrationCheck) {
@@ -2620,7 +2628,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 val exception = result.exceptionOrNull()
                 if (exception?.message?.contains("already claimed") == true) {
                     Timber.i("Migration/Refresh check: Purchase token is already claimed. Silently ignoring.")
-                    if (productId.startsWith("credits_")) {
+                    if (isTopupProduct(productId) || productId.startsWith("credits_")) {
                         billingClientWrapper.consumePurchase(purchase.purchaseToken)
                     } else {
                         billingClientWrapper.markAccountConflict()

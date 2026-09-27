@@ -210,6 +210,7 @@ import com.aryan.reader.shared.EpubVisibleTextRange
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
 import com.aryan.reader.shared.ReaderMotionPolicy
+import com.aryan.reader.shared.hasSpendableBalance
 import com.aryan.reader.shared.ReaderSearchState as SearchState
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.SearchResult
@@ -355,6 +356,8 @@ internal fun EpubReaderRenderSurfaces(
     isDarkTheme: Boolean,
     isProUser: Boolean,
     credits: Int,
+    walletMicros: Long = 0L,
+    walletMigrated: Boolean = false,
     coverImagePath: String?,
     onSavePosition: (Locator, String?, Float) -> Unit,
     onRenderModeChange: (RenderMode) -> Unit,
@@ -1371,7 +1374,7 @@ internal fun EpubReaderRenderSurfaces(
 
                                                     if (ttsChunks.isNotEmpty()) {
                                                         logTtsChapterDiag("Vertical TTS extraction produced ${ttsChunks.size} chunks for chapter $targetChapterIndex")
-                                                        if (BuildConfig.FLAVOR != "oss" && prefs.currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && credits <= 0) {
+                                                        if (BuildConfig.FLAVOR != "oss" && prefs.currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && !hasSpendableBalance(credits, walletMicros)) {
                                                             navigation.showInsufficientCreditsDialog = true
                                                             ttsShouldStartOnChapterLoad = false
                                                             return@launch

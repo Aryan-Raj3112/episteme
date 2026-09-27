@@ -98,8 +98,14 @@ suspend fun fetchAiDefinition(
             }
 
             val responseCode = connection.responseCode
-            if (responseCode == 402) {
-                onError("INSUFFICIENT_CREDITS")
+            if (responseCode == 402 || responseCode == 429) {
+                val errorBody = try {
+                    connection.errorStream?.bufferedReader()?.use { it.readText() }
+                } catch (_: Exception) { null }
+                onError(
+                    com.aryan.reader.epubreader.mapAiHttpError(responseCode, errorBody)
+                        ?: "INSUFFICIENT_CREDITS"
+                )
                 onFinish()
                 return@withContext
             }
@@ -118,7 +124,7 @@ suspend fun fetchAiDefinition(
                                 hasReceivedData = true
                             }
                             jsonResponse.optString("error").takeIf { it.isNotEmpty() }?.let {
-                                onError(it)
+                                onError(com.aryan.reader.epubreader.mapAiStreamError(jsonResponse))
                             }
                         } catch (e: Exception) {
                             Timber.w(e, "Could not parse stream line: $line")
@@ -626,8 +632,14 @@ suspend fun fetchRecap(
             }
 
             val responseCode = connection.responseCode
-            if (responseCode == 402) {
-                onError("INSUFFICIENT_CREDITS")
+            if (responseCode == 402 || responseCode == 429) {
+                val errorBody = try {
+                    connection.errorStream?.bufferedReader()?.use { it.readText() }
+                } catch (_: Exception) { null }
+                onError(
+                    com.aryan.reader.epubreader.mapAiHttpError(responseCode, errorBody)
+                        ?: "INSUFFICIENT_CREDITS"
+                )
                 onFinish()
                 return@withContext
             }
@@ -646,7 +658,7 @@ suspend fun fetchRecap(
                                 hasReceivedData = true
                             }
                             jsonResponse.optString("error").takeIf { it.isNotEmpty() }?.let {
-                                onError(it)
+                                onError(com.aryan.reader.epubreader.mapAiStreamError(jsonResponse))
                             }
                         } catch (e: Exception) {
                             Timber.w(e, "Could not parse stream line: $line")

@@ -120,6 +120,10 @@ import com.aryan.reader.BuildConfig
 import com.aryan.reader.R
 import com.aryan.reader.RenderMode
 import com.aryan.reader.shared.ReaderMotionPolicy
+import com.aryan.reader.shared.formatMicrosUsd
+import com.aryan.reader.shared.formatSpendGuardCountdown
+import com.aryan.reader.shared.parseSpendGuardSentinel
+import com.aryan.reader.shared.spendableDisplayText
 import com.aryan.reader.shared.ReaderSearchState as SearchState
 import com.aryan.reader.SearchTopBar
 import com.aryan.reader.TooltipIconButton
@@ -1696,6 +1700,8 @@ fun TtsOverlayControls(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
     credits: Int,
+    walletMicros: Long = 0L,
+    walletMigrated: Boolean = false,
     readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
     val context = LocalContext.current
@@ -1933,7 +1939,7 @@ fun TtsOverlayControls(
                     }
                 }
             } else {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1983,7 +1989,7 @@ fun TtsOverlayControls(
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
                                     Text(
-                                        "⭐ $credits",
+                                        spendableDisplayText(credits, walletMicros, walletMigrated),
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.onTertiaryContainer,
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -2031,7 +2037,41 @@ fun TtsOverlayControls(
                         }
                     }
 
-                    Spacer(Modifier.height(16.dp))
+                    // Spend-guard notice (rate-limit countdown / daily cap) and the
+                    // live session-spend line for the USD wallet. Compact by design:
+                    // one caption row, no extra sections.
+                    val isCloudSpendable = BuildConfig.FLAVOR != "oss" && activeMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD
+                    val spendGuard = remember(ttsState.errorMessage) { parseSpendGuardSentinel(ttsState.errorMessage) }
+                    if (spendGuard != null && isCloudSpendable) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = if (spendGuard.first == "RATE_LIMITED") {
+                                    stringResource(R.string.tts_notice_rate_limited, formatSpendGuardCountdown(spendGuard.second))
+                                } else {
+                                    stringResource(R.string.tts_notice_spend_limit, formatSpendGuardCountdown(spendGuard.second))
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    } else if (isCloudSpendable && walletMigrated && ttsState.cloudSessionSpendMicros > 0) {
+                        Text(
+                            text = stringResource(R.string.tts_session_spend, formatMicrosUsd(ttsState.cloudSessionSpendMicros)),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    } else {
+                        Spacer(Modifier.height(8.dp))
+                    }
 
                     if (chapterLabel != null || progressPercent != null || chunkLabel != null) {
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -2057,7 +2097,7 @@ fun TtsOverlayControls(
                             }
                         }
 
-                        Spacer(Modifier.height(16.dp))
+                        Spacer(Modifier.height(8.dp))
                     }
 
                     // Middle Section: Controls
@@ -2120,7 +2160,7 @@ fun TtsOverlayControls(
                         Spacer(Modifier.width(12.dp))
 
                         // Unified Sliders Block
-                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),

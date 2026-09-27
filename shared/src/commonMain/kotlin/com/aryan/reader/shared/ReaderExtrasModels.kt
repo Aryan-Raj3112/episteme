@@ -11,6 +11,8 @@ import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
 import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
+import kotlin.math.floor
+import kotlin.math.roundToInt
 
 // LEGACY pre-Fish live model. Kept so older clients (and their stored
 // tts_model values) keep working against the legacy worker routes.
@@ -191,6 +193,89 @@ val ReaderCloudTtsSpeakers = ReaderCloudTtsVoices.map { it.id }
 
 fun readerCloudTtsVoiceById(id: String): ReaderCloudTtsVoice? {
     return ReaderCloudTtsVoices.firstOrNull { it.id == id }
+}
+
+/**
+ * Whether the user can spend on metered features: either legacy credits
+ * (older balances, older app versions) or the USD wallet (micro-dollars).
+ */
+fun hasSpendableBalance(credits: Int, walletMicros: Long): Boolean {
+    return credits > 0 || walletMicros > 0
+}
+
+/**
+ * Balance chip text: USD wallet once migrated, legacy "⭐ N" otherwise.
+ */
+fun spendableDisplayText(credits: Int, walletMicros: Long, walletMigrated: Boolean): String {
+    if (walletMigrated) return formatMicrosUsd(walletMicros)
+    return "⭐ $credits"
+}
+
+/**
+ * Formats an integer micro-dollar wallet balance as USD ("$10.25").
+ * Sub-cent fractions truncate in display only; the ledger keeps micros.
+ */
+fun formatMicrosUsd(micros: Long): String {
+    val negative = micros < 0
+    val abs = if (negative) -micros else micros
+    val dollars = abs / 1_000_000L
+    val cents = (abs % 1_000_000L) / 10_000L
+    return (if (negative) "-$" else "$") + dollars.toString() + "." + cents.toString().padStart(2, '0')
+}
+
+/**
+ * Parses worker spend-guard error bodies:
+ * {"error":"RATE_LIMITED"|"DAILY_SPEND_LIMIT","retry_after_seconds":N}.
+ * Returns (kind, retrySeconds) or null when the body is anything else.
+ */
+fun parseSpendGuardError(body: String?): Pair<String, Int>? {
+    if (body.isNullOrBlank()) return null
+    val kind = Regex("\"error\"\\s*:\\s*\"([A-Z_]+)\"").find(body)?.groupValues?.getOrNull(1)
+        ?: return null
+    if (kind != "RATE_LIMITED" && kind != "DAILY_SPEND_LIMIT") return null
+    val retry = Regex("\"retry_after_seconds\"\\s*:\\s*(\\d+)").find(body)
+        ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+    return kind to retry
+}
+
+/**
+ * Parses the client-side sentinel "RATE_LIMITED:<s>" / "DAILY_SPEND_LIMIT:<s>"
+ * carried through TtsAudioData.error / AI onError strings.
+ */
+fun parseSpendGuardSentinel(sentinel: String?): Pair<String, Int>? {
+    if (sentinel.isNullOrBlank()) return null
+    val head = sentinel.substringBefore(":")
+    if (head != "RATE_LIMITED" && head != "DAILY_SPEND_LIMIT") return null
+    val retry = sentinel.substringAfter(":", "").toIntOrNull() ?: 0
+    return head to retry
+}
+
+fun spendGuardSentinel(kind: String, retryAfterSeconds: Int): String {
+    return "$kind:${retryAfterSeconds.coerceAtLeast(0)}"
+}
+
+/**
+ * cost_deducted unit depends on ledger: migrated users pay dollars, legacy
+ * users pay credits. Never show a raw dollar number as "credits" or vice versa.
+ */
+fun formatAiCostDeducted(cost: Double, walletMigrated: Boolean): String {
+    if (!walletMigrated) {
+        val text = if (cost == floor(cost)) cost.toLong().toString() else cost.toString()
+        return "$text credits"
+    }
+    val cents = (cost * 100).roundToInt().coerceAtLeast(1)
+    return "$" + (cents / 100).toString() + "." + (cents % 100).toString().padStart(2, '0')
+}
+
+/**
+ * Short countdown for rate-limit / spend-cap notices: "45s", "3m 20s", "11h 05m".
+ */
+fun formatSpendGuardCountdown(totalSeconds: Int): String {
+    val s = totalSeconds.coerceAtLeast(0)
+    if (s < 60) return "${s}s"
+    val m = s / 60
+    if (m < 60) return "${m}m ${(s % 60).toString().padStart(2, '0')}s"
+    return "${m / 60}h ${(m % 60).toString().padStart(2, '0')}m"
 }
 
 fun formatReaderTtsBytes(bytes: Long): String {

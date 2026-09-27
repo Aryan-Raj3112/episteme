@@ -263,6 +263,8 @@ internal class EpubReaderNavigationState {
     var isNavigatingToPosition by mutableStateOf(false)
     var isSeamlessTransitioning by mutableStateOf(false)
     var showInsufficientCreditsDialog by mutableStateOf(false)
+    // Spend-guard notice from workers: ("RATE_LIMITED"|"DAILY_SPEND_LIMIT", retryAfterSeconds).
+    var aiSpendNotice by mutableStateOf<Pair<String, Int>?>(null)
     var showFileInfoDialog by mutableStateOf(false)
 
     var chapterToLoadOnSwitch by mutableStateOf<Int?>(null)
