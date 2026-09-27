@@ -161,6 +161,7 @@ import com.aryan.reader.epub.hasReadableExtractedContent
 import com.aryan.reader.epub.plainTextCharacterCount
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.isByokCloudTtsAvailable
+import com.aryan.reader.isByokTtsReady
 import com.aryan.reader.loadBookReplacementPreferences
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.loadEpubRightToLeftPagination
@@ -1374,7 +1375,8 @@ internal fun EpubReaderRenderSurfaces(
 
                                                     if (ttsChunks.isNotEmpty()) {
                                                         logTtsChapterDiag("Vertical TTS extraction produced ${ttsChunks.size} chunks for chapter $targetChapterIndex")
-                                                        if (BuildConfig.FLAVOR != "oss" && prefs.currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && !hasSpendableBalance(credits, walletMicros)) {
+                                                        // BYOK TTS never spends credits, so it bypasses the balance gate.
+                                                        if (BuildConfig.FLAVOR != "oss" && prefs.currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && !hasSpendableBalance(credits, walletMicros) && !isByokTtsReady(context)) {
                                                             navigation.showInsufficientCreditsDialog = true
                                                             ttsShouldStartOnChapterLoad = false
                                                             return@launch

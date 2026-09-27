@@ -553,9 +553,10 @@ class SpeakerSamplePlayer(
     }
 
     /**
-     * Synthesizes a short Fish voice preview (worker sample endpoint when a
-     * credit backend + auth token is available, otherwise direct Fish BYOK)
-     * and plays the returned mp3. Billing matches production synthesis.
+     * Synthesizes a short Fish voice preview (direct Fish BYOK when the user
+     * provided a key, otherwise the worker sample endpoint) and plays the
+     * returned mp3. Billing matches production synthesis: the user's own key
+     * is always preferred over credits when both are present.
      */
     fun playFishSample(
         voiceRef: String,
@@ -576,13 +577,13 @@ class SpeakerSamplePlayer(
                     val safeRef = voiceRef.replace(Regex("[^A-Za-z0-9-]"), "_").take(48).ifBlank { "voice" }
                     val cacheFile = File(context.cacheDir, "sample_fish_${safeRef}.mp3")
                     if (!cacheFile.exists() || cacheFile.length() < 1024) {
-                        val result = if (!workerBaseUrl.isNullOrBlank() && !authToken.isNullOrBlank()) {
-                            TtsService.FishRestTtsClient(httpClient).synthesizeSampleViaWorker(
-                                workerBaseUrl, authToken, sampleText, voiceRef
-                            )
-                        } else if (!fishByokKey.isNullOrBlank()) {
+                        val result = if (!fishByokKey.isNullOrBlank()) {
                             TtsService.FishRestTtsClient(httpClient).synthesizeViaByok(
                                 fishByokKey, sampleText, voiceRef
+                            )
+                        } else if (!workerBaseUrl.isNullOrBlank() && !authToken.isNullOrBlank()) {
+                            TtsService.FishRestTtsClient(httpClient).synthesizeSampleViaWorker(
+                                workerBaseUrl, authToken, sampleText, voiceRef
                             )
                         } else {
                             throw Exception("No Fish backend configured")

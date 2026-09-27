@@ -251,6 +251,7 @@ import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.areReaderAiFeaturesEnabled
 import com.aryan.reader.callByokGeminiInlineAi
 import com.aryan.reader.isByokModelReady
+import com.aryan.reader.isByokTtsReady
 import com.aryan.reader.cardTitle
 import com.aryan.reader.epubreader.AutoScrollControls
 import com.aryan.reader.epubreader.DictionarySettingsDialog
@@ -2707,7 +2708,9 @@ private fun PdfViewerScreenContent(
 
                     if (effectiveUseOnline) {
                         val wordCount = com.aryan.reader.countWords(text)
-                        if (BuildConfig.FLAVOR != "oss" && wordCount > 1 && !isProUser) {
+                        // No upsell when the user's own key covers definitions:
+                        // the request routes through BYOK and never touches credits.
+                        if (BuildConfig.FLAVOR != "oss" && wordCount > 1 && !isProUser && !isByokModelReady(context, AiFeature.DEFINE)) {
                             showDictionaryUpsellDialog = true
                         } else {
                             selectedTextForAi = text
@@ -3103,7 +3106,8 @@ private fun PdfViewerScreenContent(
         if (isSplitPane && !isPaneFocused) {
             return
         }
-        if (BuildConfig.FLAVOR != "oss" && currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && !hasSpendableBalance(uiState.credits, uiState.walletMicros)) {
+        // BYOK TTS never spends credits, so it bypasses the balance gate.
+        if (BuildConfig.FLAVOR != "oss" && currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && !hasSpendableBalance(uiState.credits, uiState.walletMicros) && !isByokTtsReady(context)) {
             showInsufficientCreditsDialog = true
             return
         }
@@ -4695,7 +4699,9 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
             isSummarizationLoading = isSummarizationLoading,
             onClearSummary = { summarizationResult = null },
             onGenerateSummary = { force ->
-                if (BuildConfig.FLAVOR != "oss" && !isProUser && !hasSpendableBalance(uiState.credits, uiState.walletMicros)) {
+                // No upsell when the user's own key covers summaries: the
+                // request routes through BYOK and never touches credits.
+                if (BuildConfig.FLAVOR != "oss" && !isProUser && !hasSpendableBalance(uiState.credits, uiState.walletMicros) && !isByokModelReady(context, AiFeature.SUMMARIZE)) {
                     showInsufficientCreditsDialog = true
                     showAiHubSheet = false
                 } else {

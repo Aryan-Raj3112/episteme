@@ -175,6 +175,9 @@ import com.aryan.reader.TtsWordReplacementsSheet
 import com.aryan.reader.areReaderAiFeaturesEnabled
 import com.aryan.reader.countWords
 import com.aryan.reader.isByokCloudTtsAvailable
+import com.aryan.reader.isByokModelReady
+import com.aryan.reader.isByokTtsReady
+import com.aryan.reader.shared.ReaderAiFeature as AiFeature
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.hasReadableExtractedContent
@@ -538,7 +541,9 @@ fun EpubReaderHost(
 
         if (effectiveUseOnline) {
             val wordCount = countWords(word)
-            if (BuildConfig.FLAVOR != "oss" && wordCount > 1 && !isProUser) {
+            // No upsell when the user's own key covers definitions: the
+            // request routes through BYOK and never touches credits.
+            if (BuildConfig.FLAVOR != "oss" && wordCount > 1 && !isProUser && !isByokModelReady(context, AiFeature.DEFINE)) {
                 showDictionaryUpsellDialog = true
             } else {
                 dictTools.selectedTextForAi = word
@@ -1458,7 +1463,8 @@ fun EpubReaderHost(
     }
 
     fun startTts() {
-        if (BuildConfig.FLAVOR != "oss" && prefs.currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && !hasSpendableBalance(credits, walletMicros)) {
+        // BYOK TTS never spends credits, so it bypasses the balance gate.
+        if (BuildConfig.FLAVOR != "oss" && prefs.currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && !hasSpendableBalance(credits, walletMicros) && !isByokTtsReady(context)) {
             navigation.showInsufficientCreditsDialog = true
             return
         }
@@ -1595,7 +1601,8 @@ fun EpubReaderHost(
         startOffset: Int,
         chapterIndexOverride: Int? = null
     ) {
-        if (BuildConfig.FLAVOR != "oss" && prefs.currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && !hasSpendableBalance(credits, walletMicros)) {
+        // BYOK TTS never spends credits, so it bypasses the balance gate.
+        if (BuildConfig.FLAVOR != "oss" && prefs.currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && !hasSpendableBalance(credits, walletMicros) && !isByokTtsReady(context)) {
             navigation.showInsufficientCreditsDialog = true
             return
         }
@@ -3996,7 +4003,9 @@ fun EpubReaderHost(
         }
 
         val handleGenerateSummary: (Boolean) -> Unit = { force ->
-            if (BuildConfig.FLAVOR != "oss" && !isProUser && !hasSpendableBalance(credits, walletMicros)) {
+            // No upsell when the user's own key covers summaries: the
+            // request routes through BYOK and never touches credits.
+            if (BuildConfig.FLAVOR != "oss" && !isProUser && !hasSpendableBalance(credits, walletMicros) && !isByokModelReady(context, AiFeature.SUMMARIZE)) {
                 navigation.showInsufficientCreditsDialog = true
                 showAiHubSheet = false
             } else {
@@ -4132,7 +4141,9 @@ fun EpubReaderHost(
         }
 
         val handleGenerateRecap: () -> Unit = {
-            if (BuildConfig.FLAVOR != "oss" && !hasSpendableBalance(credits, walletMicros)) {
+            // No upsell when the user's own key covers recaps: the request
+            // routes through BYOK and never touches credits.
+            if (BuildConfig.FLAVOR != "oss" && !hasSpendableBalance(credits, walletMicros) && !isByokModelReady(context, AiFeature.RECAP)) {
                 navigation.showInsufficientCreditsDialog = true
                 showAiHubSheet = false
             } else {

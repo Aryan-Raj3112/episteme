@@ -258,6 +258,15 @@ fun isByokCloudTtsAvailable(context: Context): Boolean {
             settings.isAnyByokTtsAvailable
 }
 
+/**
+ * True when the user's own key covers cloud TTS (key + TTS model picked),
+ * on any flavor. TtsService already prefers BYOK over the credited worker,
+ * so callers use this to skip credit upsells the user will never hit.
+ */
+internal fun isByokTtsReady(context: Context): Boolean {
+    return loadAiByokSettings(context).isAnyByokTtsAvailable
+}
+
 fun aiModelById(id: String): AiModelOption? {
     return aiByokModelOptions.firstOrNull { it.id == id }
 }
