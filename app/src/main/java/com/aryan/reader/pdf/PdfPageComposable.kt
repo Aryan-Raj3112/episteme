@@ -117,6 +117,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -141,6 +142,16 @@ private const val PDF_TILE_SIZE_DP = 256
 private const val PDF_TARGET_TILE_BITMAP_SIZE_PX = 768
 private const val PDF_MAX_VISIBLE_TILE_COUNT = 12
 private const val PDF_TILE_IDLE_RENDER_DELAY_MS = 60L
+
+/**
+ * Grace period after a stroke ends before high-res tile rendering resumes.
+ * Short enough that a genuinely finished stroke sharpens quickly; long enough
+ * that a fast follow-up stroke starts while tiles are still frozen — without
+ * it, the queued catch-up burst (up to 12 tiles per page through one pdfium
+ * mutex, doubled in spread mode) steals the next stroke's frames, which reads
+ * as first-stroke lag or dropped quick strokes.
+ */
+private const val PDF_TILE_STROKE_RESUME_DELAY_MS = 150L
 private const val PDF_TILE_RENDER_IDLE_COOLDOWN_MS = 220L
 private const val PDF_PAGINATION_PAN_FLING_MIN_VELOCITY = 600f
 private const val PDF_PAGINATION_PAN_FLING_MULTIPLIER = 0.72f
@@ -3480,7 +3491,19 @@ internal fun PdfPageComposable(
                                 }
                                 eraserPosition = null
                                 isStylusEraserOverride = false
-                                isDrawingStroke = false
+                                // Resume tile rendering only after the post-stroke
+                                // commit (persist/undo push in onDrawEnd callers)
+                                // has been composed through. Resuming immediately
+                                // lets the queued zoomed-tile catch-up burst — 12
+                                // tiles per page through one pdfium mutex, doubled
+                                // in spread mode — steal the next stroke's frames,
+                                // which read as first-stroke lag or dropped quick
+                                // strokes between fast separate strokes.
+                                isDrawingStroke = true
+                                coroutineScope.launch {
+                                    delay(PDF_TILE_STROKE_RESUME_DELAY_MS)
+                                    isDrawingStroke = false
+                                }
                                 return@awaitEachGesture
                             }
 

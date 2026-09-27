@@ -7336,7 +7336,15 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                         }
 
                         Box(modifier = Modifier.fillMaxSize().clipToBounds()) {
-                            var pageTurnTouchY by remember { mutableStateOf<Float?>(null) }
+                            // Draw-phase state: the curl's fold corner Y. Held as a
+                            // state object and passed to pages as a provider so the
+                            // per-event writes below NEVER recompose the pager pages —
+                            // the value is only read inside realisticPageCurl's
+                            // drawWithContent. Reading it in composition made every
+                            // pressed pointer event (every pinch/pen move) recompose
+                            // all visible pages, which starve zoom and ink whenever
+                            // the realistic page turn is enabled.
+                            val pageTurnTouchYState = remember { mutableStateOf<Float?>(null) }
                             val paginationUserScrollEnabled =
                                 (currentPageScale == 1f || (isScrollLocked && displayMode == DisplayMode.PAGINATION)) &&
                                     !isTtsPlayingOrLoading &&
@@ -7371,7 +7379,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                                     while (true) {
                                                         val event = awaitPointerEvent(PointerEventPass.Initial)
                                                         event.changes.firstOrNull { it.pressed }?.let { down ->
-                                                            pageTurnTouchY = down.position.y
+                                                            pageTurnTouchYState.value = down.position.y
                                                         }
                                                     }
                                                 }
@@ -7391,7 +7399,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                     paginationPageState = paginationPageState,
                                     pagerPageIndex = pagerPageIndex,
                                     pageTurnAnimationEnabled = pageTurnAnimationEnabled,
-                                    pageTurnTouchY = pageTurnTouchY,
+                                    pageTurnTouchYProvider = { pageTurnTouchYState.value },
                                     onTextBoxCreateAt = surfaceState.onTextBoxCreateAt,
                                 )
                             }
@@ -11098,7 +11106,9 @@ private fun PdfViewerPaginationPage(
     paginationPageState: PdfViewerPaginationPageState,
     pagerPageIndex: Int,
     pageTurnAnimationEnabled: Boolean,
-    pageTurnTouchY: Float?,
+    // Provider, not a value: see pageTurnTouchYState above. The curl reads the
+    // fold corner Y during the draw phase only.
+    pageTurnTouchYProvider: () -> Float?,
     /**
      * Currently retired page editor: taps in TEXT mode create a text box at
      * the tap instead of focusing page rich text. Relative 0..1 coords.
@@ -11330,7 +11340,7 @@ private fun PdfViewerPaginationPage(
             }
             .realisticPageCurl(
                 pageOffsetProvider = { turnPageOffset },
-                touchYProvider = { pageTurnTouchY },
+                touchYProvider = pageTurnTouchYProvider,
                 paperColor = pagePaperColor,
                 rightToLeft = pagerRightToLeft
             )
@@ -11390,7 +11400,13 @@ private fun PdfViewerPaginationPage(
                                 canStartOneHandZoom = {
                                     useSharedSpreadZoom && !isDrawingActive && !isScrollLocked
                                 },
-                                canHandleQuickDoubleTap = { !isScrollLocked },
+                                // Edit mode owns every gesture: the ink/tap
+                                // detectors on each page must not fight a
+                                // double-tap zoom classifier that treats a fast
+                                // second stroke as a quick-double-tap (dropped
+                                // strokes) or a held pen as a one-hand zoom
+                                // (blocked drawing).
+                                canHandleQuickDoubleTap = { !isScrollLocked && !isDrawingActive },
                                 consumeSingleTap = false,
                                 onTap = { offset ->
                                     Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
