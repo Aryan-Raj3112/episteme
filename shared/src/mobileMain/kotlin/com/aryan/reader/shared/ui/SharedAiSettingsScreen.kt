@@ -45,6 +45,8 @@ import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiModelOption
 import com.aryan.reader.shared.ReaderAiModelOptions
 import com.aryan.reader.shared.ReaderCloudTtsVoices
+import com.aryan.reader.shared.ReaderFishVoice
+import com.aryan.reader.shared.ReaderTtsByokOptions
 import com.aryan.reader.shared.ReaderTtsCacheSummary
 
 data class SharedAiSettingsStrings(
@@ -94,6 +96,14 @@ fun SharedAiSettingsScreen(
     onSettingsChange: (ReaderAiByokSettings) -> Unit,
     cloudCacheSummary: ReaderTtsCacheSummary? = null,
     onClearCloudTtsCache: () -> Unit = {},
+    // BYOK TTS model picker options. Hosts pass a live list when available
+    // (Gemini ListModels filtered to TTS models); defaults to the manual
+    // fallback. Prices render only when an option carries a priceLabel.
+    ttsModelOptions: List<ReaderAiModelOption> = ReaderTtsByokOptions,
+    // Fish voices for BYOK Fish TTS, as exposed by the Fish API (hosts fetch
+    // with the user's Fish key). Empty = key missing or fetch failed.
+    fishVoices: List<ReaderFishVoice> = emptyList(),
+    fishVoicesLoading: Boolean = false,
     // Temporary iOS launch scope (see IosFeatureGating): iOS passes false to
     // hide cloud TTS model/voice/cache controls while the TTS logic stays.
     // Defaults stay true so Android behavior remains the benchmark.
@@ -136,7 +146,9 @@ fun SharedAiSettingsScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(strings.savedKeys, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            listOf("gemini", "groq").forEach { provider ->
+            // Providers come from the host's labels so new key types (e.g. Fish)
+            // appear without screen changes.
+            strings.providerLabels.keys.toList().forEach { provider ->
                 SharedSavedAiKeyRow(
                     label = strings.providerLabels.getValue(provider),
                     maskedKey = maskedKeys[provider].orEmpty(),
@@ -162,7 +174,7 @@ fun SharedAiSettingsScreen(
                     modifier = Modifier.fillMaxWidth().menuAnchor(),
                 )
                 ExposedDropdownMenu(expanded = providerMenuExpanded, onDismissRequest = { providerMenuExpanded = false }) {
-                    listOf("gemini", "groq").forEach { provider ->
+                    strings.providerLabels.keys.toList().forEach { provider ->
                         DropdownMenuItem(
                             text = { Text(strings.providerLabels[provider].orEmpty()) },
                             onClick = {
@@ -228,10 +240,12 @@ fun SharedAiSettingsScreen(
                     strings.cloudTts,
                     strings.cloudTtsDescription,
                     currentSettings.ttsModel,
-                    listOf(ReaderAiModelOption("gemini", GEMINI_CLOUD_TTS_MODEL)),
+                    // Keep a stale/legacy selection visible so it can be changed
+                    // away instead of vanishing.
+                    (ttsModelOptions + currentSettings.ttsModel.toTtsOptionIfKnown()).distinctBy { it.id },
                     strings,
                 ) { updateSettings(currentSettings.copy(ttsModel = it)) }
-                if (currentSettings.ttsModel == GEMINI_CLOUD_TTS_MODEL_ID) {
+                if (currentSettings.ttsProvider == "gemini") {
                     Text("Cloud TTS voice", style = MaterialTheme.typography.titleMedium)
                     ExposedDropdownMenuBox(
                         expanded = ttsVoiceMenuExpanded,
@@ -271,6 +285,76 @@ fun SharedAiSettingsScreen(
                             }
                         }
                     }
+                }
+                if (currentSettings.ttsProvider == "fish") {
+                    var fishVoiceMenuExpanded by remember { mutableStateOf(false) }
+                    Text("Fish voice", style = MaterialTheme.typography.titleMedium)
+                    if (fishVoicesLoading) {
+                        Text(
+                            "Loading voices…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (fishVoices.isNotEmpty()) {
+                        ExposedDropdownMenuBox(
+                            expanded = fishVoiceMenuExpanded,
+                            onExpandedChange = { fishVoiceMenuExpanded = it },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            val selectedFishVoice = fishVoices.firstOrNull {
+                                it.referenceId == currentSettings.ttsSpeakerId || it.id == currentSettings.ttsSpeakerId
+                            }
+                            OutlinedTextField(
+                                value = selectedFishVoice?.let { "${it.title} · ${it.description}".trimEnd(' ', '·') }
+                                    ?: currentSettings.ttsSpeakerId.ifBlank { "Select a voice" },
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Voice") },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = fishVoiceMenuExpanded) },
+                                modifier = Modifier.fillMaxWidth().menuAnchor(),
+                            )
+                            ExposedDropdownMenu(
+                                expanded = fishVoiceMenuExpanded,
+                                onDismissRequest = { fishVoiceMenuExpanded = false },
+                            ) {
+                                fishVoices.forEach { voice ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Column {
+                                                Text(voice.title)
+                                                if (voice.description.isNotBlank()) {
+                                                    Text(voice.description, style = MaterialTheme.typography.bodySmall)
+                                                }
+                                            }
+                                        },
+                                        onClick = {
+                                            updateSettings(currentSettings.copy(ttsSpeakerId = voice.referenceId))
+                                            fishVoiceMenuExpanded = false
+                                        },
+                                        trailingIcon = if (voice.referenceId == currentSettings.ttsSpeakerId || voice.id == currentSettings.ttsSpeakerId) {
+                                            { Icon(Icons.Default.Check, contentDescription = null) }
+                                        } else null,
+                                    )
+                                }
+                            }
+                        }
+                    } else if (!fishVoicesLoading) {
+                        Text(
+                            "No Fish voices found. Save a Fish API key and create voices at fish.audio.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    OutlinedTextField(
+                        value = currentSettings.ttsSpeakerId,
+                        onValueChange = { updateSettings(currentSettings.copy(ttsSpeakerId = it)) },
+                        label = { Text("Voice reference ID (advanced)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                if (currentSettings.ttsModel.isNotBlank()) {
                     cloudCacheSummary?.let { cache ->
                         Text(
                             if (cache.hasCachedAudio) {
@@ -323,6 +407,19 @@ fun SharedAiSettingsScreen(
     }
 }
 
+/** Maps a stored TTS model id back to a displayable option, including the
+ * legacy Live model so old selections stay visible until changed. */
+private fun String.toTtsOptionIfKnown(): List<ReaderAiModelOption> {
+    if (isBlank()) return emptyList()
+    if (this == GEMINI_CLOUD_TTS_MODEL_ID) {
+        return listOf(ReaderAiModelOption("gemini", GEMINI_CLOUD_TTS_MODEL))
+    }
+    val provider = substringBefore(':', "")
+    val name = substringAfter(':', "")
+    if (provider.isBlank() || name.isBlank()) return emptyList()
+    return listOf(ReaderAiModelOption(provider, name))
+}
+
 @Composable
 private fun SharedSavedAiKeyRow(
     label: String,
@@ -359,7 +456,9 @@ private fun SharedAiModelSelector(
         Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }, modifier = Modifier.fillMaxWidth()) {
             OutlinedTextField(
-                value = selected?.label ?: strings.noModelSelected,
+                value = selected?.let { option ->
+                    option.priceLabel?.let { "${option.label} · $it" } ?: option.label
+                } ?: strings.noModelSelected,
                 onValueChange = {},
                 readOnly = true,
                 label = { Text(strings.modelLabel) },
@@ -374,7 +473,7 @@ private fun SharedAiModelSelector(
                 )
                 options.forEach { option ->
                     DropdownMenuItem(
-                        text = { Text(option.label) },
+                        text = { Text(option.priceLabel?.let { "${option.label} · $it" } ?: option.label) },
                         onClick = { onSelected(option.id); expanded = false },
                         trailingIcon = if (option.id == selected?.id) ({ Icon(Icons.Default.Check, contentDescription = null) }) else null,
                     )

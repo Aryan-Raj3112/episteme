@@ -74,6 +74,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.media3.common.util.UnstableApi
+import kotlinx.coroutines.launch
+import com.aryan.reader.shared.ReaderFishVoice
 import com.aryan.reader.shared.ui.SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH
 import com.aryan.reader.shared.ui.sanitizeSharedMobileTtsSampleText
 import com.aryan.reader.shared.ui.toggleSharedMobileTtsVoiceFavorite
@@ -83,6 +85,7 @@ import com.aryan.reader.tts.TtsCacheManager
 import com.aryan.reader.tts.TtsPlaybackManager
 import com.aryan.reader.tts.effectiveTtsPreviewSampleText
 import com.aryan.reader.tts.formatBytes
+import com.aryan.reader.tts.googleCloudWorkerTtsUrl
 import com.aryan.reader.tts.loadTtsFavoriteVoices
 import com.aryan.reader.tts.loadTtsPreviewSampleText
 import com.aryan.reader.tts.saveTtsFavoriteVoices
@@ -182,7 +185,7 @@ fun TtsSettingsSheet(
                 Spacer(Modifier.height(16.dp))
 
                 when (selectedTabIndex) {
-                    0 -> AiVoicesTab(currentSpeakerId, onSpeakerChange, isTtsActive, samplePlayer, currentMode)
+                    0 -> AiVoicesTab(currentSpeakerId, onSpeakerChange, isTtsActive, samplePlayer, currentMode, getAuthToken)
                     1 -> DeviceVoicesTab(isTtsActive, context, currentMode)
                     2 -> TtsCacheTab(bookTitle, context, currentSpeakerId)
                 }
@@ -191,6 +194,14 @@ fun TtsSettingsSheet(
     }
 }
 
+/** One selectable cloud voice. [fishRef] is null for Gemini prebuilt voices. */
+private data class CloudVoiceRow(
+    val id: String,
+    val name: String,
+    val description: String,
+    val fishRef: String?
+)
+
 @UnstableApi
 @Composable
 fun AiVoicesTab(
@@ -198,10 +209,46 @@ fun AiVoicesTab(
     onSpeakerChange: (String) -> Unit,
     isTtsActive: Boolean,
     samplePlayer: SpeakerSamplePlayer,
-    currentMode: TtsPlaybackManager.TtsMode
+    currentMode: TtsPlaybackManager.TtsMode,
+    getAuthToken: suspend () -> String? = { null }
 ) {
-    LocalContext.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val isCloudMode = currentMode == TtsPlaybackManager.TtsMode.CLOUD
+    // Voice source follows the active backend: BYOK Gemini -> 30 prebuilt
+    // voices, BYOK Fish -> all voices the Fish API exposes for the saved key,
+    // otherwise credited Fish via the worker catalog.
+    val byok = remember { loadAiByokSettings(context).sanitized() }
+    val useByokFish = byok.isFishByokTtsAvailable
+    val useByokGemini = !useByokFish &&
+        (byok.isGeminiRestByokTtsAvailable || byok.isByokCloudTtsAvailable)
+
+    var fishVoices by remember(useByokFish, useByokGemini) {
+        mutableStateOf<List<ReaderFishVoice>>(emptyList())
+    }
+    var voicesLoading by remember(useByokFish, useByokGemini) { mutableStateOf(false) }
+    LaunchedEffect(useByokFish, useByokGemini) {
+        if (useByokGemini) {
+            fishVoices = emptyList()
+            voicesLoading = false
+            return@LaunchedEffect
+        }
+        voicesLoading = true
+        fishVoices = if (useByokFish) {
+            fetchFishVoices(byok.fishKey)
+        } else {
+            fetchCloudFishVoices(googleCloudWorkerTtsUrl, getAuthToken())
+        }
+        voicesLoading = false
+    }
+
+    val rows: List<CloudVoiceRow> = if (useByokGemini) {
+        GEMINI_TTS_SPEAKERS.map { CloudVoiceRow(it.id, it.name, it.description, null) }
+    } else {
+        fishVoices.map {
+            CloudVoiceRow(it.referenceId, it.title, it.description.ifBlank { it.referenceId }, it.referenceId)
+        }
+    }
 
     Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Text(stringResource(R.string.tts_select_cloud_voice), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
@@ -213,8 +260,25 @@ fun AiVoicesTab(
     }
 
     LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp))) {
-        items(GEMINI_TTS_SPEAKERS.size) { index ->
-            val voice = GEMINI_TTS_SPEAKERS[index]
+        if (!useByokGemini && voicesLoading) {
+            item {
+                Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                }
+            }
+        }
+        if (!useByokGemini && !voicesLoading && rows.isEmpty()) {
+            item {
+                Text(
+                    stringResource(R.string.tts_no_cloud_voices),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+        }
+        items(rows.size) { index ->
+            val voice = rows[index]
             val isSelected = currentSpeakerId == voice.id
             val isCached = samplePlayer.cachedSpeakers.contains(voice.id)
 
@@ -230,7 +294,22 @@ fun AiVoicesTab(
                 },
                 trailingContent = {
                     if (!isTtsActive) {
-                        IconButton(onClick = { samplePlayer.playOrStop(voice.id) }) {
+                        IconButton(onClick = {
+                            if (voice.fishRef != null) {
+                                scope.launch {
+                                    samplePlayer.playFishSample(
+                                        voiceRef = voice.fishRef,
+                                        displayId = voice.id,
+                                        sampleText = effectiveTtsPreviewSampleText(context),
+                                        workerBaseUrl = googleCloudWorkerTtsUrl.takeIf { !useByokFish },
+                                        authToken = getAuthToken(),
+                                        fishByokKey = byok.fishKey.takeIf { useByokFish }
+                                    )
+                                }
+                            } else {
+                                samplePlayer.playOrStop(voice.id)
+                            }
+                        }) {
                             if (samplePlayer.loadingSpeakerId == voice.id) {
                                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                             } else {

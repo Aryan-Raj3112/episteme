@@ -43,6 +43,15 @@ import kotlin.math.pow
 
 const val googleCloudWorkerTtsUrl = BuildConfig.TTS_WORKER_URL
 
+// Fish Cloud TTS (v2 worker routes + direct BYOK). Audio is mp3; the local
+// cache layout mirrors the legacy wav layout, only the extension differs.
+const val fishWorkerTtsPath = "/v2/tts"
+const val fishWorkerTtsSamplePath = "/v2/tts/sample"
+const val fishWorkerVoicesPath = "/v2/voices"
+const val fishDirectTtsUrl = "https://api.fish.audio/v1/tts"
+const val FISH_BYOK_MODEL_HEADER = "s2.1-pro"
+const val FISH_CLOUD_AUDIO_EXTENSION = "mp3"
+
 const val TTS_CHUNK_MAX_LENGTH = 250
 const val DEFAULT_SPEAKER_ID = "Aoede"
 internal const val TTS_SETTINGS_PREFS_NAME = "epub_reader_settings"
@@ -84,8 +93,24 @@ val GEMINI_TTS_SPEAKERS = listOf(
 )
 
 internal fun normalizeTtsSpeakerId(speakerId: String?): String {
-    val cleanSpeakerId = speakerId?.takeIf { it.isNotBlank() } ?: return DEFAULT_SPEAKER_ID
-    return cleanSpeakerId.takeIf { id -> GEMINI_TTS_SPEAKERS.any { it.id == id } } ?: DEFAULT_SPEAKER_ID
+    val cleanSpeakerId = speakerId?.trim()?.takeIf { it.isNotBlank() } ?: return DEFAULT_SPEAKER_ID
+    if (GEMINI_TTS_SPEAKERS.any { it.id == cleanSpeakerId }) return cleanSpeakerId
+    // Fish voices: BYOK reference_ids are UUID-shaped, worker catalog aliases
+    // use the documented `fish-` prefix (see worker/tts-worker.js).
+    if (cleanSpeakerId.length <= 64 &&
+        (isFishReferenceId(cleanSpeakerId) || cleanSpeakerId.startsWith("fish-"))
+    ) {
+        return cleanSpeakerId
+    }
+    return DEFAULT_SPEAKER_ID
+}
+
+internal fun isFishReferenceId(value: String): Boolean {
+    val v = value.trim()
+    // Fish model IDs are 32-char hex without dashes (e.g. from the Fish voice
+    // library); dashed UUIDs are accepted too for forward compatibility.
+    return v.matches(Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")) ||
+        v.matches(Regex("[0-9a-fA-F]{32}"))
 }
 
 internal fun saveTtsSpeaker(context: Context, speakerId: String) {
@@ -194,7 +219,8 @@ class TtsCacheManager(private val context: Context) {
         chapterTitle: String?,
         text: String,
         speakerId: String,
-        mode: TtsPlaybackManager.TtsMode
+        mode: TtsPlaybackManager.TtsMode,
+        extension: String = "wav"
     ): File {
         val bookDir = getBookCacheDir(bookTitle)
         val chapterDir = File(bookDir, chapterDirName(chapterTitle))
@@ -202,10 +228,18 @@ class TtsCacheManager(private val context: Context) {
             chapterDir.mkdirs()
         }
 
-        val hashParams = hash(text + speakerId + mode.name)
+        // Local cache layout is unchanged: only the container extension varies
+        // ("wav" for legacy Gemini chunks, "mp3" for Fish REST chunks).
+        // Legacy wav hashes are preserved exactly so existing caches keep hitting.
+        val safeExt = if (extension == "mp3") "mp3" else "wav"
+        val hashParams = if (safeExt == "wav") {
+            hash(text + speakerId + mode.name)
+        } else {
+            hash(text + speakerId + mode.name + safeExt)
+        }
         val safeSpeaker = sanitizeFileToken(speakerId)
 
-        return File(chapterDir, "cached_chunk_${safeSpeaker}_$hashParams.wav")
+        return File(chapterDir, "cached_chunk_${safeSpeaker}_$hashParams.$safeExt")
     }
 
     fun getBookCacheDir(bookTitle: String): File {
@@ -218,7 +252,9 @@ class TtsCacheManager(private val context: Context) {
 
         return bookDir.listFiles()?.filter { it.isDirectory }?.mapNotNull { chapterDir ->
             val files = chapterDir.listFiles()?.filter { file ->
-                if (!file.isFile || !file.name.endsWith(".wav")) return@filter false
+                if (!file.isFile) return@filter false
+                // Legacy Gemini chunks are .wav, Fish REST chunks are .mp3.
+                if (!file.name.endsWith(".wav") && !file.name.endsWith(".mp3")) return@filter false
                 if (speakerFilter == null || speakerFilter == "All") return@filter true
 
                 val parts = file.name.split("_")
@@ -388,8 +424,14 @@ class SpeakerSamplePlayer(
     init {
         // Read initially existing files
         scope.launch(Dispatchers.IO) {
-            val files = context.cacheDir.listFiles { _, name -> name.startsWith("sample_") && name.endsWith(".wav") }
-            val ids = files?.map { it.name.removePrefix("sample_").removeSuffix(".wav") } ?: emptyList()
+            val files = context.cacheDir.listFiles { _, name ->
+                (name.startsWith("sample_") && name.endsWith(".wav")) ||
+                    (name.startsWith("sample_fish_") && name.endsWith(".mp3"))
+            }
+            val ids = files?.map {
+                it.name.removePrefix("sample_fish_").removePrefix("sample_")
+                    .removeSuffix(".mp3").removeSuffix(".wav")
+            } ?: emptyList()
             withContext(Dispatchers.Main) {
                 cachedSpeakers.addAll(ids)
             }
@@ -483,11 +525,83 @@ class SpeakerSamplePlayer(
 
     fun clearSamples() {
         scope.launch(Dispatchers.IO) {
-            val files = context.cacheDir.listFiles { _, name -> name.startsWith("sample_") && name.endsWith(".wav") }
+            val files = context.cacheDir.listFiles { _, name ->
+                (name.startsWith("sample_") && name.endsWith(".wav")) ||
+                    (name.startsWith("sample_fish_") && name.endsWith(".mp3"))
+            }
             files?.forEach { it.delete() }
             withContext(Dispatchers.Main) {
                 cachedSpeakers.clear()
             }
+        }
+    }
+
+    /**
+     * Synthesizes a short Fish voice preview (worker sample endpoint when a
+     * credit backend + auth token is available, otherwise direct Fish BYOK)
+     * and plays the returned mp3. Billing matches production synthesis.
+     */
+    fun playFishSample(
+        voiceRef: String,
+        displayId: String,
+        sampleText: String,
+        workerBaseUrl: String?,
+        authToken: String?,
+        fishByokKey: String?
+    ) {
+        scope.launch {
+            if (sampleMediaPlayer.isPlaying) sampleMediaPlayer.stop()
+            sampleMediaPlayer.reset()
+            loadingSpeakerId = displayId
+            playingSpeakerId = null
+
+            withContext(Dispatchers.IO) {
+                try {
+                    val safeRef = voiceRef.replace(Regex("[^A-Za-z0-9-]"), "_").take(48).ifBlank { "voice" }
+                    val cacheFile = File(context.cacheDir, "sample_fish_${safeRef}.mp3")
+                    if (!cacheFile.exists() || cacheFile.length() < 1024) {
+                        val result = if (!workerBaseUrl.isNullOrBlank() && !authToken.isNullOrBlank()) {
+                            TtsService.FishRestTtsClient(httpClient).synthesizeSampleViaWorker(
+                                workerBaseUrl, authToken, sampleText, voiceRef
+                            )
+                        } else if (!fishByokKey.isNullOrBlank()) {
+                            TtsService.FishRestTtsClient(httpClient).synthesizeViaByok(
+                                fishByokKey, sampleText, voiceRef
+                            )
+                        } else {
+                            throw Exception("No Fish backend configured")
+                        }
+                        val bytes = result.audioBytes
+                        if (result.error != null || bytes == null || bytes.isEmpty()) {
+                            throw Exception(result.error ?: "Sample failed")
+                        }
+                        cacheFile.writeBytes(bytes)
+                    }
+                    presentCachedSample(cacheFile, displayId)
+                } catch (e: Exception) {
+                    Timber.e(e, "Exception playing Fish sample for $displayId")
+                    withContext(Dispatchers.Main) { if (loadingSpeakerId == displayId) loadingSpeakerId = null }
+                }
+            }
+        }
+    }
+
+    private suspend fun presentCachedSample(cacheFile: File, id: String) {
+        withContext(Dispatchers.Main) {
+            if (!cachedSpeakers.contains(id)) cachedSpeakers.add(id)
+            if (loadingSpeakerId != id) return@withContext
+            sampleMediaPlayer.setDataSource(cacheFile.absolutePath)
+            sampleMediaPlayer.setOnPreparedListener { mp ->
+                if (loadingSpeakerId == id) {
+                    mp.start()
+                    playingSpeakerId = id
+                    loadingSpeakerId = null
+                }
+            }
+            sampleMediaPlayer.setOnCompletionListener {
+                if (playingSpeakerId == id) playingSpeakerId = null
+            }
+            sampleMediaPlayer.prepareAsync()
         }
     }
 

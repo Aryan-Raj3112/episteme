@@ -1646,6 +1646,7 @@
     <string name="tts_offline">Offline</string>
     <string name="tts_voice_filter">Voice Filter</string>
     <string name="tts_no_audio_cached_for_voice">No audio cached for this voice.</string>
+    <string name="tts_no_cloud_voices">No cloud voices available right now. Check your connection or API key.</string>
     <!-- Button label. %1$s = selected cloud TTS voice identifier. Example: "Clear Cache for Kore". -->
     <string name="tts_clear_cache_for_voice">Clear Cache for %1$s</string>
     <string name="tts_voice_sample_generic">This is a voice sample.</string>
@@ -1685,7 +1686,7 @@
     <string name="credits_estimated_cost_breakdown">Estimated Cost Breakdown</string>
     <string name="credits_cloud_tts_title">Cloud TTS</string>
     <!-- Cloud TTS credits card. Two paragraphs: cost per minute, then where to enable it — localize the navigation path to match the UI. -->
-    <string name="credits_cloud_tts_desc">Cost: ~3–4 credits per minute of audio generated.\nTo enable: Reader Screen &gt; More &gt; TTS Voice Settings.</string>
+    <string name="credits_cloud_tts_desc">Cost: ~2 credits per minute of audio generated.\nTo enable: Reader Screen &gt; More &gt; TTS Voice Settings.</string>
     <string name="credits_ai_summaries_title">AI Summaries &amp; Recap</string>
     <!-- AI summaries credits card. Two paragraphs: cost per request (varies with chapter length), then the free daily allowance for Pro users. -->
     <string name="credits_ai_summaries_desc">Cost: ~1–4 credits per request based on chapter length.\nPro Users get 10 free summaries daily.</string>
@@ -1808,6 +1809,8 @@
     <string name="provider_gemini" translatable="false">Gemini</string>
     <!-- Provider/product name. Do not translate. -->
     <string name="provider_groq" translatable="false">Groq</string>
+    <!-- Provider/product name. Do not translate. -->
+    <string name="provider_fish" translatable="false">Fish Audio</string>
     <!-- AI = Artificial Intelligence. Keep the acronym "AI" as-is. -->
     <string name="ai_definition_title">AI Definition</string>
     <!-- Chapter label. %1$d = 1-indexed chapter number. Example: "Chapter 4". -->
@@ -1898,7 +1901,7 @@
     <string name="ai_settings_recaps">Recaps</string>
     <string name="ai_settings_recaps_desc">Used for story recap generation.</string>
     <!-- TTS = Text-to-Speech. Gemini is a provider name. %1$s = exact model identifier; do not translate the inserted value. Example: "Uses the saved Gemini key. Only gemini-2.5-flash-preview-tts is supported for now." -->
-    <string name="ai_settings_cloud_tts_desc">Uses the saved Gemini key. Only %1$s is supported for now.</string>
+    <string name="ai_settings_cloud_tts_desc">Uses your saved Gemini or Fish Audio key. Gemini offers proper text-to-speech models; Fish Audio uses your own voices.</string>
     <!-- Provider key confirmation title. %1$s = provider name, such as Gemini or Groq. Example: "Save Gemini key?" -->
     <string name="dialog_save_provider_key">Save %1$s key?</string>
     <!-- Shown after saving an AI API key: only first 3 and last 3 characters stay visible; to change it, replace or delete it. -->

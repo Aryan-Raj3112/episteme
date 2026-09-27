@@ -12,8 +12,21 @@ import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
 import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
 
+// LEGACY pre-Fish live model. Kept so older clients (and their stored
+// tts_model values) keep working against the legacy worker routes.
 const val GEMINI_CLOUD_TTS_MODEL = "gemini-3.1-flash-live-preview"
 const val GEMINI_CLOUD_TTS_MODEL_ID = "gemini:$GEMINI_CLOUD_TTS_MODEL"
+// Proper (non-Live) Gemini TTS models, selectable via AI Keys & Models (BYOK).
+// Listed dynamically from the Gemini ListModels API when possible; these are
+// the manual fallback (prices are never hardcoded — shown only if an API
+// provides them).
+const val GEMINI_TTS_MODEL_LITE = "gemini-3.8-flash-lite-tts"
+const val GEMINI_TTS_MODEL_PREVIEW = "gemini-3.1-flash-tts-preview"
+const val GEMINI_TTS_MODEL_LITE_ID = "gemini:$GEMINI_TTS_MODEL_LITE"
+const val GEMINI_TTS_MODEL_PREVIEW_ID = "gemini:$GEMINI_TTS_MODEL_PREVIEW"
+// Fish TTS via BYOK (user's Fish key, direct api.fish.audio calls, no credits).
+const val FISH_TTS_MODEL = "s2.1-pro"
+const val FISH_TTS_MODEL_ID = "fish:$FISH_TTS_MODEL"
 const val DEFAULT_CLOUD_TTS_SPEAKER_ID = "Aoede"
 const val READER_TTS_CHUNK_MAX_LENGTH = 250
 private const val ReaderTtsStartTraceLogTag = "EpistemeDesktopTtsStartTrace"
@@ -33,14 +46,28 @@ enum class ReaderAiFeature(val displayName: String) {
 data class ReaderAiModelOption(
     val provider: String,
     val name: String,
-    val label: String = "${provider.replaceFirstChar { it.uppercaseChar() }} - $name"
+    val label: String = "${provider.replaceFirstChar { it.uppercaseChar() }} - $name",
+    // Displayed next to the label only when a listing API provides pricing.
+    // Never hardcoded: null means "no price info".
+    val priceLabel: String? = null
 ) {
     val id: String = "$provider:$name"
 }
 
+// A Fish voice as exposed by the Fish API (GET /model) or the worker catalog
+// (GET /v2/voices). [id] is the alias in the worker catalog or the Fish
+// model _id for BYOK voices; [referenceId] is what TTS requests send.
+data class ReaderFishVoice(
+    val id: String,
+    val referenceId: String,
+    val title: String,
+    val description: String = ""
+)
+
 data class ReaderAiByokSettings(
     val geminiKey: String = "",
     val groqKey: String = "",
+    val fishKey: String = "",
     val useOneModel: Boolean = true,
     val modelForAll: String = "",
     val defineModel: String = "",
@@ -48,20 +75,23 @@ data class ReaderAiByokSettings(
     val recapModel: String = "",
     val ttsModel: String = "",
     val hideReaderAiFeatures: Boolean = false,
+    // Provider-specific: Gemini prebuilt voice name, or Fish alias/reference_id.
     val ttsSpeakerId: String = DEFAULT_CLOUD_TTS_SPEAKER_ID,
     val serverBackedReaderAiFeatures: Boolean = false,
     val serverBackedCloudTts: Boolean = false
 ) {
     fun sanitized(): ReaderAiByokSettings {
         val knownTextModelIds = ReaderAiModelOptions.mapTo(mutableSetOf()) { it.id }
+        val knownTtsModelIds = ReaderTtsByokOptions.mapTo(mutableSetOf()) { it.id } + GEMINI_CLOUD_TTS_MODEL_ID
         return copy(
             geminiKey = geminiKey.trim(),
             groqKey = groqKey.trim(),
+            fishKey = fishKey.trim(),
             modelForAll = modelForAll.takeIf { it in knownTextModelIds }.orEmpty(),
             defineModel = defineModel.takeIf { it in knownTextModelIds }.orEmpty(),
             summarizeModel = summarizeModel.takeIf { it in knownTextModelIds }.orEmpty(),
             recapModel = recapModel.takeIf { it in knownTextModelIds }.orEmpty(),
-            ttsModel = ttsModel.takeIf { it == GEMINI_CLOUD_TTS_MODEL_ID }.orEmpty(),
+            ttsModel = ttsModel.takeIf { it in knownTtsModelIds }.orEmpty(),
             ttsSpeakerId = ttsSpeakerId.ifBlank { DEFAULT_CLOUD_TTS_SPEAKER_ID }
         )
     }
@@ -82,15 +112,36 @@ data class ReaderAiByokSettings(
         return when (provider) {
             "gemini" -> geminiKey
             "groq" -> groqKey
+            "fish" -> fishKey
             else -> ""
         }.trim()
     }
 
-    val hasAnyAiKey: Boolean get() = geminiKey.isNotBlank() || groqKey.isNotBlank()
+    // Provider selected for BYOK TTS ("gemini", "fish", or "" when unset).
+    val ttsProvider: String get() = ttsModel.substringBefore(':', "").takeIf { ttsModel.contains(':') }.orEmpty()
+
+    val hasAnyAiKey: Boolean get() = geminiKey.isNotBlank() || groqKey.isNotBlank() || fishKey.isNotBlank()
     val areReaderAiFeaturesAvailable: Boolean get() = !hideReaderAiFeatures && (serverBackedReaderAiFeatures || hasAnyAiKey)
+    // LEGACY: pre-Fish live-model check. Kept for older clients (notably iOS,
+    // which still gates on it); Android uses isAnyByokTtsAvailable.
     val isByokCloudTtsAvailable: Boolean get() = geminiKey.isNotBlank() && ttsModel == GEMINI_CLOUD_TTS_MODEL_ID
-    val isCloudTtsAvailable: Boolean get() = serverBackedCloudTts || isByokCloudTtsAvailable
+    val isGeminiRestByokTtsAvailable: Boolean get() =
+        geminiKey.isNotBlank() && (ttsModel == GEMINI_TTS_MODEL_LITE_ID || ttsModel == GEMINI_TTS_MODEL_PREVIEW_ID)
+    val isFishByokTtsAvailable: Boolean get() = fishKey.isNotBlank() && ttsModel == FISH_TTS_MODEL_ID
+    val isAnyByokTtsAvailable: Boolean get() = isByokCloudTtsAvailable || isGeminiRestByokTtsAvailable || isFishByokTtsAvailable
+    val isCloudTtsAvailable: Boolean get() = serverBackedCloudTts || isAnyByokTtsAvailable
 }
+
+/**
+ * Manual fallback for the BYOK TTS model picker. Clients prefer a live list:
+ * Gemini ListModels filtered to TTS-capable models, Fish voices from the Fish
+ * API — both with prices only when the API provides them.
+ */
+val ReaderTtsByokOptions = listOf(
+    ReaderAiModelOption("gemini", GEMINI_TTS_MODEL_LITE),
+    ReaderAiModelOption("gemini", GEMINI_TTS_MODEL_PREVIEW),
+    ReaderAiModelOption("fish", FISH_TTS_MODEL)
+)
 
 val ReaderAiModelOptions = listOf(
     ReaderAiModelOption("groq", "qwen/qwen3-32b"),
@@ -580,11 +631,14 @@ data class ReaderVoiceSampleState(
 
 /**
  * Android `TtsCacheManager` file-name parity:
- * `cached_chunk_<speaker>_<digest>.wav`. Returns the speaker id or null.
+ * `cached_chunk_<speaker>_<digest>.<ext>` (ext is `wav` for legacy
+ * Gemini-Live chunks, `mp3` for Fish REST chunks). Returns the speaker id or null.
  */
 fun readerTtsCacheSpeakerId(fileName: String): String? {
-    if (!fileName.startsWith("cached_chunk_") || !fileName.endsWith(".wav")) return null
-    return fileName.removePrefix("cached_chunk_").removeSuffix(".wav")
+    if (!fileName.startsWith("cached_chunk_")) return null
+    val ext = fileName.substringAfterLast('.', "")
+    if (ext != "wav" && ext != "mp3") return null
+    return fileName.removePrefix("cached_chunk_").removeSuffix(".$ext")
         .substringBeforeLast('_').takeIf { it.isNotBlank() }
 }
 

@@ -172,6 +172,66 @@ class ReaderExtrasModelsTest {
     }
 
     @Test
+    fun `proper gemini tts models are available with gemini key`() {
+        assertFalse(ReaderAiByokSettings(geminiKey = "key", ttsModel = GEMINI_TTS_MODEL_LITE_ID).isByokCloudTtsAvailable)
+        assertTrue(ReaderAiByokSettings(geminiKey = "key", ttsModel = GEMINI_TTS_MODEL_LITE_ID).isGeminiRestByokTtsAvailable)
+        assertTrue(ReaderAiByokSettings(geminiKey = "key", ttsModel = GEMINI_TTS_MODEL_PREVIEW_ID).isGeminiRestByokTtsAvailable)
+        assertTrue(ReaderAiByokSettings(geminiKey = "key", ttsModel = GEMINI_TTS_MODEL_LITE_ID).isAnyByokTtsAvailable)
+        assertEquals("gemini", ReaderAiByokSettings(ttsModel = GEMINI_TTS_MODEL_LITE_ID).ttsProvider)
+    }
+
+    @Test
+    fun `fish byok tts is available with fish key and fish model`() {
+        assertFalse(ReaderAiByokSettings(fishKey = "key").isAnyByokTtsAvailable)
+        assertFalse(ReaderAiByokSettings(ttsModel = FISH_TTS_MODEL_ID).isAnyByokTtsAvailable)
+        assertFalse(ReaderAiByokSettings(geminiKey = "key", ttsModel = FISH_TTS_MODEL_ID).isFishByokTtsAvailable)
+
+        val settings = ReaderAiByokSettings(fishKey = "key", ttsModel = FISH_TTS_MODEL_ID)
+        assertTrue(settings.isFishByokTtsAvailable)
+        assertTrue(settings.isAnyByokTtsAvailable)
+        assertTrue(settings.isCloudTtsAvailable)
+        assertTrue(settings.hasAnyAiKey)
+        assertEquals("key", settings.apiKeyFor("fish"))
+        assertEquals("fish", settings.ttsProvider)
+    }
+
+    @Test
+    fun `tts model sanitization keeps proper and legacy models`() {
+        assertEquals(
+            GEMINI_TTS_MODEL_LITE_ID,
+            ReaderAiByokSettings(ttsModel = GEMINI_TTS_MODEL_LITE_ID).sanitized().ttsModel
+        )
+        assertEquals(
+            FISH_TTS_MODEL_ID,
+            ReaderAiByokSettings(ttsModel = FISH_TTS_MODEL_ID).sanitized().ttsModel
+        )
+        assertEquals(
+            GEMINI_CLOUD_TTS_MODEL_ID,
+            ReaderAiByokSettings(ttsModel = GEMINI_CLOUD_TTS_MODEL_ID).sanitized().ttsModel
+        )
+        assertEquals(
+            "",
+            ReaderAiByokSettings(ttsModel = "gemini:unknown-model").sanitized().ttsModel
+        )
+    }
+
+    @Test
+    fun `tts byok options cover both gemini models and fish`() {
+        val ids = ReaderTtsByokOptions.map { it.id }.toSet()
+        assertTrue(ids.contains(GEMINI_TTS_MODEL_LITE_ID))
+        assertTrue(ids.contains(GEMINI_TTS_MODEL_PREVIEW_ID))
+        assertTrue(ids.contains(FISH_TTS_MODEL_ID))
+        assertTrue(ReaderTtsByokOptions.all { it.priceLabel == null })
+    }
+
+    @Test
+    fun `cache speaker parsing supports fish mp3 chunks`() {
+        assertEquals("fish-voice-a", readerTtsCacheSpeakerId("cached_chunk_fish-voice-a_ab12cd34ef56.mp3"))
+        assertEquals("Aoede", readerTtsCacheSpeakerId("cached_chunk_Aoede_ab12cd34ef56.wav"))
+        assertNull(readerTtsCacheSpeakerId("cached_chunk_Aoede_ab12cd34ef56.ogg"))
+    }
+
+    @Test
     fun `cloud tts mode and voice settings keep canonical android ids`() {
         val settings = ReaderAiByokSettings(
             ttsModel = GEMINI_CLOUD_TTS_MODEL_ID,
