@@ -63,7 +63,10 @@ data class ReaderFishVoice(
     val id: String,
     val referenceId: String,
     val title: String,
-    val description: String = ""
+    val description: String = "",
+    // Language codes from the Fish model catalog (e.g. ["en"]). Empty when
+    // the source carries no language info (static catalog, Gemini rows).
+    val languages: List<String> = emptyList()
 )
 
 data class ReaderAiByokSettings(
@@ -329,6 +332,18 @@ fun splitReaderTextIntoTtsChunks(
 
 fun readerAiModelById(id: String): ReaderAiModelOption? {
     return ReaderAiModelOptions.firstOrNull { it.id == id }
+}
+
+/**
+ * Client-side TTL for Fish voice-list caches (the worker additionally
+ * caches 5 minutes server-side). Voice catalogs change rarely; an hour
+ * avoids refetching on every settings visit without going stale.
+ */
+const val FISH_VOICE_LIST_CACHE_TTL_MS = 60L * 60L * 1000L
+
+/** Pure TTL check for timestamped voice-list cache entries. */
+fun isFishVoiceListCacheFresh(fetchedAtMs: Long, nowMs: Long): Boolean {
+    return nowMs - fetchedAtMs <= FISH_VOICE_LIST_CACHE_TTL_MS
 }
 
 /**

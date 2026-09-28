@@ -5924,6 +5924,8 @@ private fun ReaderIosApp(
                     IosUtilityScreen.AI_SETTINGS -> {
                         var iosFishVoices by remember { mutableStateOf(emptyList<com.aryan.reader.shared.ReaderFishVoice>()) }
                         var iosFishVoicesLoading by remember { mutableStateOf(false) }
+                        var iosFavoriteFishVoices by remember { mutableStateOf(iosLoadTtsFavoriteVoices()) }
+                        var iosFishLanguageFilter by remember { mutableStateOf(iosLoadFishLanguageFilter()) }
                         LaunchedEffect(
                             effectiveReaderAiSettings.fishKey,
                             bridge.accountState.uid,
@@ -5998,6 +6000,22 @@ private fun ReaderIosApp(
                             deleteKeyDescription = { provider ->
                                 stringResolver.string("content_desc_delete_provider_key", "Delete saved %1\$s key", provider)
                             },
+                            languageFilterLabel = readerString("tts_language_filter", "Language"),
+                            favoritesLabel = readerString("tts_favorites", "Favorites"),
+                            allLanguagesLabel = readerString("filter_all", "All"),
+                            noFishVoicesFound = readerString(
+                                "ai_settings_no_fish_voices",
+                                "No Fish voices found. Save a Fish API key and create voices at fish.audio.",
+                            ),
+                            noFavoriteVoices = readerString(
+                                "tts_no_favorite_voices",
+                                "No favorite voices yet. Tap the star on any voice to add it here.",
+                            ),
+                            noVoicesForLanguage = { _ ->
+                                stringResolver.string("tts_no_voices_for_language", "No voices found for this language.")
+                            },
+                            addFavoriteDescription = readerString("tts_add_favorite", "Add to favorites"),
+                            removeFavoriteDescription = readerString("tts_remove_favorite", "Remove from favorites"),
                         ),
                         onBackClick = { utilityScreen = null },
                         onSaveKey = { provider, key ->
@@ -6017,6 +6035,21 @@ private fun ReaderIosApp(
                         showCloudTts = IosFeatureGating.SHOW_CLOUD_TTS,
                         fishVoices = iosFishVoices,
                         fishVoicesLoading = iosFishVoicesLoading,
+                        favoriteFishVoiceIds = iosFavoriteFishVoices,
+                        onToggleFavoriteFishVoice = { referenceId ->
+                            iosFavoriteFishVoices =
+                                if (referenceId in iosFavoriteFishVoices) {
+                                    iosFavoriteFishVoices - referenceId
+                                } else {
+                                    iosFavoriteFishVoices + referenceId
+                                }
+                            iosSaveTtsFavoriteVoices(iosFavoriteFishVoices)
+                        },
+                        fishLanguageSelection = iosFishLanguageFilter,
+                        onFishLanguageSelectionChange = { selection ->
+                            iosFishLanguageFilter = selection
+                            iosSaveFishLanguageFilter(selection)
+                        },
                         modifier = Modifier.fillMaxSize().statusBarsPadding(),
                     )
                     }

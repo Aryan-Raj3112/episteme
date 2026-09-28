@@ -1924,6 +1924,7 @@
     <string name="content_desc_delete_provider_key">Delete %1$s key</string>
     <string name="label_model">Model</string>
     <string name="ai_settings_no_model_selected">No model selected</string>
+    <string name="ai_settings_no_fish_voices">No Fish voices found. Save a Fish API key and create voices at fish.audio.</string>
     <string name="options_show_ai_in_reader">Show AI in reader</string>
     <string name="options_hide_ai_in_reader">Hide AI in reader</string>
 

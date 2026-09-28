@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
@@ -81,6 +82,16 @@ data class SharedAiSettingsStrings(
     val saveDialogTitle: (String) -> String,
     val deleteDialogTitle: (String) -> String,
     val deleteKeyDescription: (String) -> String,
+    // Fish voice list filter + favorites (mirrors the native TTS voice tabs).
+    // Hosts that pass no favorites still get the language filter.
+    val languageFilterLabel: String = "Language",
+    val favoritesLabel: String = "Favorites",
+    val allLanguagesLabel: String = "All",
+    val noFishVoicesFound: String = "No Fish voices found. Save a Fish API key and create voices at fish.audio.",
+    val noFavoriteVoices: String = "No favorite voices yet. Tap the star on any voice to add it here.",
+    val noVoicesForLanguage: (String) -> String = { "No voices for $it yet." },
+    val addFavoriteDescription: String = "Add to favorites",
+    val removeFavoriteDescription: String = "Remove from favorites",
 )
 
 /** Android-parity AI/BYOK settings UI. Secure storage and persistence stay platform-owned. */
@@ -104,6 +115,13 @@ fun SharedAiSettingsScreen(
     // with the user's Fish key). Empty = key missing or fetch failed.
     fishVoices: List<ReaderFishVoice> = emptyList(),
     fishVoicesLoading: Boolean = false,
+    // Starred Fish voice reference ids + toggle. Null = no favorites UI.
+    favoriteFishVoiceIds: Set<String> = emptySet(),
+    onToggleFavoriteFishVoice: ((String) -> Unit)? = null,
+    // Persisted Fish language filter selection. Null = manage internally
+    // (not persisted); hosts pass their stored value + saver to persist.
+    fishLanguageSelection: String? = null,
+    onFishLanguageSelectionChange: ((String) -> Unit)? = null,
     // Temporary iOS launch scope (see IosFeatureGating): iOS passes false to
     // hide cloud TTS model/voice/cache controls while the TTS logic stays.
     // Defaults stay true so Android behavior remains the benchmark.
@@ -288,7 +306,72 @@ fun SharedAiSettingsScreen(
                 }
                 if (currentSettings.ttsProvider == "fish") {
                     var fishVoiceMenuExpanded by remember { mutableStateOf(false) }
+                    var fishLanguageMenuExpanded by remember { mutableStateOf(false) }
+                    var internalFishLanguage by remember { mutableStateOf(strings.allLanguagesLabel) }
                     Text("Fish voice", style = MaterialTheme.typography.titleMedium)
+                    // Language filter + favorites mirror the native TTS voice
+                    // tabs. Voices without language info are hidden under a
+                    // specific language filter.
+                    val fishFilterLanguages = remember(fishVoices) {
+                        listOf(strings.favoritesLabel, strings.allLanguagesLabel) +
+                            fishVoices.flatMap { it.languages }.filter { it.isNotBlank() }.distinct().sorted()
+                    }
+                    val effectiveFishLanguage =
+                        (fishLanguageSelection ?: internalFishLanguage).takeIf { it in fishFilterLanguages }
+                            ?: strings.allLanguagesLabel
+                    val showingFishFavorites = effectiveFishLanguage == strings.favoritesLabel
+                    val visibleFishVoices = remember(fishVoices, effectiveFishLanguage, showingFishFavorites, favoriteFishVoiceIds) {
+                        val base = when {
+                            showingFishFavorites || effectiveFishLanguage == strings.allLanguagesLabel -> fishVoices
+                            else -> fishVoices.filter { effectiveFishLanguage in it.languages }
+                        }
+                        if (showingFishFavorites) {
+                            base.filter { it.referenceId in favoriteFishVoiceIds }
+                        } else base
+                    }
+                    if (fishFilterLanguages.size > 2 || onToggleFavoriteFishVoice != null) {
+                        ExposedDropdownMenuBox(
+                            expanded = fishLanguageMenuExpanded,
+                            onExpandedChange = { fishLanguageMenuExpanded = it },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            OutlinedTextField(
+                                value = effectiveFishLanguage,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text(strings.languageFilterLabel) },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = fishLanguageMenuExpanded) },
+                                modifier = Modifier.fillMaxWidth().menuAnchor(),
+                            )
+                            ExposedDropdownMenu(
+                                expanded = fishLanguageMenuExpanded,
+                                onDismissRequest = { fishLanguageMenuExpanded = false },
+                            ) {
+                                fishFilterLanguages.forEach { lang ->
+                                    DropdownMenuItem(
+                                        text = { Text(lang) },
+                                        leadingIcon = if (lang == strings.favoritesLabel) {
+                                            {
+                                                Icon(
+                                                    Icons.Default.Star,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                )
+                                            }
+                                        } else null,
+                                        trailingIcon = if (lang == effectiveFishLanguage) {
+                                            { Icon(Icons.Default.Check, contentDescription = null) }
+                                        } else null,
+                                        onClick = {
+                                            internalFishLanguage = lang
+                                            onFishLanguageSelectionChange?.invoke(lang)
+                                            fishLanguageMenuExpanded = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
                     if (fishVoicesLoading) {
                         Text(
                             "Loading voices…",
@@ -296,7 +379,7 @@ fun SharedAiSettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    if (fishVoices.isNotEmpty()) {
+                    if (visibleFishVoices.isNotEmpty()) {
                         ExposedDropdownMenuBox(
                             expanded = fishVoiceMenuExpanded,
                             onExpandedChange = { fishVoiceMenuExpanded = it },
@@ -318,7 +401,8 @@ fun SharedAiSettingsScreen(
                                 expanded = fishVoiceMenuExpanded,
                                 onDismissRequest = { fishVoiceMenuExpanded = false },
                             ) {
-                                fishVoices.forEach { voice ->
+                                visibleFishVoices.forEach { voice ->
+                                    val isFavorite = voice.referenceId in favoriteFishVoiceIds
                                     DropdownMenuItem(
                                         text = {
                                             Column {
@@ -328,6 +412,22 @@ fun SharedAiSettingsScreen(
                                                 }
                                             }
                                         },
+                                        leadingIcon = if (onToggleFavoriteFishVoice != null) {
+                                            {
+                                                IconButton(onClick = { onToggleFavoriteFishVoice.invoke(voice.referenceId) }) {
+                                                    Icon(
+                                                        Icons.Default.Star,
+                                                        contentDescription = if (isFavorite) {
+                                                            strings.removeFavoriteDescription
+                                                        } else {
+                                                            strings.addFavoriteDescription
+                                                        },
+                                                        tint = if (isFavorite) MaterialTheme.colorScheme.primary
+                                                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    )
+                                                }
+                                            }
+                                        } else null,
                                         onClick = {
                                             updateSettings(currentSettings.copy(ttsSpeakerId = voice.referenceId))
                                             fishVoiceMenuExpanded = false
@@ -341,7 +441,11 @@ fun SharedAiSettingsScreen(
                         }
                     } else if (!fishVoicesLoading) {
                         Text(
-                            "No Fish voices found. Save a Fish API key and create voices at fish.audio.",
+                            when {
+                                fishVoices.isEmpty() -> strings.noFishVoicesFound
+                                showingFishFavorites -> strings.noFavoriteVoices
+                                else -> strings.noVoicesForLanguage(effectiveFishLanguage)
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

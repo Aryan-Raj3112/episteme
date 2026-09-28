@@ -173,6 +173,19 @@ internal fun saveTtsFavoriteVoices(context: Context, favorites: Set<String>) {
     prefs.edit { putStringSet(TTS_FAVORITE_VOICES_KEY, favorites) }
 }
 
+/** Persisted cloud-voice language filter (raw selection: language code or a localized All/Favorites label). */
+internal const val TTS_CLOUD_VOICE_LANGUAGE_KEY = "reader.tts.cloud_voice_language"
+
+internal fun loadCloudVoiceLanguage(context: Context): String? {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getString(TTS_CLOUD_VOICE_LANGUAGE_KEY, null)?.takeIf { it.isNotBlank() }
+}
+
+internal fun saveCloudVoiceLanguage(context: Context, language: String) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putString(TTS_CLOUD_VOICE_LANGUAGE_KEY, language) }
+}
+
 data class TtsChapterCacheInfo(
     val chapterTitle: String,
     val chunkCount: Int,

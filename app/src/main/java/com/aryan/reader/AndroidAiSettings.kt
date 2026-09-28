@@ -5,6 +5,7 @@ package com.aryan.reader
 import com.aryan.reader.shared.ReaderAiByokSettings as AiByokSettings
 
 import com.aryan.reader.shared.hasByokModel
+import com.aryan.reader.shared.isFishVoiceListCacheFresh
 
 import com.aryan.reader.shared.ReaderAiModelOption as AiModelOption
 
@@ -22,6 +23,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.core.content.edit
+import kotlinx.coroutines.async
+import kotlin.time.Clock
 import timber.log.Timber
 import java.security.KeyStore
 import java.util.Locale
@@ -321,53 +324,143 @@ suspend fun fetchGeminiTtsModels(apiKey: String): List<AiModelOption> {
 }
 
 /**
- * Lists all voices the Fish API exposes for the given key (the user's own
- * voice library). Used for BYOK Fish TTS voice selection.
+ * Fish Official's author id: the professional voices Fish themselves post
+ * (the `licensed=true` pool is only 7 voices and a subset of this catalog).
+ */
+internal const val FISH_OFFICIAL_AUTHOR_ID = "d8b0991f96b44e489422ca2ddf0bd31d"
+
+/**
+ * Lists voices for BYOK Fish TTS: the user's own voice library plus Fish
+ * Official's own catalog (docs: GET /model paginated; `self=true` scopes to
+ * the workspace, `author_id` lists one author's public voices). Own voices
+ * first, deduped. Used for BYOK Fish TTS voice selection.
  */
 suspend fun fetchFishVoices(apiKey: String): List<FishVoice> {
     val key = apiKey.trim()
     if (key.isBlank()) return emptyList()
+    // Process-lifetime cache so settings revisits don't refetch; keyed by
+    // credential so key rotation refetches. Empty results are never cached.
+    val cacheKey = "byok:$key"
+    cachedFishVoices(cacheKey)?.let { return it }
     return try {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val client = okhttp3.OkHttpClient.Builder()
                 .callTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .build()
-            val url = okhttp3.HttpUrl.Builder()
-                .scheme("https")
-                .host("api.fish.audio")
-                .addPathSegment("model")
-                .addQueryParameter("self", "true")
-                .addQueryParameter("page_size", "100")
-                .build()
-            val response = client.newCall(
-                okhttp3.Request.Builder()
-                    .url(url)
-                    .header("Authorization", "Bearer $key")
-                    .get()
-                    .build()
-            ).execute()
-            response.use {
-                if (!it.isSuccessful) return@withContext emptyList()
-                val items = org.json.JSONObject(it.body?.string().orEmpty()).optJSONArray("items")
-                    ?: return@withContext emptyList()
-                val voices = mutableListOf<FishVoice>()
-                for (i in 0 until items.length()) {
-                    val item = items.optJSONObject(i) ?: continue
-                    val id = item.optString("_id").ifBlank { item.optString("id") }
-                    if (id.isBlank()) continue
-                    voices += FishVoice(
-                        id = id,
-                        referenceId = id,
-                        title = item.optString("title").ifBlank { id },
-                        description = item.optString("description")
-                    )
-                }
-                voices
-            }
+            // Own + public fetch concurrently; each side degrades
+            // independently so one slow/failed listing still leaves the other
+            // instead of an empty picker.
+            val ownDeferred = async { fetchFishModelPages(client, key, selfOnly = true) }
+            val publicDeferred = async { fetchFishModelPages(client, key, selfOnly = false) }
+            val own = runCatching { ownDeferred.await() }.getOrDefault(emptyList())
+            val seen = own.mapTo(mutableSetOf()) { it.referenceId }
+            val public = runCatching { publicDeferred.await() }.getOrDefault(emptyList())
+                .filter { it.referenceId.isNotBlank() && seen.add(it.referenceId) }
+            (own + public).also { if (it.isNotEmpty()) storeFishVoices(cacheKey, it) }
         }
     } catch (e: Exception) {
         Timber.w(e, "Failed to list Fish voices")
         emptyList()
+    }
+}
+
+private data class CachedFishVoices(val voices: List<FishVoice>, val fetchedAtMs: Long)
+
+private val fishVoicesCache = mutableMapOf<String, CachedFishVoices>()
+
+private fun cachedFishVoices(cacheKey: String): List<FishVoice>? {
+    val cached = synchronized(fishVoicesCache) { fishVoicesCache[cacheKey] } ?: return null
+    if (!isFishVoiceListCacheFresh(cached.fetchedAtMs, Clock.System.now().toEpochMilliseconds())) {
+        synchronized(fishVoicesCache) { fishVoicesCache.remove(cacheKey) }
+        return null
+    }
+    return cached.voices
+}
+
+private fun storeFishVoices(cacheKey: String, voices: List<FishVoice>) {
+    synchronized(fishVoicesCache) {
+        fishVoicesCache[cacheKey] = CachedFishVoices(voices, Clock.System.now().toEpochMilliseconds())
+    }
+}
+
+private fun fetchFishModelPages(
+    client: okhttp3.OkHttpClient,
+    apiKey: String,
+    selfOnly: Boolean,
+    maxPages: Int = 4,
+    pageSize: Int = 100
+): List<FishVoice> {
+    val voices = mutableListOf<FishVoice>()
+    repeat(maxPages) { index ->
+        val url = okhttp3.HttpUrl.Builder()
+            .scheme("https")
+            .host("api.fish.audio")
+            .addPathSegment("model")
+            .addQueryParameter("page_size", pageSize.toString())
+            .addQueryParameter("page_number", (index + 1).toString())
+            // Fish Official's catalog for the public side: the professional
+            // voices Fish themselves post, no random user clones.
+            // `author_id` is ignored server-side for self.
+            .apply {
+                if (selfOnly) {
+                    addQueryParameter("self", "true")
+                } else {
+                    addQueryParameter("author_id", FISH_OFFICIAL_AUTHOR_ID)
+                }
+            }
+            .build()
+        val response = client.newCall(
+            okhttp3.Request.Builder()
+                .url(url)
+                .header("Authorization", "Bearer $apiKey")
+                .get()
+                .build()
+        ).execute()
+        response.use {
+            if (!it.isSuccessful) return voices
+            val body = org.json.JSONObject(it.body?.string().orEmpty())
+            val items = body.optJSONArray("items") ?: return voices
+            for (i in 0 until items.length()) {
+                fishVoiceFromModel(items.optJSONObject(i))?.let(voices::add)
+            }
+            val hasMore = if (body.has("has_more")) {
+                body.optBoolean("has_more")
+            } else {
+                items.length() >= pageSize
+            }
+            if (!hasMore) return voices
+        }
+    }
+    return voices
+}
+
+internal fun fishVoiceFromModel(item: org.json.JSONObject?): FishVoice? {
+    if (item == null) return null
+    // Skip voices that cannot synthesize (training failed / still
+    // training). `state` is absent on older entries — those are kept.
+    val state = item.optString("state")
+    if (state.isNotBlank() && state != "trained") return null
+    // Only TTS-capable models belong in a TTS picker (`type` is absent on
+    // older entries — those are kept).
+    val type = item.optString("type")
+    if (type.isNotBlank() && type != "tts") return null
+    val id = item.optString("_id").ifBlank { item.optString("id") }
+    if (id.isBlank()) return null
+    return FishVoice(
+        id = id,
+        referenceId = id,
+        title = item.optString("title").ifBlank { item.optString("name").ifBlank { id } },
+        description = item.optString("description"),
+        languages = fishLanguages(item.optJSONArray("languages"))
+    )
+}
+
+internal fun fishLanguages(array: org.json.JSONArray?): List<String> {
+    if (array == null) return emptyList()
+    return buildList {
+        for (i in 0 until array.length()) {
+            array.optString(i).takeIf { it.isNotBlank() }?.let(::add)
+        }
     }
 }
 
@@ -378,6 +471,10 @@ suspend fun fetchFishVoices(apiKey: String): List<FishVoice> {
 suspend fun fetchCloudFishVoices(workerBaseUrl: String, firebaseToken: String?): List<FishVoice> {
     val base = workerBaseUrl.trim().removeSuffix("/")
     if (base.isBlank() || firebaseToken.isNullOrBlank()) return emptyList()
+    // The worker response carries no per-user data (auth only gates access),
+    // so it is cached by base URL, not by token. Empty results are never cached.
+    val cacheKey = "worker:$base"
+    cachedFishVoices(cacheKey)?.let { return it }
     return try {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val client = okhttp3.OkHttpClient.Builder()
@@ -403,10 +500,11 @@ suspend fun fetchCloudFishVoices(workerBaseUrl: String, firebaseToken: String?):
                         id = item.optString("id").ifBlank { referenceId },
                         referenceId = referenceId,
                         title = item.optString("name").ifBlank { item.optString("title").ifBlank { referenceId } },
-                        description = item.optString("description")
+                        description = item.optString("description"),
+                        languages = fishLanguages(item.optJSONArray("languages"))
                     )
                 }
-                out
+                out.also { if (it.isNotEmpty()) storeFishVoices(cacheKey, it) }
             }
         }
     } catch (e: Exception) {

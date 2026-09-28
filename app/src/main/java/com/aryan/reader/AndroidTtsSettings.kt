@@ -39,6 +39,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -87,6 +89,8 @@ import com.aryan.reader.tts.effectiveTtsPreviewSampleText
 import com.aryan.reader.tts.formatBytes
 import com.aryan.reader.tts.googleCloudWorkerTtsUrl
 import com.aryan.reader.tts.saveTtsSpeakerName
+import com.aryan.reader.tts.loadCloudVoiceLanguage
+import com.aryan.reader.tts.saveCloudVoiceLanguage
 import com.aryan.reader.tts.loadTtsFavoriteVoices
 import com.aryan.reader.tts.loadTtsPreviewSampleText
 import com.aryan.reader.tts.saveTtsFavoriteVoices
@@ -200,10 +204,12 @@ private data class CloudVoiceRow(
     val id: String,
     val name: String,
     val description: String,
-    val fishRef: String?
+    val fishRef: String?,
+    val languages: List<String> = emptyList()
 )
 
 @UnstableApi
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AiVoicesTab(
     currentSpeakerId: String,
@@ -247,8 +253,31 @@ fun AiVoicesTab(
         GEMINI_TTS_SPEAKERS.map { CloudVoiceRow(it.id, it.name, it.description, null) }
     } else {
         fishVoices.map {
-            CloudVoiceRow(it.referenceId, it.title, it.description.ifBlank { it.referenceId }, it.referenceId)
+            CloudVoiceRow(it.referenceId, it.title, it.description.ifBlank { it.referenceId }, it.referenceId, it.languages)
         }
+    }
+
+    // Language filter + favorites mirror the device-voices tab. Gemini rows
+    // carry no language info, so the menu offers only Favorites/All there
+    // (every Gemini voice stays visible). Fish rows without language info
+    // are hidden under a specific language filter.
+    val allLanguagesLabel = stringResource(R.string.filter_all)
+    val favoritesLabel = stringResource(R.string.tts_favorites)
+    var selectedLanguage by remember { mutableStateOf(loadCloudVoiceLanguage(context) ?: allLanguagesLabel) }
+    var languageMenuExpanded by remember { mutableStateOf(false) }
+    var favoriteVoices by remember { mutableStateOf(loadTtsFavoriteVoices(context)) }
+    val languages = remember(rows, allLanguagesLabel, favoritesLabel) {
+        listOf(favoritesLabel, allLanguagesLabel) +
+            rows.flatMap { it.languages }.filter { it.isNotBlank() }.distinct().sorted()
+    }
+    val effectiveLanguage = selectedLanguage.takeIf { it in languages } ?: allLanguagesLabel
+    val showingFavorites = effectiveLanguage == favoritesLabel
+    val filteredRows = remember(rows, effectiveLanguage, showingFavorites, favoriteVoices) {
+        val base = when {
+            showingFavorites || effectiveLanguage == allLanguagesLabel -> rows
+            else -> rows.filter { effectiveLanguage in it.languages }
+        }
+        if (showingFavorites) base.filter { it.id in favoriteVoices } else base
     }
 
     Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -256,6 +285,50 @@ fun AiVoicesTab(
         if (samplePlayer.cachedSpeakers.isNotEmpty()) {
             TextButton(onClick = { samplePlayer.clearSamples() }, modifier = Modifier.heightIn(min = 24.dp)) {
                 Text(stringResource(R.string.tts_clear_samples), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+            }
+        }
+    }
+
+    androidx.compose.material3.ExposedDropdownMenuBox(
+        expanded = languageMenuExpanded,
+        onExpandedChange = { if (!isTtsActive) languageMenuExpanded = it },
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+    ) {
+        OutlinedTextField(
+            value = effectiveLanguage,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(stringResource(R.string.tts_language_filter)) },
+            trailingIcon = { androidx.compose.material3.ExposedDropdownMenuDefaults.TrailingIcon(expanded = languageMenuExpanded) },
+            colors = androidx.compose.material3.ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+            modifier = Modifier.fillMaxWidth().menuAnchor(),
+            enabled = !isTtsActive
+        )
+        ExposedDropdownMenu(
+            expanded = languageMenuExpanded,
+            onDismissRequest = { languageMenuExpanded = false }
+        ) {
+            languages.forEach { lang ->
+                DropdownMenuItem(
+                    text = { Text(text = lang) },
+                    leadingIcon = if (lang == favoritesLabel) {
+                        {
+                            Icon(
+                                Icons.Default.Star,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    } else null,
+                    trailingIcon = if (lang == effectiveLanguage) {
+                        { Icon(Icons.Default.Check, contentDescription = null) }
+                    } else null,
+                    onClick = {
+                        selectedLanguage = lang
+                        saveCloudVoiceLanguage(context, lang)
+                        languageMenuExpanded = false
+                    }
+                )
             }
         }
     }
@@ -268,7 +341,7 @@ fun AiVoicesTab(
                 }
             }
         }
-        if (!useByokGemini && !voicesLoading && rows.isEmpty()) {
+        if (!useByokGemini && !voicesLoading && fishVoices.isEmpty()) {
             item {
                 Text(
                     stringResource(R.string.tts_no_cloud_voices),
@@ -278,10 +351,25 @@ fun AiVoicesTab(
                 )
             }
         }
-        items(rows.size) { index ->
-            val voice = rows[index]
+        if (!voicesLoading && rows.isNotEmpty() && filteredRows.isEmpty()) {
+            item {
+                Text(
+                    text = if (showingFavorites) {
+                        stringResource(R.string.tts_no_favorite_voices)
+                    } else {
+                        stringResource(R.string.tts_no_voices_for_language)
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+        }
+        items(filteredRows.size) { index ->
+            val voice = filteredRows[index]
             val isSelected = currentSpeakerId == voice.id
             val isCached = samplePlayer.cachedSpeakers.contains(voice.id)
+            val isFavorite = voice.id in favoriteVoices
 
             ListItem(
                 headlineContent = { Text(voice.name, fontWeight = if (isSelected && isCloudMode) FontWeight.Bold else FontWeight.Normal) },
@@ -294,7 +382,25 @@ fun AiVoicesTab(
                     }
                 },
                 trailingContent = {
-                    if (!isTtsActive) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = {
+                                favoriteVoices = toggleSharedMobileTtsVoiceFavorite(favoriteVoices, voice.id)
+                                saveTtsFavoriteVoices(context, favoriteVoices)
+                            }
+                        ) {
+                            Icon(
+                                Icons.Default.Star,
+                                contentDescription = if (isFavorite) {
+                                    stringResource(R.string.tts_remove_favorite)
+                                } else {
+                                    stringResource(R.string.tts_add_favorite)
+                                },
+                                tint = if (isFavorite) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (!isTtsActive) {
                         IconButton(onClick = {
                             if (voice.fishRef != null) {
                                 scope.launch {
@@ -322,6 +428,7 @@ fun AiVoicesTab(
                                     tint = MaterialTheme.colorScheme.primary
                                 )
                             }
+                        }
                         }
                     }
                 },
@@ -498,7 +605,7 @@ fun DeviceVoicesTab(
         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
     )
 
-    androidx.compose.material3.ExposedDropdownMenuBox(
+    ExposedDropdownMenuBox(
         expanded = languageMenuExpanded,
         onExpandedChange = { if (!isTtsActive) languageMenuExpanded = it },
         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
@@ -508,8 +615,8 @@ fun DeviceVoicesTab(
             onValueChange = {},
             readOnly = true,
             label = { Text(stringResource(R.string.tts_language_filter)) },
-            trailingIcon = { androidx.compose.material3.ExposedDropdownMenuDefaults.TrailingIcon(expanded = languageMenuExpanded) },
-            colors = androidx.compose.material3.ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = languageMenuExpanded) },
+            colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
             modifier = Modifier.fillMaxWidth().menuAnchor(),
             enabled = !isTtsActive
         )

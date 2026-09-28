@@ -14,8 +14,10 @@ import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.formatMicrosUsd
 import com.aryan.reader.shared.formatSpendGuardCountdown
 import com.aryan.reader.shared.hasSpendableBalance
+import com.aryan.reader.shared.isFishVoiceListCacheFresh
 import com.aryan.reader.shared.parseSpendGuardError
 import com.aryan.reader.shared.maskedReaderAiKey
+import kotlin.time.Clock
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.interpretCPointer
@@ -26,10 +28,15 @@ import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -181,6 +188,58 @@ internal class IosReaderAiSettingsStore(
         const val KEY_TTS_SPEAKER = "reader.ai.tts_speaker.v1"
         const val KEY_HIDE_READER_AI = "reader.ai.hide_features.v1"
     }
+}
+
+/**
+ * Starred TTS voice ids (device + cloud reference ids share one set, same
+ * as Android's TTS prefs). Favorites are not secrets: NSUserDefaults, not
+ * the Keychain.
+ */
+private const val IOS_TTS_FAVORITE_VOICES_KEY = "reader.tts.favoriteVoices"
+
+internal fun iosLoadTtsFavoriteVoices(): Set<String> {
+    val stored = NSUserDefaults.standardUserDefaults.arrayForKey(IOS_TTS_FAVORITE_VOICES_KEY) as? List<*>
+    return stored?.mapNotNull { it as? String }?.toSet().orEmpty()
+}
+
+internal fun iosSaveTtsFavoriteVoices(favorites: Set<String>) {
+    NSUserDefaults.standardUserDefaults.setObject(favorites.toList(), forKey = IOS_TTS_FAVORITE_VOICES_KEY)
+}
+
+/** Persisted Fish voice language filter (raw selection, validated by the UI). */
+private const val IOS_FISH_LANGUAGE_FILTER_KEY = "reader.tts.fish_language_filter"
+
+internal fun iosLoadFishLanguageFilter(): String? {
+    return NSUserDefaults.standardUserDefaults.stringForKey(IOS_FISH_LANGUAGE_FILTER_KEY)?.takeIf { it.isNotBlank() }
+}
+
+internal fun iosSaveFishLanguageFilter(selection: String) {
+    NSUserDefaults.standardUserDefaults.setObject(selection, forKey = IOS_FISH_LANGUAGE_FILTER_KEY)
+}
+
+/**
+ * Process-lifetime Fish voice-list cache (TTL is shared). Keyed by
+ * credential for BYOK and by base URL for the worker (whose response
+ * carries no per-user data); empty results are never cached.
+ */
+private data class IosCachedFishVoices(
+    val voices: List<com.aryan.reader.shared.ReaderFishVoice>,
+    val fetchedAtMs: Long
+)
+
+private val iosFishVoicesCache = mutableMapOf<String, IosCachedFishVoices>()
+
+private fun iosCachedFishVoices(cacheKey: String): List<com.aryan.reader.shared.ReaderFishVoice>? {
+    val cached = iosFishVoicesCache[cacheKey] ?: return null
+    if (!isFishVoiceListCacheFresh(cached.fetchedAtMs, Clock.System.now().toEpochMilliseconds())) {
+        iosFishVoicesCache.remove(cacheKey)
+        return null
+    }
+    return cached.voices
+}
+
+private fun iosStoreFishVoices(cacheKey: String, voices: List<com.aryan.reader.shared.ReaderFishVoice>) {
+    iosFishVoicesCache[cacheKey] = IosCachedFishVoices(voices, Clock.System.now().toEpochMilliseconds())
 }
 
 /** Small Keychain wrapper; values never enter NSUserDefaults or cloud snapshots. */
@@ -705,10 +764,17 @@ private fun workerErrorMessage(body: String): String? {
 }
 
 /**
+ * Fish Official's author id: the professional voices Fish themselves post
+ * (the `licensed=true` pool is only 7 voices and a subset of this catalog).
+ */
+private const val FISH_OFFICIAL_AUTHOR_ID = "d8b0991f96b44e489422ca2ddf0bd31d"
+
+/**
  * Fish voice catalog for the iOS voice picker (Android `fetchFishVoices` +
- * `fetchCloudFishVoices` parity). BYOK Fish key lists the live Fish model
- * catalog; otherwise the credited worker catalog (`GET /v2/voices`).
- * Empty when neither credential is available or the call fails.
+ * `fetchCloudFishVoices` parity). BYOK Fish key lists the user's own voice
+ * library plus Fish Official's own catalog; otherwise the credited worker
+ * catalog (`GET /v2/voices`). Empty when neither credential is available or
+ * the call fails.
  */
 internal suspend fun iosFetchFishVoices(
     fishKey: String,
@@ -716,40 +782,31 @@ internal suspend fun iosFetchFishVoices(
     authToken: String?,
 ): List<com.aryan.reader.shared.ReaderFishVoice> {
     if (fishKey.isNotBlank()) {
-        val response = runCatching {
-            IosReaderAiHttpClient.get(
-                "https://api.fish.audio/v1/model?page_size=100&page_number=1",
-                mapOf("Authorization" to "Bearer $fishKey"),
+        val cacheKey = "byok:$fishKey"
+        iosCachedFishVoices(cacheKey)?.let { return it }
+        // Own + public fetch concurrently; each side degrades independently
+        // so one slow/failed listing still leaves the other instead of an
+        // empty picker.
+        val (own, public) = coroutineScope {
+            awaitAll(
+                async { runCatching { iosFetchFishModelPages(fishKey, selfOnly = true) }.getOrDefault(emptyList()) },
+                async { runCatching { iosFetchFishModelPages(fishKey, selfOnly = false) }.getOrDefault(emptyList()) },
             )
-        }.getOrNull()
-        if (response != null && response.statusCode in 200..299) {
-            val items = runCatching {
-                IosReaderAiJson.parseToJsonElement(response.body).jsonObject["items"]?.jsonArray
-            }.getOrNull()
-            if (items != null) {
-                return items.mapNotNull { element ->
-                    val model = element.jsonObject
-                    val rawRef = model["_id"]?.jsonPrimitive?.contentOrNull
-                        ?: model["id"]?.jsonPrimitive?.contentOrNull
-                        ?: model["reference_id"]?.jsonPrimitive?.contentOrNull
-                        ?: return@mapNotNull null
-                    val referenceId = rawRef.replace("-", "")
-                    if (referenceId.isBlank()) return@mapNotNull null
-                    com.aryan.reader.shared.ReaderFishVoice(
-                        id = referenceId,
-                        referenceId = referenceId,
-                        title = model["title"]?.jsonPrimitive?.contentOrNull
-                            ?: model["name"]?.jsonPrimitive?.contentOrNull
-                            ?: "Fish voice",
-                        description = model["description"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                    )
-                }
-            }
+        }
+        val seen = own.mapTo(mutableSetOf()) { it.referenceId }
+        val merged = own + public.filter { it.referenceId.isNotBlank() && seen.add(it.referenceId) }
+        if (merged.isNotEmpty()) {
+            iosStoreFishVoices(cacheKey, merged)
+            return merged
         }
     }
     val base = workerBaseUrl.trim().removeSuffix("/")
     val token = authToken
     if (base.isBlank() || token.isNullOrBlank()) return emptyList()
+    // The worker response carries no per-user data (auth only gates access),
+    // so it is cached by base URL, not by token.
+    val workerCacheKey = "worker:$base"
+    iosCachedFishVoices(workerCacheKey)?.let { return it }
     val response = runCatching {
         IosReaderAiHttpClient.get(
             "$base/v2/voices",
@@ -773,8 +830,71 @@ internal suspend fun iosFetchFishVoices(
                 ?.ifBlank { voice["title"]?.jsonPrimitive?.contentOrNull }
                 ?: referenceId,
             description = voice["description"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            languages = voice["languages"]?.jsonArray?.mapNotNull {
+                it.jsonPrimitive.contentOrNull?.takeIf(String::isNotBlank)
+            }.orEmpty(),
         )
+    }.also { if (it.isNotEmpty()) iosStoreFishVoices(workerCacheKey, it) }
+}
+
+private suspend fun iosFetchFishModelPages(
+    fishKey: String,
+    selfOnly: Boolean,
+    maxPages: Int = 4,
+    pageSize: Int = 100,
+): List<com.aryan.reader.shared.ReaderFishVoice> {
+    val voices = mutableListOf<com.aryan.reader.shared.ReaderFishVoice>()
+    repeat(maxPages) { index ->
+        // NOTE: the listing endpoint is NOT under /v1 (/v1/model 404s).
+        // Fish Official's catalog for the public side: the professional
+        // voices Fish themselves post, no random user clones.
+        val scopeParam = if (selfOnly) "&self=true" else "&author_id=$FISH_OFFICIAL_AUTHOR_ID"
+        val response = runCatching {
+            IosReaderAiHttpClient.get(
+                "https://api.fish.audio/model?page_size=$pageSize&page_number=${index + 1}$scopeParam",
+                mapOf("Authorization" to "Bearer $fishKey"),
+            )
+        }.getOrNull() ?: return voices
+        if (response.statusCode !in 200..299) return voices
+        val body = runCatching {
+            IosReaderAiJson.parseToJsonElement(response.body).jsonObject
+        }.getOrNull() ?: return voices
+        val items = body["items"]?.jsonArray ?: return voices
+        items.mapNotNullTo(voices) { iosFishVoiceFromModel(it) }
+        val hasMore = body["has_more"]?.jsonPrimitive?.booleanOrNull
+            ?: (items.size >= pageSize)
+        if (!hasMore) return voices
     }
+    return voices
+}
+
+private fun iosFishVoiceFromModel(element: JsonElement): com.aryan.reader.shared.ReaderFishVoice? {
+    val model = runCatching { element.jsonObject }.getOrNull() ?: return null
+    // Skip voices that cannot synthesize; `state` is absent on older entries.
+    val state = model["state"]?.jsonPrimitive?.contentOrNull
+    if (!state.isNullOrBlank() && state != "trained") return null
+    // Only TTS-capable models belong in a TTS picker (`type` is absent on
+    // older entries — those are kept).
+    val type = model["type"]?.jsonPrimitive?.contentOrNull
+    if (!type.isNullOrBlank() && type != "tts") return null
+    val rawRef = model["_id"]?.jsonPrimitive?.contentOrNull
+        ?: model["id"]?.jsonPrimitive?.contentOrNull
+        ?: model["reference_id"]?.jsonPrimitive?.contentOrNull
+        ?: return null
+    val referenceId = rawRef.replace("-", "")
+    if (referenceId.isBlank()) return null
+    val languages = model["languages"]?.jsonArray?.mapNotNull {
+        it.jsonPrimitive.contentOrNull?.takeIf(String::isNotBlank)
+    }.orEmpty()
+    return com.aryan.reader.shared.ReaderFishVoice(
+        id = referenceId,
+        referenceId = referenceId,
+        title = model["title"]?.jsonPrimitive?.contentOrNull
+            ?: model["name"]?.jsonPrimitive?.contentOrNull
+            ?: "Fish voice",
+        description = model["description"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        languages = languages,
+    )
 }
 
 /** Gemini's stream endpoint may return adjacent JSON objects rather than NDJSON. */

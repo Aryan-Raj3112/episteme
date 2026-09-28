@@ -130,6 +130,15 @@ class ReaderExtrasModelsTest {
     }
 
     @Test
+    fun `fish voice list cache freshness honors the ttl`() {
+        assertTrue(isFishVoiceListCacheFresh(fetchedAtMs = 1000L, nowMs = 1000L + FISH_VOICE_LIST_CACHE_TTL_MS))
+        assertFalse(isFishVoiceListCacheFresh(fetchedAtMs = 1000L, nowMs = 1000L + FISH_VOICE_LIST_CACHE_TTL_MS + 1L))
+        // Future timestamps (clock skew) count as fresh rather than
+        // triggering a refetch storm.
+        assertTrue(isFishVoiceListCacheFresh(fetchedAtMs = 2000L, nowMs = 1000L))
+    }
+
+    @Test
     fun `hasByokModel is true only with known model and matching provider key`() {
         assertFalse(ReaderAiByokSettings().hasByokModel(ReaderAiFeature.DEFINE))
         assertFalse(

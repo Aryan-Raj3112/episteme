@@ -13,6 +13,11 @@ import androidx.compose.ui.res.stringResource
 import com.aryan.reader.shared.ReaderFishVoice
 import com.aryan.reader.shared.ui.SharedAiSettingsScreen
 import com.aryan.reader.shared.ui.SharedAiSettingsStrings
+import com.aryan.reader.shared.ui.toggleSharedMobileTtsVoiceFavorite
+import com.aryan.reader.tts.loadCloudVoiceLanguage
+import com.aryan.reader.tts.saveCloudVoiceLanguage
+import com.aryan.reader.tts.loadTtsFavoriteVoices
+import com.aryan.reader.tts.saveTtsFavoriteVoices
 import com.aryan.reader.tts.saveTtsSpeaker
 
 @Composable
@@ -26,6 +31,10 @@ fun AiSettingsScreen(onBackClick: () -> Unit) {
     var geminiTtsOptions by remember { mutableStateOf(aiByokTtsModelFallback) }
     var fishVoices by remember { mutableStateOf<List<ReaderFishVoice>>(emptyList()) }
     var fishVoicesLoading by remember { mutableStateOf(false) }
+    var favoriteFishVoices by remember { mutableStateOf(loadTtsFavoriteVoices(context)) }
+    // Shared persisted cloud-voice language filter (same key as the TTS
+    // settings cloud tab, so both surfaces agree).
+    var fishLanguageFilter by remember { mutableStateOf(loadCloudVoiceLanguage(context)) }
 
     fun refresh() {
         settings = loadAiByokSettings(context)
@@ -92,6 +101,14 @@ fun AiSettingsScreen(onBackClick: () -> Unit) {
             saveDialogTitle = { context.getString(R.string.dialog_save_provider_key, it) },
             deleteDialogTitle = { context.getString(R.string.dialog_delete_provider_key, it) },
             deleteKeyDescription = { context.getString(R.string.content_desc_delete_provider_key, it) },
+            languageFilterLabel = stringResource(R.string.tts_language_filter),
+            favoritesLabel = stringResource(R.string.tts_favorites),
+            allLanguagesLabel = stringResource(R.string.filter_all),
+            noFishVoicesFound = stringResource(R.string.ai_settings_no_fish_voices),
+            noFavoriteVoices = stringResource(R.string.tts_no_favorite_voices),
+            noVoicesForLanguage = { context.getString(R.string.tts_no_voices_for_language) },
+            addFavoriteDescription = stringResource(R.string.tts_add_favorite),
+            removeFavoriteDescription = stringResource(R.string.tts_remove_favorite),
         ),
         onBackClick = onBackClick,
         onSaveKey = { provider, key ->
@@ -116,6 +133,16 @@ fun AiSettingsScreen(onBackClick: () -> Unit) {
         } + com.aryan.reader.shared.ReaderAiModelOption("fish", FISH_TTS_MODEL),
         fishVoices = fishVoices,
         fishVoicesLoading = fishVoicesLoading,
+        favoriteFishVoiceIds = favoriteFishVoices,
+        onToggleFavoriteFishVoice = { referenceId ->
+            favoriteFishVoices = toggleSharedMobileTtsVoiceFavorite(favoriteFishVoices, referenceId)
+            saveTtsFavoriteVoices(context, favoriteFishVoices)
+        },
+        fishLanguageSelection = fishLanguageFilter,
+        onFishLanguageSelectionChange = { selection ->
+            fishLanguageFilter = selection
+            saveCloudVoiceLanguage(context, selection)
+        },
         modifier = Modifier.statusBarsPadding(),
     )
 }
