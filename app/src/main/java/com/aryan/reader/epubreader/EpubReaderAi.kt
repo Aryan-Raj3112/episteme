@@ -20,6 +20,7 @@
 package com.aryan.reader.epubreader
 
 import android.content.Context
+import com.aryan.reader.appCheckHeaderMap
 import androidx.compose.foundation.layout.fillMaxWidth
 import com.aryan.reader.shared.parseSpendGuardError
 import com.aryan.reader.shared.parseSpendGuardSentinel
@@ -128,6 +129,8 @@ suspend fun summarizeBookContent(
             if (authToken != null) {
                 connection.setRequestProperty("Authorization", "Bearer $authToken")
             }
+            // Attestation (omitted when unavailable; the server logs the miss).
+            appCheckHeaderMap().forEach { (name, value) -> connection.setRequestProperty(name, value) }
             connection.connectTimeout = 15000
             connection.readTimeout = 120000
             connection.doOutput = true

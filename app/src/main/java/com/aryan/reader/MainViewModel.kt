@@ -2610,6 +2610,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 try {
                     connection.requestMethod = "POST"
                     connection.setRequestProperty("Authorization", "Bearer $token")
+                    // Attestation (omitted when unavailable; the server logs the miss).
+                    appCheckHeaderMap().forEach { (name, value) -> connection.setRequestProperty(name, value) }
                     connection.connectTimeout = 15000
                     connection.readTimeout = 15000
                     val code = connection.responseCode

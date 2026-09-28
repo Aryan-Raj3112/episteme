@@ -16,7 +16,7 @@ class SharedPdfWheelDockPolicyTest {
     }
 
     @Test
-    fun `small arcs do not scroll, large arcs scroll end to end`() {
+    fun `small arcs do not scroll and large arcs scroll end to end`() {
         // 4 tools span 120 degrees: fits, no scroll.
         assertEquals(0f, sharedPdfWheelRotationRangeDeg(4))
         // 9 tools span 320 degrees: 86 degrees each way (ends stop 16

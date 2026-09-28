@@ -2,6 +2,7 @@
 
 package com.aryan.reader.shared.ios
 
+import kotlin.time.Clock
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -1691,6 +1692,29 @@ class ReaderIosBridge internal constructor(
         if (expectedUid != null && accountState.uid != expectedUid) return
         accountState = accountState.copy(authToken = authToken)
     }
+
+    /**
+     * Latest App Check token pushed from Swift. Attestation is app-scoped
+     * (not account-scoped), so it lives outside IosAccountState.
+     */
+    internal var appCheckToken: String? = null
+        private set
+    internal var appCheckTokenFetchedAtMs: Long = 0
+        private set
+
+    fun updateAppCheckToken(token: String?) {
+        appCheckToken = token?.takeIf { it.isNotBlank() }
+        appCheckTokenFetchedAtMs = Clock.System.now().toEpochMilliseconds()
+    }
+
+    /**
+     * Cached token for worker calls. Stale tokens (App Check default TTL is
+     * 1h) are omitted, never sent — the server logs the miss in log mode.
+     */
+    fun freshAppCheckToken(): String? {
+        val ageMs = Clock.System.now().toEpochMilliseconds() - appCheckTokenFetchedAtMs
+        return appCheckToken?.takeIf { ageMs in 0..50 * 60 * 1000 }
+    }
 }
 
 internal object IosStoreKitProductIds {
@@ -2863,6 +2887,9 @@ private fun ReaderIosApp(
         state.isProUser,
         state.credits,
     ) {
+        // Attestation rides the bridge-cached token Swift pushes on each
+        // auth (re)publish (top-level provider in IosReaderAiAdapters.kt).
+        iosAppCheckTokenProvider = { bridge.freshAppCheckToken() }
         IosReaderAiAdapter(
             settingsProvider = { effectiveReaderAiSettings },
             accountStateProvider = {
@@ -3359,10 +3386,10 @@ private fun ReaderIosApp(
             return
         }
         // Android parity (PdfViewerScreen.onDictionaryLookup /
-        // EpubReaderScreen.onDictionaryLookup): defining more than one word
-        // without Pro shows the smart-dictionary upsell popup instead of
-        // fetching. BYOK bypasses the worker gate exactly like Android OSS.
-        if (feature == ReaderAiFeature.DEFINE && iosCountWords(input) > 1 && !state.isProUser) {
+        // EpubReaderScreen.onDictionaryLookup): smart dictionary without Pro
+        // shows the upsell popup instead of fetching. BYOK bypasses the
+        // worker gate exactly like Android.
+        if (feature == ReaderAiFeature.DEFINE && !state.isProUser) {
             val sanitizedSettings = effectiveReaderAiSettings.sanitized()
             val byokModelId = sanitizedSettings.modelIdFor(ReaderAiFeature.DEFINE)
             val hasByokDefine = readerAiModelById(byokModelId)?.let {

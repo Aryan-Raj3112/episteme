@@ -361,14 +361,12 @@ internal class IosReaderAiAdapter(
     ): AiDefinitionResult {
         val trimmed = text.trim()
         if (trimmed.isBlank()) return AiDefinitionResult(error = "There is no text to define.")
-        // Android parity (PdfViewerScreen.onDictionaryLookup + worker
-        // handleDefine): multi-word smart dictionary is Pro-only. BYOK
-        // bypasses the worker gate exactly like Android OSS, so a configured
-        // define model allows phrases without Pro. No sign-in or credits
-        // check here — single-word works signed-out via the worker.
+        // Android parity (worker /define): smart dictionary is Pro-only.
+        // BYOK bypasses the worker gate exactly like Android, so a
+        // configured define model allows definitions without Pro.
         val account = accountStateProvider()
-        if (iosCountWords(trimmed) > 1 && !account.isProUser && !hasByokModel(ReaderAiFeature.DEFINE)) {
-            return AiDefinitionResult(error = "Multi-word smart dictionary requires Pro.")
+        if (!account.isProUser && !hasByokModel(ReaderAiFeature.DEFINE)) {
+            return AiDefinitionResult(error = "Smart dictionary requires Pro.")
         }
         return textRequest(ReaderAiFeature.DEFINE, trimmed.take(2400), context, onUpdate).let { result ->
             AiDefinitionResult(definition = result.text, error = result.error)
@@ -479,7 +477,9 @@ internal class IosReaderAiAdapter(
         onUsageReceived: (cost: Double?, freeRemaining: Int?) -> Unit,
         pastSummaries: List<String>,
     ): IosReaderAiTextResult {
-        val authRequired = feature != ReaderAiFeature.DEFINE
+        // Every worker feature (including /define) requires auth now; the
+        // adapter pro gate above keeps this a friendly client-side error.
+        val authRequired = true
         val token = authTokenProvider()
         if (authRequired && token.isNullOrBlank()) {
             return IosReaderAiTextResult(error = "Sign in again to use this AI feature.")
@@ -726,24 +726,6 @@ private data class IosReaderAiTextResult(
     val freeRemaining: Int? = null,
 )
 
-/**
- * Android parity (countWords): whitespace-transition count so the
- * multi-word Pro gate matches PdfViewerScreen/EpubReaderScreen exactly.
- */
-internal fun iosCountWords(text: String): Int {
-    var count = 0
-    var inWord = false
-    for (char in text) {
-        if (char.isWhitespace()) {
-            inWord = false
-        } else if (!inWord) {
-            count++
-            inWord = true
-        }
-    }
-    return count
-}
-
 private val IosReaderAiJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
 private fun workerErrorMessage(body: String): String? {
@@ -752,7 +734,7 @@ private fun workerErrorMessage(body: String): String? {
         "insufficient_credits" in normalized -> "Out of credits."
         "summary_limit" in normalized || ("free summar" in normalized && "limit" in normalized) ->
             "Free summaries are used up for today."
-        "multi_word_requires_pro" in normalized -> "Multi-word smart dictionary requires Pro."
+        "define_requires_pro" in normalized -> "Smart dictionary requires Pro."
         "authentication required" in normalized || "unauthorized" in normalized ->
             "Sign in again to use this AI feature."
         else -> runCatching {
@@ -933,6 +915,15 @@ private fun parseConcatenatedJsonObjects(body: String): List<JsonObject> {
     return objects
 }
 
+/**
+ * App Check token source, a plain (non-suspend) provider so the declaration
+ * stays representable to Swift. Swift pushes fresh tokens into the bridge
+ * (see ReaderIosBridge.updateAppCheckToken) and ReaderIosApp wires the
+ * cached value here. Null until wired — requests then simply omit the header
+ * and the server logs the miss while enforcement is off.
+ */
+internal var iosAppCheckTokenProvider: (() -> String?)? = null
+
 internal object IosReaderAiHttpClient {
     suspend fun post(url: String, body: String, headers: Map<String, String>): IosReaderAiHttpResponse {
         return request(url = url, method = "POST", body = body.toNSData(), headers = headers)
@@ -962,6 +953,8 @@ internal object IosReaderAiHttpClient {
             setValue("application/json; charset=UTF-8", forHTTPHeaderField = "Content-Type")
             setValue("application/json", forHTTPHeaderField = "Accept")
             headers.forEach { (name, value) -> setValue(value, forHTTPHeaderField = name) }
+            // Attestation (omitted when unavailable; the server logs the miss).
+            iosAppCheckTokenProvider?.invoke()?.let { setValue(it, forHTTPHeaderField = "X-Firebase-AppCheck") }
             if (body != null) setHTTPBody(body)
         }
         return suspendCancellableCoroutine { continuation ->

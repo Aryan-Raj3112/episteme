@@ -106,6 +106,8 @@ suspend fun fetchAiDefinition(
             if (authToken != null) {
                 connection.setRequestProperty("Authorization", "Bearer $authToken")
             }
+            // Attestation (omitted when unavailable; the server logs the miss).
+            appCheckHeaderMap().forEach { (name, value) -> connection.setRequestProperty(name, value) }
             connection.connectTimeout = 10000
             connection.readTimeout = 30000
             connection.doOutput = true
@@ -659,6 +661,8 @@ suspend fun fetchRecap(
             if (authToken != null) {
                 connection.setRequestProperty("Authorization", "Bearer $authToken")
             }
+            // Attestation (omitted when unavailable; the server logs the miss).
+            appCheckHeaderMap().forEach { (name, value) -> connection.setRequestProperty(name, value) }
             connection.connectTimeout = 15000
             connection.readTimeout = 120000
             connection.doOutput = true

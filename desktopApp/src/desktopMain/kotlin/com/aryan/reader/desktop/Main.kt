@@ -1602,16 +1602,19 @@ internal fun EpistemeDesktopApp(
                 messageFallback = "Desktop AI is not configured for this build."
             )
         }
-        if (feature == ReaderAiFeature.DEFINE && desktopReaderWordCount(text) > 1 && state.currentUser == null) {
+        // Worker /define is Pro-only: every definition needs sign-in + Pro,
+        // single-word included. (String keys keep their historic
+        // "multi_word" names; only the copy changed.)
+        if (feature == ReaderAiFeature.DEFINE && state.currentUser == null) {
             return desktopSignInRequiredNotice(
                 messageKey = "desktop_sign_in_required_multi_word_dictionary_desc",
-                messageFallback = "Sign in with Google to use multi-word smart dictionary on desktop."
+                messageFallback = "Sign in with Google to use smart dictionary on desktop."
             )
         }
-        if (feature == ReaderAiFeature.DEFINE && desktopReaderWordCount(text) > 1 && !state.isProUser) {
+        if (feature == ReaderAiFeature.DEFINE && !state.isProUser) {
             return desktopProRequiredNotice(
                 messageKey = "desktop_pro_required_multi_word_dictionary_desc",
-                messageFallback = "Multi-word smart dictionary requires Pro. Pro can only be purchased from the Android app, then desktop will use the upgraded account after sign-in."
+                messageFallback = "Smart dictionary requires Pro. Pro can only be purchased from the Android app, then desktop will use the upgraded account after sign-in."
             )
         }
         if (feature == ReaderAiFeature.SUMMARIZE && state.currentUser == null) {
@@ -5471,10 +5474,6 @@ private fun desktopFeatureNoticeForError(errorMessage: String?): DesktopFeatureN
 
         else -> null
     }
-}
-
-private fun desktopReaderWordCount(text: String): Int {
-    return text.trim().split(Regex("\\s+")).count { it.isNotBlank() }
 }
 
 private fun ReaderImageReference.desktopImageBytes(): ByteArray {

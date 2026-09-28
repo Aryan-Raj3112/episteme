@@ -202,9 +202,9 @@
     <string name="drawer_sign_in">Sign in with Google</string>
     <string name="drawer_by_signing_in">By signing in,</string>
     <!-- "Episteme Pro" is a product tier name — do not translate "Episteme". -->
-    <string name="drawer_pro_unlocked">Episteme Pro</string>
+    <string name="drawer_pro_unlocked">Episteme Pro and Credits</string>
     <!-- "Episteme Pro" is a product tier name — do not translate "Episteme". -->
-    <string name="drawer_upgrade_pro">Upgrade to Episteme Pro</string>
+    <string name="drawer_upgrade_pro">Episteme Pro and Credits</string>
     <string name="drawer_sync_library">Sync Library</string>
     <string name="drawer_folder_sync">Folder sync</string>
     <string name="drawer_folder_sync_desc">Choose which folders are backed up to Drive.</string>
@@ -842,7 +842,7 @@
     <string name="action_learn_more">Learn More</string>
     <string name="ai_unlock_smart_dict">Unlock Smart Dictionary</string>
     <!-- "Pro" refers to the Episteme Pro product tier. -->
-    <string name="ai_unlock_smart_dict_desc">Defining entire phrases and paragraphs up to 2000 characters is a Pro feature. Upgrade to get instant definitions for any selected text.</string>
+    <string name="ai_unlock_smart_dict_desc">Smart Dictionary gives instant AI definitions for any selected text. It is a Pro feature — upgrade to start using it.</string>
 
     <!-- EpubReaderAnnotations.kt -->
     <string name="content_desc_bookmark_icon">Bookmark</string>
@@ -2293,8 +2293,8 @@
     <string name="desktop_pro_required">Pro required</string>
     <!-- Desktop notice for a Pro-gated feature: purchase on Android, then sign in on desktop to use it. -->
     <string name="desktop_pro_required_generic_feature_desc">This feature requires Pro. Pro can only be purchased from the Android app, then desktop will use the upgraded account after sign-in.</string>
-    <!-- Desktop notice: the multi-word smart dictionary needs Pro; purchase on Android, then sign in on desktop. -->
-    <string name="desktop_pro_required_multi_word_dictionary_desc">Multi-word smart dictionary requires Pro. Pro can only be purchased from the Android app, then desktop will use the upgraded account after sign-in.</string>
+    <!-- Desktop notice: the smart dictionary needs Pro; purchase on Android, then sign in on desktop. -->
+    <string name="desktop_pro_required_multi_word_dictionary_desc">Smart dictionary requires Pro. Pro can only be purchased from the Android app, then desktop will use the upgraded account after sign-in.</string>
     <string name="desktop_reader_ai_hidden_desc">Reader AI features are hidden.</string>
     <string name="desktop_ai_not_configured_desc">Desktop AI is not configured for this build.</string>
     <string name="desktop_remove_gap_between_pages_desc">Applies to vertical reading and two-page spreads.</string>
@@ -2308,7 +2308,7 @@
     <string name="desktop_selected_annotation_format">Selected %1$s</string>
     <string name="desktop_show_search_results">Show search results</string>
     <string name="desktop_sign_in_required_generic_feature_desc">Sign in with Google to use this feature on desktop.</string>
-    <string name="desktop_sign_in_required_multi_word_dictionary_desc">Sign in with Google to use multi-word smart dictionary on desktop.</string>
+    <string name="desktop_sign_in_required_multi_word_dictionary_desc">Sign in with Google to use smart dictionary on desktop.</string>
     <string name="desktop_sign_in_required_recaps_desc">Sign in with Google to use recaps on desktop.</string>
     <string name="desktop_sign_in_required_summaries_desc">Sign in with Google to use summaries on desktop.</string>
     <string name="desktop_stopped">Stopped</string>

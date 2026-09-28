@@ -379,7 +379,10 @@ internal fun loadPdfThemeId(context: Context): String {
 internal fun loadUseOnlineDict(context: Context): Boolean {
     @Suppress("KotlinConstantConditions") if (BuildConfig.FLAVOR == "oss" && BuildConfig.IS_OFFLINE) return false
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    return prefs.getBoolean(PREF_USE_ONLINE_DICT, true)
+    // Default false ("no selection"): nothing is preselected, so a lookup
+    // with no external app chosen opens the dictionary settings sheet and
+    // lets the user pick Smart AI or an external app.
+    return prefs.getBoolean(PREF_USE_ONLINE_DICT, false)
 }
 
 internal fun saveUseOnlineDict(context: Context, useOnline: Boolean) {

@@ -10,6 +10,9 @@ import SwiftUI
 #if canImport(FirebaseCore)
 import FirebaseCore
 #endif
+#if canImport(FirebaseAppCheck)
+import FirebaseAppCheck
+#endif
 
 @main
 struct ReaderApp: App {
@@ -31,6 +34,11 @@ struct ReaderApp: App {
             UserDefaults.standard.removePersistentDomain(forName: bundleIdentifier)
             UserDefaults.standard.synchronize()
         }
+#endif
+#if canImport(FirebaseAppCheck)
+        // App Check provider must be set before configure() so the first
+        // token request is already attested.
+        IosAppCheck.install()
 #endif
 #if canImport(FirebaseCore)
         if FirebaseApp.app() == nil, FirebaseOptions.defaultOptions() != nil {

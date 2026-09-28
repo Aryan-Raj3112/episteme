@@ -3861,6 +3861,11 @@ final class LocalAccountController: NSObject, ObservableObject {
             Task { @MainActor in
                 guard let self, let bridge = self.bridge else { return }
                 bridge.updateAccountAuthToken(authToken: token, expectedUid: publishedUID)
+#if canImport(FirebaseAppCheck)
+                // Attestation rides along with auth: every (re)publish pushes
+                // a fresh App Check token for worker calls.
+                await IosAppCheck.refresh(bridge: bridge)
+#endif
                 // Sessions outlive the ~1h token TTL (Android re-fetches per
                 // call). Keep the synchronously-consumed token live by
                 // force-refreshing ahead of expiry; the uid guard in
@@ -3891,6 +3896,9 @@ final class LocalAccountController: NSObject, ObservableObject {
                 Task { @MainActor in
                     guard let self, let bridge = self.bridge else { return }
                     bridge.updateAccountAuthToken(authToken: token, expectedUid: uid)
+#if canImport(FirebaseAppCheck)
+                    await IosAppCheck.refresh(bridge: bridge)
+#endif
                     if token != nil {
                         self.authTokenFetchedAtMs = Int64(Date().timeIntervalSince1970 * 1_000)
                         self.scheduleAuthTokenRefresh(uid: uid)

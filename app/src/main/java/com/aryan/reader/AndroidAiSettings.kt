@@ -494,13 +494,13 @@ suspend fun fetchCloudFishVoices(workerBaseUrl: String, firebaseToken: String?):
             val client = okhttp3.OkHttpClient.Builder()
                 .callTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .build()
-            val response = client.newCall(
-                okhttp3.Request.Builder()
-                    .url("$base/v2/voices")
-                    .header("Authorization", "Bearer $firebaseToken")
-                    .get()
-                    .build()
-            ).execute()
+            val requestBuilder = okhttp3.Request.Builder()
+                .url("$base/v2/voices")
+                .header("Authorization", "Bearer $firebaseToken")
+                .get()
+            // Attestation (omitted when unavailable; the server logs the miss).
+            appCheckHeaderMap().forEach { (name, value) -> requestBuilder.header(name, value) }
+            val response = client.newCall(requestBuilder.build()).execute()
             response.use {
                 if (!it.isSuccessful) return@withContext emptyList()
                 val voices = org.json.JSONObject(it.body?.string().orEmpty()).optJSONArray("voices")

@@ -20,6 +20,7 @@
 package com.aryan.reader.tts
 
 import android.Manifest
+import com.aryan.reader.appCheckHeaderMap
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -1052,7 +1053,7 @@ class TtsService : MediaSessionService() {
                 put("format", "mp3")
                 put("latency", "normal")
             }.toString()
-            return post(url, json, mapOf("Authorization" to "Bearer $firebaseToken"))
+            return post(url, json, mapOf("Authorization" to "Bearer $firebaseToken") + appCheckHeaderMap())
         }
 
         fun synthesizeSampleViaWorker(baseUrl: String, firebaseToken: String, text: String, voiceId: String): Synthesis {
@@ -1063,7 +1064,7 @@ class TtsService : MediaSessionService() {
                 put("format", "mp3")
                 put("latency", "balanced")
             }.toString()
-            return post(url, json, mapOf("Authorization" to "Bearer $firebaseToken"))
+            return post(url, json, mapOf("Authorization" to "Bearer $firebaseToken") + appCheckHeaderMap())
         }
 
         fun synthesizeViaByok(fishKey: String, text: String, referenceId: String): Synthesis {

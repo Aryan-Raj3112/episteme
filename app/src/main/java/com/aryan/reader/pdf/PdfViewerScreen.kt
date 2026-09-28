@@ -37,6 +37,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.print.PrintManager
+import com.aryan.reader.appCheckHeaderMap
 import android.util.Base64
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -2707,10 +2708,11 @@ private fun PdfViewerScreenContent(
                     val effectiveUseOnline = areReaderAiFeaturesEnabled(context) && useOnlineDictionary
 
                     if (effectiveUseOnline) {
-                        val wordCount = com.aryan.reader.countWords(text)
-                        // No upsell when the user's own key covers definitions:
-                        // the request routes through BYOK and never touches credits.
-                        if (BuildConfig.FLAVOR != "oss" && wordCount > 1 && !isProUser && !isByokModelReady(context, AiFeature.DEFINE)) {
+                        // Smart Dictionary is Pro-only (worker enforces it
+                        // too). No upsell when the user's own key covers
+                        // definitions: the request routes through BYOK and
+                        // never touches credits.
+                        if (BuildConfig.FLAVOR != "oss" && !isProUser && !isByokModelReady(context, AiFeature.DEFINE)) {
                             showDictionaryUpsellDialog = true
                         } else {
                             selectedTextForAi = text
@@ -2928,6 +2930,8 @@ private fun PdfViewerScreenContent(
                 if (authToken != null) {
                     connection.setRequestProperty("Authorization", "Bearer $authToken")
                 }
+                // Attestation (omitted when unavailable; the server logs the miss).
+                appCheckHeaderMap().forEach { (name, value) -> connection.setRequestProperty(name, value) }
                 connection.outputStream.use { os ->
                     os.write(jsonPayload.toString().toByteArray(Charsets.UTF_8))
                 }

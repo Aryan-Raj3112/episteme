@@ -173,7 +173,6 @@ import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.TtsWordReplacementsSheet
 import com.aryan.reader.areReaderAiFeaturesEnabled
-import com.aryan.reader.countWords
 import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.isByokModelReady
 import com.aryan.reader.isByokTtsReady
@@ -540,10 +539,10 @@ fun EpubReaderHost(
         val effectiveUseOnline = areReaderAiFeaturesEnabled(context) && dictTools.useOnlineDictionary
 
         if (effectiveUseOnline) {
-            val wordCount = countWords(word)
-            // No upsell when the user's own key covers definitions: the
-            // request routes through BYOK and never touches credits.
-            if (BuildConfig.FLAVOR != "oss" && wordCount > 1 && !isProUser && !isByokModelReady(context, AiFeature.DEFINE)) {
+            // Smart Dictionary is Pro-only (worker enforces it too). No
+            // upsell when the user's own key covers definitions: the request
+            // routes through BYOK and never touches credits.
+            if (BuildConfig.FLAVOR != "oss" && !isProUser && !isByokModelReady(context, AiFeature.DEFINE)) {
                 showDictionaryUpsellDialog = true
             } else {
                 dictTools.selectedTextForAi = word
