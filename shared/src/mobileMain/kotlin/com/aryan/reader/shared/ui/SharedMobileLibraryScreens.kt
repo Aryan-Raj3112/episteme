@@ -232,6 +232,8 @@ fun SharedMobileUnifiedLibraryScreen(
     onTtsSpeedChange: (Float) -> Unit = {},
     onTtsSleepTimer: (Int?) -> Unit = {},
     onStopTtsPlayback: () -> Unit = {},
+    // Platform Listen voice-settings opener. Null hides the player menu entry.
+    onOpenTtsVoiceSettings: (() -> Unit)? = null,
     /** Dedicated Listen import actions. Null keeps the legacy generic import fallback. */
     onAddAudiobookFile: (() -> Unit)? = null,
     onAddAudiobookMultiple: (() -> Unit)? = null,
@@ -880,6 +882,7 @@ fun SharedMobileUnifiedLibraryScreen(
                 onCustomSleepTimerMinutesChange = onCustomSleepTimerMinutesChange,
                 onStopPlayback = onStopTtsPlayback,
                 onDismiss = { showTtsPlayerSheet = false },
+                onOpenVoiceSettings = onOpenTtsVoiceSettings,
             )
         }
     }

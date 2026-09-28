@@ -236,6 +236,7 @@ import com.aryan.reader.shared.EpubVisibleTextRange
 import com.aryan.reader.shared.findEpubBookmarkForLocation
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
+import com.aryan.reader.tts.isReaderTtsVoiceChangeLocked
 import com.aryan.reader.tts.loadTtsMode
 import com.aryan.reader.tts.loadReaderTtsOverlaySize
 import com.aryan.reader.tts.readerTtsOverlayAlignmentBias
@@ -5910,7 +5911,7 @@ fun EpubReaderHost(
                 onSpeakerChange = { newSpeaker ->
                     ttsController.changeSpeaker(newSpeaker)
                 },
-                isTtsActive = (ttsState.isPlaying || ttsState.isLoading) && ttsState.playbackSource == "READER",
+                isTtsActive = isReaderTtsVoiceChangeLocked(ttsState.playbackSource, ttsState.sessionFinished),
                 getAuthToken = { viewModel.getAuthToken() },
                 bookTitle = epubBook.title
             )

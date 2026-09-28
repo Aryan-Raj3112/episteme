@@ -464,25 +464,31 @@ class TtsPlaybackManager(
         startChunkIndex: Int,
         continueSession: Boolean,
         speechRate: Float,
-        pitch: Float
+        pitch: Float,
+        ttsMode: TtsMode,
+        speakerId: String,
+        authToken: String?
     ) {
         val args = Bundle().apply {
             putBoolean(KEY_CONTINUE_SESSION, continueSession)
             putFloat("playback_speed", speechRate)
             putFloat("playback_pitch", pitch)
+            authToken?.takeIf { it.isNotBlank() }?.let { putString(KEY_AUTH_TOKEN, it) }
         }
         handleStartTts(
             chunks = content.chunks,
-            speakerId = currentSpeakerId,
+            speakerId = speakerId,
             bookId = book.bookId,
-            bookTitle = book.title,
-            chapterTitle = content.chapter.title,
+            // Canonical cache titles (same strings the Reader TTS path uses)
+            // so identical chunks share cloud cache files across surfaces.
+            bookTitle = book.cacheTitle,
+            chapterTitle = content.chapter.cacheTitle,
             coverImageUri = book.coverPath?.let { File(it).toURI().toString() },
             chapterIndex = content.chapter.index,
             totalChapters = book.chapters.size,
             pageIndex = if (book.type == com.aryan.reader.FileType.PDF) content.chapter.index else null,
             startChunkIndex = startChunkIndex,
-            ttsMode = TtsMode.BASE,
+            ttsMode = ttsMode,
             playbackSource = TTS_PLAYBACK_SOURCE_AUDIOBOOK,
             args = args
         )

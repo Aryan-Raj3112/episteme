@@ -280,6 +280,7 @@ const val EXTRA_BOOK_TTS_BOOK_ID = "book_tts_book_id"
 const val EXTRA_BOOK_TTS_START_POLICY = "book_tts_start_policy"
 const val EXTRA_BOOK_TTS_CHAPTER_INDEX = "book_tts_chapter_index"
 const val EXTRA_BOOK_TTS_SLEEP_MINUTES = "book_tts_sleep_minutes"
+const val EXTRA_BOOK_TTS_AUTH_TOKEN = "book_tts_auth_token"
 private const val TTS_NOTIFICATION_PREVIOUS_REQUEST_CODE = 4208
 private const val TTS_NOTIFICATION_NEXT_REQUEST_CODE = 4209
 
@@ -696,7 +697,8 @@ class TtsService : MediaSessionService() {
                         bookId = bookId,
                         startPolicy = intent.getStringExtra(EXTRA_BOOK_TTS_START_POLICY)
                             ?: BookTtsSessionCoordinator.START_RESUME,
-                        selectedChapterIndex = intent.getIntExtra(EXTRA_BOOK_TTS_CHAPTER_INDEX, -1).takeIf { it >= 0 }
+                        selectedChapterIndex = intent.getIntExtra(EXTRA_BOOK_TTS_CHAPTER_INDEX, -1).takeIf { it >= 0 },
+                        authToken = intent.getStringExtra(EXTRA_BOOK_TTS_AUTH_TOKEN)
                     )
                 }
                 return START_STICKY

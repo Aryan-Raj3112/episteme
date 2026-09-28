@@ -110,6 +110,13 @@ import com.aryan.reader.audiobook.BookTtsAudiobookController
 import com.aryan.reader.audiobook.BookTtsContentRepository
 import com.aryan.reader.audiobook.BookTtsListeningProgressEntity
 import com.aryan.reader.audiobook.BookTtsSessionCoordinator
+import com.aryan.reader.tts.loadListenNativeVoice
+import com.aryan.reader.tts.loadListenTtsMode
+import com.aryan.reader.tts.loadListenTtsSpeaker
+import com.aryan.reader.tts.saveListenNativeVoice
+import com.aryan.reader.tts.saveListenTtsMode
+import com.aryan.reader.tts.saveListenTtsSpeaker
+import com.aryan.reader.tts.saveListenTtsSpeakerName
 import com.aryan.reader.data.AudiobookEntity
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.epubreader.loadTtsPitch
@@ -605,9 +612,14 @@ internal fun TtsBookPickerSheet(
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable internal fun AudiobookPlayerSheet(item: AudiobookUiItem, onBeforePlay: () -> Unit, onDismiss: () -> Unit) {
+@Composable internal fun AudiobookPlayerSheet(
+    item: AudiobookUiItem,
+    onBeforePlay: () -> Unit,
+    onDismiss: () -> Unit,
+    getAuthToken: suspend () -> String? = { null }
+) {
     if (item.isTts) {
-        BookTtsPlayerSheet(item, onDismiss)
+        BookTtsPlayerSheet(item, onDismiss, getAuthToken)
         return
     }
     val context = LocalContext.current
@@ -656,13 +668,29 @@ internal fun TtsBookPickerSheet(
 @androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
+private fun BookTtsPlayerSheet(
+    item: AudiobookUiItem,
+    onDismiss: () -> Unit,
+    getAuthToken: suspend () -> String? = { null }
+) {
     val context = LocalContext.current
     var customSleepTimers by remember(context) { mutableStateOf(loadCustomSleepTimerMinutes(context)) }
     val sourceBook = item.sourceBook ?: return
-    val controller = remember(sourceBook.bookId) { BookTtsAudiobookController(context) }
+    val controller = remember(sourceBook.bookId) {
+        BookTtsAudiobookController(context, authTokenProvider = getAuthToken)
+    }
     val prepared by controller.uiState.collectAsStateWithLifecycle()
     val playback by controller.sharedPlaybackState.collectAsStateWithLifecycle()
+    // Listen voice is independent from the Reader voice: bound to the Listen
+    // prefs, with the full Reader sheet feature set (cloud/device/cache tabs).
+    var showListenVoiceSettings by remember { mutableStateOf(false) }
+    var listenMode by remember(context) { mutableStateOf(loadListenTtsMode(context)) }
+    var listenSpeaker by remember(context) { mutableStateOf(loadListenTtsSpeaker(context)) }
+    // Locked for any live Listen session — playing, loading AND paused. A
+    // paused session keeps old-voice audio queued (and Listen applies voice
+    // changes at the next session start), so switching then resuming would
+    // keep playing the previous voice.
+    val listenTtsActive = playback.connected && !playback.sessionFinished
     var adapterRate by remember { mutableFloatStateOf(prepared.savedProgress?.speechRate ?: loadTtsSpeechRate(context)) }
     var adapterPitch by remember { mutableFloatStateOf(prepared.savedProgress?.pitch ?: loadTtsPitch(context)) }
     val sharedItem = remember(sourceBook, prepared.savedProgress) {
@@ -733,8 +761,39 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
         },
         onStopPlayback = controller::stop,
         onDismiss = onDismiss,
+        onOpenVoiceSettings = { showListenVoiceSettings = true },
     )
     DisposableEffect(controller) { onDispose(controller::release) }
+
+    if (showListenVoiceSettings) {
+        TtsSettingsSheet(
+            isVisible = true,
+            onDismiss = {
+                showListenVoiceSettings = false
+                // Re-read in case the device-voice tab changed the native pick.
+                listenMode = loadListenTtsMode(context)
+                listenSpeaker = loadListenTtsSpeaker(context)
+            },
+            currentMode = listenMode,
+            onModeChange = { newMode ->
+                saveListenTtsMode(context, newMode)
+                listenMode = loadListenTtsMode(context)
+            },
+            currentSpeakerId = listenSpeaker,
+            onSpeakerChange = { newSpeaker ->
+                saveListenTtsSpeaker(context, newSpeaker)
+                listenSpeaker = loadListenTtsSpeaker(context)
+            },
+            isTtsActive = listenTtsActive,
+            getAuthToken = getAuthToken,
+            // Canonical cache title so the Cache tab lists the same files the
+            // service reads/writes (shared with Reader for identical chunks).
+            bookTitle = prepared.book?.cacheTitle ?: item.title,
+            loadDeviceVoiceName = ::loadListenNativeVoice,
+            saveDeviceVoiceName = ::saveListenNativeVoice,
+            saveCloudVoiceName = ::saveListenTtsSpeakerName
+        )
+    }
 }
 
 internal fun calculateTtsAudiobookProgress(

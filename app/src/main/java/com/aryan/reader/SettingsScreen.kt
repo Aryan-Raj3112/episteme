@@ -78,6 +78,7 @@ import com.aryan.reader.shared.toReaderSettings
 import com.aryan.reader.shared.ui.SharedSettingsHub
 import com.aryan.reader.shared.ui.LocalSharedStringResolver
 import com.aryan.reader.shared.ui.SharedStringResolver
+import com.aryan.reader.tts.isReaderTtsVoiceChangeLocked
 import com.aryan.reader.tts.loadTtsMode
 import kotlinx.coroutines.launch
 import kotlin.math.max
@@ -610,7 +611,7 @@ fun SettingsScreen(
             },
             currentSpeakerId = ttsState.speakerId,
             onSpeakerChange = viewModel.ttsController::changeSpeaker,
-            isTtsActive = ttsState.isPlaying,
+            isTtsActive = isReaderTtsVoiceChangeLocked(ttsState.playbackSource, ttsState.sessionFinished),
             getAuthToken = { viewModel.getAuthToken() },
             bookTitle = context.getString(R.string.reader_defaults)
         )

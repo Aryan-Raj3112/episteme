@@ -627,6 +627,7 @@ fun AppNavigation(
                 item = playerItem,
                 onBeforePlay = {},
                 onDismiss = { viewModel.dismissAudiobookTtsPlayerTarget(target.bookId) },
+                getAuthToken = viewModel::getAuthToken,
             )
         }
 

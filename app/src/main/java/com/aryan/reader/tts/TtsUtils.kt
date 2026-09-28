@@ -125,6 +125,18 @@ internal fun loadTtsSpeaker(context: Context): String {
 }
 
 /**
+ * Whether the voice/mode pickers must stay locked. A lock is required
+ * whenever a Reader TTS session exists — playing, loading AND paused. A
+ * paused session keeps already-generated old-voice audio queued (and the
+ * file cache is keyed per voice), so switching voices then resuming would
+ * keep playing the previous voice. Finished sessions ([sessionFinished])
+ * and the idle state (blank [playbackSource]) stay unlocked: the next
+ * start picks up the new voice with a clean queue.
+ */
+internal fun isReaderTtsVoiceChangeLocked(playbackSource: String?, sessionFinished: Boolean): Boolean =
+    playbackSource == "READER" && !sessionFinished
+
+/**
  * Display name of the selected cloud voice, saved alongside the speaker id at
  * pick time so surfaces like the TTS overlay can show "Ava" instead of a raw
  * Fish reference id. Null when the selection predates name tracking.

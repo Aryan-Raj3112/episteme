@@ -114,7 +114,11 @@ fun TtsSettingsSheet(
     onSpeakerChange: (String) -> Unit,
     isTtsActive: Boolean,
     getAuthToken: suspend () -> String?,
-    bookTitle: String
+    bookTitle: String,
+    // Listen binds these to its independent prefs; Reader uses the defaults.
+    loadDeviceVoiceName: (Context) -> String? = ::loadNativeVoice,
+    saveDeviceVoiceName: (Context, String?) -> Unit = ::saveNativeVoice,
+    saveCloudVoiceName: (Context, String) -> Unit = ::saveTtsSpeakerName
 ) {
     if (!isVisible) return
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -153,7 +157,7 @@ fun TtsSettingsSheet(
 
             if (isOss && !isOssCloudAvailable) {
                 Spacer(Modifier.height(16.dp))
-                DeviceVoicesTab(isTtsActive, context, TtsPlaybackManager.TtsMode.BASE)
+                DeviceVoicesTab(isTtsActive, context, TtsPlaybackManager.TtsMode.BASE, loadDeviceVoiceName, saveDeviceVoiceName)
             } else {
                 Text(stringResource(R.string.tts_active_engine), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.height(8.dp))
@@ -190,8 +194,8 @@ fun TtsSettingsSheet(
                 Spacer(Modifier.height(16.dp))
 
                 when (selectedTabIndex) {
-                    0 -> AiVoicesTab(currentSpeakerId, onSpeakerChange, isTtsActive, samplePlayer, currentMode, getAuthToken)
-                    1 -> DeviceVoicesTab(isTtsActive, context, currentMode)
+                    0 -> AiVoicesTab(currentSpeakerId, onSpeakerChange, isTtsActive, samplePlayer, currentMode, getAuthToken, saveCloudVoiceName)
+                    1 -> DeviceVoicesTab(isTtsActive, context, currentMode, loadDeviceVoiceName, saveDeviceVoiceName)
                     2 -> TtsCacheTab(bookTitle, context, currentSpeakerId)
                 }
             }
@@ -219,7 +223,8 @@ fun AiVoicesTab(
     isTtsActive: Boolean,
     samplePlayer: SpeakerSamplePlayer,
     currentMode: TtsPlaybackManager.TtsMode,
-    getAuthToken: suspend () -> String? = { null }
+    getAuthToken: suspend () -> String? = { null },
+    saveCloudVoiceName: (Context, String) -> Unit = ::saveTtsSpeakerName
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -436,7 +441,7 @@ fun AiVoicesTab(
                     }
                 },
                 modifier = Modifier.clickable(enabled = !isTtsActive && isCloudMode) {
-                    saveTtsSpeakerName(context, voice.name)
+                    saveCloudVoiceName(context, voice.name)
                     onSpeakerChange(voice.id)
                 },
                 colors = ListItemDefaults.colors(
@@ -454,9 +459,11 @@ fun AiVoicesTab(
 fun DeviceVoicesTab(
     isTtsActive: Boolean,
     context: Context,
-    currentMode: TtsPlaybackManager.TtsMode
+    currentMode: TtsPlaybackManager.TtsMode,
+    loadDeviceVoiceName: (Context) -> String? = ::loadNativeVoice,
+    saveDeviceVoiceName: (Context, String?) -> Unit = ::saveNativeVoice
 ) {
-    var savedVoiceName by remember { mutableStateOf(loadNativeVoice(context)) }
+    var savedVoiceName by remember { mutableStateOf(loadDeviceVoiceName(context)) }
     var ttsEngine by remember { mutableStateOf<TextToSpeech?>(null) }
     var allVoices by remember { mutableStateOf<List<Voice>>(emptyList()) }
     var isTtsLoading by remember { mutableStateOf(true) }
@@ -485,7 +492,7 @@ fun DeviceVoicesTab(
             allVoices.any { voice -> voice.name == savedVoiceName && voice.isNetworkConnectionRequired }
         ) {
             savedVoiceName = null
-            saveNativeVoice(context, null)
+            saveDeviceVoiceName(context, null)
         }
     }
 
@@ -541,7 +548,7 @@ fun DeviceVoicesTab(
             .padding(bottom = 16.dp)
             .clickable(enabled = !isTtsActive && isBaseMode) {
                 savedVoiceName = null
-                saveNativeVoice(context, null)
+                saveDeviceVoiceName(context, null)
                 ttsEngine?.apply {
                     try {
                         val defaultLocale = Locale.getDefault()
@@ -682,7 +689,7 @@ fun DeviceVoicesTab(
                 },
                 modifier = Modifier.clickable(enabled = !isTtsActive && isBaseMode) {
                     savedVoiceName = voice.name
-                    saveNativeVoice(context, voice.name)
+                    saveDeviceVoiceName(context, voice.name)
                 },
                 colors = ListItemDefaults.colors(containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(0.2f) else Color.Transparent),
                 trailingContent = {

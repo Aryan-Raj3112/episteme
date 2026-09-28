@@ -789,6 +789,7 @@ fun UnifiedLibraryScreen(
                 }
             },
             onDismiss = { audiobookPlayerItem = null },
+            getAuthToken = viewModel::getAuthToken,
         )
     }
     if (showAdvancedFilters) {
