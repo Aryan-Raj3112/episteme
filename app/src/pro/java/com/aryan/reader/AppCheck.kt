@@ -2,8 +2,8 @@
 package com.aryan.reader
 
 import com.google.android.gms.tasks.Tasks
+import com.google.firebase.appcheck.AppCheckProviderFactory
 import com.google.firebase.appcheck.FirebaseAppCheck
-import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
 import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
 import java.util.concurrent.TimeUnit
 import timber.log.Timber
@@ -19,11 +19,27 @@ internal const val APP_CHECK_HEADER = "X-Firebase-AppCheck"
  */
 fun installAppCheck() {
     val factory = if (BuildConfig.DEBUG) {
-        DebugAppCheckProviderFactory.getInstance()
+        debugProviderFactory() ?: PlayIntegrityAppCheckProviderFactory.getInstance()
     } else {
         PlayIntegrityAppCheckProviderFactory.getInstance()
     }
     FirebaseAppCheck.getInstance().installAppCheckProviderFactory(factory)
+}
+
+/**
+ * Debug provider loaded via reflection: firebase-appcheck-debug is a
+ * debugImplementation dependency, so release builds cannot reference
+ * DebugAppCheckProviderFactory at compile time. Null when absent (release),
+ * where the caller falls back to Play Integrity.
+ */
+private fun debugProviderFactory(): AppCheckProviderFactory? {
+    return try {
+        val factoryClass = Class.forName("com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory")
+        factoryClass.getMethod("getInstance").invoke(null) as AppCheckProviderFactory
+    } catch (e: Exception) {
+        Timber.w(e, "Debug App Check provider unavailable")
+        null
+    }
 }
 
 /**
