@@ -236,10 +236,10 @@ internal actual val sharedMobileEpubPageInfoMatchesReaderBackground: Boolean = t
 
 internal object IosReaderLookupServices {
     // Startup defaults; the host overrides these from NSUserDefaults in
-    // loadIosReaderLookupServices. Android parity: dictionary defaults to the
-    // in-app Smart AI; translate/search default to in-app Safari, which always
-    // works, instead of the app chooser / an external browser.
-    var dictionary: ReaderExternalLookupService = ReaderExternalLookupService.AI
+    // loadIosReaderLookupServices. Android parity (no-selection default):
+    // dictionary starts on the app chooser until Smart AI is explicitly
+    // picked; translate/search default to in-app Safari, which always works.
+    var dictionary: ReaderExternalLookupService = ReaderExternalLookupService.ANY_APP
     var translate: ReaderExternalLookupService = ReaderExternalLookupService.SAFARI
     var search: ReaderExternalLookupService = ReaderExternalLookupService.SAFARI
 }

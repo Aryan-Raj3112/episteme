@@ -1023,7 +1023,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     private fun useFishRest(): Boolean = cloudTtsModeEnabled() && (workerFishAvailable() || fishByokAvailable())
 
     private fun cloudTtsModeEnabled(): Boolean =
-        settings.ttsModel == GEMINI_CLOUD_TTS_MODEL_ID || settings.ttsModel == com.aryan.reader.shared.FISH_TTS_MODEL_ID
+        com.aryan.reader.shared.isCloudTtsModelEnabled(settings.ttsModel)
 
     private fun hasActiveSession(): Boolean = chunks.isNotEmpty() && (state.isLoading || state.isPlaying || state.isPaused)
 
@@ -1169,16 +1169,11 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     )?.toString().orEmpty()
 
     private fun normalizeCloudError(raw: String): String {
-        // Worker spend-guard sentinels first (Android benchmark parity), then
-        // legacy substring matches. Wallet-aware copy throughout.
-        parseSpendGuardSentinel(raw)?.let { (kind, retry) ->
-            return if (kind == "RATE_LIMITED") {
-                "Slowing down — please retry in ${formatSpendGuardCountdown(retry)}."
-            } else {
-                "Daily spending cap reached — resets in ${formatSpendGuardCountdown(retry)}. " +
-                    "Balance: ${formatMicrosUsd(walletMicros)}."
-            }
-        }
+        // Spend-guard sentinels pass through verbatim: the reader overlay
+        // maps them to countdown notices (Android EpubReaderControls
+        // parity). Prose-ifying here would destroy the retry window the
+        // overlay needs. Wallet-aware copy for everything else.
+        if (parseSpendGuardSentinel(raw) != null) return raw
         parseSpendGuardError(raw)?.let { (kind, retry) ->
             return if (kind == "RATE_LIMITED") {
                 "Slowing down — please retry in ${formatSpendGuardCountdown(retry)}."

@@ -802,8 +802,9 @@ class ReaderExtrasModelsTest {
 
     @Test
     fun `dictionary service options exclude system for translate and search`() {
-        // Temporary (external apps undecided): browser only; define keeps AI first.
-        assertEquals(2, ReaderDictionaryServiceOptions.size)
+        // Android parity (no-selection default): the dictionary offers Smart
+        // AI first, then the explicit "choose each time" entry, then browser.
+        assertEquals(3, ReaderDictionaryServiceOptions.size)
         assertEquals(1, ReaderTranslateServiceOptions.size)
         assertEquals(1, ReaderSearchServiceOptions.size)
         // Android parity: every action can hand off to the user's installed apps,
@@ -811,6 +812,7 @@ class ReaderExtrasModelsTest {
         assertEquals(ReaderExternalLookupService.AI, ReaderDictionaryServiceOptions.first())
         assertEquals(ReaderExternalLookupService.SAFARI, ReaderTranslateServiceOptions.first())
         assertEquals(ReaderExternalLookupService.SAFARI, ReaderSearchServiceOptions.first())
+        assertTrue(ReaderDictionaryServiceOptions.contains(ReaderExternalLookupService.ANY_APP))
         assertTrue(ReaderDictionaryServiceOptions.contains(ReaderExternalLookupService.SAFARI))
     }
 
@@ -941,6 +943,39 @@ class ReaderExtrasModelsTest {
         assertNull(parseSpendGuardSentinel("INSUFFICIENT_CREDITS"))
         assertNull(parseSpendGuardSentinel(null))
         assertEquals(Pair("RATE_LIMITED", 0), parseSpendGuardSentinel("RATE_LIMITED"))
+    }
+
+    @Test
+    fun `http errors map to spend guard tokens`() {
+        assertEquals(
+            "DAILY_SPEND_LIMIT:3600",
+            mapSpendGuardHttpError(402, """{"error":"DAILY_SPEND_LIMIT","retry_after_seconds":3600}""")
+        )
+        assertEquals("INSUFFICIENT_CREDITS", mapSpendGuardHttpError(402, """{"error":"402"}"""))
+        assertEquals("INSUFFICIENT_CREDITS", mapSpendGuardHttpError(402, null))
+        assertEquals("RATE_LIMITED:30", mapSpendGuardHttpError(429, null))
+        assertEquals(
+            "RATE_LIMITED:45",
+            mapSpendGuardHttpError(429, """{"error":"RATE_LIMITED","retry_after_seconds":45}""")
+        )
+        assertNull(mapSpendGuardHttpError(500, "boom"))
+        assertNull(mapSpendGuardHttpError(200, ""))
+    }
+
+    @Test
+    fun `stream errors map to spend guard tokens`() {
+        assertEquals("RATE_LIMITED:20", mapSpendGuardStreamError("RATE_LIMITED", 20))
+        assertEquals("DAILY_SPEND_LIMIT:0", mapSpendGuardStreamError("DAILY_SPEND_LIMIT", 0))
+        assertEquals("INSUFFICIENT_CREDITS", mapSpendGuardStreamError("INSUFFICIENT_CREDITS", 0))
+        assertEquals("boom", mapSpendGuardStreamError("boom", 0))
+    }
+
+    @Test
+    fun `cloud tts model switch covers gemini and fish`() {
+        assertTrue(isCloudTtsModelEnabled(GEMINI_CLOUD_TTS_MODEL_ID))
+        assertTrue(isCloudTtsModelEnabled(FISH_TTS_MODEL_ID))
+        assertFalse(isCloudTtsModelEnabled(""))
+        assertFalse(isCloudTtsModelEnabled("gemini:unknown-model"))
     }
 
     @Test

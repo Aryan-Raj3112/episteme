@@ -105,6 +105,8 @@ import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.ReaderCloudTtsVoices
 import com.aryan.reader.shared.ReaderTtsOverlaySize
 import com.aryan.reader.shared.formatReaderTtsBytes
+import com.aryan.reader.shared.formatSpendGuardCountdown
+import com.aryan.reader.shared.parseSpendGuardSentinel
 import com.aryan.reader.shared.ReaderWordReplacementEngine
 import com.aryan.reader.shared.ReaderWordReplacementRule
 import com.aryan.reader.shared.currentTimestamp
@@ -1070,8 +1072,26 @@ internal fun SharedMobileEpubCloudTtsControls(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                        // Android parity (EpubReaderControls spend notices): the
+                        // engine preserves guard sentinels verbatim so the
+                        // overlay can render countdown copy from them.
+                        val guardNotice = remember(cloudState.errorMessage) {
+                            parseSpendGuardSentinel(cloudState.errorMessage)
+                        }
                         Text(
-                            cloudState.errorMessage ?: progress.currentPositionLabel ?: "Cloud AI · ${cloudState.cacheSummary.currentVoiceLabel}",
+                            when {
+                                guardNotice != null && guardNotice.first == "RATE_LIMITED" -> readerString(
+                                    "tts_notice_rate_limited",
+                                    "Slowing down — retrying in %1\$s…",
+                                    formatSpendGuardCountdown(guardNotice.second),
+                                )
+                                guardNotice != null -> readerString(
+                                    "tts_notice_spend_limit",
+                                    "Daily cap reached — resets in %1\$s",
+                                    formatSpendGuardCountdown(guardNotice.second),
+                                )
+                                else -> cloudState.errorMessage ?: progress.currentPositionLabel ?: "Cloud AI · ${cloudState.cacheSummary.currentVoiceLabel}"
+                            },
                             style = MaterialTheme.typography.labelSmall,
                             color = if (cloudState.errorMessage != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,

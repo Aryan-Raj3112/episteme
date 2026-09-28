@@ -29,6 +29,15 @@ const val GEMINI_TTS_MODEL_PREVIEW_ID = "gemini:$GEMINI_TTS_MODEL_PREVIEW"
 // Fish TTS via BYOK (user's Fish key, direct api.fish.audio calls, no credits).
 const val FISH_TTS_MODEL = "s2.1-pro"
 const val FISH_TTS_MODEL_ID = "fish:$FISH_TTS_MODEL"
+
+/**
+ * Cloud TTS master switch: enabled when the stored TTS model names a cloud
+ * backend (legacy Gemini Live or Fish), disabled for device speech ("").
+ * Single source of truth for the reader toggle and the speech engine — they
+ * must never disagree about whether cloud mode is on.
+ */
+fun isCloudTtsModelEnabled(ttsModel: String): Boolean =
+    ttsModel == GEMINI_CLOUD_TTS_MODEL_ID || ttsModel == FISH_TTS_MODEL_ID
 const val DEFAULT_CLOUD_TTS_SPEAKER_ID = "Aoede"
 const val READER_TTS_CHUNK_MAX_LENGTH = 250
 private const val ReaderTtsStartTraceLogTag = "EpistemeDesktopTtsStartTrace"
@@ -261,6 +270,41 @@ fun spendGuardSentinel(kind: String, retryAfterSeconds: Int): String {
 }
 
 /**
+ * Maps worker HTTP errors to client error tokens (Android benchmark parity):
+ * 402 with a DAILY_SPEND_LIMIT body -> "DAILY_SPEND_LIMIT:<s>" sentinel,
+ * other 402 / INSUFFICIENT_CREDITS -> "INSUFFICIENT_CREDITS" (callers route it
+ * to the out-of-balance dialog), 429 -> "RATE_LIMITED:<s>" sentinel, anything
+ * else -> null (caller falls back to generic handling). Callers render
+ * user-facing copy from the token; the token itself is never shown.
+ */
+fun mapSpendGuardHttpError(responseCode: Int, errorBody: String?): String? {
+    if (responseCode == 402) {
+        val parsed = parseSpendGuardError(errorBody)
+        return if (parsed?.first == "DAILY_SPEND_LIMIT") {
+            spendGuardSentinel(parsed.first, parsed.second)
+        } else {
+            "INSUFFICIENT_CREDITS"
+        }
+    }
+    if (responseCode == 429) {
+        val parsed = parseSpendGuardError(errorBody)
+        return spendGuardSentinel("RATE_LIMITED", parsed?.second ?: 30)
+    }
+    return null
+}
+
+/**
+ * Maps a worker stream error payload to a client token, preserving the retry
+ * window for the concurrency-slot path ({error, retry_after_seconds}).
+ */
+fun mapSpendGuardStreamError(error: String, retryAfterSeconds: Int): String {
+    if ((error == "RATE_LIMITED" || error == "DAILY_SPEND_LIMIT")) {
+        return spendGuardSentinel(error, retryAfterSeconds)
+    }
+    return error
+}
+
+/**
  * cost_deducted unit depends on ledger: migrated users pay dollars, legacy
  * users pay credits. Never show a raw dollar number as "credits" or vice versa.
  */
@@ -419,10 +463,13 @@ enum class ReaderExternalLookupService(val id: String, val title: String) {
     }
 }
 
-// Temporary (external apps undecided): each action offers just the browser —
-// define keeps Smart AI first with the browser second.
+// Android parity (no-selection default): with nothing persisted the Dict
+// action opens the app chooser instead of assuming an engine. ANY_APP is the
+// explicit "choose each time" choice and the default; Smart AI stays first so
+// the in-app route is prominent once selected.
 val ReaderDictionaryServiceOptions = listOf(
     ReaderExternalLookupService.AI,
+    ReaderExternalLookupService.ANY_APP,
     ReaderExternalLookupService.SAFARI,
 )
 

@@ -11,11 +11,10 @@ import com.aryan.reader.shared.ReaderByokTextRequestResult
 import com.aryan.reader.shared.ReaderByokTextRequests
 import com.aryan.reader.shared.RecapResult
 import com.aryan.reader.shared.SummarizationResult
-import com.aryan.reader.shared.formatMicrosUsd
-import com.aryan.reader.shared.formatSpendGuardCountdown
+import com.aryan.reader.shared.mapSpendGuardHttpError
+import com.aryan.reader.shared.mapSpendGuardStreamError
 import com.aryan.reader.shared.hasSpendableBalance
 import com.aryan.reader.shared.isFishVoiceListCacheFresh
-import com.aryan.reader.shared.parseSpendGuardError
 import com.aryan.reader.shared.maskedReaderAiKey
 import kotlin.time.Clock
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -509,28 +508,19 @@ internal class IosReaderAiAdapter(
             )
         }.getOrElse { error -> return IosReaderAiTextResult(error = error.message ?: "AI request failed.") }
         if (response.statusCode == 401) return IosReaderAiTextResult(error = "Sign in again to use this AI feature.")
-        // Spend guards (Android benchmark parity): velocity throttle (429) and
-        // daily spend fraud cap (402 DAILY_SPEND_LIMIT) surface user-facing
-        // countdown text; an empty wallet keeps the legacy message.
+        // Android parity (mapAiHttpError): HTTP errors become routing tokens
+        // ("RATE_LIMITED:<s>", "DAILY_SPEND_LIMIT:<s>", "INSUFFICIENT_CREDITS")
+        // that the host turns into notices/dialogs. Tokens are never shown.
         if (response.statusCode == 429) {
-            val retry = parseSpendGuardError(response.body)?.second ?: 30
-            return IosReaderAiTextResult(error = "Slowing down — please retry in ${formatSpendGuardCountdown(retry)}.")
+            return IosReaderAiTextResult(error = mapSpendGuardHttpError(429, response.body))
         }
         val workerError = workerErrorMessage(response.body)
         if (response.statusCode == 402 || response.body.contains("INSUFFICIENT_CREDITS", ignoreCase = true)) {
             onUsageReported(IosReaderAiUsage())
-            val spendGuard = parseSpendGuardError(response.body)
-            if (spendGuard?.first == "DAILY_SPEND_LIMIT") {
-                val account = accountStateProvider()
-                return IosReaderAiTextResult(
-                    error = "Daily spending cap reached — resets in ${formatSpendGuardCountdown(spendGuard.second)}. " +
-                        "Balance: ${formatMicrosUsd(account.walletMicros)}."
-                )
-            }
-            val account = accountStateProvider()
+            val token = mapSpendGuardHttpError(response.statusCode, response.body)
+                ?: if (response.body.contains("INSUFFICIENT_CREDITS", ignoreCase = true)) "INSUFFICIENT_CREDITS" else null
             return IosReaderAiTextResult(
-                error = workerError ?: if (account.walletMigrated) "You're out of balance. Top up your wallet to continue."
-                else "Out of credits."
+                error = token ?: workerError ?: "AI request failed."
             )
         }
         if (response.statusCode !in 200..299) {
@@ -624,13 +614,11 @@ internal class IosReaderAiAdapter(
             }
             obj["error"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { streamError ->
                 // Concurrency-slot throttle arrives as a stream payload
-                // ({error, retry_after_seconds}); surface the countdown.
+                // ({error, retry_after_seconds}); Android parity
+                // (mapAiStreamError): keep the routing token so the host can
+                // turn it into a notice/dialog. Tokens are never shown.
                 val retry = obj["retry_after_seconds"]?.jsonPrimitive?.intOrNull ?: 0
-                val text = when (streamError) {
-                    "RATE_LIMITED" -> "Slowing down — please retry in ${formatSpendGuardCountdown(retry)}."
-                    "DAILY_SPEND_LIMIT" -> "Daily spending cap reached — resets in ${formatSpendGuardCountdown(retry)}."
-                    else -> streamError
-                }
+                val text = mapSpendGuardStreamError(streamError, retry)
                 return IosReaderAiTextResult(text = output.toString(), error = text, cost = cost, freeRemaining = freeRemaining)
             }
             obj["cost_deducted"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()?.let { cost = it }

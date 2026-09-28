@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		92166C5A306AA0CA00A2A559 /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE10C2FFE500000000001 /* FirebaseAppCheck */; };
 		A11CE0062FFE500000000006 /* ../third_party/pdfium/ios/PDFium.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A11CE1102FFE500000000001 /* ../third_party/pdfium/ios/PDFium.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A11CE1012FFE500000000001 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE1052FFE500000000001 /* FirebaseAuth */; };
 		A11CE1022FFE500000000001 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE1062FFE500000000001 /* GoogleSignIn */; };
@@ -47,6 +48,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				92166C5A306AA0CA00A2A559 /* FirebaseAppCheck in Frameworks */,
 				A11CE1012FFE500000000001 /* FirebaseAuth in Frameworks */,
 				A11CE1022FFE500000000001 /* GoogleSignIn in Frameworks */,
 				A11CE1072FFE500000000001 /* FirebaseFirestore in Frameworks */,

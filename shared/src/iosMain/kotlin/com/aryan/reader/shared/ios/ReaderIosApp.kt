@@ -170,7 +170,12 @@ import com.aryan.reader.shared.ReaderTtsOverlaySize
 import com.aryan.reader.shared.resolveReaderTtsOverlaySize
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiFeature
+import com.aryan.reader.shared.isCloudTtsModelEnabled
 import com.aryan.reader.shared.readerAiModelById
+import com.aryan.reader.shared.hasSpendableBalance
+import com.aryan.reader.shared.parseSpendGuardSentinel
+import com.aryan.reader.shared.formatSpendGuardCountdown
+import com.aryan.reader.shared.formatMicrosUsd
 import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.AiDefinitionResult
 import com.aryan.reader.shared.RecapResult
@@ -2156,12 +2161,13 @@ private const val IosLookupSearchServiceKey = "ios_reader_lookup_search_service"
 
 private fun loadIosReaderLookupServices():
     Triple<ReaderExternalLookupService, ReaderExternalLookupService, ReaderExternalLookupService> {
-    // Android parity (PdfPreferences): the dictionary engine defaults to the
-    // in-app Smart AI (use_online_dictionary = true); translate/search fall
-    // back to in-app Safari when nothing is persisted. Only fresh installs
-    // (nothing stored) see these; explicit user picks are never migrated.
+    // Android parity (use_online_dictionary defaults to false): with nothing
+    // persisted the Dict action opens the app chooser (ANY_APP) instead of
+    // assuming Smart AI — the router (readerLookupUsesAiDictionary) is false
+    // until "ai" is explicitly stored. Translate/search fall back to in-app
+    // Safari when nothing is persisted. Explicit user picks are never migrated.
     return Triple(
-        loadIosLookupService(IosLookupDictionaryServiceKey, ReaderExternalLookupService.AI),
+        loadIosLookupService(IosLookupDictionaryServiceKey, ReaderExternalLookupService.ANY_APP),
         loadIosLookupService(IosLookupTranslateServiceKey, ReaderExternalLookupService.SAFARI),
         loadIosLookupService(IosLookupSearchServiceKey, ReaderExternalLookupService.SAFARI),
     )
@@ -2902,11 +2908,11 @@ private fun ReaderIosApp(
                 )
             },
             authTokenProvider = { bridge.accountState.authToken },
-            onUsageReported = { usage ->
-                usage.freeRemaining?.let { remaining ->
-                    state = state.copy(credits = remaining.coerceAtLeast(0))
-                }
-            },
+            // Android parity (EpubReaderAi usage): per-result cost /
+            // free-remaining feeds the result badge only. The global balance
+            // is owned by entitlements (StoreKit push + foreground refresh),
+            // never overwritten by a single result's free-remaining count.
+            onUsageReported = { },
         )
     }
     val readerCloudTts = remember { IosSharedMobileCloudTts() }
@@ -2914,8 +2920,15 @@ private fun ReaderIosApp(
         onDispose { readerCloudTts.release() }
     }
     fun updateCloudTtsMode(enabled: Boolean) {
+        // Toggling cloud on must not clobber the backend choice: keep the
+        // current model when it already names a cloud backend (e.g. Fish),
+        // otherwise fall back to Gemini.
+        val currentModel = effectiveReaderAiSettings.ttsModel
         val updated = readerAiSettings.copy(
-            ttsModel = if (enabled) com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID else "",
+            ttsModel = if (enabled) {
+                if (isCloudTtsModelEnabled(currentModel)) currentModel
+                else com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID
+            } else "",
         ).sanitized()
         readerAiSettings = updated
         readerAiSettingsStore.save(updated)
@@ -3232,6 +3245,12 @@ private fun ReaderIosApp(
     // dictionary is Pro-only, so the upsell popup appears instead of the
     // AI result sheet when a phrase is defined without Pro.
     var showDictionaryUpsellDialog by remember { mutableStateOf(false) }
+    // Android parity (showInsufficientCreditsDialog + aiSpendNotice): spend
+    // routing for AI errors — empty wallet opens the out-of-balance dialog,
+    // the daily fraud cap opens the cap dialog with balance + countdown.
+    var showOutOfBalanceDialog by remember { mutableStateOf(false) }
+    var showSpendCapDialog by remember { mutableStateOf(false) }
+    var spendCapRetrySeconds by remember { mutableStateOf(0) }
     val initialLookupServices = remember {
         loadIosReaderLookupServices().also { (dictionary, translate, search) ->
             IosReaderLookupServices.dictionary = dictionary
@@ -3389,16 +3408,30 @@ private fun ReaderIosApp(
         // EpubReaderScreen.onDictionaryLookup): smart dictionary without Pro
         // shows the upsell popup instead of fetching. BYOK bypasses the
         // worker gate exactly like Android.
-        if (feature == ReaderAiFeature.DEFINE && !state.isProUser) {
+        fun hasByokFor(feature: ReaderAiFeature): Boolean {
             val sanitizedSettings = effectiveReaderAiSettings.sanitized()
-            val byokModelId = sanitizedSettings.modelIdFor(ReaderAiFeature.DEFINE)
-            val hasByokDefine = readerAiModelById(byokModelId)?.let {
+            val byokModelId = sanitizedSettings.modelIdFor(feature)
+            return readerAiModelById(byokModelId)?.let {
                 sanitizedSettings.apiKeyFor(it.provider).isNotBlank()
             } == true
-            if (!hasByokDefine) {
+        }
+        if (feature == ReaderAiFeature.DEFINE && !state.isProUser) {
+            if (!hasByokFor(ReaderAiFeature.DEFINE)) {
                 showDictionaryUpsellDialog = true
                 return
             }
+        }
+        // Android parity (EpubReaderScreen handleGenerateSummary): summaries
+        // and recaps without Pro, spendable balance, or BYOK show the
+        // out-of-balance dialog instead of fetching. Pro users pass via the
+        // free tier even with an empty wallet.
+        if ((feature == ReaderAiFeature.SUMMARIZE || feature == ReaderAiFeature.RECAP) &&
+            !state.isProUser &&
+            !hasSpendableBalance(state.credits, state.walletMicros) &&
+            !hasByokFor(feature)
+        ) {
+            showOutOfBalanceDialog = true
+            return
         }
         readerExtrasState = readerExtrasState.copy(
             aiResult = com.aryan.reader.shared.ReaderAiResultState(
@@ -3420,9 +3453,9 @@ private fun ReaderIosApp(
                 }
                 ReaderAiFeature.SUMMARIZE -> readerAiAdapter.summarizeStreaming(
                     input,
-                    onUsageReceived = { _, freeRemaining ->
-                        freeRemaining?.let { state = state.copy(credits = it.coerceAtLeast(0)) }
-                    },
+                    // Badge data lands on aiResult below; the global balance
+                    // stays entitlement-owned (see onUsageReported above).
+                    onUsageReceived = { _, _ -> },
                     onUpdate = { chunk ->
                         readerExtrasState = readerExtrasState.copy(
                             aiResult = readerExtrasState.aiResult.copy(text = readerExtrasState.aiResult.text + chunk)
@@ -3455,11 +3488,31 @@ private fun ReaderIosApp(
                 is RecapResult -> result.freeRemaining
                 else -> null
             }
+            // Android parity (handleAiRequestError): route spend tokens to
+            // notices/dialogs instead of inline prose. INSUFFICIENT_CREDITS
+            // opens the out-of-balance dialog, RATE_LIMITED posts a retry
+            // banner, DAILY_SPEND_LIMIT opens the cap dialog with balance +
+            // countdown. Anything else stays inline in the result sheet.
+            val guard = parseSpendGuardSentinel(error)
+            when {
+                error == "INSUFFICIENT_CREDITS" -> showOutOfBalanceDialog = true
+                guard != null && guard.first == "RATE_LIMITED" -> showMessage(
+                    stringResolver.string(
+                        "snackbar_rate_limited_retry",
+                        "Slowing down to protect the service — retrying in %1\$s…",
+                        formatSpendGuardCountdown(guard.second),
+                    )
+                )
+                guard != null -> {
+                    spendCapRetrySeconds = guard.second
+                    showSpendCapDialog = true
+                }
+            }
             readerExtrasState = readerExtrasState.copy(
                 aiResult = readerExtrasState.aiResult.copy(
                     text = if (readerExtrasState.aiResult.text.isNotBlank()) readerExtrasState.aiResult.text else textResult,
                     isLoading = false,
-                    errorMessage = error,
+                    errorMessage = if (error == "INSUFFICIENT_CREDITS" || guard != null) null else error,
                     cost = cost,
                     freeRemaining = freeRemaining,
                 )
@@ -4842,7 +4895,7 @@ private fun ReaderIosApp(
             readerAiAvailable = readerAiAvailable,
             readerExtrasState = readerExtrasState.copy(cloudTts = readerCloudTts.state),
             cloudTts = if (IosFeatureGating.SHOW_CLOUD_TTS) readerCloudTts else null,
-            cloudTtsModeEnabled = effectiveReaderAiSettings.ttsModel == com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID,
+            cloudTtsModeEnabled = isCloudTtsModelEnabled(effectiveReaderAiSettings.ttsModel),
             onCloudTtsModeChange = ::updateCloudTtsMode,
             cloudTtsVoiceId = effectiveReaderAiSettings.ttsSpeakerId,
             onCloudTtsVoiceChange = ::updateCloudTtsVoice,
@@ -5438,19 +5491,19 @@ private fun ReaderIosApp(
                             onOpenDictionarySettings = { showDictionarySettingsSheet = true },
                             readerAiAvailable = readerAiAvailable,
                             readerExtrasState = readerExtrasState.copy(cloudTts = readerCloudTts.state),
-                            cloudTts = if (IosFeatureGating.SHOW_CLOUD_TTS) readerCloudTts else null,
-                            cloudTtsModeEnabled = effectiveReaderAiSettings.ttsModel == com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID,
-                            onCloudTtsModeChange = ::updateCloudTtsMode,
-                            cloudTtsVoiceId = effectiveReaderAiSettings.ttsSpeakerId,
-                            onCloudTtsVoiceChange = ::updateCloudTtsVoice,
-                            onClearCloudTtsCache = readerCloudTts::clearCache,
-                            initialTtsOverlaySize = loadIosReaderTtsOverlaySize(),
-                            onTtsOverlaySizePreferenceChange = ::persistIosReaderTtsOverlaySize,
-                            onAiAction = ::runReaderAiAction,
-                            onAiResultDismiss = {
-                                dismissReaderAiResult()
-                            },
-                            onOpenAiHub = {},
+            cloudTts = if (IosFeatureGating.SHOW_CLOUD_TTS) readerCloudTts else null,
+            cloudTtsModeEnabled = isCloudTtsModelEnabled(effectiveReaderAiSettings.ttsModel),
+            onCloudTtsModeChange = ::updateCloudTtsMode,
+            cloudTtsVoiceId = effectiveReaderAiSettings.ttsSpeakerId,
+            onCloudTtsVoiceChange = ::updateCloudTtsVoice,
+            onClearCloudTtsCache = readerCloudTts::clearCache,
+            initialTtsOverlaySize = loadIosReaderTtsOverlaySize(),
+            onTtsOverlaySizePreferenceChange = ::persistIosReaderTtsOverlaySize,
+            onAiAction = ::runReaderAiAction,
+            onAiResultDismiss = {
+                dismissReaderAiResult()
+            },
+            onOpenAiHub = {},
                             summaryCache = remember { SharedSummaryCache() },
                             aiCredits = if (IosFeatureGating.SHOW_WALLET_TOPUP) state.credits else null,
                             walletMicros = state.walletMicros,
@@ -5559,6 +5612,51 @@ private fun ReaderIosApp(
                             utilityScreen = IosUtilityScreen.PRO
                         },
                         onDismiss = { showDictionaryUpsellDialog = false },
+                    )
+                }
+                // Android parity (dialog_out_of_credits): empty wallet for a
+                // paid AI action. Get Pro / Top Up opens the Pro screen.
+                if (showOutOfBalanceDialog) {
+                    SharedMobileInfoConfirmationDialog(
+                        title = readerString(
+                            "dialog_out_of_credits_title",
+                            "Out of Balance",
+                        ),
+                        body = readerString(
+                            "dialog_out_of_credits_desc",
+                            "You don't have enough balance. Get Episteme Pro for 10 free Summaries per day, or top up your wallet to use Summaries, Cloud TTS and Story Recap.",
+                        ),
+                        confirmLabel = readerString("action_get_pro_or_add_credits", "Get Pro / Top Up"),
+                        dismissLabel = readerString("action_not_now", "Not now"),
+                        icon = { Icon(Icons.Default.Ai, contentDescription = null) },
+                        onConfirm = {
+                            showOutOfBalanceDialog = false
+                            utilityScreen = IosUtilityScreen.PRO
+                        },
+                        onDismiss = { showOutOfBalanceDialog = false },
+                    )
+                }
+                // Android parity (dialog_daily_spend_limit): fraud cap hit.
+                if (showSpendCapDialog) {
+                    SharedMobileInfoConfirmationDialog(
+                        title = readerString(
+                            "dialog_daily_spend_limit_title",
+                            "Daily spending cap reached",
+                        ),
+                        body = readerString(
+                            "dialog_daily_spend_limit_desc",
+                            "This safety cap protects your wallet from runaway or fraudulent spend. Balance: %1\$s. Resets in %2\$s.",
+                            formatMicrosUsd(state.walletMicros),
+                            formatSpendGuardCountdown(spendCapRetrySeconds),
+                        ),
+                        confirmLabel = readerString("action_get_pro_or_add_credits", "Get Pro / Top Up"),
+                        dismissLabel = readerString("action_not_now", "Not now"),
+                        icon = { Icon(Icons.Default.Ai, contentDescription = null) },
+                        onConfirm = {
+                            showSpendCapDialog = false
+                            utilityScreen = IosUtilityScreen.PRO
+                        },
+                        onDismiss = { showSpendCapDialog = false },
                     )
                 }
                 pdfSplitPickerTarget?.let { target ->
