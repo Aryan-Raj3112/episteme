@@ -1714,6 +1714,19 @@ class ReaderIosBridge internal constructor(
     }
 
     /**
+     * Live network reachability pushed from Swift (NWPathMonitor). Android
+     * parity (`areReaderAiFeaturesEnabled` offline leg): the AI adapter
+     * hides entries while offline. Defaults true until Swift starts the
+     * monitor.
+     */
+    internal var readerAiNetworkAvailable by mutableStateOf(true)
+        private set
+
+    fun updateReaderAiNetworkAvailable(available: Boolean) {
+        readerAiNetworkAvailable = available
+    }
+
+    /**
      * Cached token for worker calls. Stale tokens (App Check default TTL is
      * 1h) are omitted, never sent — the server logs the miss in log mode.
      */
@@ -2881,14 +2894,6 @@ private fun ReaderIosApp(
     }
     val readerAiSettingsStore = remember { IosReaderAiSettingsStore() }
     var readerAiSettings by remember { mutableStateOf(readerAiSettingsStore.load()) }
-    // Android parity (areReaderAiFeaturesEnabled offline leg): the adapter
-    // hides AI entries while offline. iOS has no offline flavor, so Swift
-    // pushes live reachability here (NWPathMonitor); default true preserves
-    // current behavior until that wiring lands.
-    var readerAiNetworkAvailable by remember { mutableStateOf(true) }
-    fun updateReaderAiNetworkAvailable(available: Boolean) {
-        readerAiNetworkAvailable = available
-    }
     val effectiveReaderAiSettings = readerAiSettings.copy(
         hideReaderAiFeatures = readerAiSettings.hideReaderAiFeatures || state.hideReaderAi,
         serverBackedReaderAiFeatures = bridge.accountState.uid != null,
@@ -2926,7 +2931,7 @@ private fun ReaderIosApp(
         bridge.accountState.authToken,
         state.isProUser,
         state.credits,
-        readerAiNetworkAvailable,
+        bridge.readerAiNetworkAvailable,
     ) {
         // Attestation rides the bridge-cached token Swift pushes on each
         // auth (re)publish (top-level provider in IosReaderAiAdapters.kt).
@@ -2943,7 +2948,7 @@ private fun ReaderIosApp(
                 )
             },
             authTokenProvider = { bridge.accountState.authToken },
-            networkAccess = { readerAiNetworkAvailable },
+            networkAccess = { bridge.readerAiNetworkAvailable },
             // Android parity (EpubReaderAi usage): per-result cost /
             // free-remaining feeds the result badge only. The global balance
             // is owned by entitlements (StoreKit push + foreground refresh),
@@ -3574,6 +3579,18 @@ private fun ReaderIosApp(
         }
     }
 
+    // Android parity (executeRecapLogic progress): the adapter emits
+    // stable tokens; the host resolves them so recap progress localizes
+    // like every other reader string.
+    fun localizeRecapProgress(token: String): String {
+        val copy = recapProgressCopy(token)
+        return if (copy.chapterNumber != null) {
+            stringResolver.string(copy.key, copy.fallback, copy.chapterNumber)
+        } else {
+            stringResolver.string(copy.key, copy.fallback)
+        }
+    }
+
     // Android parity (executeRecapLogic): chained story recap — past sections
     // resolve through the summary cache (misses summarize on the fly and
     // backfill it), the final recap streams, and staged progress shows while
@@ -3603,15 +3620,15 @@ private fun ReaderIosApp(
             aiResult = com.aryan.reader.shared.ReaderAiResultState(
                 title = ReaderAiFeature.RECAP.displayName,
                 isLoading = true,
-                progressMessage = "Checking past chapters...",
+                progressMessage = localizeRecapProgress("CHECKING_PAST"),
             )
         )
         readerAiJob = scope.launch {
             val result = readerAiAdapter.recapChained(
                 request,
-                onProgress = { message ->
+                onProgress = { token ->
                     readerExtrasState = readerExtrasState.copy(
-                        aiResult = readerExtrasState.aiResult.copy(progressMessage = message)
+                        aiResult = readerExtrasState.aiResult.copy(progressMessage = localizeRecapProgress(token))
                     )
                 },
                 onUpdate = { chunk ->

@@ -74,6 +74,11 @@ struct ContentView: View {
         .ignoresSafeArea()
         .statusBarHidden(isReaderSystemUiHidden)
         .persistentSystemOverlays(isReaderSystemUiHidden ? .hidden : .visible)
+        .task {
+            // Live reachability for the shared Kotlin AI gates (idempotent;
+            // the NWPathMonitor itself starts once per process).
+            IosReachability.start(bridge: bridge)
+        }
         .fileImporter(
             isPresented: $isImportPickerPresented,
             allowedContentTypes: importKind == .fonts

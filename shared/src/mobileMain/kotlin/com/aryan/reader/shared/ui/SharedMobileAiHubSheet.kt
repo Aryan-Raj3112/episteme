@@ -168,7 +168,7 @@ fun SharedMobileAiHubSheet(
                                 isMainTtsActive = isMainTtsActive,
                                 ttsBookTitle = bookTitle,
                                 ttsChapterTitle = cachedSummary.sectionTitle,
-showUsageBadge = credits != null,
+showUsageBadge = true,
                                 walletMigrated = walletMigrated,
                             )
                         } else {
@@ -226,7 +226,7 @@ showUsageBadge = credits != null,
                             isMainTtsActive = isMainTtsActive,
                             ttsBookTitle = bookTitle,
                             ttsChapterTitle = sectionTitle,
-                            showUsageBadge = credits != null,
+                            showUsageBadge = true,
                             walletMigrated = walletMigrated,
                             progressMessage = summaryLive?.progressMessage,
                         )
@@ -287,7 +287,7 @@ showUsageBadge = credits != null,
                             isMainTtsActive = isMainTtsActive,
                             ttsBookTitle = bookTitle,
                             ttsChapterTitle = readerString("ai_output_title", "AI Output"),
-                            showUsageBadge = credits != null,
+                            showUsageBadge = true,
                             walletMigrated = walletMigrated,
                             progressMessage = recapLive?.progressMessage,
                         )

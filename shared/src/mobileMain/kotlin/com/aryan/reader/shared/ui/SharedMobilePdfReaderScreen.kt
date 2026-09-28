@@ -4717,7 +4717,6 @@ fun SharedMobilePdfReaderHost(
                     isMainTtsActive = isPdfTtsPlayingOrLoading,
                     ttsBookTitle = book.title?.takeIf { it.isNotBlank() } ?: book.displayName,
                     onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
-                    showUsageBadge = aiCredits != null,
                     walletMigrated = walletMigrated,
                 )
             }

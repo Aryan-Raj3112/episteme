@@ -3125,7 +3125,6 @@ fun SharedMobileEpubReaderScreen(
                 isMainTtsActive = localTts.isSessionActive,
                 ttsBookTitle = book.displayName,
                 onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
-                showUsageBadge = aiCredits != null,
                 walletMigrated = walletMigrated,
             )
         }
@@ -3166,7 +3165,18 @@ fun SharedMobileEpubReaderScreen(
                             text = chapter.plainText,
                         )
                     }
-                    val currentText = epub.chapters.getOrNull(hubChapterIndex)?.plainText.orEmpty()
+                    // Android parity (runRecap charsScrolled): the current
+                    // chapter slices at the reading position instead of
+                    // leaking post-position text into the recap. Falls back
+                    // to the full chapter when the locator is stale or blank.
+                    val currentChapterText = epub.chapters.getOrNull(hubChapterIndex)?.plainText.orEmpty()
+                    val positionOffset = currentLocator
+                        ?.takeIf { it.chapterIndex == hubChapterIndex }
+                        ?.let { it.charOffset ?: it.startOffset }
+                        ?.coerceIn(0, currentChapterText.length)
+                    val currentText = positionOffset
+                        ?.let { currentChapterText.take(it).ifBlank { currentChapterText } }
+                        ?: currentChapterText
                     val chainedRecap = onAiRecapAction
                     if (chainedRecap != null) {
                         chainedRecap(

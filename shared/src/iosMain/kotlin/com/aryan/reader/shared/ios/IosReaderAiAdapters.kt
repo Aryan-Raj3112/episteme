@@ -439,10 +439,10 @@ internal class IosReaderAiAdapter(
         }
         val pastSummaries = mutableListOf<String>()
         if (request.pastSections.isNotEmpty()) {
-            onProgress("Checking past chapters...")
+            onProgress("CHECKING_PAST")
             request.pastSections.forEachIndexed { offset, section ->
                 val sectionIndex = request.sectionIndex - request.pastSections.size + offset
-                onProgress("Analyzing Chapter ${offset + 1}...")
+                onProgress("ANALYZING:${offset + 1}")
                 val cached = request.summaryCache?.getSummary(request.bookTitle, sectionIndex)?.summary
                 if (!cached.isNullOrBlank()) {
                     pastSummaries.add(cached)
@@ -467,12 +467,12 @@ internal class IosReaderAiAdapter(
                 }
             }
         }
-        onProgress("Reading current position...")
+        onProgress("READING_POSITION")
         val currentText = request.currentText.trim().take(24_000)
         if (currentText.isBlank() && pastSummaries.isEmpty()) {
             return RecapResult(error = "There is no reading context for a recap.")
         }
-        onProgress("Generating Recap...")
+        onProgress("GENERATING")
         return recapWithContext(pastSummaries, currentText.ifBlank { pastSummaries.joinToString("\n\n") }, onUpdate)
     }
 
@@ -792,6 +792,34 @@ private fun workerErrorMessage(body: String): String? {
  * (the `licensed=true` pool is only 7 voices and a subset of this catalog).
  */
 private const val FISH_OFFICIAL_AUTHOR_ID = "d8b0991f96b44e489422ca2ddf0bd31d"
+
+/**
+ * Localized copy for a chained-recap progress token (`recapChained`
+ * emits stable tokens; the host resolves them so progress localizes like
+ * every other reader string). Unknown tokens pass through as-is.
+ */
+internal data class RecapProgressCopy(
+    val key: String,
+    val fallback: String,
+    val chapterNumber: Int? = null
+)
+
+internal fun recapProgressCopy(token: String): RecapProgressCopy {
+    if (token.startsWith("ANALYZING:")) {
+        val number = token.substringAfter(":").toIntOrNull() ?: 0
+        return RecapProgressCopy(
+            key = "ai_recap_analyzing_chapter",
+            fallback = "Analyzing Chapter %1\$d...",
+            chapterNumber = number,
+        )
+    }
+    return when (token) {
+        "CHECKING_PAST" -> RecapProgressCopy("ai_recap_checking_past", "Checking past chapters...")
+        "READING_POSITION" -> RecapProgressCopy("ai_recap_reading_position", "Reading current position...")
+        "GENERATING" -> RecapProgressCopy("ai_recap_generating", "Generating Recap...")
+        else -> RecapProgressCopy("ai_thinking", token)
+    }
+}
 
 /**
  * Fish voice catalog for the iOS voice picker (Android `fetchFishVoices` +

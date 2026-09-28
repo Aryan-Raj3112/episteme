@@ -74,8 +74,10 @@ fun SharedMobileAiResultContent(
     emptyText: String? = null,
     /**
      * Usage badge (cost / free-remaining / cache-hit) mirrors Android's
-     * credits UI. iOS hides it until credits launch — callers pass
-     * `aiCredits != null`.
+     * credits UI. Android (`AiResultContentView`) gates it on the result
+     * alone (cache hit, cost present, or loading) with no account
+     * condition, so iOS passes true and lets [sharedAiUsageBadgeVisible]
+     * decide — never on credits availability.
      */
     showUsageBadge: Boolean = true,
     walletMigrated: Boolean = false,

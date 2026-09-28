@@ -152,7 +152,7 @@ class IosReaderAiAdaptersTest {
             onProgress = { progress.add(it) },
         )
         assertEquals("AI features are unavailable while offline.", result.error)
-        assertEquals(listOf("Checking past chapters...", "Analyzing Chapter 1..."), progress)
+        assertEquals(listOf("CHECKING_PAST", "ANALYZING:1"), progress)
     }
 
     @Test
@@ -180,14 +180,31 @@ class IosReaderAiAdaptersTest {
         // The cached past chapter needs no network; the full staged
         // sequence runs and the offline gate surfaces from the final recap.
         assertEquals(
-            listOf(
-                "Checking past chapters...",
-                "Analyzing Chapter 1...",
-                "Reading current position...",
-                "Generating Recap...",
-            ),
+            listOf("CHECKING_PAST", "ANALYZING:1", "READING_POSITION", "GENERATING"),
             progress,
         )
         assertEquals("AI features are unavailable while offline.", result.error)
+    }
+
+    @Test
+    fun recapProgressTokensResolveToLocalizedCopy() {
+        assertEquals(
+            RecapProgressCopy("ai_recap_checking_past", "Checking past chapters..."),
+            recapProgressCopy("CHECKING_PAST"),
+        )
+        assertEquals(
+            RecapProgressCopy("ai_recap_analyzing_chapter", "Analyzing Chapter %1\$d...", 3),
+            recapProgressCopy("ANALYZING:3"),
+        )
+        assertEquals(
+            RecapProgressCopy("ai_recap_reading_position", "Reading current position..."),
+            recapProgressCopy("READING_POSITION"),
+        )
+        assertEquals(
+            RecapProgressCopy("ai_recap_generating", "Generating Recap..."),
+            recapProgressCopy("GENERATING"),
+        )
+        // Unknown tokens pass through (hosts render them verbatim).
+        assertEquals(RecapProgressCopy("ai_thinking", "SOMETHING_ELSE"), recapProgressCopy("SOMETHING_ELSE"))
     }
 }
