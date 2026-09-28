@@ -77,6 +77,8 @@ import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderAiResultState
+import com.aryan.reader.shared.ReaderRecapRequest
+import com.aryan.reader.shared.ReaderRecapSection
 import com.aryan.reader.shared.SharedSummaryCache
 import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.ReaderTheme
@@ -223,11 +225,24 @@ fun SharedMobileEpubReaderScreen(
     cloudTtsVoiceId: String = com.aryan.reader.shared.DEFAULT_CLOUD_TTS_SPEAKER_ID,
     onCloudTtsVoiceChange: (String) -> Unit = {},
     onClearCloudTtsCache: () -> Unit = {},
+    // Android benchmark (AiVoicesTab): Fish catalog + favorites + language
+    // filter for the reader TTS sheet. Defaulted; iOS passes live values.
+    cloudFishVoices: List<com.aryan.reader.shared.ReaderFishVoice> = emptyList(),
+    expectCloudFishVoices: Boolean = false,
+    cloudFishVoicesLoading: Boolean = false,
+    favoriteCloudVoiceIds: Set<String> = emptySet(),
+    onToggleFavoriteCloudVoice: (String) -> Unit = {},
+    cloudVoiceLanguage: String? = null,
+    onCloudVoiceLanguageChange: (String) -> Unit = {},
+    onClearCloudVoiceSamples: () -> Unit = {},
     initialTtsOverlaySize: ReaderTtsOverlaySize = ReaderTtsOverlaySize.LARGE,
     onTtsOverlaySizePreferenceChange: (ReaderTtsOverlaySize) -> Unit = {},
     onAiAction: (ReaderAiFeature, String) -> Unit = { _, _ -> },
     onAiResultDismiss: () -> Unit = {},
     onOpenAiHub: () -> Unit = {},
+    // Android parity (executeRecapLogic): chained recap with cache
+    // read-through + progress. Null keeps the legacy single-shot path.
+    onAiRecapAction: ((ReaderRecapRequest) -> Unit)? = null,
     summaryCache: SharedSummaryCache? = null,
     aiCredits: Int? = null,
     walletMicros: Long = 0L,
@@ -2619,6 +2634,9 @@ fun SharedMobileEpubReaderScreen(
                             modifier = Modifier
                                 .padding(horizontal = 12.dp)
                                 .offset(y = epubTtsBottomOffset),
+                            credits = aiCredits,
+                            walletMicros = walletMicros,
+                            walletMigrated = walletMigrated,
                         )
                     }
                 }
@@ -3142,10 +3160,31 @@ fun SharedMobileEpubReaderScreen(
             },
             onGenerateRecap = {
                 hubBook?.let { epub ->
-                    val recapText = epub.chapters.take(hubChapterIndex + 1)
-                        .joinToString("\n\n") { chapter -> chapter.plainText }
-                        .take(24_000)
-                    if (recapText.isNotBlank()) onAiAction(ReaderAiFeature.RECAP, recapText)
+                    val pastSections = epub.chapters.take(hubChapterIndex).mapIndexed { index, chapter ->
+                        ReaderRecapSection(
+                            title = chapter.title.takeIf { it.isNotBlank() } ?: "Chapter ${index + 1}",
+                            text = chapter.plainText,
+                        )
+                    }
+                    val currentText = epub.chapters.getOrNull(hubChapterIndex)?.plainText.orEmpty()
+                    val chainedRecap = onAiRecapAction
+                    if (chainedRecap != null) {
+                        chainedRecap(
+                            ReaderRecapRequest(
+                                bookTitle = hubBookTitle,
+                                sectionIndex = hubChapterIndex,
+                                pastSections = pastSections,
+                                currentText = currentText,
+                                currentTitle = hubChapterTitle,
+                                summaryCache = summaryCache,
+                            )
+                        )
+                    } else if (currentText.isNotBlank() || pastSections.any { it.text.isNotBlank() }) {
+                        onAiAction(
+                            ReaderAiFeature.RECAP,
+                            (pastSections.map { it.text } + currentText).joinToString("\n\n").take(24_000),
+                        )
+                    }
                 }
             },
             onClearAiResult = { pendingSummarySave = null; onAiResultDismiss() },
@@ -3173,6 +3212,15 @@ fun SharedMobileEpubReaderScreen(
             aiCacheRevision++
         }
     }
+    // Android parity (executeRecapLogic cache backfill): chained recaps save
+    // past-chapter summaries into the shared cache, so refresh the hub's
+    // cache view when a recap finishes.
+    LaunchedEffect(readerExtrasState.aiResult.isLoading, readerExtrasState.aiResult.title) {
+        val result = readerExtrasState.aiResult
+        if (!result.isLoading && result.title == ReaderAiFeature.RECAP.displayName) {
+            aiCacheRevision++
+        }
+    }
     if (showTtsSettingsSheet) {
         SharedMobileReaderTtsSettingsSheet(
             tts = localTts,
@@ -3183,6 +3231,14 @@ fun SharedMobileEpubReaderScreen(
             cloudTtsVoiceId = cloudTtsVoiceId,
             onCloudTtsVoiceChange = onCloudTtsVoiceChange,
             onClearCloudTtsCache = onClearCloudTtsCache,
+            fishVoices = cloudFishVoices,
+            expectFishVoices = expectCloudFishVoices,
+            fishVoicesLoading = cloudFishVoicesLoading,
+            favoriteCloudVoiceIds = favoriteCloudVoiceIds,
+            onToggleFavoriteCloudVoice = onToggleFavoriteCloudVoice,
+            cloudVoiceLanguage = cloudVoiceLanguage,
+            onCloudVoiceLanguageChange = onCloudVoiceLanguageChange,
+            onClearCloudVoiceSamples = onClearCloudVoiceSamples,
         )
     }
     if (showBookReplacementsSheet) {

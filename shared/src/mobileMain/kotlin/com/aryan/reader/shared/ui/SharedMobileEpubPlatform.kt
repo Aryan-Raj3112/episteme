@@ -330,7 +330,15 @@ interface SharedMobileEpubCloudTts {
     val voiceSampleState: ReaderVoiceSampleState get() = ReaderVoiceSampleState()
 
     /** Toggles sample playback for one cloud voice (downloads once, then caches). */
-    fun playOrStopVoiceSample(voiceId: String) = Unit
+    fun playOrStopVoiceSample(
+        voiceId: String,
+        // Android `playFishSample` parity: Fish rows pass their reference id
+        // plus the catalog's free static preview URL (played unbilled when
+        // present, synthesized on demand otherwise). Null = Gemini prebuilt.
+        fishReferenceId: String? = null,
+        sampleAudioUrl: String? = null,
+        sampleText: String? = null,
+    ) = Unit
 
     /** Deletes all cached voice samples. */
     fun clearVoiceSamples() = Unit

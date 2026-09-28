@@ -280,6 +280,7 @@ import com.aryan.reader.shared.ui.MobileAccountLegalDisclosure
 import com.aryan.reader.shared.ui.MobileAccountPresentation
 import com.aryan.reader.shared.ui.SharedMobileEpubReaderScreen
 import com.aryan.reader.shared.ui.SharedMobileReaderTtsSettingsSheet
+import com.aryan.reader.shared.ui.toggleSharedMobileTtsVoiceFavorite
 import com.aryan.reader.shared.ui.SharedMobilePdfReaderHost
 import com.aryan.reader.shared.ui.SharedMobilePdfReflowUiState
 import com.aryan.reader.shared.ui.SharedPdfTtsOverlaySize
@@ -2880,11 +2881,44 @@ private fun ReaderIosApp(
     }
     val readerAiSettingsStore = remember { IosReaderAiSettingsStore() }
     var readerAiSettings by remember { mutableStateOf(readerAiSettingsStore.load()) }
+    // Android parity (areReaderAiFeaturesEnabled offline leg): the adapter
+    // hides AI entries while offline. iOS has no offline flavor, so Swift
+    // pushes live reachability here (NWPathMonitor); default true preserves
+    // current behavior until that wiring lands.
+    var readerAiNetworkAvailable by remember { mutableStateOf(true) }
+    fun updateReaderAiNetworkAvailable(available: Boolean) {
+        readerAiNetworkAvailable = available
+    }
     val effectiveReaderAiSettings = readerAiSettings.copy(
         hideReaderAiFeatures = readerAiSettings.hideReaderAiFeatures || state.hideReaderAi,
         serverBackedReaderAiFeatures = bridge.accountState.uid != null,
         serverBackedCloudTts = bridge.accountState.uid != null,
     ).sanitized()
+    // Android parity (AiVoicesTab catalog): the reader TTS sheet lists the
+    // same Fish catalog as AI settings, so the fetch lives at top scope and
+    // both surfaces share one cached list, favorites, and language filter.
+    var iosReaderFishVoices by remember { mutableStateOf(emptyList<com.aryan.reader.shared.ReaderFishVoice>()) }
+    var iosReaderFishVoicesLoading by remember { mutableStateOf(false) }
+    var iosFavoriteCloudVoices by remember { mutableStateOf(iosLoadTtsFavoriteVoices()) }
+    var iosCloudVoiceLanguage by remember { mutableStateOf(iosLoadFishLanguageFilter()) }
+    LaunchedEffect(
+        effectiveReaderAiSettings.fishKey,
+        bridge.accountState.uid,
+        bridge.accountState.authToken,
+    ) {
+        iosReaderFishVoicesLoading = true
+        iosReaderFishVoices = iosFetchFishVoices(
+            fishKey = effectiveReaderAiSettings.fishKey,
+            workerBaseUrl = IOS_TTS_WORKER_URL,
+            authToken = bridge.accountState.authToken,
+        )
+        iosReaderFishVoicesLoading = false
+    }
+    // Android parity (AiVoicesTab source rule): Gemini BYOK backends keep the
+    // static prebuilt list; every other backend shows the Fish catalog.
+    val iosExpectFishVoices: Boolean = with(effectiveReaderAiSettings) {
+        isFishByokTtsAvailable || (!isGeminiRestByokTtsAvailable && !isByokCloudTtsAvailable)
+    }
     val readerAiAdapter = remember(
         bridge,
         effectiveReaderAiSettings,
@@ -2892,6 +2926,7 @@ private fun ReaderIosApp(
         bridge.accountState.authToken,
         state.isProUser,
         state.credits,
+        readerAiNetworkAvailable,
     ) {
         // Attestation rides the bridge-cached token Swift pushes on each
         // auth (re)publish (top-level provider in IosReaderAiAdapters.kt).
@@ -2908,6 +2943,7 @@ private fun ReaderIosApp(
                 )
             },
             authTokenProvider = { bridge.accountState.authToken },
+            networkAccess = { readerAiNetworkAvailable },
             // Android parity (EpubReaderAi usage): per-result cost /
             // free-remaining feeds the result badge only. The global balance
             // is owned by entitlements (StoreKit push + foreground refresh),
@@ -3391,6 +3427,55 @@ private fun ReaderIosApp(
         )
     }
 
+    // Android parity (PdfViewerScreen.onDictionaryLookup /
+    // EpubReaderScreen.onDictionaryLookup): BYOK bypasses the worker gate
+    // exactly like Android. Shared by runReaderAiAction + runReaderRecap.
+    fun hasReaderAiByokFor(feature: ReaderAiFeature): Boolean {
+        val sanitizedSettings = effectiveReaderAiSettings.sanitized()
+        val byokModelId = sanitizedSettings.modelIdFor(feature)
+        return readerAiModelById(byokModelId)?.let {
+            sanitizedSettings.apiKeyFor(it.provider).isNotBlank()
+        } == true
+    }
+
+    // Android parity (handleAiRequestError): route spend tokens to
+    // notices/dialogs instead of inline prose. INSUFFICIENT_CREDITS opens
+    // the out-of-balance dialog, RATE_LIMITED posts a retry banner,
+    // DAILY_SPEND_LIMIT opens the cap dialog with balance + countdown.
+    // Anything else stays inline in the result sheet.
+    fun applyReaderAiResult(
+        textResult: String,
+        error: String?,
+        cost: Double?,
+        freeRemaining: Int?,
+    ) {
+        val guard = parseSpendGuardSentinel(error)
+        when {
+            error == "INSUFFICIENT_CREDITS" -> showOutOfBalanceDialog = true
+            guard != null && guard.first == "RATE_LIMITED" -> showMessage(
+                stringResolver.string(
+                    "snackbar_rate_limited_retry",
+                    "Slowing down to protect the service — retrying in %1\$s…",
+                    formatSpendGuardCountdown(guard.second),
+                )
+            )
+            guard != null -> {
+                spendCapRetrySeconds = guard.second
+                showSpendCapDialog = true
+            }
+        }
+        readerExtrasState = readerExtrasState.copy(
+            aiResult = readerExtrasState.aiResult.copy(
+                text = if (readerExtrasState.aiResult.text.isNotBlank()) readerExtrasState.aiResult.text else textResult,
+                isLoading = false,
+                errorMessage = if (error == "INSUFFICIENT_CREDITS" || guard != null) null else error,
+                cost = cost,
+                freeRemaining = freeRemaining,
+                progressMessage = null,
+            )
+        )
+    }
+
     fun runReaderAiAction(feature: ReaderAiFeature, text: String) {
         readerAiJob?.cancel()
         readerAiJob = null
@@ -3404,19 +3489,16 @@ private fun ReaderIosApp(
             )
             return
         }
+        // Android parity (areReaderAiFeaturesEnabled + hidden entry): a
+        // hidden or offline AI surface never fetches — the toolbar entry is
+        // already filtered out, so reaching here means a stale caller.
+        if (!readerAiAvailable) return
         // Android parity (PdfViewerScreen.onDictionaryLookup /
         // EpubReaderScreen.onDictionaryLookup): smart dictionary without Pro
         // shows the upsell popup instead of fetching. BYOK bypasses the
         // worker gate exactly like Android.
-        fun hasByokFor(feature: ReaderAiFeature): Boolean {
-            val sanitizedSettings = effectiveReaderAiSettings.sanitized()
-            val byokModelId = sanitizedSettings.modelIdFor(feature)
-            return readerAiModelById(byokModelId)?.let {
-                sanitizedSettings.apiKeyFor(it.provider).isNotBlank()
-            } == true
-        }
         if (feature == ReaderAiFeature.DEFINE && !state.isProUser) {
-            if (!hasByokFor(ReaderAiFeature.DEFINE)) {
+            if (!hasReaderAiByokFor(ReaderAiFeature.DEFINE)) {
                 showDictionaryUpsellDialog = true
                 return
             }
@@ -3428,7 +3510,7 @@ private fun ReaderIosApp(
         if ((feature == ReaderAiFeature.SUMMARIZE || feature == ReaderAiFeature.RECAP) &&
             !state.isProUser &&
             !hasSpendableBalance(state.credits, state.walletMicros) &&
-            !hasByokFor(feature)
+            !hasReaderAiByokFor(feature)
         ) {
             showOutOfBalanceDialog = true
             return
@@ -3488,35 +3570,64 @@ private fun ReaderIosApp(
                 is RecapResult -> result.freeRemaining
                 else -> null
             }
-            // Android parity (handleAiRequestError): route spend tokens to
-            // notices/dialogs instead of inline prose. INSUFFICIENT_CREDITS
-            // opens the out-of-balance dialog, RATE_LIMITED posts a retry
-            // banner, DAILY_SPEND_LIMIT opens the cap dialog with balance +
-            // countdown. Anything else stays inline in the result sheet.
-            val guard = parseSpendGuardSentinel(error)
-            when {
-                error == "INSUFFICIENT_CREDITS" -> showOutOfBalanceDialog = true
-                guard != null && guard.first == "RATE_LIMITED" -> showMessage(
-                    stringResolver.string(
-                        "snackbar_rate_limited_retry",
-                        "Slowing down to protect the service — retrying in %1\$s…",
-                        formatSpendGuardCountdown(guard.second),
-                    )
-                )
-                guard != null -> {
-                    spendCapRetrySeconds = guard.second
-                    showSpendCapDialog = true
-                }
-            }
+            applyReaderAiResult(textResult, error, cost, freeRemaining)
+        }
+    }
+
+    // Android parity (executeRecapLogic): chained story recap — past sections
+    // resolve through the summary cache (misses summarize on the fly and
+    // backfill it), the final recap streams, and staged progress shows while
+    // loading. Gates mirror runReaderAiAction (hidden/offline entry,
+    // out-of-balance pre-gate, spend-token routing).
+    fun runReaderRecap(request: com.aryan.reader.shared.ReaderRecapRequest) {
+        readerAiJob?.cancel()
+        readerAiJob = null
+        if (!readerAiAvailable) return
+        if (request.currentText.trim().isBlank() && request.pastSections.all { it.text.isBlank() }) {
             readerExtrasState = readerExtrasState.copy(
-                aiResult = readerExtrasState.aiResult.copy(
-                    text = if (readerExtrasState.aiResult.text.isNotBlank()) readerExtrasState.aiResult.text else textResult,
-                    isLoading = false,
-                    errorMessage = if (error == "INSUFFICIENT_CREDITS" || guard != null) null else error,
-                    cost = cost,
-                    freeRemaining = freeRemaining,
+                aiResult = com.aryan.reader.shared.ReaderAiResultState(
+                    title = ReaderAiFeature.RECAP.displayName,
+                    errorMessage = "There is no reading context for this action.",
                 )
             )
+            return
+        }
+        if (!state.isProUser &&
+            !hasSpendableBalance(state.credits, state.walletMicros) &&
+            !hasReaderAiByokFor(ReaderAiFeature.RECAP)
+        ) {
+            showOutOfBalanceDialog = true
+            return
+        }
+        readerExtrasState = readerExtrasState.copy(
+            aiResult = com.aryan.reader.shared.ReaderAiResultState(
+                title = ReaderAiFeature.RECAP.displayName,
+                isLoading = true,
+                progressMessage = "Checking past chapters...",
+            )
+        )
+        readerAiJob = scope.launch {
+            val result = readerAiAdapter.recapChained(
+                request,
+                onProgress = { message ->
+                    readerExtrasState = readerExtrasState.copy(
+                        aiResult = readerExtrasState.aiResult.copy(progressMessage = message)
+                    )
+                },
+                onUpdate = { chunk ->
+                    // Android parity (first chunk clears loading): streamed
+                    // text replaces the progress state mid-flight.
+                    val current = readerExtrasState.aiResult
+                    readerExtrasState = readerExtrasState.copy(
+                        aiResult = current.copy(
+                            text = current.text + chunk,
+                            isLoading = false,
+                            progressMessage = null,
+                        )
+                    )
+                },
+            )
+            applyReaderAiResult(result.recap.orEmpty(), result.error, result.cost, result.freeRemaining)
         }
     }
 
@@ -4900,7 +5011,24 @@ private fun ReaderIosApp(
             cloudTtsVoiceId = effectiveReaderAiSettings.ttsSpeakerId,
             onCloudTtsVoiceChange = ::updateCloudTtsVoice,
             onClearCloudTtsCache = readerCloudTts::clearCache,
+            cloudFishVoices = iosReaderFishVoices,
+            expectCloudFishVoices = iosExpectFishVoices,
+            cloudFishVoicesLoading = iosReaderFishVoicesLoading,
+            favoriteCloudVoiceIds = iosFavoriteCloudVoices,
+            onToggleFavoriteCloudVoice = { referenceId ->
+                iosFavoriteCloudVoices =
+                    toggleSharedMobileTtsVoiceFavorite(iosFavoriteCloudVoices, referenceId).also {
+                        iosSaveTtsFavoriteVoices(it)
+                    }
+            },
+            cloudVoiceLanguage = iosCloudVoiceLanguage,
+            onCloudVoiceLanguageChange = { language ->
+                iosCloudVoiceLanguage = language
+                iosSaveFishLanguageFilter(language)
+            },
+            onClearCloudVoiceSamples = readerCloudTts::clearVoiceSamples,
             onAiAction = ::runReaderAiAction,
+            onAiRecapAction = ::runReaderRecap,
             onAiResultDismiss = {
                 dismissReaderAiResult()
             },
@@ -5497,9 +5625,26 @@ private fun ReaderIosApp(
             cloudTtsVoiceId = effectiveReaderAiSettings.ttsSpeakerId,
             onCloudTtsVoiceChange = ::updateCloudTtsVoice,
             onClearCloudTtsCache = readerCloudTts::clearCache,
+            cloudFishVoices = iosReaderFishVoices,
+            expectCloudFishVoices = iosExpectFishVoices,
+            cloudFishVoicesLoading = iosReaderFishVoicesLoading,
+            favoriteCloudVoiceIds = iosFavoriteCloudVoices,
+            onToggleFavoriteCloudVoice = { referenceId ->
+                iosFavoriteCloudVoices =
+                    toggleSharedMobileTtsVoiceFavorite(iosFavoriteCloudVoices, referenceId).also {
+                        iosSaveTtsFavoriteVoices(it)
+                    }
+            },
+            cloudVoiceLanguage = iosCloudVoiceLanguage,
+            onCloudVoiceLanguageChange = { language ->
+                iosCloudVoiceLanguage = language
+                iosSaveFishLanguageFilter(language)
+            },
+            onClearCloudVoiceSamples = readerCloudTts::clearVoiceSamples,
             initialTtsOverlaySize = loadIosReaderTtsOverlaySize(),
             onTtsOverlaySizePreferenceChange = ::persistIosReaderTtsOverlaySize,
             onAiAction = ::runReaderAiAction,
+            onAiRecapAction = ::runReaderRecap,
             onAiResultDismiss = {
                 dismissReaderAiResult()
             },
@@ -6047,23 +6192,6 @@ private fun ReaderIosApp(
                         )
                     }
                     IosUtilityScreen.AI_SETTINGS -> {
-                        var iosFishVoices by remember { mutableStateOf(emptyList<com.aryan.reader.shared.ReaderFishVoice>()) }
-                        var iosFishVoicesLoading by remember { mutableStateOf(false) }
-                        var iosFavoriteFishVoices by remember { mutableStateOf(iosLoadTtsFavoriteVoices()) }
-                        var iosFishLanguageFilter by remember { mutableStateOf(iosLoadFishLanguageFilter()) }
-                        LaunchedEffect(
-                            effectiveReaderAiSettings.fishKey,
-                            bridge.accountState.uid,
-                            bridge.accountState.authToken,
-                        ) {
-                            iosFishVoicesLoading = true
-                            iosFishVoices = iosFetchFishVoices(
-                                fishKey = effectiveReaderAiSettings.fishKey,
-                                workerBaseUrl = IOS_TTS_WORKER_URL,
-                                authToken = bridge.accountState.authToken,
-                            )
-                            iosFishVoicesLoading = false
-                        }
                         SharedAiSettingsScreen(
                         settings = effectiveReaderAiSettings,
                         maskedKeys = readerAiSettingsStore.maskedKeys(),
@@ -6158,21 +6286,21 @@ private fun ReaderIosApp(
                         cloudCacheSummary = readerCloudTts.state.cacheSummary,
                         onClearCloudTtsCache = readerCloudTts::clearCache,
                         showCloudTts = IosFeatureGating.SHOW_CLOUD_TTS,
-                        fishVoices = iosFishVoices,
-                        fishVoicesLoading = iosFishVoicesLoading,
-                        favoriteFishVoiceIds = iosFavoriteFishVoices,
+                        fishVoices = iosReaderFishVoices,
+                        fishVoicesLoading = iosReaderFishVoicesLoading,
+                        favoriteFishVoiceIds = iosFavoriteCloudVoices,
                         onToggleFavoriteFishVoice = { referenceId ->
-                            iosFavoriteFishVoices =
-                                if (referenceId in iosFavoriteFishVoices) {
-                                    iosFavoriteFishVoices - referenceId
+                            iosFavoriteCloudVoices =
+                                if (referenceId in iosFavoriteCloudVoices) {
+                                    iosFavoriteCloudVoices - referenceId
                                 } else {
-                                    iosFavoriteFishVoices + referenceId
+                                    iosFavoriteCloudVoices + referenceId
                                 }
-                            iosSaveTtsFavoriteVoices(iosFavoriteFishVoices)
+                            iosSaveTtsFavoriteVoices(iosFavoriteCloudVoices)
                         },
-                        fishLanguageSelection = iosFishLanguageFilter,
+                        fishLanguageSelection = iosCloudVoiceLanguage,
                         onFishLanguageSelectionChange = { selection ->
-                            iosFishLanguageFilter = selection
+                            iosCloudVoiceLanguage = selection
                             iosSaveFishLanguageFilter(selection)
                         },
                         modifier = Modifier.fillMaxSize().statusBarsPadding(),

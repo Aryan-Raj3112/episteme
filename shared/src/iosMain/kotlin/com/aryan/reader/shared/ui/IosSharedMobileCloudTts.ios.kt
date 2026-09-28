@@ -403,7 +403,12 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     private fun sampleFile(voiceId: String): String =
         "$cacheRoot/voice_sample_${safeSpeakerId(voiceId)}.wav"
 
-    override fun playOrStopVoiceSample(voiceId: String) {
+    override fun playOrStopVoiceSample(
+        voiceId: String,
+        fishReferenceId: String?,
+        sampleAudioUrl: String?,
+        sampleText: String?,
+    ) {
         if (voiceSampleState.playingVoiceId == voiceId) {
             samplePlayer?.stop()
             samplePlayer = null
@@ -421,18 +426,18 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         samplePlayer = null
         voiceSampleState = voiceSampleState.copy(loadingVoiceId = voiceId, playingVoiceId = null)
         sampleJob = scope.launch(Dispatchers.Default) {
-            val file = sampleFile(voiceId)
-            if (!fileManager.fileExistsAtPath(file)) {
-                val url = NSURL(string = "https://firebasestorage.googleapis.com/v0/b/reader-9fc469d7.firebasestorage.app/o/samples%2Fsample_${voiceId}.wav?alt=media")
-                val downloaded = downloadUrlToFile(url, file)
-                if (!downloaded) {
-                    withContext(Dispatchers.Main.immediate) {
-                        if (voiceSampleState.loadingVoiceId == voiceId) {
-                            voiceSampleState = voiceSampleState.copy(loadingVoiceId = null)
-                        }
+            val file = if (!fishReferenceId.isNullOrBlank()) {
+                resolveFishSampleFile(voiceId, fishReferenceId, sampleAudioUrl, sampleText)
+            } else {
+                resolveGeminiSampleFile(voiceId)
+            }
+            if (file == null) {
+                withContext(Dispatchers.Main.immediate) {
+                    if (voiceSampleState.loadingVoiceId == voiceId) {
+                        voiceSampleState = voiceSampleState.copy(loadingVoiceId = null)
                     }
-                    return@launch
                 }
+                return@launch
             }
             val audio = readFile(file)
             withContext(Dispatchers.Main.immediate) {
@@ -460,6 +465,83 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         }
     }
 
+    private suspend fun resolveGeminiSampleFile(voiceId: String): String? {
+        val file = sampleFile(voiceId)
+        if (fileManager.fileExistsAtPath(file)) return file
+        val url = NSURL(string = "https://firebasestorage.googleapis.com/v0/b/reader-9fc469d7.firebasestorage.app/o/samples%2Fsample_${voiceId}.wav?alt=media")
+        return if (downloadUrlToFile(url, file)) file else null
+    }
+
+    /**
+     * Android `SpeakerSamplePlayer.playFishSample` parity. Priority: cached
+     * synthesis → free catalog static MP3 (unbilled) → on-demand synthesis
+     * (BYOK direct, else the credited `/v2/tts/sample` worker route).
+     * Failures stay silent — a preview must never pollute overlay errors.
+     */
+    private suspend fun resolveFishSampleFile(
+        voiceId: String,
+        referenceId: String,
+        sampleAudioUrl: String?,
+        sampleText: String?,
+    ): String? {
+        val safe = safeSpeakerId(referenceId)
+        val synthFile = "$cacheRoot/voice_sample_fish_${safe}.mp3"
+        if (fileManager.fileExistsAtPath(synthFile)) return synthFile
+        if (!sampleAudioUrl.isNullOrBlank()) {
+            val staticFile = "$cacheRoot/voice_sample_fish_static_${safe}.mp3"
+            if (!fileManager.fileExistsAtPath(staticFile)) {
+                downloadUrlToFile(NSURL(string = sampleAudioUrl), staticFile)
+            }
+            if (fileManager.fileExistsAtPath(staticFile)) return staticFile
+        }
+        val preview = synthesizeFishPreview(sampleText, referenceId) ?: return null
+        writeFileAtomically(synthFile, preview)
+        return synthFile
+    }
+
+    private suspend fun synthesizeFishPreview(text: String?, referenceId: String): ByteArray? {
+        val previewText = text?.trim().orEmpty().ifBlank { SHARED_MOBILE_TTS_SAMPLE_DEFAULT }
+        val url: String
+        val headers: Map<String, String>
+        val body: String
+        if (settings.fishKey.isNotBlank()) {
+            url = "https://api.fish.audio/v1/tts"
+            headers = mapOf(
+                "Authorization" to "Bearer ${settings.fishKey}",
+                "model" to FISH_TTS_MODEL,
+            )
+            body = buildJsonObject {
+                put("text", previewText)
+                put("reference_id", referenceId)
+                put("format", "mp3")
+                put("normalize", true)
+                put("latency", "normal")
+                put("chunk_length", 300)
+                put("condition_on_previous_chunks", true)
+            }.toString()
+        } else {
+            if (!workerAvailable()) return null
+            url = workerUrl.removeSuffix("/") + "/v2/tts/sample"
+            headers = mapOf("Authorization" to "Bearer ${authToken.orEmpty()}")
+            body = buildJsonObject {
+                put("text", previewText)
+                put("voiceId", referenceId)
+                put("format", "mp3")
+                put("latency", "balanced")
+            }.toString()
+        }
+        return try {
+            val response = withTimeout(CLOUD_TTS_TIMEOUT_MILLIS) {
+                IosReaderAiHttpClient.postBytes(url, body, headers)
+            }
+            if (response.statusCode !in 200..299 || response.bodyBytes.size < 1024) null
+            else response.bodyBytes
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            null
+        }
+    }
+
     override fun clearVoiceSamples() {
         samplePlayer?.stop()
         samplePlayer = null
@@ -469,7 +551,9 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         scope.launch(Dispatchers.Default) {
             fileManager.contentsOfDirectoryAtPath(cacheRoot, error = null).orEmpty()
                 .mapNotNull { it as? String }
-                .filter { it.startsWith("voice_sample_") && it.endsWith(".wav") }
+                .filter {
+                    it.startsWith("voice_sample_") && (it.endsWith(".wav") || it.endsWith(".mp3"))
+                }
                 .forEach { fileManager.removeItemAtPath("$cacheRoot/$it", error = null) }
         }
     }
@@ -495,8 +579,8 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         scope.launch(Dispatchers.Default) {
             val cached = fileManager.contentsOfDirectoryAtPath(cacheRoot, error = null).orEmpty()
                 .mapNotNull { it as? String }
-                .filter { it.startsWith("voice_sample_") && it.endsWith(".wav") }
-                .map { it.removePrefix("voice_sample_").removeSuffix(".wav") }
+                .filter { it.startsWith("voice_sample_") && (it.endsWith(".wav") || it.endsWith(".mp3")) }
+                .map { it.removePrefix("voice_sample_").removeSuffix(".wav").removeSuffix(".mp3") }
                 .toSet()
             if (cached.isNotEmpty()) {
                 withContext(Dispatchers.Main.immediate) {

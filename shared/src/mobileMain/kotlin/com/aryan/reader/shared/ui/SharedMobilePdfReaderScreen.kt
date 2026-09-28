@@ -201,6 +201,8 @@ import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.DockLocation
 import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderExternalLookupAction
+import com.aryan.reader.shared.ReaderRecapRequest
+import com.aryan.reader.shared.ReaderRecapSection
 import com.aryan.reader.shared.SharedSummaryCache
 import com.aryan.reader.shared.ReaderAiResultState
 import com.aryan.reader.shared.ReaderExtrasState
@@ -398,6 +400,19 @@ fun SharedMobilePdfReaderScreen(
     cloudTtsVoiceId: String = com.aryan.reader.shared.DEFAULT_CLOUD_TTS_SPEAKER_ID,
     onCloudTtsVoiceChange: (String) -> Unit = {},
     onClearCloudTtsCache: () -> Unit = {},
+    // Android benchmark (AiVoicesTab): Fish catalog + favorites + language
+    // filter for the reader TTS sheet. Defaulted; iOS passes live values.
+    cloudFishVoices: List<com.aryan.reader.shared.ReaderFishVoice> = emptyList(),
+    expectCloudFishVoices: Boolean = false,
+    cloudFishVoicesLoading: Boolean = false,
+    favoriteCloudVoiceIds: Set<String> = emptySet(),
+    onToggleFavoriteCloudVoice: (String) -> Unit = {},
+    cloudVoiceLanguage: String? = null,
+    onCloudVoiceLanguageChange: (String) -> Unit = {},
+    onClearCloudVoiceSamples: () -> Unit = {},
+    // Android parity (executeRecapLogic): chained recap with cache
+    // read-through + progress. Null keeps the legacy single-shot path.
+    onAiRecapAction: ((ReaderRecapRequest) -> Unit)? = null,
     onAiAction: (ReaderAiFeature, String) -> Unit = { _, _ -> },
     onAiResultDismiss: () -> Unit = {},
     onOpenAiHub: () -> Unit = {},
@@ -489,6 +504,15 @@ fun SharedMobilePdfReaderScreen(
         cloudTtsVoiceId = cloudTtsVoiceId,
         onCloudTtsVoiceChange = onCloudTtsVoiceChange,
         onClearCloudTtsCache = onClearCloudTtsCache,
+        cloudFishVoices = cloudFishVoices,
+        expectCloudFishVoices = expectCloudFishVoices,
+        cloudFishVoicesLoading = cloudFishVoicesLoading,
+        favoriteCloudVoiceIds = favoriteCloudVoiceIds,
+        onToggleFavoriteCloudVoice = onToggleFavoriteCloudVoice,
+        cloudVoiceLanguage = cloudVoiceLanguage,
+        onCloudVoiceLanguageChange = onCloudVoiceLanguageChange,
+        onClearCloudVoiceSamples = onClearCloudVoiceSamples,
+        onAiRecapAction = onAiRecapAction,
         onAiAction = onAiAction,
         onAiResultDismiss = onAiResultDismiss,
         onOpenAiHub = onOpenAiHub,
@@ -579,6 +603,19 @@ fun SharedMobilePdfReaderHost(
     cloudTtsVoiceId: String = com.aryan.reader.shared.DEFAULT_CLOUD_TTS_SPEAKER_ID,
     onCloudTtsVoiceChange: (String) -> Unit = {},
     onClearCloudTtsCache: () -> Unit = {},
+    // Android benchmark (AiVoicesTab): Fish catalog + favorites + language
+    // filter for the reader TTS sheet. Defaulted; iOS passes live values.
+    cloudFishVoices: List<com.aryan.reader.shared.ReaderFishVoice> = emptyList(),
+    expectCloudFishVoices: Boolean = false,
+    cloudFishVoicesLoading: Boolean = false,
+    favoriteCloudVoiceIds: Set<String> = emptySet(),
+    onToggleFavoriteCloudVoice: (String) -> Unit = {},
+    cloudVoiceLanguage: String? = null,
+    onCloudVoiceLanguageChange: (String) -> Unit = {},
+    onClearCloudVoiceSamples: () -> Unit = {},
+    // Android parity (executeRecapLogic): chained recap with cache
+    // read-through + progress. Null keeps the legacy single-shot path.
+    onAiRecapAction: ((ReaderRecapRequest) -> Unit)? = null,
     onAiAction: (ReaderAiFeature, String) -> Unit = { _, _ -> },
     onAiResultDismiss: () -> Unit = {},
     onOpenAiHub: () -> Unit = {},
@@ -3277,6 +3314,9 @@ fun SharedMobilePdfReaderHost(
                                 }
                             },
                             modifier = Modifier.padding(bottom = ttsBottomPadding),
+                            credits = aiCredits,
+                            walletMicros = walletMicros,
+                            walletMigrated = walletMigrated,
                         )
                     }
                 }
@@ -4775,10 +4815,37 @@ fun SharedMobilePdfReaderHost(
                 }
             },
             onGenerateRecap = {
-                val pages = hubPageSessions.map { session ->
-                    session?.let { it.textForRange(0, it.pageCharCount) }
+                val chainedRecap = onAiRecapAction
+                if (chainedRecap != null) {
+                    // Window sessions are newest-first; past pages resolve
+                    // oldest-first so cache indices ascend like chapters.
+                    val texts = hubPageSessions.map { session ->
+                        session?.let { it.textForRange(0, it.pageCharCount) }.orEmpty()
+                    }
+                    val pastPairs = texts.drop(1)
+                        .mapIndexed { back, text -> (hubBasePage - 1 - back) to text }
+                        .reversed()
+                    chainedRecap(
+                        ReaderRecapRequest(
+                            bookTitle = hubBookTitle,
+                            sectionIndex = hubBasePage,
+                            pastSections = pastPairs.map { (pageIndex, text) ->
+                                ReaderRecapSection(
+                                    title = "Page ${pageIndex + 1}",
+                                    text = text,
+                                )
+                            },
+                            currentText = texts.firstOrNull().orEmpty(),
+                            currentTitle = hubPageTitle,
+                            summaryCache = summaryCache,
+                        )
+                    )
+                } else {
+                    val pages = hubPageSessions.map { session ->
+                        session?.let { it.textForRange(0, it.pageCharCount) }
+                    }
+                    buildPdfAiHubRecapText(pages)?.let { onAiAction(ReaderAiFeature.RECAP, it) }
                 }
-                buildPdfAiHubRecapText(pages)?.let { onAiAction(ReaderAiFeature.RECAP, it) }
             },
             onClearAiResult = { pendingSummarySave = null; onAiResultDismiss() },
             onDeleteCached = { entry ->
@@ -4802,6 +4869,15 @@ fun SharedMobilePdfReaderHost(
             result.title == ReaderAiFeature.SUMMARIZE.displayName
         ) {
             summaryCache?.saveSummary(pending.first, pending.second, pending.third, result.text)
+            aiCacheRevision++
+        }
+    }
+    // Android parity (executeRecapLogic cache backfill): chained recaps save
+    // past-page summaries into the shared cache, so refresh the hub's cache
+    // view when a recap finishes.
+    LaunchedEffect(readerExtrasState.aiResult.isLoading, readerExtrasState.aiResult.title) {
+        val result = readerExtrasState.aiResult
+        if (!result.isLoading && result.title == ReaderAiFeature.RECAP.displayName) {
             aiCacheRevision++
         }
     }
@@ -5000,6 +5076,14 @@ fun SharedMobilePdfReaderHost(
             cloudTtsVoiceId = cloudTtsVoiceId,
             onCloudTtsVoiceChange = onCloudTtsVoiceChange,
             onClearCloudTtsCache = onClearCloudTtsCache,
+            fishVoices = cloudFishVoices,
+            expectFishVoices = expectCloudFishVoices,
+            fishVoicesLoading = cloudFishVoicesLoading,
+            favoriteCloudVoiceIds = favoriteCloudVoiceIds,
+            onToggleFavoriteCloudVoice = onToggleFavoriteCloudVoice,
+            cloudVoiceLanguage = cloudVoiceLanguage,
+            onCloudVoiceLanguageChange = onCloudVoiceLanguageChange,
+            onClearCloudVoiceSamples = onClearCloudVoiceSamples,
         )
     }
     if (showNewPdfTabSheet) {

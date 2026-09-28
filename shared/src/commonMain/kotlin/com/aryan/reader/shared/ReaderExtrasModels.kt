@@ -1394,10 +1394,37 @@ data class ReaderAiResultState(
      */
     val cost: Double? = null,
     val freeRemaining: Int? = null,
-    val isCacheHit: Boolean = false
+    val isCacheHit: Boolean = false,
+    /**
+     * Android parity (executeRecapLogic progress): "Checking past
+     * chapters..." / "Analyzing Chapter N..." / "Reading current
+     * position..." / "Generating Recap...". Shown while [isLoading] with
+     * blank [text]; cleared on first streamed chunk.
+     */
+    val progressMessage: String? = null
 ) {
     val hasContent: Boolean get() = text.isNotBlank() || errorMessage != null || isLoading
 }
+
+/**
+ * Android parity (executeRecapLogic): a story-recap request carries past
+ * sections (summarized with cache read-through) plus the current section
+ * text, instead of one head-truncated blob. [summaryCache] is the host's
+ * instance so chained summaries land in the same store the hub reads.
+ */
+data class ReaderRecapSection(
+    val title: String,
+    val text: String
+)
+
+data class ReaderRecapRequest(
+    val bookTitle: String,
+    val sectionIndex: Int,
+    val pastSections: List<ReaderRecapSection>,
+    val currentText: String,
+    val currentTitle: String = "",
+    val summaryCache: SharedSummaryCache? = null
+)
 
 data class ReaderExtrasState(
     val autoScroll: ReaderAutoScrollState = ReaderAutoScrollState(),

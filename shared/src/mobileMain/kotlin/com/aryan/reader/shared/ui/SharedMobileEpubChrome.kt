@@ -6,6 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -101,12 +102,15 @@ import com.aryan.reader.shared.ReaderTool
 import com.aryan.reader.shared.ReaderToolbarPreferences
 import com.aryan.reader.shared.ReaderCloudTtsState
 import com.aryan.reader.shared.DEFAULT_CLOUD_TTS_SPEAKER_ID
+import com.aryan.reader.shared.ReaderFishVoice
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.ReaderCloudTtsVoices
 import com.aryan.reader.shared.ReaderTtsOverlaySize
 import com.aryan.reader.shared.formatReaderTtsBytes
+import com.aryan.reader.shared.formatMicrosUsd
 import com.aryan.reader.shared.formatSpendGuardCountdown
 import com.aryan.reader.shared.parseSpendGuardSentinel
+import com.aryan.reader.shared.spendableDisplayText
 import com.aryan.reader.shared.ReaderWordReplacementEngine
 import com.aryan.reader.shared.ReaderWordReplacementRule
 import com.aryan.reader.shared.currentTimestamp
@@ -1036,6 +1040,14 @@ internal fun SharedMobileEpubCloudTtsControls(
     overlaySize: ReaderTtsOverlaySize = ReaderTtsOverlaySize.LARGE,
     onOverlaySizeChange: (ReaderTtsOverlaySize) -> Unit = {},
     modifier: Modifier = Modifier,
+    // Android parity (TtsOverlayControls balance chip + session spend):
+    // credited-cloud balance + accrued session cost. Null credits hides the
+    // chip (matches the AI hub aiCredits=null badge rule); BYOK/native never
+    // accrue session spend so the line stays hidden for them.
+    credits: Int? = null,
+    walletMicros: Long = 0L,
+    walletMigrated: Boolean = false,
+    isCloudSpendable: Boolean = true,
 ) {
     val cloudState = tts.state
     val progress = cloudState.progress
@@ -1066,12 +1078,34 @@ internal fun SharedMobileEpubCloudTtsControls(
                             .clickable(enabled = progress.currentChunk != null, onClick = onLocate)
                             .padding(horizontal = 8.dp),
                     ) {
-                        Text(
-                            progress.currentChunk?.chapterTitle?.ifBlank { "Cloud read aloud" } ?: "Preparing cloud audio…",
-                            style = MaterialTheme.typography.labelLarge,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        // Android parity (TtsOverlayControls balance chip):
+                        // credited-cloud balance next to the title.
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                progress.currentChunk?.chapterTitle?.ifBlank { "Cloud read aloud" } ?: "Preparing cloud audio…",
+                                style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (isCloudSpendable && credits != null) {
+                                Text(
+                                    spendableDisplayText(credits, walletMicros, walletMigrated),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    maxLines = 1,
+                                    modifier = Modifier
+                                        .background(
+                                            MaterialTheme.colorScheme.tertiaryContainer,
+                                            RoundedCornerShape(8.dp),
+                                        )
+                                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                                )
+                            }
+                        }
                         // Android parity (EpubReaderControls spend notices): the
                         // engine preserves guard sentinels verbatim so the
                         // overlay can render countdown copy from them.
@@ -1097,6 +1131,23 @@ internal fun SharedMobileEpubCloudTtsControls(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                        // Android parity (TtsOverlayControls session spend):
+                        // mutually exclusive with the guard notice above.
+                        if (guardNotice == null && isCloudSpendable && walletMigrated &&
+                            cloudState.cloudSessionSpendMicros > 0
+                        ) {
+                            Text(
+                                readerString(
+                                    "tts_session_spend",
+                                    "This session %1\$s • ~\$0.04/min",
+                                    formatMicrosUsd(cloudState.cloudSessionSpendMicros),
+                                ),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                 }
                 if (size != ReaderTtsOverlaySize.SMALL) {
@@ -1197,6 +1248,17 @@ private fun sharedMobileEpubVoiceQualityLabel(tier: SharedMobileEpubVoiceQuality
         SharedMobileEpubVoiceQuality.PREMIUM -> readerString("tts_voice_quality_premium", "Premium")
     }
 
+/** One selectable cloud voice. [fishReferenceId] is null for Gemini prebuilt voices. */
+private data class SharedCloudVoiceRow(
+    val id: String,
+    val name: String,
+    val description: String,
+    val fishReferenceId: String?,
+    val languages: List<String> = emptyList(),
+    // Free pre-generated Fish preview audio; null = synthesize on demand.
+    val sampleAudioUrl: String? = null,
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun SharedMobileReaderTtsSettingsSheet(
@@ -1208,6 +1270,18 @@ internal fun SharedMobileReaderTtsSettingsSheet(
     cloudTtsVoiceId: String = DEFAULT_CLOUD_TTS_SPEAKER_ID,
     onCloudTtsVoiceChange: (String) -> Unit = {},
     onClearCloudTtsCache: () -> Unit = {},
+    // Android benchmark (AiVoicesTab): the reader sheet lists the Fish
+    // catalog (credited worker or Fish BYOK) with language filter +
+    // favorites, falling back to the static Gemini list only when the host
+    // expects no Fish catalog (Gemini BYOK backend).
+    fishVoices: List<ReaderFishVoice> = emptyList(),
+    expectFishVoices: Boolean = false,
+    fishVoicesLoading: Boolean = false,
+    favoriteCloudVoiceIds: Set<String> = emptySet(),
+    onToggleFavoriteCloudVoice: (String) -> Unit = {},
+    cloudVoiceLanguage: String? = null,
+    onCloudVoiceLanguageChange: (String) -> Unit = {},
+    onClearCloudVoiceSamples: () -> Unit = {},
 ) {
     var rate by remember(tts.speechRate) { mutableStateOf(tts.speechRate) }
     var pitch by remember(tts.speechPitch) { mutableStateOf(tts.speechPitch) }
@@ -1286,9 +1360,109 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                     )
                 }
                 if (cloudTtsModeEnabled) {
+                    // Android benchmark (AiVoicesTab rows): Fish rows key on
+                    // referenceId (what TTS requests send); Gemini rows stay
+                    // static prebuilts with no language info.
+                    val cloudVoiceRows = remember(fishVoices, expectFishVoices) {
+                        if (expectFishVoices) {
+                            fishVoices.map {
+                                SharedCloudVoiceRow(
+                                    id = it.referenceId.ifBlank { it.id },
+                                    name = it.title.ifBlank { it.referenceId.ifBlank { it.id } },
+                                    description = it.description.ifBlank { it.referenceId.ifBlank { it.id } },
+                                    fishReferenceId = it.referenceId.ifBlank { it.id },
+                                    languages = it.languages,
+                                    sampleAudioUrl = it.sampleAudioUrl.ifBlank { null },
+                                )
+                            }
+                        } else {
+                            ReaderCloudTtsVoices.map {
+                                SharedCloudVoiceRow(it.id, it.name, it.description, null, emptyList(), null)
+                            }
+                        }
+                    }
+                    // Language filter + favorites mirror the device-voices tab
+                    // and Android AiVoicesTab (Favorites/All always offered;
+                    // languageless rows hide under a specific filter).
+                    val cloudFavoritesLabel = readerString("tts_favorites", "Favorites")
+                    val cloudAllLanguagesLabel = readerString("filter_all", "All")
+                    val cloudLanguageOptions = remember(cloudVoiceRows, cloudFavoritesLabel, cloudAllLanguagesLabel) {
+                        listOf(cloudFavoritesLabel, cloudAllLanguagesLabel) +
+                            cloudVoiceRows.flatMap { it.languages }.filter { it.isNotBlank() }.distinct().sorted()
+                    }
+                    val effectiveCloudLanguage = cloudVoiceLanguage.takeIf { it in cloudLanguageOptions } ?: cloudAllLanguagesLabel
+                    val showingCloudFavorites = effectiveCloudLanguage == cloudFavoritesLabel
+                    val filteredCloudVoiceRows = remember(cloudVoiceRows, effectiveCloudLanguage, showingCloudFavorites, favoriteCloudVoiceIds) {
+                        val base = when {
+                            showingCloudFavorites || effectiveCloudLanguage == cloudAllLanguagesLabel -> cloudVoiceRows
+                            else -> cloudVoiceRows.filter { effectiveCloudLanguage in it.languages }
+                        }
+                        if (showingCloudFavorites) base.filter { it.id in favoriteCloudVoiceIds } else base
+                    }
+                    var showCloudLanguageOptions by remember { mutableStateOf(false) }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            readerString("tts_select_cloud_voice", "Select High-Quality Cloud Voice"),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        if (cloud.voiceSampleState.cachedVoiceIds.isNotEmpty()) {
+                            TextButton(onClick = onClearCloudVoiceSamples) {
+                                Text(
+                                    readerString("tts_clear_samples", "Clear Samples"),
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                            }
+                        }
+                    }
                     Box {
-                        val selectedCloudVoice = ReaderCloudTtsVoices.firstOrNull { it.id == cloudTtsVoiceId }
-                            ?: ReaderCloudTtsVoices.firstOrNull()
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().clickable { showCloudLanguageOptions = true },
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    effectiveCloudLanguage,
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Icon(
+                                    Icons.Default.ArrowDropDown,
+                                    contentDescription = readerString("tts_language_filter", "Language Filter"),
+                                )
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = showCloudLanguageOptions,
+                            onDismissRequest = { showCloudLanguageOptions = false },
+                            modifier = Modifier.heightIn(max = 360.dp),
+                        ) {
+                            cloudLanguageOptions.forEach { option ->
+                                DropdownMenuItem(
+                                    text = { Text(option) },
+                                    trailingIcon = if (option == effectiveCloudLanguage) {
+                                        { Icon(Icons.Default.Check, contentDescription = null) }
+                                    } else null,
+                                    onClick = {
+                                        onCloudVoiceLanguageChange(option)
+                                        showCloudLanguageOptions = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    Box {
+                        val selectedCloudVoice = cloudVoiceRows.firstOrNull { it.id == cloudTtsVoiceId }
                         Surface(
                             modifier = Modifier.fillMaxWidth().clickable { showCloudVoices = true },
                             shape = RoundedCornerShape(12.dp),
@@ -1322,7 +1496,48 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                             onDismissRequest = { showCloudVoices = false },
                             modifier = Modifier.heightIn(max = 360.dp),
                         ) {
-                            ReaderCloudTtsVoices.forEach { voice ->
+                            if (fishVoicesLoading) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.Center,
+                                        ) {
+                                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                                        }
+                                    },
+                                    onClick = {},
+                                    enabled = false,
+                                )
+                            }
+                            if (!fishVoicesLoading && filteredCloudVoiceRows.isEmpty()) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            if (showingCloudFavorites) {
+                                                readerString(
+                                                    "tts_no_favorite_voices",
+                                                    "No favorite voices yet. Tap the star on any voice to add it here.",
+                                                )
+                                            } else if (expectFishVoices && cloudVoiceRows.isEmpty()) {
+                                                readerString(
+                                                    "tts_no_cloud_voices",
+                                                    "No cloud voices available right now. Check your connection or API key.",
+                                                )
+                                            } else {
+                                                readerString(
+                                                    "tts_no_voices_for_language",
+                                                    "No voices found for this language.",
+                                                )
+                                            },
+                                            style = MaterialTheme.typography.bodyMedium,
+                                        )
+                                    },
+                                    onClick = {},
+                                    enabled = false,
+                                )
+                            }
+                            filteredCloudVoiceRows.forEach { voice ->
                                 val sampleState = cloud.voiceSampleState
                                 DropdownMenuItem(
                                     text = {
@@ -1342,10 +1557,32 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                                             if (voice.id == cloudTtsVoiceId) {
                                                 Icon(Icons.Default.Check, contentDescription = null)
                                             }
+                                            val isCloudFavorite = voice.id in favoriteCloudVoiceIds
+                                            IconButton(
+                                                onClick = { onToggleFavoriteCloudVoice(voice.id) },
+                                                enabled = !ttsVoiceLocked,
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Star,
+                                                    contentDescription = readerString(
+                                                        if (isCloudFavorite) "tts_remove_favorite" else "tts_add_favorite",
+                                                        if (isCloudFavorite) "Remove from favorites" else "Add to favorites",
+                                                    ),
+                                                    tint = if (isCloudFavorite) MaterialTheme.colorScheme.primary
+                                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
                                             // Android benchmark (AiVoicesTab): per-voice
                                             // sample preview with loading/playing states.
                                             IconButton(
-                                                onClick = { cloud.playOrStopVoiceSample(voice.id) },
+                                                onClick = {
+                                                    cloud.playOrStopVoiceSample(
+                                                        voice.id,
+                                                        fishReferenceId = voice.fishReferenceId,
+                                                        sampleAudioUrl = voice.sampleAudioUrl,
+                                                        sampleText = tts.previewSampleText,
+                                                    )
+                                                },
                                                 enabled = !ttsVoiceLocked,
                                             ) {
                                                 when {

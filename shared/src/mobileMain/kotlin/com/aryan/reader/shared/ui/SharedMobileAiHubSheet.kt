@@ -228,6 +228,7 @@ showUsageBadge = credits != null,
                             ttsChapterTitle = sectionTitle,
                             showUsageBadge = credits != null,
                             walletMigrated = walletMigrated,
+                            progressMessage = summaryLive?.progressMessage,
                         )
                     }
                 }
@@ -288,6 +289,7 @@ showUsageBadge = credits != null,
                             ttsChapterTitle = readerString("ai_output_title", "AI Output"),
                             showUsageBadge = credits != null,
                             walletMigrated = walletMigrated,
+                            progressMessage = recapLive?.progressMessage,
                         )
                     }
                 }

@@ -1,6 +1,10 @@
 package com.aryan.reader.shared.ios
 
 import com.aryan.reader.shared.ReaderAiByokSettings
+import com.aryan.reader.shared.ReaderRecapRequest
+import com.aryan.reader.shared.ReaderRecapSection
+import com.aryan.reader.shared.SharedSummaryCache
+import com.aryan.reader.shared.SharedSummaryCacheStorage
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -98,5 +102,92 @@ class IosReaderAiAdaptersTest {
 
         assertEquals("This action needs credits.", adapter.summarize("text").error)
         assertEquals("This action needs credits.", adapter.recap("context").error)
+    }
+
+    private class FakeRecapCacheStorage : SharedSummaryCacheStorage {
+        val files = mutableMapOf<String, String>()
+        override fun read(fileName: String): String? = files[fileName]
+        override fun write(fileName: String, content: String): Boolean {
+            files[fileName] = content
+            return true
+        }
+        override fun delete(fileName: String): Boolean = files.remove(fileName) != null
+        override fun listFileNames(): List<String> = files.keys.toList()
+    }
+
+    @Test
+    fun chainedRecapRejectsBlankContext() = runTest {
+        val adapter = IosReaderAiAdapter(
+            settingsProvider = { ReaderAiByokSettings() },
+            accountStateProvider = { IosReaderAiAccountState() },
+            authTokenProvider = { null },
+        )
+
+        val result = adapter.recapChained(
+            ReaderRecapRequest("Book", 0, emptyList(), "   ")
+        )
+        assertEquals("There is no reading context for a recap.", result.error)
+    }
+
+    @Test
+    fun chainedRecapAbortsWhenPastChapterSummarizeIsGated() = runTest {
+        val progress = mutableListOf<String>()
+        val adapter = IosReaderAiAdapter(
+            settingsProvider = { ReaderAiByokSettings() },
+            accountStateProvider = { IosReaderAiAccountState() },
+            authTokenProvider = { null },
+            networkAccess = { false },
+        )
+
+        // Android parity (executeRecapLogic): the uncached past chapter
+        // summarizes first, so its gate error aborts before the final recap.
+        val result = adapter.recapChained(
+            ReaderRecapRequest(
+                bookTitle = "Book",
+                sectionIndex = 1,
+                pastSections = listOf(ReaderRecapSection("Chapter 1", "x".repeat(200))),
+                currentText = "Current chapter text.",
+                summaryCache = SharedSummaryCache(FakeRecapCacheStorage()),
+            ),
+            onProgress = { progress.add(it) },
+        )
+        assertEquals("AI features are unavailable while offline.", result.error)
+        assertEquals(listOf("Checking past chapters...", "Analyzing Chapter 1..."), progress)
+    }
+
+    @Test
+    fun chainedRecapUsesCachedPastChapterThenFinalGate() = runTest {
+        val progress = mutableListOf<String>()
+        val cache = SharedSummaryCache(FakeRecapCacheStorage())
+        cache.saveSummary("Book", 0, "Chapter 1", "Past events.")
+        val adapter = IosReaderAiAdapter(
+            settingsProvider = { ReaderAiByokSettings() },
+            accountStateProvider = { IosReaderAiAccountState() },
+            authTokenProvider = { null },
+            networkAccess = { false },
+        )
+
+        val result = adapter.recapChained(
+            ReaderRecapRequest(
+                bookTitle = "Book",
+                sectionIndex = 1,
+                pastSections = listOf(ReaderRecapSection("Chapter 1", "Full past text.")),
+                currentText = "Current chapter text.",
+                summaryCache = cache,
+            ),
+            onProgress = { progress.add(it) },
+        )
+        // The cached past chapter needs no network; the full staged
+        // sequence runs and the offline gate surfaces from the final recap.
+        assertEquals(
+            listOf(
+                "Checking past chapters...",
+                "Analyzing Chapter 1...",
+                "Reading current position...",
+                "Generating Recap...",
+            ),
+            progress,
+        )
+        assertEquals("AI features are unavailable while offline.", result.error)
     }
 }

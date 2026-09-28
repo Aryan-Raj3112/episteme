@@ -401,6 +401,7 @@ internal class IosReaderAiAdapter(
     internal suspend fun recapWithContext(
         pastSummaries: List<String>,
         currentText: String,
+        onUpdate: (String) -> Unit = {},
     ): RecapResult {
         val trimmed = currentText.trim()
         if (trimmed.isBlank()) return RecapResult(error = "There is no reading context for a recap.")
@@ -410,7 +411,7 @@ internal class IosReaderAiAdapter(
             feature = ReaderAiFeature.RECAP,
             text = trimmed,
             context = null,
-            onUpdate = {},
+            onUpdate = onUpdate,
             onUsageReceived = { _, _ -> },
             pastSummaries = pastSummaries.filter { it.isNotBlank() },
         )
@@ -420,6 +421,59 @@ internal class IosReaderAiAdapter(
             cost = result.cost,
             freeRemaining = result.freeRemaining,
         )
+    }
+
+    /**
+     * Android `executeRecapLogic` parity: past sections resolve through the
+     * summary cache (misses summarize on the fly and backfill the cache),
+     * then the final recap streams with progress callbacks. A failed past
+     * chapter aborts with its error so spend-gate tokens still route.
+     */
+    internal suspend fun recapChained(
+        request: com.aryan.reader.shared.ReaderRecapRequest,
+        onProgress: (String) -> Unit = {},
+        onUpdate: (String) -> Unit = {},
+    ): RecapResult {
+        if (request.currentText.trim().isBlank() && request.pastSections.all { it.text.isBlank() }) {
+            return RecapResult(error = "There is no reading context for a recap.")
+        }
+        val pastSummaries = mutableListOf<String>()
+        if (request.pastSections.isNotEmpty()) {
+            onProgress("Checking past chapters...")
+            request.pastSections.forEachIndexed { offset, section ->
+                val sectionIndex = request.sectionIndex - request.pastSections.size + offset
+                onProgress("Analyzing Chapter ${offset + 1}...")
+                val cached = request.summaryCache?.getSummary(request.bookTitle, sectionIndex)?.summary
+                if (!cached.isNullOrBlank()) {
+                    pastSummaries.add(cached)
+                } else if (section.text.length > 100) {
+                    val chapterSummary = StringBuilder()
+                    val chapterResult = summarizeStreaming(
+                        section.text,
+                        onUsageReceived = { _, _ -> },
+                        onUpdate = { chapterSummary.append(it) },
+                    )
+                    if (chapterResult.error != null) return RecapResult(
+                        recap = null,
+                        error = chapterResult.error,
+                        cost = chapterResult.cost,
+                        freeRemaining = chapterResult.freeRemaining,
+                    )
+                    val summary = chapterSummary.toString().trim().ifBlank { chapterResult.summary.orEmpty() }
+                    if (summary.isNotBlank()) {
+                        request.summaryCache?.saveSummary(request.bookTitle, sectionIndex, section.title, summary)
+                        pastSummaries.add(summary)
+                    }
+                }
+            }
+        }
+        onProgress("Reading current position...")
+        val currentText = request.currentText.trim().take(24_000)
+        if (currentText.isBlank() && pastSummaries.isEmpty()) {
+            return RecapResult(error = "There is no reading context for a recap.")
+        }
+        onProgress("Generating Recap...")
+        return recapWithContext(pastSummaries, currentText.ifBlank { pastSummaries.joinToString("\n\n") }, onUpdate)
     }
 
     private fun hasByokModel(feature: ReaderAiFeature): Boolean {
