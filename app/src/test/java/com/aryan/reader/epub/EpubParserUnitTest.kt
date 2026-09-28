@@ -130,6 +130,29 @@ class EpubParserUnitTest {
     }
 
     @Test
+    fun `createEpubBook parses ncx with canonical epub2 doctype`() = runTest {
+        val cacheDir = temp.newFolder("cache-ncx-doctype")
+        val extractionDir = temp.newFolder("extract-ncx-doctype")
+        val parser = EpubParser(contextWithCache(cacheDir))
+
+        val book = parser.createEpubBook(
+            inputStream = ByteArrayInputStream(canonicalNcxDoctypeEpubBytes()),
+            bookId = "book-id",
+            shouldUseToc = true,
+            originalBookNameHint = "little-prince.epub",
+            parseContent = true,
+            extractionDirOverride = extractionDir
+        )
+
+        assertEquals("The Little Prince", book.title)
+        assertEquals(
+            listOf("The Little Prince", "1", "2"),
+            book.tableOfContents.map { it.label }
+        )
+        assertEquals(listOf(0, 1, 1), book.tableOfContents.map { it.depth })
+    }
+
+    @Test
     fun `nested fragment toc entries do not overwrite their spine document title`() = runTest {
         val parser = EpubParser(contextWithCache(temp.newFolder("cache-fragment-toc")))
         val book = parser.createEpubBook(
@@ -775,6 +798,54 @@ class EpubParserUnitTest {
         "OEBPS/1/chapter1.xhtml" to "<html><body><h1>HTML Chapter 1</h1><p>Chapter one.</p></body></html>",
         "OEBPS/2/title.xhtml" to "<html><body><h1>HTML Volume 2</h1><p>Volume two.</p></body></html>",
         "OEBPS/2/chapter1.xhtml" to "<html><body><h1>HTML Chapter 2</h1><p>Chapter two.</p></body></html>"
+    )
+
+    private fun canonicalNcxDoctypeEpubBytes(): ByteArray = zipBytes(
+        "META-INF/container.xml" to """
+            <container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>
+        """.trimIndent(),
+        "OEBPS/content.opf" to """
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/" unique-identifier="BookID" version="2.0">
+                <metadata><dc:title>The Little Prince</dc:title></metadata>
+                <manifest>
+                    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+                    <item id="home" href="Text/framehome.html" media-type="application/xhtml+xml"/>
+                    <item id="ch1" href="Text/framechapter1.html" media-type="application/xhtml+xml"/>
+                    <item id="ch2" href="Text/framechapter2.html" media-type="application/xhtml+xml"/>
+                </manifest>
+                <spine toc="ncx">
+                    <itemref idref="home"/>
+                    <itemref idref="ch1"/>
+                    <itemref idref="ch2"/>
+                </spine>
+            </package>
+        """.trimIndent(),
+        "OEBPS/toc.ncx" to """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN"
+               "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">
+            <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+                <head><meta name="dtb:uid" content="a5abd6d1-887f-4afd-b6c3-a3f6539e27c6"/></head>
+                <docTitle><text>The Little Prince</text></docTitle>
+                <navMap>
+                    <navPoint id="navPoint-1" playOrder="1">
+                        <navLabel><text>The Little Prince</text></navLabel>
+                        <content src="Text/framehome.html"/>
+                        <navPoint id="navPoint-2" playOrder="2">
+                            <navLabel><text>1</text></navLabel>
+                            <content src="Text/framechapter1.html"/>
+                        </navPoint>
+                        <navPoint id="navPoint-3" playOrder="3">
+                            <navLabel><text>2</text></navLabel>
+                            <content src="Text/framechapter2.html"/>
+                        </navPoint>
+                    </navPoint>
+                </navMap>
+            </ncx>
+        """.trimIndent(),
+        "OEBPS/Text/framehome.html" to "<html><body><h1>Home</h1></body></html>",
+        "OEBPS/Text/framechapter1.html" to "<html><body><h1>One</h1></body></html>",
+        "OEBPS/Text/framechapter2.html" to "<html><body><h1>Two</h1></body></html>"
     )
 
     private fun sameFileNestedTocEpubBytes(): ByteArray = zipBytes(

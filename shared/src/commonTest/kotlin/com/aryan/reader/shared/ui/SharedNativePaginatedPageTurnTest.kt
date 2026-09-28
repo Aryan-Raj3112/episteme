@@ -341,6 +341,104 @@ class SharedNativePaginatedPageTurnTest {
     }
 
     @Test
+    fun `right to left fold mirrors the left to right fold horizontally`() {
+        val width = 800f
+        val height = 600f
+        val ltr = spreadPageCurlFold(width, height, progress = 0.35f, touchY = 480f)
+        val rtl = spreadPageCurlFold(width, height, progress = 0.35f, touchY = 480f, rightToLeft = true)
+        assertTrue(ltr.valid && rtl.valid)
+        // Same leaf, mirrored about the page center: the free edge moves from the
+        // right edge to the left edge and the fold normal flips on x only.
+        assertEquals(width - ltr.dragX, rtl.dragX)
+        assertEquals(width - ltr.midX, rtl.midX)
+        assertEquals(ltr.dragY, rtl.dragY)
+        assertEquals(ltr.cornerY, rtl.cornerY)
+        assertEquals(-ltr.nx, rtl.nx)
+        assertEquals(ltr.ny, rtl.ny)
+    }
+
+    @Test
+    fun `right to left leaf lifts at the left edge and sweeps right`() {
+        val width = 800f
+        val height = 600f
+        val spineX = width / 2f
+        val early = spreadPageCurlFold(width, height, progress = 0.1f, touchY = null, rightToLeft = true)
+        val mid = spreadPageCurlFold(width, height, progress = 0.5f, touchY = null, rightToLeft = true)
+        val settled = spreadPageCurlFold(width, height, progress = 1f, touchY = null, rightToLeft = true)
+        assertTrue(early.valid && mid.valid && settled.valid)
+        assertTrue(early.dragX < spineX)
+        assertTrue(mid.dragX > spineX)
+        assertTrue(settled.dragX > width)
+        // RTL free corner is the left edge, so the flap normal points left.
+        assertTrue(early.nx < 0f)
+    }
+
+    @Test
+    fun `right to left book flip peels from the left and settles at the spine`() {
+        val width = 800f
+        val height = 600f
+        val spineX = width / 2f
+        val early = spreadBookFlipFold(width, height, progress = 0.1f, rightToLeft = true)
+        val mid = spreadBookFlipFold(width, height, progress = 0.5f, rightToLeft = true)
+        val settled = spreadBookFlipFold(width, height, progress = 1f, rightToLeft = true)
+        assertTrue(early.valid && mid.valid && settled.valid)
+        assertTrue(early.isVerticalBookHinge())
+        assertTrue(mid.isVerticalBookHinge())
+        assertTrue(settled.isVerticalBookHinge())
+        // Peel starts at the left edge and crosses toward the spine.
+        assertTrue(early.dragX < spineX)
+        assertTrue(mid.dragX >= spineX)
+        // Settles with the fold parked at the spine — the left leaf lands on
+        // the right page instead of flying past it.
+        assertEquals(width, settled.dragX)
+        assertEquals(spineX, settled.midX)
+    }
+
+    @Test
+    fun `pager reads right to left only when the two compose flips cancel out`() {
+        // LTR host: reverseLayout alone decides.
+        assertFalse(sharedPaginatedPagerRightToLeft(reverseLayout = false, layoutDirectionIsRtl = false))
+        assertTrue(sharedPaginatedPagerRightToLeft(reverseLayout = true, layoutDirectionIsRtl = false))
+        // An Rtl host mirrors the pager a second time, so reverseLayout lands
+        // left-to-right again (Compose's placeRelative flip).
+        assertTrue(sharedPaginatedPagerRightToLeft(reverseLayout = false, layoutDirectionIsRtl = true))
+        assertFalse(sharedPaginatedPagerRightToLeft(reverseLayout = true, layoutDirectionIsRtl = true))
+    }
+
+    @Test
+    fun `pager counter translation pins every turn offset on both reading directions`() {
+        val width = 400f
+        // Every offset a single-page turn produces, from both sides of the flip.
+        listOf(-1f, -0.5f, 0f, 0.5f, 1f).forEach { offset ->
+            // A left-to-right pager places the slot at +offset*width, so the
+            // counter-translation has to equal its negation.
+            assertEquals(
+                -(offset * width),
+                sharedPaginatedCurlTranslationX(offset, width, rightToLeftPagination = false)
+            )
+            // A right-to-left pager mirrors that placement to -offset*width, so
+            // the counter-translation flips too. Keeping the LTR sign here moved
+            // the slot twice as far and pushed the incoming page out of the
+            // viewport, which is what read as skipped pages on Android.
+            assertEquals(
+                offset * width,
+                sharedPaginatedCurlTranslationX(offset, width, rightToLeftPagination = true)
+            )
+        }
+    }
+
+    @Test
+    fun `curled turns keep pager index space in both reading directions`() {
+        // Forward turn: the outgoing sheet peels away whichever edge it lifts
+        // from, so the curl never flips with reading direction.
+        assertEquals(1, sharedPaginatedCurlTurnDirection(outgoingFirstPageIndex = 2, incomingFirstPageIndex = 3))
+        assertEquals(-1, sharedPaginatedCurlTurnDirection(outgoingFirstPageIndex = 3, incomingFirstPageIndex = 2))
+        // Flat slides still follow the physical pager direction.
+        assertEquals(1, sharedPaginatedTransitionDirection(2, 3, rightToLeftPagination = false))
+        assertEquals(-1, sharedPaginatedTransitionDirection(2, 3, rightToLeftPagination = true))
+    }
+
+    @Test
     fun `book flip peels from right and settles onto the left page`() {
         val width = 800f
         val height = 600f

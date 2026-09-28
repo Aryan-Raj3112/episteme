@@ -66,6 +66,18 @@ import java.io.File
 
 const val PAGE_BREAK_CHAR = SHARED_PDF_PAGE_BREAK_CHAR
 
+/**
+ * Currently retired: the flowing page (word-like) editor is hidden on
+ * Android and text boxes are the only text annotation. The controller below
+ * is kept for loading/rendering/exporting legacy page text and for the
+ * one-tap legacy converter — editing entry points are deprecated, not
+ * deleted. See docs/android-page-rich-text-retirement.md.
+ */
+const val ENABLE_PAGE_RICH_TEXT = false
+
+private const val RETIRED_PAGE_RICH_TEXT =
+    "Currently retired: page rich text is hidden on Android, text boxes only."
+
 internal fun String.hasRenderableRichText(): Boolean =
     hasRenderableSharedPdfRichText()
 
@@ -332,16 +344,20 @@ class RichTextController(
     fun updateLayoutConfig(width: Float, height: Float, density: Density, measurer: TextMeasurer) =
         delegate.updateLayoutConfig(width, height, density, measurer)
 
+    @Deprecated(RETIRED_PAGE_RICH_TEXT, level = DeprecationLevel.WARNING)
     fun onValueChanged(newValue: TextFieldValue) = delegate.onValueChanged(newValue)
 
+    @Deprecated(RETIRED_PAGE_RICH_TEXT, level = DeprecationLevel.WARNING)
     fun updateCurrentStyle(
         style: SpanStyle,
         fontPath: String? = currentFontPath,
         fontName: String? = currentFontName,
     ) = delegate.updateCurrentStyle(style, fontPath, fontName)
 
+    @Deprecated(RETIRED_PAGE_RICH_TEXT, level = DeprecationLevel.WARNING)
     fun richParagraphUiState(): RichParagraphUiState = delegate.richParagraphUiState()
 
+    @Deprecated(RETIRED_PAGE_RICH_TEXT, level = DeprecationLevel.WARNING)
     fun toggleRichListType(type: SharedPdfRichListType) {
         // Mirror of the controller's local->global mapping so the log shows
         // the paragraph the op actually targets (the raw global selection is
@@ -364,6 +380,7 @@ class RichTextController(
         )
     }
 
+    @Deprecated(RETIRED_PAGE_RICH_TEXT, level = DeprecationLevel.WARNING)
     fun setRichParagraphAlignment(align: SharedPdfRichTextAlign) {
         val mapped = mappedGlobalSelectionForLog()
         val globalBefore = sharedRichParagraphUiState(delegate.globalTextFieldValue.annotatedString, mapped)
@@ -389,8 +406,10 @@ class RichTextController(
         )
     }
 
+    @Deprecated(RETIRED_PAGE_RICH_TEXT, level = DeprecationLevel.WARNING)
     fun requestEditingFocus() = delegate.requestEditingFocus()
 
+    @Deprecated(RETIRED_PAGE_RICH_TEXT, level = DeprecationLevel.WARNING)
     fun handleTapOnPage(pageIndex: Int, localTapOffset: Offset) {
         pdfRichCursorTrace(
             "tap page=$pageIndex offset=(${localTapOffset.x},${localTapOffset.y}) activeBefore=${delegate.activePageIndex}"
@@ -402,13 +421,17 @@ class RichTextController(
         )
     }
 
+    @Deprecated(RETIRED_PAGE_RICH_TEXT, level = DeprecationLevel.WARNING)
     fun insertPageBreakAt(insertPageIndex: Int, count: Int = 1) =
         delegate.insertPageBreakAt(insertPageIndex, count)
 
+    @Deprecated(RETIRED_PAGE_RICH_TEXT, level = DeprecationLevel.WARNING)
     fun insertBlankPageAt(insertPageIndex: Int) = delegate.insertBlankPageAt(insertPageIndex)
 
+    @Deprecated(RETIRED_PAGE_RICH_TEXT, level = DeprecationLevel.WARNING)
     fun deleteTextOnPage(pageIndex: Int) = delegate.deleteTextOnPage(pageIndex)
 
+    @Deprecated(RETIRED_PAGE_RICH_TEXT, level = DeprecationLevel.WARNING)
     fun handleBackspaceAtStart(): Boolean = delegate.handleBackspaceAtStart()
 
     suspend fun remapPagesForLayoutChange(
@@ -422,4 +445,10 @@ class RichTextController(
     }
 
     suspend fun saveImmediate() = delegate.saveImmediate()
+
+    /**
+     * Legacy converter support: the exact stored document. Callers must
+     * `saveImmediate()` first so pending debounced writes are flushed.
+     */
+    fun snapshotDocument(): GlobalRichDocument? = repository.document.value
 }

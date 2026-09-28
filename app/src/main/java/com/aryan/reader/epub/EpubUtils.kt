@@ -31,7 +31,59 @@ import javax.xml.parsers.DocumentBuilderFactory
 fun parseXMLFile(inputSteam: InputStream): Document? =
     secureDocumentBuilderFactory().newDocumentBuilder().parse(inputSteam)
 
-fun parseXMLFile(byteArray: ByteArray): Document? = parseXMLFile(byteArray.inputStream())
+fun parseXMLFile(byteArray: ByteArray): Document? {
+    try {
+        return parseXMLFile(byteArray.inputStream())
+    } catch (e: Exception) {
+        if (!isDoctypeRejection(e)) throw e
+    }
+    // The JDK enforces disallow-doctype-decl while Android's runtime parser
+    // ignores the flag, so classic EPUB 2 files (notably toc.ncx with its
+    // canonical PUBLIC doctype) parse on-device but throw in JVM unit tests.
+    // Strip the declaration and retry so both runtimes behave alike. The
+    // shared/iOS parser likewise skips doctypes without fetching external
+    // DTDs or expanding entities, keeping the platforms at parity.
+    return parseXMLFile(byteArray.withDoctypeStripped().inputStream())
+}
+
+private fun isDoctypeRejection(e: Exception): Boolean {
+    var cause: Throwable? = e
+    while (cause != null) {
+        val message = cause.message.orEmpty()
+        if (message.contains("DOCTYPE", ignoreCase = true) && message.contains("disallow", ignoreCase = true)) {
+            return true
+        }
+        cause = cause.cause
+    }
+    return false
+}
+
+internal fun ByteArray.withDoctypeStripped(): ByteArray {
+    // DOCTYPE scaffolding is ASCII; on non-UTF-8 encodings the marker won't
+    // match and the original bytes are returned untouched.
+    val text = toString(Charsets.UTF_8)
+    val start = text.indexOf("<!DOCTYPE", ignoreCase = true).takeIf { it >= 0 } ?: return this
+    var quote: Char? = null
+    var subsetDepth = 0
+    var index = start + "<!DOCTYPE".length
+    while (index < text.length) {
+        val char = text[index]
+        if (quote != null) {
+            if (char == quote) quote = null
+        } else {
+            when (char) {
+                '\'', '"' -> quote = char
+                '[' -> subsetDepth++
+                ']' -> if (subsetDepth > 0) subsetDepth--
+                '>' -> if (subsetDepth == 0) {
+                    return (text.removeRange(start, index + 1)).toByteArray(Charsets.UTF_8)
+                }
+            }
+        }
+        index++
+    }
+    return this
+}
 
 fun String.asFileName(): String = this.replace("/", "_")
 

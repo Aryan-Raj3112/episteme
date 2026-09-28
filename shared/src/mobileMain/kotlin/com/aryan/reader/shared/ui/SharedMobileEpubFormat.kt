@@ -112,7 +112,6 @@ import com.aryan.reader.shared.PageInfoMode
 import com.aryan.reader.shared.PageInfoPosition
 import com.aryan.reader.shared.SystemUiMode
 import com.aryan.reader.shared.currentTimestamp
-import com.aryan.reader.shared.toSharedReaderFontFamily
 import com.aryan.reader.shared.toAndroidEpubFormatSliderValues
 import com.aryan.reader.shared.withAndroidEpubFormatSliderValue
 import com.aryan.reader.shared.reader.ReaderPageInfo
@@ -385,9 +384,10 @@ internal fun SharedMobileEpubFormatPreview(settings: ReaderSettings) {
     ) {
         Column(Modifier.padding(horizontal = 18.dp, vertical = 16.dp)) {
             val previewWeight = settings.fontWeight.takeIf { it > 0 }?.let(::FontWeight)
+            val previewFontFamily = rememberSharedReaderFontFamily(settings.fontFamily)
             Text(
                 "The art of reading, perfected",
-                fontFamily = settings.toSharedReaderFontFamily(),
+                fontFamily = previewFontFamily,
                 fontSize = settings.fontSize.sp,
                 fontWeight = previewWeight,
                 letterSpacing = settings.letterSpacing.em,
@@ -398,7 +398,7 @@ internal fun SharedMobileEpubFormatPreview(settings: ReaderSettings) {
             Spacer(Modifier.height(4.dp))
             Text(
                 "0123456789  ·  Aa Bb Cc",
-                fontFamily = settings.toSharedReaderFontFamily(),
+                fontFamily = previewFontFamily,
                 fontSize = (settings.fontSize * 0.72f).sp,
                 fontWeight = previewWeight,
                 letterSpacing = settings.letterSpacing.em,

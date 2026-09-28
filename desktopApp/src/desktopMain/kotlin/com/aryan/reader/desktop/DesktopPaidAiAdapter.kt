@@ -36,17 +36,18 @@ internal class DesktopPaidAiAdapter(
     override suspend fun define(text: String, context: String?): AiDefinitionResult {
         val trimmed = text.trim()
         if (trimmed.isBlank()) return AiDefinitionResult(error = "There is no text to define.")
-        val multiWord = wordCount(trimmed) > 1
-        if (multiWord && !currentSignedIn()) {
-            return AiDefinitionResult(error = "Sign in with Google to use multi-word smart dictionary.")
+        // Worker /define is Pro-only: sign-in + Pro required for every
+        // definition, single-word included.
+        if (!currentSignedIn()) {
+            return AiDefinitionResult(error = "Sign in with Google to use smart dictionary.")
         }
-        if (multiWord && !currentIsProUser()) {
-            return AiDefinitionResult(error = "Multi-word smart dictionary requires Pro. Pro can only be purchased from the Android app.")
+        if (!currentIsProUser()) {
+            return AiDefinitionResult(error = "Smart dictionary requires Pro. Pro can only be purchased from the Android app.")
         }
         val result = callWorker(
             path = "/define",
             body = buildJsonObject { put("text", JsonPrimitive(trimmed.take(2400))) }.toString(),
-            authRequired = multiWord
+            authRequired = true
         )
         return AiDefinitionResult(definition = result.getOrNull()?.text, error = result.exceptionOrNull()?.message)
     }
@@ -58,17 +59,18 @@ internal class DesktopPaidAiAdapter(
     ): AiDefinitionResult {
         val trimmed = text.trim()
         if (trimmed.isBlank()) return AiDefinitionResult(error = "There is no text to define.")
-        val multiWord = wordCount(trimmed) > 1
-        if (multiWord && !currentSignedIn()) {
-            return AiDefinitionResult(error = "Sign in with Google to use multi-word smart dictionary.")
+        // Worker /define is Pro-only: sign-in + Pro required for every
+        // definition, single-word included.
+        if (!currentSignedIn()) {
+            return AiDefinitionResult(error = "Sign in with Google to use smart dictionary.")
         }
-        if (multiWord && !currentIsProUser()) {
-            return AiDefinitionResult(error = "Multi-word smart dictionary requires Pro. Pro can only be purchased from the Android app.")
+        if (!currentIsProUser()) {
+            return AiDefinitionResult(error = "Smart dictionary requires Pro. Pro can only be purchased from the Android app.")
         }
         val result = callWorker(
             path = "/define",
             body = buildJsonObject { put("text", JsonPrimitive(trimmed.take(2400))) }.toString(),
-            authRequired = multiWord,
+            authRequired = true,
             onChunk = onUpdate
         )
         return AiDefinitionResult(definition = result.getOrNull()?.text, error = result.exceptionOrNull()?.message)
@@ -214,8 +216,8 @@ internal class DesktopPaidAiAdapter(
                 if (connection.responseCode == 401) {
                     throw IllegalStateException("Sign in again to use this AI feature.")
                 }
-                if (connection.responseCode == 403 && responseText.contains("MULTI_WORD_REQUIRES_PRO")) {
-                    throw IllegalStateException("Multi-word smart dictionary requires Pro. Pro can only be purchased from the Android app.")
+                if (connection.responseCode == 403 && responseText.contains("DEFINE_REQUIRES_PRO")) {
+                    throw IllegalStateException("Smart dictionary requires Pro. Pro can only be purchased from the Android app.")
                 }
                 if (connection.responseCode !in 200..299) {
                     throw IllegalStateException(workerErrorMessage(responseText) ?: "AI request failed: HTTP ${connection.responseCode}")
@@ -334,8 +336,4 @@ private fun workerErrorMessage(errorBody: String): String? {
                 ?.contentOrNull
         }.getOrNull()
     }
-}
-
-private fun wordCount(text: String): Int {
-    return text.trim().split(Regex("\\s+")).count { it.isNotBlank() }
 }

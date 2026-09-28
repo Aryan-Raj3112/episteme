@@ -320,6 +320,10 @@ fun SharedNativePaginatedReader(
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit = {},
     onReaderTap: () -> Unit = {},
     onReaderHorizontalTap: ((horizontalFraction: Float, touchY: Float) -> Unit)? = null,
+    // Mobile scrollable hosts disable immediate drag-to-select (Android
+    // benchmark: selection starts on long-press/handles only) so scroll
+    // gestures reach the LazyColumn; desktop keeps mouse drag selection.
+    immediateDragSelectEnabled: Boolean = true,
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)? = null,
     positionController: SharedNativePaginatedPositionController? = null,
     pageTurn: SharedPaginatedPageTurnSpec? = null,
@@ -461,6 +465,8 @@ fun SharedNativePaginatedReader(
             onHighlightSelected = onHighlightSelected,
             onLinkClicked = onLinkClicked,
             onReaderTap = onReaderTap,
+            onReaderHorizontalTap = onReaderHorizontalTap,
+            immediateDragSelectEnabled = immediateDragSelectEnabled,
             imageContent = imageContent,
             pageTurn = pageTurn,
             magnifierCaptureLayer = magnifierCaptureLayer,
@@ -583,6 +589,8 @@ internal fun SharedNativePaginatedPagesContent(
     onHighlightSelected: (String) -> Unit,
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit,
     onReaderTap: () -> Unit,
+    onReaderHorizontalTap: ((horizontalFraction: Float, touchY: Float) -> Unit)? = null,
+    immediateDragSelectEnabled: Boolean = true,
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?,
     pageTurn: SharedPaginatedPageTurnSpec?,
     magnifierCaptureLayer: GraphicsLayer?,
@@ -692,7 +700,8 @@ internal fun SharedNativePaginatedPagesContent(
                                     pageOffsetProvider = { turnSpec.offsetForSlot(0) },
                                     touchYProvider = { turnSpec.touchY },
                                     paperColor = renderPlan.background,
-                                    spreadGutterPx = gutterWidthPx
+                                    spreadGutterPx = gutterWidthPx,
+                                    rightToLeft = turnSpec.rightToLeft
                                 )
                         }
                     )
@@ -733,7 +742,8 @@ internal fun SharedNativePaginatedPagesContent(
                                     pageOffsetProvider = { turnSpec.offsetForSlot(turnSlot) },
                                     touchYProvider = { turnSpec.touchY },
                                     paperColor = renderPlan.background,
-                                    isDarkPaper = paperIsDark
+                                    isDarkPaper = paperIsDark,
+                                    rightToLeftPagination = turnSpec.rightToLeft
                                 )
                             }
                         )
@@ -753,6 +763,8 @@ internal fun SharedNativePaginatedPagesContent(
                     onHighlightSelected = onHighlightSelected,
                     onLinkClicked = onLinkClicked,
                     onReaderTap = onReaderTap,
+                    onReaderHorizontalTap = onReaderHorizontalTap,
+                    immediateDragSelectEnabled = immediateDragSelectEnabled,
                     selectionLayouts = selectionLayouts,
                     imageContent = imageContent,
                     pageChromeEnabled = pageChromeEnabled,
@@ -862,6 +874,11 @@ fun SharedNativeVerticalReader(
     onHighlightSelected: (String) -> Unit = {},
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit = {},
     onReaderTap: () -> Unit = {},
+    // Mobile scrollable hosts disable immediate drag-to-select (Android
+    // benchmark: selection starts on long-press/handles only) so scroll
+    // gestures reach the LazyColumn; desktop keeps mouse drag selection.
+    // Vertical taps always toggle chrome via onReaderTap (no page turns).
+    immediateDragSelectEnabled: Boolean = true,
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)? = null,
     verticalScrollController: SharedNativeVerticalScrollController? = null
 ) {
@@ -1119,6 +1136,7 @@ fun SharedNativeVerticalReader(
                                     ).withAndroidPaginationTextMetrics(renderPlan.settings.letterSpacing),
                                     activeSelection = activeSelection,
                                     onReaderTap = onReaderTap,
+                                    immediateDragSelectEnabled = immediateDragSelectEnabled,
                                     onSelectionChange = ::updateActiveSelection,
                                     onSelectionGestureActiveChange = { selectionGestureActive = it },
                                     onHighlightSelected = onHighlightSelected,
@@ -1154,6 +1172,7 @@ fun SharedNativeVerticalReader(
                                         settings = renderPlan.settings,
                                         includeTrailingBottomMargin = true,
                                         onReaderTap = onReaderTap,
+                                        immediateDragSelectEnabled = immediateDragSelectEnabled,
                                         onSelectionChange = ::updateActiveSelection,
                                         onSelectionGestureActiveChange = { selectionGestureActive = it },
                                         onHighlightSelected = onHighlightSelected,

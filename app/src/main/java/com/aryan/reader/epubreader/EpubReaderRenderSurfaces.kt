@@ -161,6 +161,7 @@ import com.aryan.reader.epub.hasReadableExtractedContent
 import com.aryan.reader.epub.plainTextCharacterCount
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.isByokCloudTtsAvailable
+import com.aryan.reader.isByokTtsReady
 import com.aryan.reader.loadBookReplacementPreferences
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.loadEpubRightToLeftPagination
@@ -210,6 +211,7 @@ import com.aryan.reader.shared.EpubVisibleTextRange
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
 import com.aryan.reader.shared.ReaderMotionPolicy
+import com.aryan.reader.shared.hasSpendableBalance
 import com.aryan.reader.shared.ReaderSearchState as SearchState
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.SearchResult
@@ -355,6 +357,8 @@ internal fun EpubReaderRenderSurfaces(
     isDarkTheme: Boolean,
     isProUser: Boolean,
     credits: Int,
+    walletMicros: Long = 0L,
+    walletMigrated: Boolean = false,
     coverImagePath: String?,
     onSavePosition: (Locator, String?, Float) -> Unit,
     onRenderModeChange: (RenderMode) -> Unit,
@@ -1371,7 +1375,8 @@ internal fun EpubReaderRenderSurfaces(
 
                                                     if (ttsChunks.isNotEmpty()) {
                                                         logTtsChapterDiag("Vertical TTS extraction produced ${ttsChunks.size} chunks for chapter $targetChapterIndex")
-                                                        if (BuildConfig.FLAVOR != "oss" && prefs.currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && credits <= 0) {
+                                                        // BYOK TTS never spends credits, so it bypasses the balance gate.
+                                                        if (BuildConfig.FLAVOR != "oss" && prefs.currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && !hasSpendableBalance(credits, walletMicros) && !isByokTtsReady(context)) {
                                                             navigation.showInsufficientCreditsDialog = true
                                                             ttsShouldStartOnChapterLoad = false
                                                             return@launch

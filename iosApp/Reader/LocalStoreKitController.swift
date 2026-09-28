@@ -22,13 +22,32 @@ final class LocalStoreKitController: ObservableObject {
         static let credits100 = "credits_100"
         static let credits300 = "credits_300"
         static let credits750 = "credits_750"
-        static let all = [pro, credits100, credits300, credits750]
+        // USD wallet top-ups (micro-dollars), Android parity. Legacy credits_*
+        // stay valid server-side for old versions; the app offers top-ups only.
+        // `all` keeps legacy IDs so unfinished legacy transactions still claim.
+        static let topup1 = "topup_1"
+        static let topup5 = "topup_5"
+        static let topup10 = "topup_10"
+        static let topup20 = "topup_20"
+        static let topups = [topup1, topup5, topup10, topup20]
+        static let topupMicros: [String: Int64] = [
+            topup1: 1_000_000,
+            topup5: 5_000_000,
+            topup10: 10_000_000,
+            topup20: 20_000_000,
+        ]
+        static let all = [pro, credits100, credits300, credits750] + topups
     }
 
     private enum Endpoint {
         static let base = URL(string: "https://episteme-verifier.aryanrajivyms.workers.dev")!
         static let accountToken = base.appending(path: "v2/apple/account-token")
         static let verify = base.appending(path: "v2/apple/verify")
+        // Explicit legacy -> USD migration (tts-worker POST /v2/migrate).
+        // Same conversion the workers run lazily; the app triggers it once at
+        // sign-in so credit holders don't see a $0 wallet until first use.
+        static let ttsBase = URL(string: "https://reader-tts-proxy.aryanrajivyms.workers.dev")!
+        static let migrate = ttsBase.appending(path: "v2/migrate")
     }
 
     private struct AccountTokenResponse: Decodable { let appAccountToken: String }
@@ -39,9 +58,16 @@ final class LocalStoreKitController: ObservableObject {
     private var updatesTask: Task<Void, Never>?
     private var startupTask: Task<Void, Never>?
     private var isProUnlocked = false
+    /// Published for the CloudKit sync Pro gate (ContentView forwards to
+    /// `LocalAccountController.setProSyncEnabled`). Source of truth stays
+    /// server entitlements; this is only a projection.
+    @Published var proSyncEnabled = false
     private var serverCredits = 0
+    private var serverWalletMicros: Int64 = 0
+    private var serverWalletMigrated = false
     private var localTestingProUnlocked = false
     private var localTestingCredits = 0
+    private var localTestingWalletMicros: Int64 = 0
     private var localTestingClaimedTransactions = Set<UInt64>()
     private var status: String?
     /// Android parity (`BillingClientWrapper.proUpgradeState`): server
@@ -360,11 +386,31 @@ final class LocalStoreKitController: ObservableObject {
         await refreshServerEntitlements()
     }
 
+    /// Fire-and-forget legacy migration (POST tts-worker /v2/migrate).
+    /// The profile listener picks up the new balance; lazy worker paths and
+    /// the top-up grant convert anyway as a backstop.
+    private func runLegacyMigration() async {
+        guard currentFirebaseUserExists else { return }
+        do {
+            var request = URLRequest(url: Endpoint.migrate)
+            request.httpMethod = "POST"
+            request.setValue("Bearer \(try await freshFirebaseIDToken())", forHTTPHeaderField: "Authorization")
+            request.timeoutInterval = 15
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return }
+            await refreshServerEntitlements()
+        } catch {
+            // Best-effort only; never surface to the user.
+        }
+    }
+
     private func refreshServerEntitlements() async {
 #if canImport(FirebaseFirestore) && canImport(FirebaseAuth)
         guard let uid = Auth.auth().currentUser?.uid else {
             isProUnlocked = false
             serverCredits = 0
+            serverWalletMicros = 0
+            serverWalletMigrated = false
             serverEntitlementsLoaded = true
             stopObservingEntitlements()
             publish()
@@ -391,21 +437,39 @@ final class LocalStoreKitController: ObservableObject {
 
     /// Maps a Firestore `users/{uid}` document onto the local entitlement state
     /// and pushes it through the bridge so shared UI reacts instantly.
+    /// Triggers the one-time legacy -> USD migration when credit holders
+    /// haven't migrated yet (Android `MainViewModel.runLegacyMigration`).
     private func applyEntitlementSnapshot(_ data: [String: Any], missingDocument: Bool = false) {
         let sources = data["proEntitlements"] as? [String: Any] ?? [:]
         let pro = (data["isPro"] as? Bool ?? false)
             || (sources["appStoreLifetime"] as? String) == "active"
             || (sources["googlePlayLifetime"] as? String) == "active"
         let credits = max((data["credits"] as? NSNumber)?.intValue ?? 0, 0)
+        let walletMicros = (data["balance_micros"] as? NSNumber)?.int64Value ?? 0
+        let migrated = (data["credits_migrated"] as? Bool ?? false)
         if missingDocument {
             isProUnlocked = false
             serverCredits = 0
+            serverWalletMicros = 0
+            serverWalletMigrated = false
         } else {
             isProUnlocked = pro
             serverCredits = credits
+            serverWalletMicros = walletMicros
+            serverWalletMigrated = migrated
         }
         serverEntitlementsLoaded = true
-        bridge?.updateLiveAccountEntitlements(isPro: isProUnlocked, credits: Int32(clamping: serverCredits))
+        bridge?.updateLiveAccountEntitlements(
+            isPro: isProUnlocked,
+            credits: Int32(clamping: serverCredits),
+            walletMicros: serverWalletMicros + localTestingWalletMicros,
+            walletMigrated: serverWalletMigrated || localTestingWalletMicros > 0
+        )
+        // Eager migration (idempotent server-side): credit holders convert at
+        // sign-in instead of waiting for first TTS/AI use or top-up.
+        if !missingDocument && credits > 0 && !migrated {
+            Task { @MainActor in await self.runLegacyMigration() }
+        }
         publish()
     }
 
@@ -451,6 +515,8 @@ final class LocalStoreKitController: ObservableObject {
                 self.serverEntitlementsLoaded = false
                 self.isProUnlocked = false
                 self.serverCredits = 0
+                self.serverWalletMicros = 0
+                self.serverWalletMigrated = false
                 self.hasAccountConflict = false
                 self.stopObservingEntitlements()
                 self.publish()
@@ -514,11 +580,22 @@ final class LocalStoreKitController: ObservableObject {
             localTestingCredits += 300
         } else if transaction.productID == ProductID.credits750 {
             localTestingCredits += 750
+        } else if let micros = ProductID.topupMicros[transaction.productID] {
+            localTestingWalletMicros += micros
         }
 #endif
     }
 
     private func publish() {
+        proSyncEnabled = isProUnlocked || localTestingProUnlocked
+        var topupPrices: [String: String] = [:]
+        var topupNames: [String: String] = [:]
+        var topupDescriptions: [String: String] = [:]
+        for id in ProductID.topups {
+            if let price = products[id]?.displayPrice { topupPrices[id] = price }
+            if let name = products[id]?.displayName { topupNames[id] = name }
+            if let desc = products[id]?.description, !desc.isEmpty { topupDescriptions[id] = desc }
+        }
         bridge?.updateLocalStoreKitState(
             available: !products.isEmpty,
             entitlementsLoaded: serverEntitlementsLoaded,
@@ -535,6 +612,11 @@ final class LocalStoreKitController: ObservableObject {
             credits100Description: products[ProductID.credits100]?.description,
             credits300Description: products[ProductID.credits300]?.description,
             credits750Description: products[ProductID.credits750]?.description,
+            topupPrices: topupPrices,
+            topupNames: topupNames,
+            topupDescriptions: topupDescriptions,
+            walletMicros: serverWalletMicros + localTestingWalletMicros,
+            walletMigrated: serverWalletMigrated || localTestingWalletMicros > 0,
             isVerifying: isPurchasing,
             hasAccountConflict: hasAccountConflict,
             status: status

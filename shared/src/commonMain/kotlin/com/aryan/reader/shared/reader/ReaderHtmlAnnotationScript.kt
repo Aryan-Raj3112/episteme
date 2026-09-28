@@ -1456,7 +1456,6 @@ internal fun readerHtmlAnnotationScript(): String = """
                 if (action === 'palette') sendSelectionAction('palette', text);
                 if (action === 'define') sendSelectionAction('define', text);
                 if (action === 'speak') sendSelectionAction('speak', text);
-                if (action === 'dictionary') sendSelectionAction('dictionary', text);
                 if (action === 'translate') sendSelectionAction('translate', text);
                 if (action === 'web-search') sendSelectionAction('web-search', text);
                 if (action === 'note') sendSelectionAction('note', text);
@@ -1530,6 +1529,23 @@ internal fun readerHtmlAnnotationScript(): String = """
               document.addEventListener('keyup', function () {
                 scheduleMenuFromSelection();
               });
+              // Android parity (ChapterWebView clears the WebView selection at
+              // interruption points): WKWebView keeps a pre-background selection
+              // alive across an app switch, and after resume it can even paint
+              // ::selection bands for a selection whose model is already gone
+              // (stale paint with a dangling caret). Clearing unconditionally on
+              // becoming visible dismisses both. Gated to iOS via the bootstrap
+              // flag so Android keeps its exact current behavior.
+              if (window.readerIosClearsSelectionOnResume === true) {
+                document.addEventListener('visibilitychange', function () {
+                  if (document.visibilityState !== 'visible') return;
+                  var selection = window.getSelection();
+                  if (selection) selection.removeAllRanges();
+                  savedRange = null;
+                  hideMenu();
+                  if (!activeSelectionHandle) hideSelectionHandles();
+                });
+              }
               document.addEventListener('scroll', function () {
                 if (!selectionPointerDown && !activeSelectionHandle) {
                   hideMenu();

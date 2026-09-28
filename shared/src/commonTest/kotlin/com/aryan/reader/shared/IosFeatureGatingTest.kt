@@ -7,44 +7,89 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * Documents the intentional temporary iOS launch scope: Google sign-in,
- * cloud sync, credits purchase, and cloud TTS are hidden from iOS UI while
- * their logic stays intact. Flip [IosFeatureGating] flags to restore.
- * Android remains the benchmark and is unaffected by these flags.
+ * iOS launch scope. Google sign-in, Drive folder mirror, credits purchase, and
+ * cloud TTS remain hidden; library cloud sync is visible on the pure-CloudKit
+ * backend (Pro + iCloud only, no Google/Drive required). Android stays the
+ * benchmark and is unaffected by these flags or the defaulted `requiresGoogle`
+ * gate.
  */
 class IosFeatureGatingTest {
 
     @Test
-    fun `temporary iOS scope hides google cloud sync credits and cloud tts`() {
+    fun `ios shows cloudkit library sync but hides google folder-drive-clear`() {
         assertFalse(IosFeatureGating.SHOW_GOOGLE_SIGN_IN)
-        assertFalse(IosFeatureGating.SHOW_CLOUD_SYNC)
-        assertFalse(IosFeatureGating.SHOW_CREDITS_PURCHASE)
-        assertFalse(IosFeatureGating.SHOW_CLOUD_TTS)
+        assertTrue(IosFeatureGating.SHOW_CLOUD_SYNC)
+        // CloudKit authenticates with iCloud; Google/Drive must not gate sync.
+        assertFalse(IosFeatureGating.REQUIRES_GOOGLE_DRIVE_FOR_SYNC)
+        assertFalse(IosFeatureGating.SHOW_DRIVE_FOLDER_SYNC)
+        assertFalse(IosFeatureGating.SHOW_CLOUD_DATA_CLEAR)
+        assertTrue(IosFeatureGating.SHOW_WALLET_TOPUP)
+        assertTrue(IosFeatureGating.SHOW_CLOUD_TTS)
     }
 
     @Test
-    fun `hidden cloud sync inputs remove sync rows but keep account entry`() {
+    fun `cloudkit gate never requires google`() {
+        // Pro, Apple-only, no Drive permission -> READY on CloudKit, blocked on Drive.
+        assertTrue(
+            canUseCloudSync(
+                providers = setOf(AccountAuthProvider.APPLE),
+                hasGoogleDrivePermission = false,
+                isProUser = true,
+                requiresGoogle = false,
+            )
+        )
+        assertFalse(
+            canUseCloudSync(
+                providers = setOf(AccountAuthProvider.APPLE),
+                hasGoogleDrivePermission = false,
+                isProUser = true,
+                requiresGoogle = true,
+            )
+        )
+        // Non-Pro stays blocked regardless of backend.
+        assertFalse(
+            canUseCloudSync(
+                providers = setOf(AccountAuthProvider.APPLE),
+                hasGoogleDrivePermission = false,
+                isProUser = false,
+                requiresGoogle = false,
+            )
+        )
+        // Android default (no explicit argument) must keep requiring Google.
+        assertFalse(
+            canUseCloudSync(
+                providers = setOf(AccountAuthProvider.APPLE),
+                hasGoogleDrivePermission = false,
+                isProUser = true,
+            )
+        )
+    }
+
+    @Test
+    fun `library sync row shows while drive folder and clear rows stay hidden`() {
         val model = sharedSettingsHubModel(
             SharedSettingsHubInput(
                 platform = SharedSettingsPlatform.IOS,
                 isDebugBuild = true,
                 isSignedIn = true,
                 isProUser = true,
-                // Mirrors the iOS caller while IosFeatureGating hides sync.
-                // Android benchmark ties clear-cloud-data to sync support,
-                // so iOS does the same via the gating flag.
                 syncAvailable = IosFeatureGating.SHOW_CLOUD_SYNC,
-                folderSyncAvailable = IosFeatureGating.SHOW_CLOUD_SYNC,
-                includeCloudLocalDataClear = IosFeatureGating.SHOW_CLOUD_SYNC,
+                cloudSyncSetupIntent = resolveCloudSyncSetupIntent(
+                    isProUser = true,
+                    providers = setOf(AccountAuthProvider.APPLE),
+                    hasGoogleDrivePermission = false,
+                    requiresGoogle = IosFeatureGating.REQUIRES_GOOGLE_DRIVE_FOR_SYNC,
+                ),
+                folderSyncAvailable = IosFeatureGating.SHOW_DRIVE_FOLDER_SYNC,
+                includeCloudLocalDataClear = IosFeatureGating.SHOW_CLOUD_DATA_CLEAR,
             )
         )
         val actions = model.rootCategories.flatMap { category ->
             model.page(category.destination).items.map { it.action }
         }
 
-        assertFalse(SharedSettingsAction.CLOUD_SYNC in actions)
+        assertTrue(SharedSettingsAction.CLOUD_SYNC in actions)
         assertFalse(SharedSettingsAction.FOLDER_SYNC in actions)
-        assertFalse(SharedSettingsAction.DEVICE_MANAGEMENT in actions)
         assertFalse(SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA in actions)
         assertTrue(SharedSettingsAction.SIGN_OUT in actions)
     }
@@ -57,3 +102,4 @@ class IosFeatureGatingTest {
         )
     }
 }
+

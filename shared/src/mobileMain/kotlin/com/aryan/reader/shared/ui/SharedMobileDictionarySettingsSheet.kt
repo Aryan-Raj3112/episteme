@@ -17,6 +17,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -25,6 +26,7 @@ import com.aryan.reader.shared.ReaderDictionaryServiceOptions
 import com.aryan.reader.shared.ReaderExternalLookupService
 import com.aryan.reader.shared.ReaderSearchServiceOptions
 import com.aryan.reader.shared.ReaderTranslateServiceOptions
+import com.aryan.reader.shared.visibleReaderLookupOptions
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -35,8 +37,30 @@ internal fun SharedMobileDictionarySettingsSheet(
     onDictionaryServiceChange: (ReaderExternalLookupService) -> Unit,
     onTranslateServiceChange: (ReaderExternalLookupService) -> Unit,
     onSearchServiceChange: (ReaderExternalLookupService) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /**
+     * Schemes probed present on the device (iOS `canOpenURL`). Scheme-gated
+     * apps (Google Translate, iTranslate) are listed only when installed;
+     * everything else is always available. Null disables filtering so hosts
+     * without a prober (Android keeps its own sheet) change nothing.
+     */
+    installedAppSchemes: Set<String>? = null,
 ) {
+    val dictionaryOptions = remember(dictionaryService, installedAppSchemes) {
+        installedAppSchemes?.let {
+            visibleReaderLookupOptions(ReaderDictionaryServiceOptions, dictionaryService, it)
+        } ?: ReaderDictionaryServiceOptions
+    }
+    val translateOptions = remember(translateService, installedAppSchemes) {
+        installedAppSchemes?.let {
+            visibleReaderLookupOptions(ReaderTranslateServiceOptions, translateService, it)
+        } ?: ReaderTranslateServiceOptions
+    }
+    val searchOptions = remember(searchService, installedAppSchemes) {
+        installedAppSchemes?.let {
+            visibleReaderLookupOptions(ReaderSearchServiceOptions, searchService, it)
+        } ?: ReaderSearchServiceOptions
+    }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp),
@@ -52,7 +76,7 @@ internal fun SharedMobileDictionarySettingsSheet(
                     "dictionary_settings_app_desc",
                     "Used when you select text and choose Dictionary",
                 ),
-                options = ReaderDictionaryServiceOptions,
+                options = dictionaryOptions,
                 selected = dictionaryService,
                 onSelected = onDictionaryServiceChange
             )
@@ -62,7 +86,7 @@ internal fun SharedMobileDictionarySettingsSheet(
                     "dictionary_settings_translate_desc",
                     "Used when you select text and choose Translate",
                 ),
-                options = ReaderTranslateServiceOptions,
+                options = translateOptions,
                 selected = translateService,
                 onSelected = onTranslateServiceChange
             )
@@ -72,7 +96,7 @@ internal fun SharedMobileDictionarySettingsSheet(
                     "dictionary_settings_search_desc",
                     "Used when you select text and choose Search",
                 ),
-                options = ReaderSearchServiceOptions,
+                options = searchOptions,
                 selected = searchService,
                 onSelected = onSearchServiceChange
             )

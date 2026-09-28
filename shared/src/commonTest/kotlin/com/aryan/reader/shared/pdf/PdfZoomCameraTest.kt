@@ -100,8 +100,7 @@ class PdfZoomCameraTest {
     }
 
     @Test
-    fun visibleBoundsRemainNormalizedAtOneThousandPercent() {
-        val bounds = visiblePdfPageBounds(
+    fun visibleBoundsRemainNormalizedAtOneThousandPercent() {        val bounds = visiblePdfPageBounds(
             camera = PdfZoomCamera(PDF_MAX_ZOOM_SCALE),
             transformedPageLeft = -1_800f,
             transformedPageTop = -3_600f,
@@ -114,5 +113,43 @@ class PdfZoomCameraTest {
         )
 
         assertEquals(PdfPageBounds(0.45f, 0.45f, 0.55f, 0.55f), bounds)
+    }
+
+    @Test
+    fun forwardAndInversePointAreRoundTrips() {
+        val (fx, fy) = pdfZoomForwardPoint(100f, 300f, 200f, 400f, 2.5f, 10f, -20f)
+        val (ix, iy) = pdfZoomInversePoint(fx, fy, 200f, 400f, 2.5f, 10f, -20f)
+        assertTrue(kotlin.math.abs(ix - 100f) < 0.001f)
+        assertTrue(kotlin.math.abs(iy - 300f) < 0.001f)
+    }
+
+    @Test
+    fun liveBoundsMatchDirectCallWhenMeasureIsFresh() {
+        val camera = PdfZoomCamera(2f, PdfZoomPoint(0f, 0f))
+        val measure = PdfZoomWindowMeasure(
+            pageRect = PdfPageBounds(-200f, -400f, 600f, 1200f),
+            camera = camera,
+            viewportRect = PdfPageBounds(0f, 0f, 400f, 800f)
+        )
+        assertEquals(
+            PdfPageBounds(0.25f, 0.25f, 0.75f, 0.75f),
+            livePdfPageVisibleBounds(measure, camera)
+        )
+    }
+
+    @Test
+    fun liveBoundsTrackCameraPastStaleMeasure() {
+        // Measure captured at scale 1 (page fills the viewport); the camera
+        // has since zoomed to 2x about the viewport center without a layout
+        // pass. Tiles must plan for the zoomed view, not the stale full page.
+        val measure = PdfZoomWindowMeasure(
+            pageRect = PdfPageBounds(0f, 0f, 400f, 800f),
+            camera = PdfZoomCamera(),
+            viewportRect = PdfPageBounds(0f, 0f, 400f, 800f)
+        )
+        assertEquals(
+            PdfPageBounds(0.25f, 0.25f, 0.75f, 0.75f),
+            livePdfPageVisibleBounds(measure, PdfZoomCamera(2f, PdfZoomPoint(0f, 0f)))
+        )
     }
 }

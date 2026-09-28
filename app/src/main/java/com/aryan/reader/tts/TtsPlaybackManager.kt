@@ -62,6 +62,7 @@ import com.aryan.reader.shared.LocalTtsInterruptionAction
 import com.aryan.reader.shared.LocalTtsInterruptionEvent
 import com.aryan.reader.shared.LocalTtsInterruptionState
 import com.aryan.reader.shared.TTS_PLAYBACK_SOURCE_AUDIOBOOK
+import com.aryan.reader.shared.parseSpendGuardSentinel
 import com.aryan.reader.shared.reduce
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -402,7 +403,10 @@ class TtsPlaybackManager(
         val playbackSource: String? = null,
         val ttsMode: String = TtsMode.CLOUD.name,
         val transcriptStartIndex: Int = 0,
-        val transcriptChunks: List<String> = emptyList()
+        val transcriptChunks: List<String> = emptyList(),
+        // USD session spend (credited Cloud TTS only; BYOK/native stay 0).
+        // Accumulated from the worker's X-Tts-Cost-Micros header per chunk.
+        val cloudSessionSpendMicros: Long = 0L
     )
 
     private val initialSpeakerId = loadTtsSpeaker(appContext)
@@ -460,25 +464,31 @@ class TtsPlaybackManager(
         startChunkIndex: Int,
         continueSession: Boolean,
         speechRate: Float,
-        pitch: Float
+        pitch: Float,
+        ttsMode: TtsMode,
+        speakerId: String,
+        authToken: String?
     ) {
         val args = Bundle().apply {
             putBoolean(KEY_CONTINUE_SESSION, continueSession)
             putFloat("playback_speed", speechRate)
             putFloat("playback_pitch", pitch)
+            authToken?.takeIf { it.isNotBlank() }?.let { putString(KEY_AUTH_TOKEN, it) }
         }
         handleStartTts(
             chunks = content.chunks,
-            speakerId = currentSpeakerId,
+            speakerId = speakerId,
             bookId = book.bookId,
-            bookTitle = book.title,
-            chapterTitle = content.chapter.title,
+            // Canonical cache titles (same strings the Reader TTS path uses)
+            // so identical chunks share cloud cache files across surfaces.
+            bookTitle = book.cacheTitle,
+            chapterTitle = content.chapter.cacheTitle,
             coverImageUri = book.coverPath?.let { File(it).toURI().toString() },
             chapterIndex = content.chapter.index,
             totalChapters = book.chapters.size,
             pageIndex = if (book.type == com.aryan.reader.FileType.PDF) content.chapter.index else null,
             startChunkIndex = startChunkIndex,
-            ttsMode = TtsMode.BASE,
+            ttsMode = ttsMode,
             playbackSource = TTS_PLAYBACK_SOURCE_AUDIOBOOK,
             args = args
         )
@@ -1184,6 +1194,10 @@ class TtsPlaybackManager(
             currentChunkIndex = chunkIndex,
             totalChunks = textChunks.size
         )
+        // Prewarm the notification artwork on IO: the loader serves
+        // synchronously on Main, and chapter turns otherwise pay a
+        // content-resolver read + double decode per chunk.
+        com.aryan.reader.MediaNotificationBitmapLoader.prewarm(appContext, coverImageUri?.toUri())
         val metadata = MediaMetadata.Builder()
             .setTitle(bookTitle)
             .setDisplayTitle(bookTitle)
@@ -1477,7 +1491,9 @@ class TtsPlaybackManager(
             speakerId = effectiveSpeakerId,
             playbackSource = playbackSource,
             ttsMode = ttsMode.name,
-            currentText = if (continueSession) _ttsState.value.currentText else null
+            currentText = if (continueSession) _ttsState.value.currentText else null,
+            // New listen keeps its own spend line; chapter continuations accrue.
+            cloudSessionSpendMicros = if (continueSession) _ttsState.value.cloudSessionSpendMicros else 0L
         )
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
             "TTS state set to loading. bookProgress=${_ttsState.value.bookProgressPercent}, currentTextRetained=${_ttsState.value.currentText != null}"
@@ -1741,7 +1757,8 @@ class TtsPlaybackManager(
         startAtIndex: Int = 0,
         playWhenReady: Boolean = true,
         startAtPosition: Long = 0L,
-        prefetchAfterPrepare: Boolean = true
+        prefetchAfterPrepare: Boolean = true,
+        retriedAfterRateLimit: Boolean = false
     ) {
         val generation = currentPlaybackGeneration()
         val firstChunk = textChunks.getOrNull(startAtIndex)
@@ -1783,6 +1800,14 @@ class TtsPlaybackManager(
             "prepare-first-generated",
             "chunk=$startAtIndex elapsedMs=$generateElapsedMs audioFile=${ttsAudioData.audioFile?.name} streamUri=${ttsAudioData.streamUri} error=${ttsAudioData.error}"
         )
+        if (ttsAudioData.costMicros > 0) {
+            val currentError = _ttsState.value.errorMessage
+            _ttsState.value = _ttsState.value.copy(
+                cloudSessionSpendMicros = _ttsState.value.cloudSessionSpendMicros + ttsAudioData.costMicros,
+                // A successful chunk clears a stale rate/spend notice (e.g. after auto-retry).
+                errorMessage = if (parseSpendGuardSentinel(currentError) != null) null else currentError
+            )
+        }
         if (!isPlaybackGenerationActive(generation)) {
             Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
                 "Ignoring stale prepared TTS chunk. chunk=$startAtIndex, generation=$generation, currentGeneration=${currentPlaybackGeneration()}"
@@ -1795,10 +1820,21 @@ class TtsPlaybackManager(
             return
         }
 
-        if (ttsAudioData.error == "INSUFFICIENT_CREDITS") {
+        val spendGuard = parseSpendGuardSentinel(ttsAudioData.error)
+        if (ttsAudioData.error == "INSUFFICIENT_CREDITS" || spendGuard != null) {
+            // RATE_LIMITED retries once automatically after the worker's window;
+            // the overlay notice (ttsState.errorMessage) shows the countdown.
+            if (spendGuard?.first == "RATE_LIMITED" && !retriedAfterRateLimit) {
+                _ttsState.value = _ttsState.value.copy(isLoading = true, errorMessage = ttsAudioData.error)
+                delay(spendGuard.second.coerceIn(1, 120) * 1000L)
+                if (isPlaybackGenerationActive(generation)) {
+                    prepareAndPlayFirstChunk(startAtIndex, playWhenReady, startAtPosition, prefetchAfterPrepare, retriedAfterRateLimit = true)
+                }
+                return
+            }
             withContext(Dispatchers.Main) {
                 if (!isPlaybackGenerationActive(generation)) return@withContext
-                _ttsState.value = _ttsState.value.copy(isLoading = false, isPlaying = false, errorMessage = "INSUFFICIENT_CREDITS")
+                _ttsState.value = _ttsState.value.copy(isLoading = false, isPlaying = false, errorMessage = ttsAudioData.error)
                 handleStopTts(clearState = false)
             }
             return
@@ -2417,10 +2453,17 @@ class TtsPlaybackManager(
                             return@launch
                         }
 
-                        if (ttsAudioData.error == "INSUFFICIENT_CREDITS") {
+                        if (ttsAudioData.costMicros > 0) {
+                            val currentError = _ttsState.value.errorMessage
+                            _ttsState.value = _ttsState.value.copy(
+                                cloudSessionSpendMicros = _ttsState.value.cloudSessionSpendMicros + ttsAudioData.costMicros,
+                                errorMessage = if (parseSpendGuardSentinel(currentError) != null) null else currentError
+                            )
+                        }
+                        if (ttsAudioData.error == "INSUFFICIENT_CREDITS" || parseSpendGuardSentinel(ttsAudioData.error) != null) {
                             withContext(Dispatchers.Main) {
                                 if (!isPlaybackGenerationActive(generation)) return@withContext
-                                _ttsState.value = _ttsState.value.copy(isLoading = false, isPlaying = false, errorMessage = "INSUFFICIENT_CREDITS")
+                                _ttsState.value = _ttsState.value.copy(isLoading = false, isPlaying = false, errorMessage = ttsAudioData.error)
                                 handleStopTts(clearState = false)
                             }
                             return@launch
@@ -2674,6 +2717,10 @@ class TtsPlaybackManager(
     private fun createMediaItem(text: String, path: String, index: Int, chunk: TtsChunk): MediaItem {
         val isStreaming = path.startsWith("ttsstream://")
         val localAudioFile = if (isStreaming) null else File(path)
+        // Same prewarm as updateLocalMediaItem: playlist items are built
+        // ahead of playback, so the cover is usually cached before Media3
+        // asks for it on Main.
+        com.aryan.reader.MediaNotificationBitmapLoader.prewarm(appContext, coverImageUri?.toUri())
         val chapterLabel = buildTtsNotificationContextLabel(
             chapterTitle = chapterTitle,
             chapterIndex = chapterIndex,

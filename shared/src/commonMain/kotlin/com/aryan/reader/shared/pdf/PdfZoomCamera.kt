@@ -101,8 +101,7 @@ fun visiblePdfPageBounds(
     viewportTop: Float,
     viewportRight: Float,
     viewportBottom: Float
-): PdfPageBounds? {
-    val scale = camera.scale.takeIf { it.isFinite() && it > 0f } ?: 1f
+): PdfPageBounds? {    val scale = camera.scale.takeIf { it.isFinite() && it > 0f } ?: 1f
     val centerX = (viewportLeft + viewportRight) / 2f
     val centerY = (viewportTop + viewportBottom) / 2f
     fun inverseX(value: Float) = centerX + (value - centerX - camera.offset.x) / scale
@@ -127,3 +126,98 @@ fun visiblePdfPageBounds(
 }
 
 private const val PdfZoomEpsilon = 0.001f
+
+/**
+ * Window-geometry snapshot behind a zoomed page, captured together so the
+ * pair stays consistent: the transformed page rect, the camera that produced
+ * it, and the viewport rect. Scroll/layout changes re-fire the observer that
+ * records this, while zoom/pinch only move [PdfZoomCamera] state — so the
+ * rect can lag the camera. [livePdfPageVisibleBounds] repairs that lag with
+ * pure Center-pivot math instead of trusting a fresh layout pass.
+ */
+data class PdfZoomWindowMeasure(
+    val pageRect: PdfPageBounds,
+    val camera: PdfZoomCamera,
+    val viewportRect: PdfPageBounds
+)
+
+/**
+ * Forward Center-pivot zoom transform (the inverse of [visiblePdfPageBounds]'s
+ * mapping): windowPos = center + (basePos - center) * scale + offset.
+ */
+fun pdfZoomForwardPoint(
+    x: Float,
+    y: Float,
+    centerX: Float,
+    centerY: Float,
+    cameraScale: Float,
+    cameraOffsetX: Float,
+    cameraOffsetY: Float
+): Pair<Float, Float> {
+    val scale = cameraScale.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val safeOffsetX = cameraOffsetX.takeIf { it.isFinite() } ?: 0f
+    val safeOffsetY = cameraOffsetY.takeIf { it.isFinite() } ?: 0f
+    return (centerX + (x - centerX) * scale + safeOffsetX) to
+        (centerY + (y - centerY) * scale + safeOffsetY)
+}
+
+/** Inverse of [pdfZoomForwardPoint]: recovers the untransformed point. */
+fun pdfZoomInversePoint(
+    x: Float,
+    y: Float,
+    centerX: Float,
+    centerY: Float,
+    cameraScale: Float,
+    cameraOffsetX: Float,
+    cameraOffsetY: Float
+): Pair<Float, Float> {
+    val scale = cameraScale.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val safeOffsetX = cameraOffsetX.takeIf { it.isFinite() } ?: 0f
+    val safeOffsetY = cameraOffsetY.takeIf { it.isFinite() } ?: 0f
+    return (centerX + (x - centerX - safeOffsetX) / scale) to
+        (centerY + (y - centerY - safeOffsetY) / scale)
+}
+
+/**
+ * Visible page fractions for the CURRENT camera from a possibly-stale
+ * [PdfZoomWindowMeasure]. Recovers the untransformed page rect with the
+ * measure-time camera, re-applies [camera], then runs the standard
+ * [visiblePdfPageBounds] intersection. When the measure is fresh this returns
+ * exactly what a direct call would; when the measure lags (zoom/pan moved
+ * state without a layout pass), the result still tracks the live camera.
+ */
+fun livePdfPageVisibleBounds(
+    measure: PdfZoomWindowMeasure,
+    camera: PdfZoomCamera
+): PdfPageBounds? {
+    val viewport = measure.viewportRect
+    val centerX = (viewport.left + viewport.right) / 2f
+    val centerY = (viewport.top + viewport.bottom) / 2f
+    val (baseLeft, baseTop) = pdfZoomInversePoint(
+        measure.pageRect.left, measure.pageRect.top, centerX, centerY,
+        measure.camera.scale, measure.camera.offset.x, measure.camera.offset.y
+    )
+    val (baseRight, baseBottom) = pdfZoomInversePoint(
+        measure.pageRect.right, measure.pageRect.bottom, centerX, centerY,
+        measure.camera.scale, measure.camera.offset.x, measure.camera.offset.y
+    )
+    val (liveLeft, liveTop) = pdfZoomForwardPoint(
+        baseLeft, baseTop, centerX, centerY,
+        camera.scale, camera.offset.x, camera.offset.y
+    )
+    val (liveRight, liveBottom) = pdfZoomForwardPoint(
+        baseRight, baseBottom, centerX, centerY,
+        camera.scale, camera.offset.x, camera.offset.y
+    )
+    return visiblePdfPageBounds(
+        camera = camera,
+        transformedPageLeft = liveLeft,
+        transformedPageTop = liveTop,
+        transformedPageRight = liveRight,
+        transformedPageBottom = liveBottom,
+        viewportLeft = viewport.left,
+        viewportTop = viewport.top,
+        viewportRight = viewport.right,
+        viewportBottom = viewport.bottom
+    )
+}

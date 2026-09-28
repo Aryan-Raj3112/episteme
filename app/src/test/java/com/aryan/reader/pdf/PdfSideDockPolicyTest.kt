@@ -1,0 +1,223 @@
+package com.aryan.reader.pdf
+
+import androidx.compose.ui.geometry.Rect
+import com.aryan.reader.shared.DockLocation
+import com.aryan.reader.shared.pdf.isPdfTextDockSideDocked
+import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockInLeftHalf
+import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockSide
+import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockSticky
+import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockVertical
+import com.aryan.reader.shared.pdf.resolveSharedPdfBarDropX
+import com.aryan.reader.shared.pdf.resolveSharedPdfDockSnapLocation
+import com.aryan.reader.shared.pdf.resolveSharedPdfSideWheelClearOfBarBand
+import com.aryan.reader.shared.pdf.resolveSharedPdfSideWheelDropY
+import com.aryan.reader.shared.pdf.sharedPdfAnnotationDockLeftXPx
+import com.aryan.reader.shared.pdf.sharedPdfWheelBaseAngleDeg
+import com.aryan.reader.shared.pdf.sharedPdfWheelClampRotationDeg
+import com.aryan.reader.shared.pdf.sharedPdfWheelEffectiveStepDeg
+import com.aryan.reader.shared.pdf.sharedPdfWheelIsFullCircle
+import com.aryan.reader.shared.pdf.sharedPdfWheelNormalizeDeg
+import com.aryan.reader.shared.pdf.sharedPdfWheelRotationForDragDy
+import com.aryan.reader.shared.pdf.sharedPdfWheelRotationRangeDeg
+import com.aryan.reader.shared.pdf.sharedPdfWheelToolCenterPx
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * Side-edge docking for the PDF annotation + text toolbars.
+ *
+ * The bars snap to LEFT/RIGHT as well as TOP/BOTTOM/FLOATING and render
+ * there as vertical semi-circle-capped bars flush to the edge.
+ */
+class PdfSideDockPolicyTest {
+
+    @Test
+    fun `side docks are sticky and vertical`() {
+        assertTrue(isSharedPdfAnnotationDockSticky(DockLocation.LEFT, isDragging = false))
+        assertTrue(isSharedPdfAnnotationDockSticky(DockLocation.RIGHT, isDragging = false))
+        assertFalse(isSharedPdfAnnotationDockSticky(DockLocation.LEFT, isDragging = true))
+        assertTrue(isSharedPdfAnnotationDockSide(DockLocation.LEFT))
+        assertTrue(isSharedPdfAnnotationDockSide(DockLocation.RIGHT))
+        assertTrue(isSharedPdfAnnotationDockVertical(DockLocation.RIGHT))
+        assertFalse(isSharedPdfAnnotationDockSide(DockLocation.TOP))
+        assertFalse(isSharedPdfAnnotationDockSide(DockLocation.FLOATING))
+    }
+
+    @Test
+    fun `side dock left x hugs the edge`() {
+        assertEquals(0f, sharedPdfAnnotationDockLeftXPx(DockLocation.LEFT, 400f, 1000f, 56f))
+        assertEquals(944f, sharedPdfAnnotationDockLeftXPx(DockLocation.RIGHT, 400f, 1000f, 56f))
+        assertEquals(400f, sharedPdfAnnotationDockLeftXPx(DockLocation.FLOATING, 400f, 1000f, 56f))
+        assertTrue(isSharedPdfAnnotationDockInLeftHalf(0f, 56f, 1000f))
+        assertFalse(isSharedPdfAnnotationDockInLeftHalf(944f, 56f, 1000f))
+    }
+
+    @Test
+    fun `snap resolver prefers side edges`() {
+        assertEquals(DockLocation.LEFT, resolveSharedPdfDockSnapLocation(50f, 50f, 1000f, 1000f))
+        assertEquals(DockLocation.RIGHT, resolveSharedPdfDockSnapLocation(900f, 50f, 1000f, 1000f))
+        assertEquals(DockLocation.TOP, resolveSharedPdfDockSnapLocation(500f, 50f, 1000f, 1000f))
+        assertEquals(DockLocation.BOTTOM, resolveSharedPdfDockSnapLocation(500f, 900f, 1000f, 1000f))
+        assertNull(resolveSharedPdfDockSnapLocation(500f, 500f, 1000f, 1000f))
+    }
+
+    @Test
+    fun `snap resolver docks where the dock touches most`() {
+        // Wide horizontal bar (400x56) in the top-left corner touches the
+        // top along 400px but the side along 56px -> TOP (not LEFT).
+        assertEquals(
+            DockLocation.TOP,
+            resolveSharedPdfDockSnapLocation(
+                dockOffsetX = 50f, dockOffsetY = 50f,
+                boxWidthPx = 1000f, boxHeightPx = 1000f,
+                dockWidthPx = 400f, dockHeightPx = 56f,
+            ),
+        )
+        // Same bar in the bottom-left corner -> BOTTOM.
+        assertEquals(
+            DockLocation.BOTTOM,
+            resolveSharedPdfDockSnapLocation(
+                dockOffsetX = 50f, dockOffsetY = 900f,
+                boxWidthPx = 1000f, boxHeightPx = 1000f,
+                dockWidthPx = 400f, dockHeightPx = 56f,
+            ),
+        )
+        // Tall side wheel (96x192) in the top-left corner touches the side
+        // along 192px but the top along 96px -> LEFT.
+        assertEquals(
+            DockLocation.LEFT,
+            resolveSharedPdfDockSnapLocation(
+                dockOffsetX = 50f, dockOffsetY = 50f,
+                boxWidthPx = 1000f, boxHeightPx = 1000f,
+                dockWidthPx = 96f, dockHeightPx = 192f,
+            ),
+        )
+        // Mid-height against the right edge stays reachable -> RIGHT.
+        assertEquals(
+            DockLocation.RIGHT,
+            resolveSharedPdfDockSnapLocation(
+                dockOffsetX = 850f, dockOffsetY = 500f,
+                boxWidthPx = 1000f, boxHeightPx = 1000f,
+                dockWidthPx = 96f, dockHeightPx = 192f,
+            ),
+        )
+        // Center touches nothing -> floating.
+        assertNull(
+            resolveSharedPdfDockSnapLocation(
+                dockOffsetX = 400f, dockOffsetY = 500f,
+                boxWidthPx = 1000f, boxHeightPx = 1000f,
+                dockWidthPx = 200f, dockHeightPx = 56f,
+            ),
+        )
+    }
+
+    @Test
+    fun `text dock mirrors side detection`() {
+        assertTrue(isPdfTextDockSideDocked(DockLocation.LEFT))
+        assertTrue(isPdfTextDockSideDocked(DockLocation.RIGHT))
+        assertFalse(isPdfTextDockSideDocked(DockLocation.TOP))
+        assertFalse(isPdfTextDockSideDocked(DockLocation.FLOATING))
+    }
+
+    @Test
+    fun `wheel arc centers tools and scrolls large arcs end to end`() {
+        assertEquals(-80f, sharedPdfWheelBaseAngleDeg(0, 5))
+        assertEquals(0f, sharedPdfWheelBaseAngleDeg(2, 5))
+        assertEquals(80f, sharedPdfWheelBaseAngleDeg(4, 5))
+        // 4 tools span 120 degrees: fits, no scroll.
+        assertEquals(0f, sharedPdfWheelRotationRangeDeg(4))
+        // 9 tools span 320 degrees: 86 degrees each way (ends stop 16
+        // degrees before the rim so icons are never cut off), clamped.
+        assertEquals(86f, sharedPdfWheelRotationRangeDeg(9))
+        assertEquals(86f, sharedPdfWheelClampRotationDeg(200f, 9))
+        assertEquals(-86f, sharedPdfWheelClampRotationDeg(-200f, 9))
+        // 10 tools would wrap onto each other, so they spread evenly over
+        // the full circle (no coincident first/last) with a half-turn range.
+        assertEquals(36f, sharedPdfWheelEffectiveStepDeg(10))
+        assertTrue(sharedPdfWheelIsFullCircle(10))
+        assertEquals(-162f, sharedPdfWheelBaseAngleDeg(0, 10))
+        assertEquals(162f, sharedPdfWheelBaseAngleDeg(9, 10))
+        assertEquals(180f, sharedPdfWheelRotationRangeDeg(10))
+        assertEquals(180f, sharedPdfWheelClampRotationDeg(200f, 10))
+        assertEquals(-180f, sharedPdfWheelClampRotationDeg(-200f, 10))
+        // Angles wrap so full-circle tools stay placeable.
+        assertEquals(-74f, sharedPdfWheelNormalizeDeg(286f))
+        assertEquals(170f, sharedPdfWheelNormalizeDeg(-190f))
+        // Dragging down spins tools downward.
+        assertTrue(sharedPdfWheelRotationForDragDy(0f, 64f, 64f, 10) > 0f)
+        // 0 degrees points inward, mirrored across edges.
+        val left = sharedPdfWheelToolCenterPx(0f, 64f, 96f, 192f, isLeft = true)
+        val right = sharedPdfWheelToolCenterPx(0f, 64f, 96f, 192f, isLeft = false)
+        assertEquals(64f, left.x)
+        assertEquals(96f - 64f, right.x)
+        assertEquals(left.y, right.y)
+    }
+
+    @Test
+    fun `side wheel stacks above or below the other dock`() {
+        val gap = 8f
+        val other = Rect(0f, 400f, 96f, 592f)
+        // Drop below the other's center slides below it; above slides above.
+        assertEquals(
+            600f,
+            resolveSharedPdfSideWheelDropY(450f, 0f, 96f, 192f, 0f, 1000f, gap, other),
+        )
+        assertEquals(
+            200f,
+            resolveSharedPdfSideWheelDropY(350f, 0f, 96f, 192f, 0f, 1000f, gap, other),
+        )
+        // A wheel dropped onto a top bar slides down clear of it.
+        assertEquals(
+            68f,
+            resolveSharedPdfSideWheelDropY(
+                0f, 0f, 96f, 192f, 0f, 1000f, gap, Rect(0f, 0f, 1000f, 60f),
+            ),
+        )
+        // A wheel dropped onto a bottom bar slides up clear of it.
+        assertEquals(
+            740f,
+            resolveSharedPdfSideWheelDropY(
+                800f, 0f, 96f, 192f, 0f, 1000f, gap, Rect(0f, 940f, 1000f, 1000f),
+            ),
+        )
+        // Opposite edges never interfere.
+        assertEquals(
+            450f,
+            resolveSharedPdfSideWheelDropY(
+                450f, 0f, 96f, 192f, 0f, 1000f, gap, Rect(904f, 400f, 1000f, 592f),
+            ),
+        )
+    }
+
+    @Test
+    fun `landed bars push wheels and floating bars clear`() {
+        val gap = 8f
+        // A bar landing on top nudges a hugging wheel below it.
+        assertEquals(
+            68f,
+            resolveSharedPdfSideWheelClearOfBarBand(0f, 192f, 0f, 1000f, gap, 0f, 60f),
+        )
+        // A bar landing at the bottom nudges a hugging wheel above it.
+        assertEquals(
+            740f,
+            resolveSharedPdfSideWheelClearOfBarBand(800f, 192f, 0f, 1000f, gap, 940f, 1000f),
+        )
+        // A floating bar dropped onto a side wheel slides out of its band.
+        assertEquals(
+            104f,
+            resolveSharedPdfBarDropX(
+                50f, 450f, 300f, 48f, 1000f, gap, Rect(0f, 400f, 96f, 592f),
+            ),
+        )
+        // Clear drops pass through.
+        assertEquals(
+            300f,
+            resolveSharedPdfBarDropX(
+                300f, 100f, 300f, 48f, 1000f, gap, Rect(0f, 400f, 96f, 592f),
+            ),
+        )
+    }
+}

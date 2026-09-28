@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowDropUp
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,6 +47,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
@@ -150,24 +153,49 @@ internal fun SharedMobileEpubSearchOverlay(
                         Text(readerString("reader_search_no_results", "No results found"), style = MaterialTheme.typography.bodyLarge)
                     }
                     else -> Column {
+                        // Android parity (SharedReaderSearchResultsPanel):
+                        // localized plural count header, chapter-title headline,
+                        // and a bolded matched span inside the snippet.
                         Text(
-                            "${results.size} results",
+                            if (results.size == 1) {
+                                readerString("search_results_count_one", "1 result")
+                            } else {
+                                readerString("search_results_count_other", "%1\$d results", results.size)
+                            },
                             style = MaterialTheme.typography.titleSmall,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                         )
                         HorizontalDivider()
                         LazyColumn(Modifier.fillMaxSize()) {
                             items(results) { result ->
-                                Column(
-                                    Modifier.fillMaxWidth().clickable {
+                                ListItem(
+                                    headlineContent = {
+                                        Text(result.chapterTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    },
+                                    supportingContent = {
+                                        Text(
+                                            buildAnnotatedString {
+                                                append(result.snippet)
+                                                if (result.matchIndexInSnippet >= 0 && result.matchLengthInSnippet > 0) {
+                                                    addStyle(
+                                                        SpanStyle(fontWeight = FontWeight.Bold),
+                                                        result.matchIndexInSnippet,
+                                                        (result.matchIndexInSnippet + result.matchLengthInSnippet)
+                                                            .coerceAtMost(result.snippet.length),
+                                                    )
+                                                }
+                                            },
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            maxLines = 3,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    },
+                                    modifier = Modifier.clickable {
                                         onResultClick(result)
                                         keyboardController?.hide()
                                         focusManager.clearFocus()
-                                    }.padding(horizontal = 20.dp, vertical = 14.dp)
-                                ) {
-                                    Text(result.chapterTitle, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                                    Text(result.snippet, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                                }
+                                    },
+                                )
                                 HorizontalDivider()
                             }
                         }
@@ -268,6 +296,10 @@ internal data class SharedMobileEpubSearchResult(
     val occurrenceIndex: Int,
     val snippet: String,
     val locator: ReaderLocator,
+    /** Offset of the match within [snippet], or -1 when unknown (snippet bolding). */
+    val matchIndexInSnippet: Int = -1,
+    /** Length of the matched span inside [snippet]. */
+    val matchLengthInSnippet: Int = 0,
 )
 internal data class SharedMobileEpubLink(val href: String, val chapterHref: String?)
 internal data class SharedMobileEpubActiveToc(val href: String, val fragmentId: String?)
@@ -358,6 +390,21 @@ internal fun String.sharedMobileEpubHighlightShiftMessageOrNull(): String? {
         ?.takeIf(String::isNotBlank)
 }
 
+/** Common tag for selection-shift diagnostics across WebView JS and native. */
+internal const val SharedMobileEpubSelectionShiftTag = "SEL_SHIFT"
+
+/** Bridge method posted by readerSelectionShiftLog in the shared document. */
+internal const val SharedMobileEpubSelectionShiftBridgeMethod = "readerSelectionShiftLog"
+
+internal fun String.sharedMobileEpubSelectionShiftMessageOrNull(): String? {
+    return runCatching { SharedMobileEpubJson.parseToJsonElement(this).jsonObject }
+        .getOrNull()
+        ?.get("message")
+        ?.jsonPrimitive
+        ?.contentOrNull
+        ?.takeIf(String::isNotBlank)
+}
+
 /**
  * Android parity (ChapterWebView restoreHighlights): the authoritative highlight list
  * is pushed into the WebView via window.readerApplyHighlights instead of reloading the
@@ -422,6 +469,14 @@ internal fun SharedEpubBook.searchMobileEpub(
                 readerWordStartMatchOffsets(text, query).forEachIndexed { chunkOccurrence, found ->
                     val snippetStart = (found - 35).coerceAtLeast(0)
                     val snippetEnd = (found + needle.length + 35).coerceAtMost(text.length)
+                    val rawSnippet = text.substring(snippetStart, snippetEnd)
+                    val trimmedSnippet = rawSnippet.trim()
+                    // Android parity (EpubReaderSearch bolded snippet): track
+                    // where the matched span lands inside the trimmed snippet
+                    // so the result row can bold the query text.
+                    val matchInSnippet = (found - snippetStart)
+                        .minus(rawSnippet.length - rawSnippet.trimStart().length)
+                        .coerceIn(0, trimmedSnippet.length)
                     val sourceOffset = chapterOffsets.getOrNull(chapterOccurrence)
                     val page = sourceOffset?.let { offset ->
                         pages.firstOrNull {
@@ -436,7 +491,11 @@ internal fun SharedEpubBook.searchMobileEpub(
                             chapterTitle = chapter.title.ifBlank { "Chapter ${chapterIndex + 1}" },
                             chunkIndex = chunkIndex,
                             occurrenceIndex = chunkOccurrence,
-                            snippet = text.substring(snippetStart, snippetEnd).trim(),
+                            snippet = trimmedSnippet,
+                            matchIndexInSnippet = matchInSnippet,
+                            matchLengthInSnippet = needle.length
+                                .coerceAtMost(trimmedSnippet.length - matchInSnippet)
+                                .coerceAtLeast(0),
                             locator = ReaderLocator(
                                 chapterIndex = chapterIndex,
                                 chapterId = chapter.id,

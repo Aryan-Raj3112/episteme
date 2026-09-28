@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
 import com.aryan.reader.shared.generated.resources.*
 import com.aryan.reader.shared.CustomFontItem
+import com.aryan.reader.shared.DockLocation
 import com.aryan.reader.shared.pdf.*
 import org.jetbrains.compose.resources.painterResource
 
@@ -39,6 +40,12 @@ fun SharedMobilePdfTextDock(
     dragGestureModifier: Modifier = Modifier,
     // A top-docked bar opens popups below itself instead of above.
     popupsBelowBar: Boolean = false,
+    // Side-docked bars render vertically with semi-circle caps and open
+    // popups to the side of the bar instead of above/below it.
+    dockLocation: DockLocation = DockLocation.BOTTOM,
+    isVertical: Boolean = isPdfTextDockSideDocked(dockLocation),
+    /** False while a dock move is in progress so moves never spin the wheel. */
+    spinEnabled: Boolean = true,
     // Android parity: hides the rich-text cursor while a popup is open.
     onPopupStateChange: (Boolean) -> Unit = {},
     // Second-row paragraph controls (lists + alignment). Null hides the row.
@@ -71,11 +78,26 @@ fun SharedMobilePdfTextDock(
         availableSharedPdfCustomFonts(customFonts, resolvedCustomFontFamilies.keys)
     }
 
-    Box(modifier.fillMaxWidth().then(dragGestureModifier), contentAlignment = Alignment.BottomCenter) {
+    val boxModifier = if (isVertical) modifier.width(SharedPdfSideWheelWidth).then(dragGestureModifier) else modifier.fillMaxWidth().then(dragGestureModifier)
+    val boxAlignment = if (isVertical) Alignment.Center else Alignment.BottomCenter
+    // Side bars open popups beside the bar; top bars open below it.
+    val sidePopupAlignment = when (dockLocation) {
+        DockLocation.LEFT -> Alignment.CenterStart
+        DockLocation.RIGHT -> Alignment.CenterEnd
+        else -> null
+    }
+    val sidePopupOffsetX = when (dockLocation) {
+        DockLocation.LEFT -> SharedPdfSideWheelWidth + 8.dp
+        DockLocation.RIGHT -> -(SharedPdfSideWheelWidth + 8.dp)
+        else -> null
+    }
+    Box(boxModifier, contentAlignment = boxAlignment) {
         SharedPdfTextDockPopupHost(
             state = state, bottomDockPadding = 0.dp, currentStyle = spanStyle,
-            popupAlignment = if (popupsBelowBar) Alignment.TopCenter else Alignment.BottomCenter,
-            popupOffsetY = if (popupsBelowBar) 48.dp + 8.dp else null,
+            popupAlignment = sidePopupAlignment
+                ?: if (popupsBelowBar) Alignment.TopCenter else Alignment.BottomCenter,
+            popupOffsetY = if (isVertical) 0.dp else if (popupsBelowBar) 48.dp + 8.dp else null,
+            popupOffsetX = sidePopupOffsetX,
             textColorPalette = textPalette, onTextColorPaletteChange = { textPalette = it },
             backgroundColorPalette = backgroundPalette, onBackgroundColorPaletteChange = { backgroundPalette = it },
             onUpdateStyle = ::update, onApplyToSelection = {},
@@ -129,6 +151,9 @@ fun SharedMobilePdfTextDock(
             isFontFamilySelected = state.popup == PdfTextDockPopup.FONT_FAMILY,
             isBold = style.isBold, isItalic = style.isItalic, isUnderline = style.isUnderline, isStrikethrough = style.isStrikeThrough,
             bottomDockPadding = 0.dp,
+            dockLocation = dockLocation,
+            isVertical = isVertical,
+            spinEnabled = spinEnabled,
             labels = SharedPdfTextDockBarLabels(
                 readerString("content_desc_select_font_family", "Select font family"), readerString("content_desc_select_font_size", "Select font size"),
                 readerString("content_desc_font_background", "Font background"), readerString("content_desc_bold", "Bold"),
@@ -152,6 +177,9 @@ fun SharedMobilePdfTextDock(
             onUnderlineClick = { update(spanStyle.copy(textDecoration = sharedPdfDockDecoration(!style.isUnderline, style.isStrikeThrough))) },
             onStrikethroughClick = { update(spanStyle.copy(textDecoration = sharedPdfDockDecoration(style.isUnderline, !style.isStrikeThrough))) },
             onInsertTextBox = onInsertTextBox,
+            // Android parity (TextAnnotationDock showInsertTextBox = false):
+            // boxes are created by tapping the page, so the insert icon is hidden.
+            showInsertTextBox = false,
             paragraphControls = paragraphState?.let { paragraph ->
                 SharedPdfTextDockParagraphControls(
                     state = paragraph,
@@ -162,21 +190,43 @@ fun SharedMobilePdfTextDock(
                 )
             },
             alignmentPopup = {
-                if (state.popup == PdfTextDockPopup.ALIGNMENT && paragraphState != null) SharedPdfTextDockPopupDp(
-                    state::dismiss,
-                    if (popupsBelowBar) Alignment.BottomCenter else Alignment.TopCenter,
-                    if (popupsBelowBar) 55.dp else (-55).dp,
-                ) {
-                    SharedPdfTextDockAlignmentPopupContent(
-                        selected = paragraphState.alignment,
-                        alignLeftPainter = painterResource(Res.drawable.format_align_left),
-                        alignCenterPainter = painterResource(Res.drawable.format_align_center),
-                        alignRightPainter = painterResource(Res.drawable.format_align_right),
-                        alignLeftDescription = readerString("content_desc_align_left", "Align left"),
-                        alignCenterDescription = readerString("content_desc_align_center", "Align center"),
-                        alignRightDescription = readerString("content_desc_align_right", "Align right"),
-                        onSelected = { onAlignmentSelected(it); state.dismiss() },
-                    )
+                if (state.popup == PdfTextDockPopup.ALIGNMENT && paragraphState != null) {
+                    if (isVertical) {
+                        SharedPdfTextDockPopupOffsetDp(
+                            state::dismiss,
+                            sidePopupAlignment ?: Alignment.TopCenter,
+                            offsetX = sidePopupOffsetX ?: 0.dp,
+                            offsetY = 0.dp,
+                        ) {
+                            SharedPdfTextDockAlignmentPopupContent(
+                                selected = paragraphState.alignment,
+                                alignLeftPainter = painterResource(Res.drawable.format_align_left),
+                                alignCenterPainter = painterResource(Res.drawable.format_align_center),
+                                alignRightPainter = painterResource(Res.drawable.format_align_right),
+                                alignLeftDescription = readerString("content_desc_align_left", "Align left"),
+                                alignCenterDescription = readerString("content_desc_align_center", "Align center"),
+                                alignRightDescription = readerString("content_desc_align_right", "Align right"),
+                                onSelected = { onAlignmentSelected(it); state.dismiss() },
+                            )
+                        }
+                    } else {
+                        SharedPdfTextDockPopupDp(
+                            state::dismiss,
+                            if (popupsBelowBar) Alignment.BottomCenter else Alignment.TopCenter,
+                            if (popupsBelowBar) 55.dp else (-55).dp,
+                        ) {
+                            SharedPdfTextDockAlignmentPopupContent(
+                                selected = paragraphState.alignment,
+                                alignLeftPainter = painterResource(Res.drawable.format_align_left),
+                                alignCenterPainter = painterResource(Res.drawable.format_align_center),
+                                alignRightPainter = painterResource(Res.drawable.format_align_right),
+                                alignLeftDescription = readerString("content_desc_align_left", "Align left"),
+                                alignCenterDescription = readerString("content_desc_align_center", "Align center"),
+                                alignRightDescription = readerString("content_desc_align_right", "Align right"),
+                                onSelected = { onAlignmentSelected(it); state.dismiss() },
+                            )
+                        }
+                    }
                 }
             },
             textColorIndicator = { color -> Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy((-3).dp)) {
@@ -184,31 +234,55 @@ fun SharedMobilePdfTextDock(
                 Box(Modifier.width(16.dp).height(2.dp).background(color))
             } },
             fontSizePopup = {
-                if (state.popup == PdfTextDockPopup.FONT_SIZE) SharedPdfTextDockPopupDp(
-                    state::dismiss,
-                    if (popupsBelowBar) Alignment.BottomCenter else Alignment.TopCenter,
-                    if (popupsBelowBar) 55.dp else (-55).dp,
-                ) {
-                    LazyColumn(Modifier.heightIn(max = 200.dp).width(80.dp).background(Color(0xFF1E1E1E), androidx.compose.foundation.shape.RoundedCornerShape(16.dp))) {
-                        items(AndroidPdfTextDockFontSizes) { size -> SharedPdfTextDockFontSizeRow(size.value.toInt(), style.fontSize == size.value) {
-                            onStyleChange(style.copy(fontSize = size.value)); state.dismiss()
-                        } }
+                if (state.popup == PdfTextDockPopup.FONT_SIZE) {
+                    if (isVertical) {
+                        SharedPdfTextDockPopupOffsetDp(
+                            state::dismiss,
+                            sidePopupAlignment ?: Alignment.TopCenter,
+                            offsetX = sidePopupOffsetX ?: 0.dp,
+                            offsetY = 0.dp,
+                        ) {
+                            SharedPdfTextDockFontSizeList(
+                                style = style,
+                                onStyleChange = onStyleChange,
+                                onDismiss = state::dismiss,
+                            )
+                        }
+                    } else {
+                        SharedPdfTextDockPopupDp(
+                            state::dismiss,
+                            if (popupsBelowBar) Alignment.BottomCenter else Alignment.TopCenter,
+                            if (popupsBelowBar) 55.dp else (-55).dp,
+                        ) {
+                            SharedPdfTextDockFontSizeList(
+                                style = style,
+                                onStyleChange = onStyleChange,
+                                onDismiss = state::dismiss,
+                            )
+                        }
                     }
                 }
             },
         )
-        // Drag-handle affordance: straddles the bar's outer edge (top when
-        // bottom-docked/floating, bottom when top-docked) so the bar reads as
-        // draggable. Touch-transparent; the dock container owns drag gestures.
-        Box(
-            modifier = Modifier
-                .align(if (popupsBelowBar) Alignment.BottomCenter else Alignment.TopCenter)
-                .offset(y = if (popupsBelowBar) 2.dp else (-2).dp)
-                .width(32.dp)
-                .height(4.dp)
-                .clip(RoundedCornerShape(50))
-                .background(Color.Black.copy(alpha = 0.25f))
-        )
+    }
+}
+
+@Composable
+private fun SharedPdfTextDockFontSizeList(
+    style: SharedPdfTextStyleConfig,
+    onStyleChange: (SharedPdfTextStyleConfig) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    LazyColumn(Modifier.heightIn(max = 200.dp).width(80.dp).background(Color(0xFF1E1E1E), androidx.compose.foundation.shape.RoundedCornerShape(16.dp))) {
+        items(AndroidPdfTextDockFontSizes) { size -> SharedPdfTextDockFontSizeRow(size.value.toInt(), style.fontSize == size.value) {
+            // Must refresh the page-relative size too: the
+            // renderer derives px from pageRelativeFontSize,
+            // which shadows fontSize when present (Android
+            // benchmark withSharedPdfTextFontSize). A raw copy
+            // leaves the stale relative size, so the change
+            // silently does nothing.
+            onStyleChange(style.withSharedPdfTextFontSize(size.value)); onDismiss()
+        } }
     }
 }
 

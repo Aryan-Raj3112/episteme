@@ -99,7 +99,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -165,12 +165,18 @@ import com.aryan.reader.ReaderThemePanel
 import com.aryan.reader.RenderMode
 import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.shared.SummarizationResult
+import com.aryan.reader.shared.hasSpendableBalance
+import com.aryan.reader.shared.spendableDisplayText
+import com.aryan.reader.shared.parseSpendGuardSentinel
+import com.aryan.reader.shared.formatSpendGuardCountdown
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.TtsWordReplacementsSheet
 import com.aryan.reader.areReaderAiFeaturesEnabled
-import com.aryan.reader.countWords
 import com.aryan.reader.isByokCloudTtsAvailable
+import com.aryan.reader.isByokModelReady
+import com.aryan.reader.isByokTtsReady
+import com.aryan.reader.shared.ReaderAiFeature as AiFeature
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.hasReadableExtractedContent
@@ -230,6 +236,7 @@ import com.aryan.reader.shared.EpubVisibleTextRange
 import com.aryan.reader.shared.findEpubBookmarkForLocation
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
+import com.aryan.reader.tts.isReaderTtsVoiceChangeLocked
 import com.aryan.reader.tts.loadTtsMode
 import com.aryan.reader.tts.loadReaderTtsOverlaySize
 import com.aryan.reader.tts.readerTtsOverlayAlignmentBias
@@ -313,7 +320,7 @@ fun EpubReaderScreen(
     onImportFonts: (List<Uri>) -> Unit,
     viewModel: MainViewModel
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     val isReflowFile = uiState.selectedBookId?.endsWith("_reflow") == true
     val originalBookId = if (isReflowFile) uiState.selectedBookId!!.removeSuffix("_reflow") else null
@@ -355,6 +362,7 @@ fun EpubReaderScreen(
             message = message,
             recovering = isRecovering,
             isError = uiState.errorMessage != null,
+            onBack = onNavigateBack,
         )
         return
     }
@@ -368,6 +376,8 @@ fun EpubReaderScreen(
         initialHighlightsJson = uiState.initialHighlightsJson,
         isProUser = isProUser,
         credits = uiState.credits,
+        walletMicros = uiState.walletMicros,
+        walletMigrated = uiState.walletMigrated,
         onNavigateBack = onNavigateBack,
         onSavePosition = onSavePosition,
         onBookmarksChanged = onBookmarksChanged,
@@ -411,6 +421,8 @@ fun EpubReaderHost(
     initialHighlightsJson: String?,
     isProUser: Boolean,
     credits: Int,
+    walletMicros: Long = 0L,
+    walletMigrated: Boolean = false,
     onNavigateBack: () -> Unit,
     onSavePosition: (locator: Locator, cfiForWebView: String?, progress: Float) -> Unit,
     onBookmarksChanged: (bookmarksJson: String) -> Unit,
@@ -428,7 +440,7 @@ fun EpubReaderHost(
     val view = LocalView.current
     val context = LocalContext.current
     val motionPolicy = rememberReaderMotionPolicy()
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val window = (view.context as? Activity)?.window
     val activity = context as? Activity
     val scope = rememberCoroutineScope()
@@ -528,8 +540,10 @@ fun EpubReaderHost(
         val effectiveUseOnline = areReaderAiFeaturesEnabled(context) && dictTools.useOnlineDictionary
 
         if (effectiveUseOnline) {
-            val wordCount = countWords(word)
-            if (BuildConfig.FLAVOR != "oss" && wordCount > 1 && !isProUser) {
+            // Smart Dictionary is Pro-only (worker enforces it too). No
+            // upsell when the user's own key covers definitions: the request
+            // routes through BYOK and never touches credits.
+            if (BuildConfig.FLAVOR != "oss" && !isProUser && !isByokModelReady(context, AiFeature.DEFINE)) {
                 showDictionaryUpsellDialog = true
             } else {
                 dictTools.selectedTextForAi = word
@@ -546,13 +560,19 @@ fun EpubReaderHost(
                         },
                         authToken = token,
                         onError = { error ->
-                            if (error == "INSUFFICIENT_CREDITS") {
-                                navigation.showInsufficientCreditsDialog = true
-                                dictTools.showAiDefinitionPopup = false
-                                dictTools.isAiDefinitionLoading = false
-                            } else {
-                                dictTools.aiDefinitionResult = AiDefinitionResult(error = error)
-                            }
+                            handleAiRequestError(
+                                error = error,
+                                navigation = navigation,
+                                onInsufficientCredits = {
+                                    navigation.showInsufficientCreditsDialog = true
+                                    dictTools.showAiDefinitionPopup = false
+                                    dictTools.isAiDefinitionLoading = false
+                                },
+                                onGuardNotice = { dictTools.isAiDefinitionLoading = false },
+                                onOtherError = {
+                                    dictTools.aiDefinitionResult = AiDefinitionResult(error = error)
+                                }
+                            )
                         },
                         onFinish = { dictTools.isAiDefinitionLoading = false },
                         context = context
@@ -748,7 +768,7 @@ fun EpubReaderHost(
     var paginatedExplicitNavigationAnchor by paginatedExplicitNavigationAnchorState
 
     val ttsController = viewModel.ttsController
-    val ttsState by ttsController.ttsState.collectAsState()
+    val ttsState by ttsController.ttsState.collectAsStateWithLifecycle()
 
     val totalBookLengthChars = remember(chapters) {
         chapters.sumOf { it.plainTextCharacterCount().toLong() }
@@ -961,8 +981,31 @@ fun EpubReaderHost(
                 navigation.showInsufficientCreditsDialog = true
                 ttsController.stop()
             } else {
-                showBanner(message, isError = true)
+                val guard = parseSpendGuardSentinel(message)
+                if (guard != null) {
+                    navigation.aiSpendNotice = guard
+                    // Spend cap halts like an empty wallet; rate limit auto-retries
+                    // once in the playback manager, so playback continues.
+                    if (guard.first == "DAILY_SPEND_LIMIT") ttsController.stop()
+                } else {
+                    showBanner(message, isError = true)
+                }
             }
+        }
+    }
+
+    // Rate-limit countdown banner (auto-dismisses; playback auto-retried once).
+    val spendNotice = navigation.aiSpendNotice
+    LaunchedEffect(spendNotice) {
+        if (spendNotice?.first == "RATE_LIMITED") {
+            showBanner(
+                context.getString(
+                    R.string.snackbar_rate_limited_retry,
+                    formatSpendGuardCountdown(spendNotice.second)
+                ),
+                isError = true
+            )
+            navigation.aiSpendNotice = null
         }
     }
 
@@ -1420,7 +1463,8 @@ fun EpubReaderHost(
     }
 
     fun startTts() {
-        if (BuildConfig.FLAVOR != "oss" && prefs.currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && credits <= 0) {
+        // BYOK TTS never spends credits, so it bypasses the balance gate.
+        if (BuildConfig.FLAVOR != "oss" && prefs.currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && !hasSpendableBalance(credits, walletMicros) && !isByokTtsReady(context)) {
             navigation.showInsufficientCreditsDialog = true
             return
         }
@@ -1557,7 +1601,8 @@ fun EpubReaderHost(
         startOffset: Int,
         chapterIndexOverride: Int? = null
     ) {
-        if (BuildConfig.FLAVOR != "oss" && prefs.currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && credits <= 0) {
+        // BYOK TTS never spends credits, so it bypasses the balance gate.
+        if (BuildConfig.FLAVOR != "oss" && prefs.currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && !hasSpendableBalance(credits, walletMicros) && !isByokTtsReady(context)) {
             navigation.showInsufficientCreditsDialog = true
             return
         }
@@ -2099,13 +2144,20 @@ fun EpubReaderHost(
                 },
                 authToken = token,
                 onError = { error ->
-                    if (error == "INSUFFICIENT_CREDITS") {
-                        navigation.showInsufficientCreditsDialog = true
-                        showRecapPopup = false
-                        isRecapLoading = false
-                    } else {
-                        recapResult = SummarizationResult(error = error)
-                    }
+                    handleAiRequestError(
+                        error = error,
+                        navigation = navigation,
+                        onInsufficientCredits = {
+                            navigation.showInsufficientCreditsDialog = true
+                            showRecapPopup = false
+                            isRecapLoading = false
+                        },
+                        onGuardNotice = {
+                            showRecapPopup = false
+                            isRecapLoading = false
+                        },
+                        onOtherError = { recapResult = SummarizationResult(error = error) }
+                    )
                 },
                 onFinish = { isRecapLoading = false }
             )
@@ -3909,13 +3961,22 @@ fun EpubReaderHost(
                             )
                         },
                         onError = { error ->
-                            if (error == "INSUFFICIENT_CREDITS") {
-                                navigation.showInsufficientCreditsDialog = true
-                                showAiHubSheet = false
-                                isSummarizationLoading = false
-                            } else {
-                                summarizationResult = SummarizationResult(error = error)
-                            }
+                            handleAiRequestError(
+                                error = error,
+                                navigation = navigation,
+                                onInsufficientCredits = {
+                                    navigation.showInsufficientCreditsDialog = true
+                                    showAiHubSheet = false
+                                    isSummarizationLoading = false
+                                },
+                                onGuardNotice = {
+                                    showAiHubSheet = false
+                                    isSummarizationLoading = false
+                                },
+                                onOtherError = {
+                                    summarizationResult = SummarizationResult(error = error)
+                                }
+                            )
                         },
                         onFinish = {
                             isSummarizationLoading = false
@@ -3942,7 +4003,9 @@ fun EpubReaderHost(
         }
 
         val handleGenerateSummary: (Boolean) -> Unit = { force ->
-            if (BuildConfig.FLAVOR != "oss" && !isProUser && credits <= 0) {
+            // No upsell when the user's own key covers summaries: the
+            // request routes through BYOK and never touches credits.
+            if (BuildConfig.FLAVOR != "oss" && !isProUser && !hasSpendableBalance(credits, walletMicros) && !isByokModelReady(context, AiFeature.SUMMARIZE)) {
                 navigation.showInsufficientCreditsDialog = true
                 showAiHubSheet = false
             } else {
@@ -4028,14 +4091,23 @@ fun EpubReaderHost(
                                             )
                                         },
                                         onError = { error ->
-                                            if (error == "INSUFFICIENT_CREDITS") {
-                                                navigation.showInsufficientCreditsDialog = true
-                                                showAiHubSheet = false
-                                                isSummarizationLoading = false
-                                            } else {
-                                                summarizationResult =
-                                                    SummarizationResult(error = error)
-                                            }
+                                            handleAiRequestError(
+                                                error = error,
+                                                navigation = navigation,
+                                                onInsufficientCredits = {
+                                                    navigation.showInsufficientCreditsDialog = true
+                                                    showAiHubSheet = false
+                                                    isSummarizationLoading = false
+                                                },
+                                                onGuardNotice = {
+                                                    showAiHubSheet = false
+                                                    isSummarizationLoading = false
+                                                },
+                                                onOtherError = {
+                                                    summarizationResult =
+                                                        SummarizationResult(error = error)
+                                                }
+                                            )
                                         },
                                         onFinish = {
                                             isSummarizationLoading = false
@@ -4069,7 +4141,9 @@ fun EpubReaderHost(
         }
 
         val handleGenerateRecap: () -> Unit = {
-            if (BuildConfig.FLAVOR != "oss" && credits <= 0) {
+            // No upsell when the user's own key covers recaps: the request
+            // routes through BYOK and never touches credits.
+            if (BuildConfig.FLAVOR != "oss" && !hasSpendableBalance(credits, walletMicros) && !isByokModelReady(context, AiFeature.RECAP)) {
                 navigation.showInsufficientCreditsDialog = true
                 showAiHubSheet = false
             } else {
@@ -4409,6 +4483,8 @@ fun EpubReaderHost(
                     isDarkTheme = isDarkTheme,
                     isProUser = isProUser,
                     credits = credits,
+                    walletMicros = walletMicros,
+                    walletMigrated = walletMigrated,
                     coverImagePath = coverImagePath,
                     onSavePosition = onSavePosition,
                     onRenderModeChange = onRenderModeChange,
@@ -5369,6 +5445,8 @@ fun EpubReaderHost(
                             ttsController.stop()
                         },
                         credits = credits,
+                        walletMicros = walletMicros,
+                        walletMigrated = walletMigrated,
                         readerMotionPolicy = motionPolicy
                     )
                 }
@@ -5672,6 +5750,8 @@ fun EpubReaderHost(
                     },
                     getAuthToken = { viewModel.getAuthToken() },
                     credits = credits,
+                    walletMicros = walletMicros,
+                    walletMigrated = walletMigrated,
                     isProUser = isProUser,
                     currentChapterIndex = effectiveCurrentChapterIndex,
                     chapterTitle = chapters.getOrNull(effectiveCurrentChapterIndex)?.title ?: context.getString(R.string.chapter_number_format, effectiveCurrentChapterIndex + 1),
@@ -5831,7 +5911,7 @@ fun EpubReaderHost(
                 onSpeakerChange = { newSpeaker ->
                     ttsController.changeSpeaker(newSpeaker)
                 },
-                isTtsActive = (ttsState.isPlaying || ttsState.isLoading) && ttsState.playbackSource == "READER",
+                isTtsActive = isReaderTtsVoiceChangeLocked(ttsState.playbackSource, ttsState.sessionFinished),
                 getAuthToken = { viewModel.getAuthToken() },
                 bookTitle = epubBook.title
             )
@@ -6033,6 +6113,30 @@ fun EpubReaderHost(
                         Text(stringResource(R.string.action_cancel))
                     }
                 }
+            )
+        }
+
+        if (navigation.aiSpendNotice?.first == "DAILY_SPEND_LIMIT") {
+            val retryAfter = navigation.aiSpendNotice?.second ?: 0
+            AlertDialog(
+                onDismissRequest = { navigation.aiSpendNotice = null },
+                icon = { Icon(painterResource(id = R.drawable.crown), contentDescription = null) },
+                title = { Text(stringResource(R.string.dialog_daily_spend_limit_title)) },
+                text = {
+                    Text(
+                        stringResource(
+                            R.string.dialog_daily_spend_limit_desc,
+                            spendableDisplayText(credits, walletMicros, walletMigrated),
+                            formatSpendGuardCountdown(retryAfter)
+                        )
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { navigation.aiSpendNotice = null }) {
+                        Text(stringResource(R.string.action_ok))
+                    }
+                },
+                dismissButton = null
             )
         }
 

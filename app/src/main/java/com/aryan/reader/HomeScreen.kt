@@ -146,6 +146,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.shared.AnnotationExportFormat
+import com.aryan.reader.shared.formatMicrosUsd
 import com.aryan.reader.shared.ui.SharedAnnotationExportFormatDialog
 import com.aryan.reader.shared.ui.SharedMobileAppDestination
 import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
@@ -442,6 +443,7 @@ fun HomeScreen(
                 snackbarHost = { SnackbarHost(snackbarHostState) },
                 topBar = {
                         if (!isContextualModeActive) {
+                            val debugFpsEnabled = rememberDebugFpsEnabled()
                             DefaultTopAppBar(
                                 uiState = uiState,
                                 onRenderModeChange = viewModel::setRenderMode,
@@ -488,6 +490,13 @@ fun HomeScreen(
                                         R.string.banner_screen_capture_protection_off
                                     }
                                     viewModel.showBanner(context.getString(messageRes))
+                                },
+                                showFpsOverlayOption = BuildConfig.DEBUG,
+                                fpsOverlayEnabled = debugFpsEnabled,
+                                onFpsOverlayToggle = {
+                                    if (BuildConfig.DEBUG) {
+                                        DebugFpsStore.setEnabled(context, !debugFpsEnabled)
+                                    }
                                 }
                             )
                         } else {
@@ -705,14 +714,6 @@ fun HomeScreen(
                 )
             }
             CustomTopBanner(bannerMessage = uiState.bannerMessage)
-
-            if (BuildConfig.DEBUG) {
-                FpsMonitor(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(top = 48.dp, start = 8.dp)
-                )
-            }
         }
     }
 }
@@ -904,6 +905,9 @@ fun DefaultTopAppBar(
     onExportLogsClick: () -> Unit,
     onToggleHideReaderAi: () -> Unit,
     onScreenCaptureProtectionChange: (Boolean) -> Unit,
+    showFpsOverlayOption: Boolean = BuildConfig.DEBUG,
+    fpsOverlayEnabled: Boolean = false,
+    onFpsOverlayToggle: () -> Unit = {},
 ) {
     val context = LocalContext.current
     com.aryan.reader.shared.ui.SharedAndroidHomeTopBar(
@@ -931,6 +935,7 @@ fun DefaultTopAppBar(
             testPanelDetection = stringResource(R.string.options_test_panel_ml_detection),
             testSpeechBubbleDetection = stringResource(R.string.options_test_speech_bubble_ml_detection),
             exportLogs = stringResource(R.string.options_export_logs_last_lines, 5000),
+            fpsOverlay = stringResource(R.string.debug_show_fps_overlay),
             showDeviceManagement = stringResource(R.string.debug_show_device_management),
             clearCloudAndLocalData = stringResource(R.string.debug_clear_cloud_local_data),
         ),
@@ -944,6 +949,9 @@ fun DefaultTopAppBar(
         showReaderAiOption = !BuildConfig.IS_OFFLINE,
         showDebugActions = BuildConfig.DEBUG,
         showDebugCloudActions = BuildConfig.DEBUG && BuildConfig.FLAVOR != "oss",
+        showFpsOverlayOption = showFpsOverlayOption && BuildConfig.DEBUG,
+        fpsOverlayEnabled = fpsOverlayEnabled,
+        onFpsOverlayToggle = onFpsOverlayToggle,
         onDrawer = onDrawerClick,
         onSettings = onSettingsClick,
         onAppTheme = onAppThemeClick,
@@ -1022,7 +1030,7 @@ internal fun AppDrawerContent(
                                 Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Default.FormatListNumbered, contentDescription = stringResource(R.string.credits_tab), modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onTertiaryContainer)
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text(safeStringResource(R.string.credits_count, uiState.credits), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onTertiaryContainer)
+                                    Text(safeStringResource(R.string.wallet_balance, formatMicrosUsd(uiState.walletMicros)), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onTertiaryContainer)
                                 }
                             }
                         }
@@ -1163,7 +1171,7 @@ internal fun AppDrawerContent(
                 )
             }
 
-            if (showAiSettings && isOss && !BuildConfig.IS_OFFLINE) {
+            if (showAiSettings && !BuildConfig.IS_OFFLINE) {
                 NavigationDrawerItem(
                     icon = { Icon(painterResource(id = R.drawable.ai), contentDescription = null) },
                     label = { Text(stringResource(R.string.ai_settings_title)) },
@@ -1383,33 +1391,11 @@ fun ClearAllDataConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit)
         })
 }
 
+@Deprecated("Use DebugFpsOverlay (global, Choreographer-based). Kept for binary compat only.")
 @Composable
 fun FpsMonitor(modifier: Modifier = Modifier) {
-    var fps by remember { mutableLongStateOf(0L) }
-    var lastFrameTime by remember { mutableLongStateOf(0L) }
-    var frameCount by remember { mutableLongStateOf(0L) }
-
-    LaunchedEffect(Unit) {
-        while (true) {
-            withFrameNanos { currentFrameTime ->
-                frameCount++
-                if (currentFrameTime - lastFrameTime >= 1_000_000_000L) {
-                    fps = frameCount
-                    frameCount = 0
-                    lastFrameTime = currentFrameTime
-                }
-            }
-        }
-    }
-
-    Text(
-        text = stringResource(R.string.debug_fps, fps),
-        color = Color.Green,
-        style = MaterialTheme.typography.labelLarge,
-        modifier = modifier
-            .background(Color.Black.copy(alpha = 0.5f))
-            .padding(4.dp)
-    )
+    if (!BuildConfig.DEBUG) return
+    DebugFpsOverlay(modifier = modifier)
 }
 
 @Composable
@@ -1709,15 +1695,17 @@ fun AppThemeBottomSheet(
 
             Text(stringResource(R.string.app_theme_color_scheme), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.height(8.dp))
-            val presets = listOf(
-                R.string.app_theme_preset_ocean to Color(0xFF00668B),
-                R.string.app_theme_preset_mint to Color(0xFF006C4C),
-                R.string.app_theme_preset_rose to Color(0xFF9C4146),
-                R.string.app_theme_preset_sepia to Color(0xFF705D49),
-                R.string.app_theme_preset_amethyst to Color(0xFF9B59B6),
-                R.string.app_theme_preset_amber to Color(0xFFFFC107),
-                R.string.app_theme_preset_sapphire to Color(0xFF0F52BA)
-            )
+            val presets = remember {
+                listOf(
+                    R.string.app_theme_preset_ocean to Color(0xFF00668B),
+                    R.string.app_theme_preset_mint to Color(0xFF006C4C),
+                    R.string.app_theme_preset_rose to Color(0xFF9C4146),
+                    R.string.app_theme_preset_sepia to Color(0xFF705D49),
+                    R.string.app_theme_preset_amethyst to Color(0xFF9B59B6),
+                    R.string.app_theme_preset_amber to Color(0xFFFFC107),
+                    R.string.app_theme_preset_sapphire to Color(0xFF0F52BA)
+                )
+            }
 
             LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 item {
@@ -1728,7 +1716,7 @@ fun AppThemeBottomSheet(
                         onClick = { onSeedColorChanged(null) }
                     )
                 }
-                items(presets.size) { i ->
+                items(presets.size, key = { it }) { i ->
                     val (labelRes, color) = presets[i]
                     ThemeSwatch(
                         color = color,
@@ -1743,7 +1731,7 @@ fun AppThemeBottomSheet(
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.theme_my_themes), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                IconButton(onClick = { showCreateDialog = true }, modifier = Modifier.size(24.dp)) {
+                IconButton(onClick = { showCreateDialog = true }) {
                     Icon(Icons.Default.Add, contentDescription = stringResource(R.string.content_desc_add_custom_theme), tint = MaterialTheme.colorScheme.primary)
                 }
             }
@@ -1753,7 +1741,7 @@ fun AppThemeBottomSheet(
                 Text(stringResource(R.string.theme_no_custom), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(uiState.customAppThemes) { theme ->
+                    items(uiState.customAppThemes, key = { it.id }) { theme ->
                         ThemeSwatch(
                             color = theme.seedColor,
                             isSelected = uiState.appSeedColor == theme.seedColor,
@@ -1803,13 +1791,16 @@ fun ThemeSwatch(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(text = label, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 64.dp))
             if (onDelete != null) {
-                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_delete), modifier = Modifier.size(16.dp).clickable { onDelete() }, tint = MaterialTheme.colorScheme.error)
+                // 48dp hit target (was a 16dp clickable icon): easier taps,
+                // default ripple retained. The row grows to fit the button.
+                IconButton(onClick = onDelete, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_delete), modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
+                }
             }
         }
     }
 }
 
-@SuppressLint("UnrememberedMutableState")
 @Composable
 fun CreateAppThemeDialog(
     initialColor: Color = Color(0xFF6750A4),
@@ -1825,9 +1816,11 @@ fun CreateAppThemeDialog(
         hsv
     }
 
-    var hue by androidx.compose.runtime.mutableFloatStateOf(initialHsv[0])
-    var saturation by androidx.compose.runtime.mutableFloatStateOf(initialHsv[1])
-    var value by androidx.compose.runtime.mutableFloatStateOf(initialHsv[2])
+    // Remembered: without this any recomposition (e.g. typing the theme
+    // name) reset the sliders to their initial positions.
+    var hue by remember(initialHsv) { androidx.compose.runtime.mutableFloatStateOf(initialHsv[0]) }
+    var saturation by remember(initialHsv) { androidx.compose.runtime.mutableFloatStateOf(initialHsv[1]) }
+    var value by remember(initialHsv) { androidx.compose.runtime.mutableFloatStateOf(initialHsv[2]) }
 
     val currentColor by remember {
         androidx.compose.runtime.derivedStateOf {

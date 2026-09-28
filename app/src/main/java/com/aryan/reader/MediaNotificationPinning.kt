@@ -70,8 +70,9 @@ internal fun pinPostedPlaybackNotification(
  * the pinning path.
  *
  * The artwork decode is bounded by [maxBitmapSize] (notification icons are small) and results are
- * cached per URI, so the synchronous cost is paid once per cover. All methods run on the session's
- * application looper (main thread).
+ * cached per URI, so the synchronous cost is paid once per cover. All instance methods still run
+ * on the session's application looper (main thread); use [prewarm] from playback start (any
+ * thread) to move the first read+decode onto IO before Media3 asks for it.
  */
 @UnstableApi
 internal class MediaNotificationBitmapLoader(
@@ -89,10 +90,17 @@ internal class MediaNotificationBitmapLoader(
         load { decodeScaled(ByteArrayInputStream(data)) }
 
     override fun loadBitmap(uri: Uri): ListenableFuture<Bitmap> {
+        synchronized(sharedCache) { sharedCache[uri.toString()] }?.let { return Futures.immediateFuture(it) }
         cache[uri.toString()]?.let { return Futures.immediateFuture(it) }
         return load {
             val bytes = readBytes(uri)
-            decodeScaled(ByteArrayInputStream(bytes)).also { bitmap -> cache[uri.toString()] = bitmap }
+            decodeScaled(ByteArrayInputStream(bytes)).also { bitmap ->
+                cache[uri.toString()] = bitmap
+                synchronized(sharedCache) {
+                    sharedCache[uri.toString()] = bitmap
+                    trimSharedCacheLocked()
+                }
+            }
         }
     }
 
@@ -143,6 +151,77 @@ internal class MediaNotificationBitmapLoader(
     companion object {
         private const val DEFAULT_MAX_BITMAP_SIZE = 512
         private const val CACHE_SIZE = 4
+        private const val SHARED_CACHE_SIZE = 8
         private const val BUFFER_SIZE_BYTES = 16_384
+
+        /**
+         * Process-wide prewarmed artwork, shared by the TTS + audiobook loader
+         * instances. Written from the IO prewarm path and read on Main;
+         * always access under its own monitor.
+         */
+        private val sharedCache = LinkedHashMap<String, Bitmap>(8, 0.75f, true)
+        private val prewarmExecutor: java.util.concurrent.ExecutorService =
+            java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+                Thread(runnable, "media-artwork-prewarm").apply { isDaemon = true }
+            }
+
+        private fun trimSharedCacheLocked() {
+            val iterator = sharedCache.entries.iterator()
+            while (sharedCache.size > SHARED_CACHE_SIZE && iterator.hasNext()) {
+                iterator.next()
+                iterator.remove()
+            }
+        }
+
+        /**
+         * Decode [uri] on IO and cache it before Media3 requests it, so the
+         * synchronous [loadBitmap] miss (content-resolver read + double decode
+         * on Main) usually becomes a cache hit. Safe to call from any thread;
+         * failures only log. No behavior change when the artwork is already
+         * cached or the prewarm loses the race — the sync path still serves.
+         */
+        fun prewarm(context: Context, uri: Uri?) {
+            if (uri == null) return
+            val key = uri.toString()
+            synchronized(sharedCache) { if (sharedCache.containsKey(key)) return }
+            val appContext = context.applicationContext
+            prewarmExecutor.execute {
+                runCatching {
+                    val bytes = appContext.contentResolver.openInputStream(uri)?.use { input ->
+                        val output = ByteArrayOutputStream()
+                        input.copyTo(output, BUFFER_SIZE_BYTES)
+                        output.toByteArray()
+                    } ?: return@execute
+                    val bitmap = decodeScaledStatic(ByteArrayInputStream(bytes), DEFAULT_MAX_BITMAP_SIZE)
+                    synchronized(sharedCache) {
+                        if (!sharedCache.containsKey(key)) {
+                            sharedCache[key] = bitmap
+                            trimSharedCacheLocked()
+                        } else {
+                            bitmap.recycle()
+                        }
+                    }
+                }.onFailure { error ->
+                    Timber.w(error, "Failed to prewarm media notification artwork")
+                }
+            }
+        }
+
+        private fun decodeScaledStatic(input: ByteArrayInputStream, maxSize: Int): Bitmap {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeStream(input, /* outPadding = */ null, bounds)
+            var sampleSize = 1
+            if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+                while (bounds.outWidth / (sampleSize * 2) >= maxSize &&
+                    bounds.outHeight / (sampleSize * 2) >= maxSize
+                ) {
+                    sampleSize *= 2
+                }
+            }
+            val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            input.reset()
+            return BitmapFactory.decodeStream(input, /* outPadding = */ null, options)
+                ?: error("Unable to decode artwork bitmap")
+        }
     }
 }

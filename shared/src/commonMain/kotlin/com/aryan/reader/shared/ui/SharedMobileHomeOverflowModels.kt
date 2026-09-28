@@ -23,6 +23,7 @@ enum class SharedMobileHomeOverflowAction {
     TEST_PANEL_DETECTION,
     TEST_SPEECH_BUBBLE_DETECTION,
     EXPORT_LOGS,
+    SHOW_FPS_OVERLAY,
     DEVICE_MANAGEMENT,
     CLEAR_CLOUD_LOCAL_DATA,
 }
@@ -44,6 +45,7 @@ data class SharedMobileHomeOverflowCapabilities(
     val clearReflowCache: Boolean = false,
     val testMlDiagnostics: Boolean = false,
     val exportLogs: Boolean = false,
+    val fpsOverlay: Boolean = false,
     val deviceManagement: Boolean = false,
     val clearCloudAndLocalData: Boolean = false,
 )
@@ -54,6 +56,7 @@ data class SharedMobileHomeOverflowState(
     val strictFileFilterEnabled: Boolean,
     val usePdfFileNameAsDisplayName: Boolean,
     val hideReaderAi: Boolean,
+    val fpsOverlayEnabled: Boolean = false,
 )
 
 data class SharedMobileHomeOverflowItem(
@@ -163,6 +166,15 @@ fun sharedMobileHomeOverflowItems(
             SharedMobileHomeOverflowItem(
                 action = SharedMobileHomeOverflowAction.EXPORT_LOGS,
                 section = SharedMobileHomeOverflowSection.DEBUG,
+            )
+        )
+    }
+    if (capabilities.fpsOverlay) {
+        add(
+            SharedMobileHomeOverflowItem(
+                action = SharedMobileHomeOverflowAction.SHOW_FPS_OVERLAY,
+                section = SharedMobileHomeOverflowSection.DEBUG,
+                checked = state.fpsOverlayEnabled,
             )
         )
     }

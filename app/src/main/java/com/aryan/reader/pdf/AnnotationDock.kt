@@ -76,7 +76,9 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.R
+import com.aryan.reader.shared.ui.SharedPdfSideWheelDock
 import com.aryan.reader.shared.ui.sharedPdfSelectionRingRadius
+import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockSide
 
 @Composable
 fun AnnotationDock(
@@ -96,9 +98,11 @@ fun AnnotationDock(
     isMinimized: Boolean,
     onToggleMinimize: () -> Unit,
     isStylusOnlyMode: Boolean,
-    onToggleStylusOnlyMode: () -> Unit
+    onToggleStylusOnlyMode: () -> Unit,
+    dockLocation: DockLocation = DockLocation.BOTTOM,
 ) {
     val showFullDock = isSticky || !isMinimized
+    val isVertical = isSharedPdfAnnotationDockSide(dockLocation)
     val scrollState = rememberScrollState()
 
     val dockHeight = 56.dp
@@ -110,6 +114,33 @@ fun AnnotationDock(
     if (showFullDock) {
         val shape = if (isSticky) RectangleShape else RoundedCornerShape(percent = 50)
 
+        if (isVertical) {
+            // Side edges render as a compact scrollable semi-circle wheel
+            // (no Surface: the wheel draws its own half-disc background).
+            Box(modifier = modifier) {
+                AnnotationDockWheelContent(
+                    selectedTool = selectedTool,
+                    activePenColor = activePenColor,
+                    activeHighlighterColor = activeHighlighterColor,
+                    onToolClick = onToolClick,
+                    onUndo = onUndo,
+                    onRedo = onRedo,
+                    onClose = onClose,
+                    canUndo = canUndo,
+                    canRedo = canRedo,
+                    lastPenTool = lastPenTool,
+                    lastHighlighterTool = lastHighlighterTool,
+                    isMinimized = isMinimized,
+                    onToggleMinimize = onToggleMinimize,
+                    isStylusOnlyMode = isStylusOnlyMode,
+                    onToggleStylusOnlyMode = onToggleStylusOnlyMode,
+                    buttonSize = buttonSize,
+                    iconSize = iconSize,
+                    dockLocation = dockLocation,
+                    spinEnabled = isSticky,
+                )
+            }
+        } else {
         Surface(
             color = Color(0xFF1E1E1E),
             shape = shape,
@@ -305,6 +336,7 @@ fun AnnotationDock(
                     )
                 }
             }
+            }
         }
     } else {
         // Minimized Floating State (Small Circle)
@@ -324,6 +356,208 @@ fun AnnotationDock(
                     tint = Color.White,
                     modifier = Modifier.size(20.dp)
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AnnotationDockWheelContent(
+    selectedTool: InkType,
+    activePenColor: Color,
+    activeHighlighterColor: Color,
+    onToolClick: (InkType) -> Unit,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
+    onClose: () -> Unit,
+    canUndo: Boolean,
+    canRedo: Boolean,
+    lastPenTool: InkType,
+    lastHighlighterTool: InkType,
+    isMinimized: Boolean,
+    onToggleMinimize: () -> Unit,
+    isStylusOnlyMode: Boolean,
+    onToggleStylusOnlyMode: () -> Unit,
+    buttonSize: androidx.compose.ui.unit.Dp,
+    iconSize: androidx.compose.ui.unit.Dp,
+    dockLocation: DockLocation,
+    spinEnabled: Boolean,
+) {
+    // Arc order matches the horizontal bar dock: chrome, tool groups,
+    // history. The stylus toggle hides while minimized (same as the bar).
+    val itemCount = if (isMinimized) 9 else 10
+    // Unkeyed so the spin position survives edge flips (e.g. previewing the
+    // right edge mid-drag) and minimize toggles.
+    var wheelRotation by remember { mutableStateOf(0f) }
+    SharedPdfSideWheelDock(
+        dockLocation = dockLocation,
+        backgroundColor = Color(0xFF1E1E1E),
+        rotationDeg = wheelRotation,
+        onRotationChange = { wheelRotation = it },
+        itemCount = itemCount,
+        spinEnabled = spinEnabled,
+    ) { index ->
+        // Without the stylus cell later indices shift up by one.
+        val shifted = if (isMinimized && index >= 2) index + 1 else index
+        // Minimized dims the tool group to 30% like the bar dock; chrome
+        // (close / minimize / undo / redo) stays fully visible.
+        val dimmed = isMinimized && shifted in 2..7
+        Box(
+            modifier = Modifier.alpha(if (dimmed) 0.3f else 1f),
+            contentAlignment = Alignment.Center
+        ) {
+            when (shifted) {
+                0 -> Box(
+                    modifier = Modifier
+                        .size(buttonSize)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.1f))
+                        .clickable(onClick = onClose),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = stringResource(R.string.content_desc_close_edit_mode),
+                        tint = Color.White,
+                        modifier = Modifier.size(iconSize)
+                    )
+                }
+                1 -> {
+                    val visIcon = if (isMinimized) Icons.Default.VisibilityOff else Icons.Default.Visibility
+                    Box(
+                        modifier = Modifier
+                            .size(buttonSize)
+                            .clip(CircleShape)
+                            .clickable(onClick = onToggleMinimize),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = visIcon,
+                            contentDescription = stringResource(R.string.content_desc_toggle_visibility),
+                            tint = Color.White,
+                            modifier = Modifier.size(iconSize)
+                        )
+                    }
+                }
+                2 -> {
+                    val iconVector = if (isStylusOnlyMode) Icons.Default.DoNotTouch else Icons.Default.TouchApp
+                    val iconTint = if (isStylusOnlyMode) Color(0xFFE57373) else Color.White
+                    Box(
+                        modifier = Modifier
+                            .size(buttonSize)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = if (isStylusOnlyMode) 0.15f else 0f))
+                            .clickable(onClick = onToggleStylusOnlyMode),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = iconVector,
+                            contentDescription = stringResource(R.string.content_desc_stylus_only_mode),
+                            tint = iconTint,
+                            modifier = Modifier.size(iconSize)
+                        )
+                    }
+                }
+                3 -> {
+                    val isSelectActive = !isMinimized && selectedTool == InkType.SELECT
+                    DockIcon(
+                        iconRes = R.drawable.lasso_select,
+                        isActive = isSelectActive,
+                        tintColor = if (isMinimized) Color.Gray else Color.White,
+                        description = stringResource(R.string.content_desc_select_mode),
+                        size = buttonSize,
+                        iconSize = iconSize,
+                        onClick = { if (!isMinimized) onToolClick(InkType.SELECT) }
+                    )
+                }
+                4 -> {
+                    val isPenActive = !isMinimized && (selectedTool == InkType.PEN ||
+                            selectedTool == InkType.FOUNTAIN_PEN ||
+                            selectedTool == InkType.PENCIL)
+                    DockIcon(
+                        iconRes = R.drawable.pen,
+                        isActive = isPenActive,
+                        tintColor = if (isMinimized) Color.Gray else activePenColor,
+                        description = stringResource(R.string.content_desc_pen),
+                        size = buttonSize,
+                        iconSize = iconSize,
+                        onClick = {
+                            if (!isMinimized) {
+                                if (selectedTool != InkType.PEN && selectedTool != InkType.FOUNTAIN_PEN && selectedTool != InkType.PENCIL) {
+                                    onToolClick(lastPenTool)
+                                } else {
+                                    onToolClick(selectedTool)
+                                }
+                            }
+                        }
+                    )
+                }
+                5 -> {
+                    val isHighlighterActive = !isMinimized && (selectedTool == InkType.HIGHLIGHTER || selectedTool == InkType.HIGHLIGHTER_ROUND)
+                    DockIcon(
+                        iconRes = R.drawable.marker,
+                        isActive = isHighlighterActive,
+                        tintColor = if (isMinimized) Color.Gray else activeHighlighterColor.copy(alpha = 1f),
+                        description = stringResource(R.string.content_desc_highlighter),
+                        size = buttonSize,
+                        iconSize = iconSize,
+                        onClick = {
+                            if (!isMinimized) {
+                                if (selectedTool != InkType.HIGHLIGHTER && selectedTool != InkType.HIGHLIGHTER_ROUND) {
+                                    onToolClick(lastHighlighterTool)
+                                } else {
+                                    onToolClick(selectedTool)
+                                }
+                            }
+                        }
+                    )
+                }
+                6 -> DockIcon(
+                    iconRes = R.drawable.keyboard,
+                    isActive = !isMinimized && selectedTool == InkType.TEXT,
+                    tintColor = if (isMinimized) Color.Gray else Color.White,
+                    description = stringResource(R.string.content_desc_text),
+                    size = buttonSize,
+                    iconSize = iconSize,
+                    onClick = { if (!isMinimized) onToolClick(InkType.TEXT) }
+                )
+                7 -> DockIcon(
+                    iconRes = R.drawable.eraser,
+                    isActive = !isMinimized && selectedTool == InkType.ERASER,
+                    tintColor = if (isMinimized) Color.Gray else Color.White,
+                    description = stringResource(R.string.content_desc_eraser),
+                    size = buttonSize,
+                    iconSize = iconSize,
+                    onClick = { if (!isMinimized) onToolClick(InkType.ERASER) }
+                )
+                8 -> Box(
+                    modifier = Modifier
+                        .size(buttonSize)
+                        .clip(CircleShape)
+                        .clickable(enabled = canUndo && !isMinimized, onClick = onUndo),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Undo,
+                        contentDescription = stringResource(R.string.content_desc_undo),
+                        tint = if (canUndo && !isMinimized) Color.White else Color.White.copy(alpha = 0.3f),
+                        modifier = Modifier.size(iconSize)
+                    )
+                }
+                else -> Box(
+                    modifier = Modifier
+                        .size(buttonSize)
+                        .clip(CircleShape)
+                        .clickable(enabled = canRedo && !isMinimized, onClick = onRedo),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Redo,
+                        contentDescription = stringResource(R.string.content_desc_redo),
+                        tint = if (canRedo && !isMinimized) Color.White else Color.White.copy(alpha = 0.3f),
+                        modifier = Modifier.size(iconSize)
+                    )
+                }
             }
         }
     }

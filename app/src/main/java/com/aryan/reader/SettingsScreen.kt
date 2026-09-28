@@ -78,6 +78,7 @@ import com.aryan.reader.shared.toReaderSettings
 import com.aryan.reader.shared.ui.SharedSettingsHub
 import com.aryan.reader.shared.ui.LocalSharedStringResolver
 import com.aryan.reader.shared.ui.SharedStringResolver
+import com.aryan.reader.tts.isReaderTtsVoiceChangeLocked
 import com.aryan.reader.tts.loadTtsMode
 import kotlinx.coroutines.launch
 import kotlin.math.max
@@ -280,13 +281,19 @@ fun SettingsScreen(
         customFonts.toSharedCustomFontItems()
     }
 
-    val settingsModel = sharedSettingsHubModel(
-        androidSettingsHubInput(
-            uiState = uiState,
-            hideReaderAi = hideReaderAi
+    // Model build allocates section/item lists; remember on its real inputs
+    // so unrelated uiState emissions (progress, sync ticks) skip it.
+    val settingsModel = remember(uiState, hideReaderAi) {
+        sharedSettingsHubModel(
+            androidSettingsHubInput(
+                uiState = uiState,
+                hideReaderAi = hideReaderAi
+            )
         )
-    )
-    val settingsPage = settingsModel.page(settingsDestination)
+    }
+    val settingsPage = remember(settingsModel, settingsDestination) {
+        settingsModel.page(settingsDestination)
+    }
 
     val cloudFolderOptions = remember(
         uiState.syncedFolders,
@@ -604,7 +611,7 @@ fun SettingsScreen(
             },
             currentSpeakerId = ttsState.speakerId,
             onSpeakerChange = viewModel.ttsController::changeSpeaker,
-            isTtsActive = ttsState.isPlaying,
+            isTtsActive = isReaderTtsVoiceChangeLocked(ttsState.playbackSource, ttsState.sessionFinished),
             getAuthToken = { viewModel.getAuthToken() },
             bookTitle = context.getString(R.string.reader_defaults)
         )

@@ -104,6 +104,206 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
                 }
               }
               window.readerHighlightShiftLog = readerHighlightShiftLog;
+              // Dedicated selection-shift diagnostics (common tag SEL_SHIFT).
+              // Same delivery contract as HIGHLIGHT_SHIFT: always posted to
+              // native AND console.log so a plain "reproduce + export logs"
+              // captures them without enabling diagnostic flags.
+              function readerSelectionShiftRound(value) {
+                var parsed = Math.round(Number(value));
+                return Number.isFinite(parsed) ? parsed : 0;
+              }
+              function readerSelectionShiftNodeLabel(node) {
+                if (!node) return 'null';
+                if (node.nodeType === 3) {
+                  var parent = node.parentElement;
+                  var tag = parent && parent.tagName ? parent.tagName.toLowerCase() : '?';
+                  return tag + ':text(len=' + (node.nodeValue || '').length + ')';
+                }
+                var el = node.tagName ? node.tagName.toLowerCase() : '?';
+                var id = node.getAttribute && node.getAttribute('id');
+                return el + (id ? '#' + id : '');
+              }
+              function readerSelectionShiftRects(range) {
+                if (!range || !range.getClientRects) return 'none';
+                var rects = range.getClientRects();
+                var parts = [];
+                for (var i = 0; i < rects.length && i < 8; i++) {
+                  var r = rects[i];
+                  parts.push(readerSelectionShiftRound(r.left) + ',' + readerSelectionShiftRound(r.top) + ',' + readerSelectionShiftRound(r.right) + ',' + readerSelectionShiftRound(r.bottom));
+                }
+                return rects.length + '[' + parts.join(';') + ']';
+              }
+              // One-line snapshot of the live selection: text head, range
+              // endpoints, painted rects, scroll, viewport and visual scale.
+              // Comparing the touch point (touchend emission) against these
+              // rects shows whether the RANGE is displaced (selection bug) as
+              // opposed to only its painting.
+              //
+              // Round 4 (rects match the webfont's left metrics exactly while
+              // glyphs paint justified): capture the RANGE's block structure
+              // (leading tags? images? is the text node first?) plus the
+              // BLOCK's own line boxes — full-width lines with left-metric
+              // word rects would prove engine-level divergence.
+              function readerSelectionShiftStructure(range) {
+                if (!range) return 'norange';
+                var block = range.commonAncestorContainer;
+                if (block && block.nodeType === 3) block = block.parentElement;
+                if (!block || block.nodeType !== 1) return 'noblock';
+                var parts = [];
+                try {
+                  var kids = block.childNodes;
+                  var kinds = [];
+                  for (var i = 0; i < kids.length && i < 8; i++) {
+                    var k = kids[i];
+                    kinds.push(k.nodeType === 3 ? ('text(len=' + (k.nodeValue || '').length + ')') : (k.tagName ? k.tagName.toLowerCase() : '?'));
+                  }
+                  parts.push('kids[' + kids.length + ']=' + kinds.join(','));
+                  var htmlHead = (block.innerHTML || '').substring(0, 160).replace(/\s+/g, ' ');
+                  parts.push('html="' + htmlHead.replace(/"/g, "'") + '"');
+                  var chapter = block.closest ? (block.closest('.chapter') || document) : document;
+                  var imgs = chapter.querySelectorAll ? chapter.querySelectorAll('img,svg') : [];
+                  var imgParts = [];
+                  for (var m = 0; m < imgs.length && m < 4; m++) {
+                    var ir = imgs[m].getBoundingClientRect();
+                    var ics = null;
+                    try { ics = window.getComputedStyle(imgs[m]); } catch (error) {}
+                    imgParts.push((imgs[m].tagName || '?').toLowerCase() + '@' +
+                      readerSelectionShiftRound(ir.left) + ',' + readerSelectionShiftRound(ir.top) + ',' +
+                      readerSelectionShiftRound(ir.right) + ',' + readerSelectionShiftRound(ir.bottom) +
+                      ' float=' + (ics ? ics.getPropertyValue('float') : '?'));
+                  }
+                  parts.push('imgs=' + imgs.length + '[' + imgParts.join(';') + ']');
+                  var blockRange = document.createRange();
+                  blockRange.selectNodeContents(block);
+                  var lineRects = blockRange.getClientRects();
+                  var lineParts = [];
+                  for (var q = 0; q < lineRects.length && q < 30; q++) {
+                    var lr = lineRects[q];
+                    lineParts.push(readerSelectionShiftRound(lr.left) + '-' + readerSelectionShiftRound(lr.right));
+                  }
+                  parts.push('lines=' + lineRects.length + '[' + lineParts.join(';') + ']');
+                  if (blockRange.detach) blockRange.detach();
+                } catch (error) {
+                  parts.push('err=' + error);
+                }
+                return parts.join(' ');
+              }
+              function readerSelectionShiftComputed(block) {
+                var cs = null;
+                try { cs = window.getComputedStyle(block); } catch (error) { return 'none'; }
+                if (!cs) return 'none';
+                function prop(name) {
+                  try {
+                    var value = cs.getPropertyValue(name);
+                    return value === null || value === undefined ? '?' : String(value);
+                  } catch (error) { return '?'; }
+                }
+                return 'tag=' + (block.tagName ? block.tagName.toLowerCase() : '?') +
+                  ' ta=' + prop('text-align') +
+                  ' tal=' + prop('text-align-last') +
+                  ' tj=' + prop('text-justify') +
+                  ' ls=' + prop('letter-spacing') +
+                  ' ws=' + prop('word-spacing') +
+                  ' hy=' + prop('hyphens') + '/' + prop('-webkit-hyphens') +
+                  ' ff=' + prop('font-family').substring(0, 48) +
+                  ' fs=' + prop('font-size') +
+                  ' ti=' + prop('text-indent') +
+                  ' tt=' + prop('text-transform') +
+                  ' tr=' + prop('text-rendering') +
+                  ' fk=' + prop('font-kerning');
+              }
+              function readerSelectionShiftDuplicates(headWord) {
+                var word = String(headWord || '').substring(0, 24);
+                if (!word) return 'noword';
+                var root = document.querySelector('.reader-content') || document.body;
+                var walker = null;
+                try { walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); } catch (error) { return 'nowalker'; }
+                var hits = [];
+                var scanned = 0;
+                var node = null;
+                try {
+                  while ((node = walker.nextNode())) {
+                    scanned++;
+                    if (scanned > 4000) break;
+                    var value = node.nodeValue || '';
+                    if (value.indexOf(word) < 0) continue;
+                    var r = document.createRange();
+                    r.setStart(node, 0);
+                    r.setEnd(node, value.length);
+                    var rects = r.getClientRects();
+                    var first = rects.length > 0 ? rects[0] : null;
+                    hits.push(readerSelectionShiftNodeLabel(node) + '@' +
+                      readerSelectionShiftRound(first ? first.left : -1) + ',' +
+                      readerSelectionShiftRound(first ? first.top : -1));
+                    if (r.detach) r.detach();
+                    if (hits.length >= 6) break;
+                  }
+                } catch (error) {}
+                return 'scanned=' + scanned + ' copies=' + hits.length + '[' + hits.join(';') + ']';
+              }
+              function readerSelectionShiftHitTest(centerX, centerY) {
+                var pointRange = null;
+                try {
+                  if (document.caretRangeFromPoint) {
+                    pointRange = document.caretRangeFromPoint(centerX, centerY);
+                  }
+                } catch (error) {}
+                if (!pointRange) return 'none';
+                var el = null;
+                try { el = document.elementFromPoint(centerX, centerY); } catch (error) {}
+                return 'node=' + readerSelectionShiftNodeLabel(pointRange.startContainer) + '@' + pointRange.startOffset +
+                  ' el=' + (el && el.tagName ? el.tagName.toLowerCase() : '?');
+              }
+              function readerSelectionShiftSummary() {
+                var selection = window.getSelection && window.getSelection();
+                if (!selection || selection.rangeCount === 0) return 'empty';
+                var range = null;
+                try { range = selection.getRangeAt(0); } catch (error) { return 'norange'; }
+                if (!range) return 'norange';
+                var text = '';
+                try { text = selection.toString(); } catch (error) {}
+                var vv = window.visualViewport;
+                var headWord = text.trim().split(/\s+/)[0] || '';
+                var firstRect = null;
+                try {
+                  var allRects = range.getClientRects();
+                  if (allRects.length > 0) firstRect = allRects[0];
+                } catch (error) {}
+                var hit = 'norect';
+                if (firstRect) {
+                  hit = readerSelectionShiftHitTest(
+                    firstRect.left + firstRect.width / 2,
+                    firstRect.top + firstRect.height / 2
+                  );
+                }
+                var blockEl = range.commonAncestorContainer;
+                if (blockEl && blockEl.nodeType === 3) blockEl = blockEl.parentElement;
+                if (blockEl && blockEl.nodeType !== 1) {
+                  blockEl = blockEl && blockEl.parentElement ? blockEl.parentElement : null;
+                }
+                return 'textLen=' + text.length +
+                  ' head="' + text.substring(0, 40).replace(/"/g, "'") + '"' +
+                  ' start=' + readerSelectionShiftNodeLabel(range.startContainer) + '@' + range.startOffset +
+                  ' end=' + readerSelectionShiftNodeLabel(range.endContainer) + '@' + range.endOffset +
+                  ' collapsed=' + (!!range.collapsed) +
+                  ' rects=' + readerSelectionShiftRects(range) +
+                  ' dups=' + readerSelectionShiftDuplicates(headWord) +
+                  ' hittest={' + hit + '}' +
+                  ' css={' + readerSelectionShiftComputed(blockEl) + '}' +
+                  ' scroll=' + readerSelectionShiftRound(window.scrollX) + ',' + readerSelectionShiftRound(window.scrollY) +
+                  ' inner=' + readerSelectionShiftRound(window.innerWidth) + 'x' + readerSelectionShiftRound(window.innerHeight) +
+                  ' vvScale=' + (vv && vv.scale ? vv.scale : 1) +
+                  ' dpr=' + (window.devicePixelRatio || 0);
+              }
+              window.readerSelectionShiftSummary = readerSelectionShiftSummary;
+              function readerSelectionShiftLog(stage, details) {
+                var line = 'SEL_SHIFT ' + stage + ' ' + (details || '');
+                try { console.log(line); } catch (error) {}
+                if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
+                  try { window.kmpJsBridge.callNative('readerSelectionShiftLog', JSON.stringify({ message: line })); } catch (error) {}
+                }
+              }
+              window.readerSelectionShiftLog = readerSelectionShiftLog;
               function readerHighlightShiftRound(value) {
                 var parsed = Number(value);
                 if (!Number.isFinite(parsed)) return 0;

@@ -29,7 +29,9 @@ import com.aryan.reader.shared.normalizeReaderHref
 import com.aryan.reader.shared.LocalTtsInterruptionAction
 import com.aryan.reader.shared.LocalTtsInterruptionEvent
 import com.aryan.reader.shared.LocalTtsInterruptionState
+import com.aryan.reader.shared.appScheme
 import com.aryan.reader.shared.externalLookupUrl
+import com.aryan.reader.shared.readerExternalLookupAppUrl
 import com.aryan.reader.shared.ios.loadIosEpubBook
 import com.aryan.reader.shared.ios.IosEpubResourceStore
 import com.aryan.reader.shared.ios.IosTtsAudioInterruption
@@ -85,10 +87,12 @@ import platform.UIKit.UIActivityViewController
 import platform.UIKit.UIModalPresentationFullScreen
 import platform.UIKit.UIModalPresentationPageSheet
 import platform.UIKit.UIReferenceLibraryViewController
+import platform.SafariServices.SFSafariViewController
 import platform.UIKit.UIWindow
 import platform.UIKit.UIWindowLevelNormal
 import platform.UIKit.UIWindowScene
 import platform.UIKit.UIViewController
+import platform.UIKit.popoverPresentationController
 import platform.WebKit.WKScriptMessage
 import platform.WebKit.WKScriptMessageHandlerProtocol
 import platform.WebKit.WKNavigation
@@ -233,10 +237,11 @@ internal actual val sharedMobileEpubPageInfoMatchesReaderBackground: Boolean = t
 internal object IosReaderLookupServices {
     // Startup defaults; the host overrides these from NSUserDefaults in
     // loadIosReaderLookupServices. Android parity: dictionary defaults to the
-    // in-app Smart AI, translate/search to the app chooser / Google.
+    // in-app Smart AI; translate/search default to in-app Safari, which always
+    // works, instead of the app chooser / an external browser.
     var dictionary: ReaderExternalLookupService = ReaderExternalLookupService.AI
-    var translate: ReaderExternalLookupService = ReaderExternalLookupService.ANY_APP
-    var search: ReaderExternalLookupService = ReaderExternalLookupService.ANY_APP
+    var translate: ReaderExternalLookupService = ReaderExternalLookupService.SAFARI
+    var search: ReaderExternalLookupService = ReaderExternalLookupService.SAFARI
 }
 
 /**
@@ -292,13 +297,40 @@ internal actual fun openSharedMobileEpubLookup(
     when (service) {
         ReaderExternalLookupService.ANY_APP -> return openSharedMobileEpubLookupViaAppChooser(action, query)
         ReaderExternalLookupService.SYSTEM -> {
-            val presenter = iosLookupPresenter() ?: return false
-            presenter.presentViewController(
-                UIReferenceLibraryViewController(term = query),
-                animated = true,
-                completion = null
+            // Apple's dictionary panel only defines single words from
+            // downloaded dictionaries (Settings > General > Dictionary).
+            // Phrases and missing dictionaries used to show a dead panel;
+            // route those to the Safari define search instead so Define
+            // always lands somewhere useful.
+            val singleWord = query.split(Regex("\\s+")).filter { it.isNotBlank() }.size == 1
+            val hasDefinition = singleWord && runCatching {
+                UIReferenceLibraryViewController.dictionaryHasDefinitionForTerm(query)
+            }.getOrDefault(false)
+            if (hasDefinition) {
+                val presenter = iosLookupPresenter() ?: return false
+                presenter.presentViewController(
+                    UIReferenceLibraryViewController(term = query),
+                    animated = true,
+                    completion = null
+                )
+                return true
+            }
+            return openSharedMobileEpubLookupInSafari(
+                externalLookupUrl(action, query, ReaderExternalLookupService.SAFARI)
             )
-            return true
+        }
+        ReaderExternalLookupService.SAFARI -> return openSharedMobileEpubLookupInSafari(
+            externalLookupUrl(action, query, ReaderExternalLookupService.SAFARI)
+        )
+        ReaderExternalLookupService.GOOGLE_TRANSLATE_APP,
+        ReaderExternalLookupService.ITRANSLATE_APP -> {
+            val appUrl = readerExternalLookupAppUrl(service, action, query)
+            if (appUrl != null && openSharedMobileExternalUrl(appUrl)) return true
+            // App went missing between the settings probe and the tap:
+            // fall back to the web page in Safari, never a dead end.
+            return openSharedMobileEpubLookupInSafari(
+                externalLookupUrl(action, query, ReaderExternalLookupService.SAFARI)
+            )
         }
         // Android parity (PdfViewerScreen.onDictionaryLookup): when the Smart AI
         // engine is selected but AI is unavailable (no key/sign-in or offline),
@@ -319,6 +351,42 @@ internal actual fun openSharedMobileEpubLookup(
 }
 
 /**
+ * Renders a lookup web page in an in-app Safari view (Safari engine, content
+ * blockers, Reader Mode) with a Done button back to the book. Unlike the
+ * default-browser opener this never leaves the reader, which is why Safari
+ * is a first-class lookup service instead of an invisible default.
+ */
+internal fun openSharedMobileEpubLookupInSafari(url: String): Boolean {
+    val target = url.trim().takeIf { it.isNotBlank() } ?: return false
+    val nsUrl = NSURL.URLWithString(normalizeReaderHref(target)) ?: return false
+    val presenter = iosLookupPresenter() ?: return false
+    presenter.presentViewController(
+        SFSafariViewController(uRL = nsUrl, entersReaderIfAvailable = false),
+        animated = true,
+        completion = null
+    )
+    return true
+}
+
+/**
+ * Probes the URL schemes of the installed-app lookup services. iOS cannot
+ * enumerate installed apps, so settings only lists scheme-gated apps whose
+ * scheme answers canOpenURL (each scheme must also be declared in
+ * LSApplicationQueriesSchemes or the probe always returns false).
+ */
+internal fun iosInstalledLookupAppSchemes(): Set<String> {
+    val application = UIApplication.sharedApplication
+    return ReaderExternalLookupService.entries
+        .mapNotNull { it.appScheme }
+        .toSet()
+        .filter { scheme ->
+            val probe = NSURL.URLWithString("$scheme://") ?: return@filter false
+            runCatching { application.canOpenURL(probe) }.getOrDefault(false)
+        }
+        .toSet()
+}
+
+/**
  * Android parity (ExternalDictionaryHelper): hand the selection to the user's
  * installed apps. The system share sheet is the closest iOS equivalent of
  * Android's PROCESS_TEXT chooser.
@@ -334,6 +402,17 @@ internal fun openSharedMobileEpubLookupViaAppChooser(
     )
     // iPad requires an anchor; phones present full screen.
     controller.modalPresentationStyle = UIModalPresentationPageSheet
+    // UIActivityViewController on iPad presents as a popover and crashes
+    // without a sourceView/sourceRect ("non-nil sourceView required"), so
+    // anchor it to the presenting view's center. Harmless on iPhone, where
+    // the popover controller is unused.
+    controller.popoverPresentationController?.let { popover ->
+        val bounds = presenter.view.bounds
+        popover.sourceView = presenter.view
+        popover.sourceRect = bounds.useContents {
+            CGRectMake(size.width / 2.0, size.height / 2.0, 1.0, 1.0)
+        }
+    }
     presenter.presentViewController(controller, animated = true, completion = null)
     return true
 }
@@ -970,6 +1049,10 @@ private class IosEpubWebViewCoordinator(
             activeWebView = this
             navigationDelegate = this@IosEpubWebViewCoordinator.navigationDelegate
             opaque = true
+            // The reader owns chapter navigation (pull-to-turn, TOC, links);
+            // the system swipe-back gesture would hijack edge pans and fight
+            // the pull gesture at the chapter boundaries.
+            allowsBackForwardNavigationGestures = false
             backgroundColor = UIColor.whiteColor
             scrollView.backgroundColor = UIColor.whiteColor
             // Compose owns the safe area (PageInfo reserve + bar insets) and the
@@ -985,6 +1068,10 @@ private class IosEpubWebViewCoordinator(
             scrollView.alwaysBounceVertical = true
             scrollView.alwaysBounceHorizontal = false
             scrollView.showsHorizontalScrollIndicator = false
+            // Wide tables/pre blocks scroll inside their own CSS overflow
+            // container; without a directional lock a diagonal pan drifts the
+            // whole page sideways and reads as page-level horizontal overflow.
+            scrollView.directionalLockEnabled = true
         }
     }
 
@@ -1433,20 +1520,33 @@ private val IosEpubBridgeBootstrapScript = """
       // custom teardrop handles on top would double them. The shared selection
       // script checks this flag and leaves handle display/drag to WebKit.
       window.readerIosNativeSelectionHandles = true;
+      // WKWebView keeps a selection across backgrounding (Android WebView does
+      // not — its host clears it at interruption points), so the shared script
+      // clears it when the document becomes visible again.
+      window.readerIosClearsSelectionOnResume = true;
       if (!window.readerIosPointerBridgeInstalled) {
         window.readerIosPointerBridgeInstalled = true;
         var start = null;
+        // Last pull direction posted to native ('previous' | 'next'). The
+        // touchend reset below must clear the indicator even when the release
+        // point cannot decide a direction (multi-touch, selection, links), so
+        // the last move-time direction is remembered instead of inferred.
+        var lastPullDirection = 'next';
+        function edgeState() {
+          var root = document.scrollingElement || document.documentElement;
+          var maxScroll = Math.max(0, root.scrollHeight - window.innerHeight);
+          return {
+            atTop: window.scrollY <= 2,
+            atBottom: window.scrollY >= maxScroll - 2
+          };
+        }
         document.addEventListener('touchstart', function (event) {
           if (!event.touches || event.touches.length !== 1) { start = null; return; }
           var touch = event.touches[0];
-          var root = document.scrollingElement || document.documentElement;
-          var maxScroll = Math.max(0, root.scrollHeight - window.innerHeight);
           start = {
             x: touch.clientX,
             y: touch.clientY,
-            at: Date.now(),
-            atTop: window.scrollY <= 2,
-            atBottom: window.scrollY >= maxScroll - 2
+            at: Date.now()
           };
         }, { passive: true, capture: true });
         document.addEventListener('touchmove', function (event) {
@@ -1456,30 +1556,87 @@ private val IosEpubBridgeBootstrapScript = """
           var dx = touch.clientX - start.x;
           var dy = touch.clientY - start.y;
           if (Math.abs(dy) <= Math.abs(dx) * 1.25) return;
+          // Android parity (InteractiveWebView gates on the live scroll edge
+          // during the drag, not the touchstart edge): a gesture that reaches
+          // the edge mid-drag can still pull. Rubber-band overscroll keeps
+          // scrollY at/below the edge so this stays true through release.
+          var edges = edgeState();
           var multiplier = Math.max(0.5, Math.min(2.0, Number(window.readerIosPullMultiplier || 1)));
           var threshold = 100 * multiplier;
-          if (start.atTop && dy > 0) {
+          if (edges.atTop && dy > 0) {
+            lastPullDirection = 'previous';
             post('readerChapterPull', JSON.stringify({ direction: 'previous', progress: Math.min(1.25, dy / threshold) }));
-          } else if (start.atBottom && dy < 0) {
+          } else if (edges.atBottom && dy < 0) {
+            lastPullDirection = 'next';
             post('readerChapterPull', JSON.stringify({ direction: 'next', progress: Math.min(1.25, -dy / threshold) }));
           }
         }, { passive: true, capture: true });
         document.addEventListener('touchend', function (event) {
-          if (!start || !event.changedTouches || event.changedTouches.length !== 1) { start = null; return; }
+          if (!start || !event.changedTouches || event.changedTouches.length !== 1) {
+            start = null;
+            post('readerChapterPull', JSON.stringify({ direction: lastPullDirection, progress: 0 }));
+            return;
+          }
           var touch = event.changedTouches[0];
           var dx = touch.clientX - start.x;
           var dy = touch.clientY - start.y;
           var elapsed = Date.now() - start.at;
-          var startedAtTop = start.atTop;
-          var startedAtBottom = start.atBottom;
+          var startX = start.x;
+          var startY = start.y;
           start = null;
+          // SEL_SHIFT diagnosis (explicit-Justify selection displacement):
+          // snapshot the live range at release with the touch point that
+          // produced it, so device logs show whether the RANGE is displaced
+          // as opposed to only its painting. Gated on a non-empty selection
+          // to keep plain taps out of the log.
+          try {
+            var endSel = window.getSelection && window.getSelection();
+            var endText = endSel ? endSel.toString() : '';
+            if (endText && endText.trim() && window.readerSelectionShiftLog && window.readerSelectionShiftSummary) {
+              window.readerSelectionShiftLog('touchend',
+                'touch=' + Math.round(startX) + ',' + Math.round(startY) +
+                ' dx=' + Math.round(dx) + ' dy=' + Math.round(dy) +
+                ' elapsed=' + elapsed +
+                ' nativeHandles=' + (window.readerIosNativeSelectionHandles === true) +
+                ' ' + window.readerSelectionShiftSummary());
+            }
+          } catch (_) {}
+          // The reset posts before every early return: selection, links, and
+          // the tap/drag classifiers below must never leave a stale
+          // progress behind (stuck indicator that never changes chapter).
+          // Chapter navigation itself also clears native state, so a reset
+          // lost to a document reload cannot stick either.
+          if (dy >= 0) lastPullDirection = 'previous'; else lastPullDirection = 'next';
+          post('readerChapterPull', JSON.stringify({ direction: lastPullDirection, progress: 0 }));
+          var edges = edgeState();
+          var startedAtTop = edges.atTop;
+          var startedAtBottom = edges.atBottom;
           var selection = window.getSelection && window.getSelection();
           if (selection && selection.toString().trim()) return;
           var target = event.target;
           if (target && target.closest && target.closest('a,button,input,textarea,select,#reader-selection-menu,.reader-selection-handle')) return;
           var multiplier = Math.max(0.5, Math.min(2.0, Number(window.readerIosPullMultiplier || 1)));
           var threshold = 100 * multiplier;
-          post('readerChapterPull', JSON.stringify({ direction: dy >= 0 ? 'previous' : 'next', progress: 0 }));
+          if (window.readerIosSeamlessChapter === true && Math.abs(dy) >= 18 && Math.abs(dy) > Math.abs(dx) * 1.25) {
+            if (startedAtTop && dy > 0) {
+              post('readerChapterBoundary', JSON.stringify({ direction: 'previous' }));
+              return;
+            }
+            if (startedAtBottom && dy < 0) {
+              post('readerChapterBoundary', JSON.stringify({ direction: 'next' }));
+              return;
+            }
+          }
+          if (window.readerIosPullEnabled !== false && elapsed <= 1400 && Math.abs(dy) >= threshold && Math.abs(dy) > Math.abs(dx) * 1.25) {
+            if (startedAtTop && dy > 0) {
+              post('readerChapterBoundary', JSON.stringify({ direction: 'previous' }));
+              return;
+            }
+            if (startedAtBottom && dy < 0) {
+              post('readerChapterBoundary', JSON.stringify({ direction: 'next' }));
+              return;
+            }
+          }
           if (window.readerIosSeamlessChapter === true && Math.abs(dy) >= 18 && Math.abs(dy) > Math.abs(dx) * 1.25) {
             if (startedAtTop && dy > 0) {
               post('readerChapterBoundary', JSON.stringify({ direction: 'previous' }));
@@ -1509,7 +1666,7 @@ private val IosEpubBridgeBootstrapScript = """
         }, { passive: true, capture: true });
         document.addEventListener('touchcancel', function () {
           start = null;
-          post('readerChapterPull', JSON.stringify({ direction: 'next', progress: 0 }));
+          post('readerChapterPull', JSON.stringify({ direction: lastPullDirection, progress: 0 }));
         }, { passive: true, capture: true });
       }
     })();

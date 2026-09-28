@@ -13,7 +13,9 @@ data class SharedPdfSearchResult(
     val preview: String,
     val matchIndex: Int,
     val matchLength: Int = 0,
-    val boundsList: List<PdfPageBounds> = emptyList()
+    val boundsList: List<PdfPageBounds> = emptyList(),
+    /** Offset of the match within [preview], or -1 when unknown (snippet bolding). */
+    val matchIndexInPreview: Int = -1,
 )
 
 @Serializable
@@ -1131,16 +1133,18 @@ object SharedPdfSearchEngine {
             while (startIndex < text.length) {
                 val matchIndex = text.indexOf(normalized, startIndex, ignoreCase = true)
                 if (matchIndex < 0) break
+                val (preview, matchInPreview) = text.previewAroundWithMatch(
+                    index = matchIndex,
+                    queryLength = normalized.length,
+                    before = previewRadiusBefore,
+                    after = previewRadiusAfter
+                )
                 matches += SharedPdfSearchResult(
                     pageIndex = pageIndex,
-                    preview = text.previewAround(
-                        index = matchIndex,
-                        queryLength = normalized.length,
-                        before = previewRadiusBefore,
-                        after = previewRadiusAfter
-                    ),
+                    preview = preview,
                     matchIndex = matchIndex,
-                    matchLength = normalized.length
+                    matchLength = normalized.length,
+                    matchIndexInPreview = matchInPreview,
                 )
                 startIndex = matchIndex + normalized.length.coerceAtLeast(1)
             }
@@ -1209,16 +1213,18 @@ class SharedPdfSearchIndex(
         return candidates.flatMap { pageIndex ->
             val text = pageTexts[pageIndex].orEmpty()
             matcher.findAll(text).map { match ->
+                val (preview, matchInPreview) = text.previewAroundWithMatch(
+                    index = match.startIndex,
+                    queryLength = match.length,
+                    before = previewRadiusBefore,
+                    after = previewRadiusAfter
+                )
                 SharedPdfSearchResult(
                     pageIndex = pageIndex,
-                    preview = text.previewAround(
-                        index = match.startIndex,
-                        queryLength = match.length,
-                        before = previewRadiusBefore,
-                        after = previewRadiusAfter
-                    ),
+                    preview = preview,
                     matchIndex = match.startIndex,
-                    matchLength = match.length
+                    matchLength = match.length,
+                    matchIndexInPreview = matchInPreview,
                 )
             }
         }
@@ -1290,9 +1296,15 @@ private class SharedPdfPhraseMatcher(query: String) {
 
 private fun String.toSearchPhraseRegex(): Regex? {
     val tokens = trim().split(Regex("\\s+")).filter { it.isNotBlank() }
-    if (tokens.size <= 1) return null
+    if (tokens.isEmpty()) return null
+    // Android parity (PdfTextRepository.createPhraseRegex): matches are
+    // anchored to a word start on the first token and joined by any
+    // whitespace run. This applies to single-token queries too, so "ion"
+    // matches "ionic" but not the tail of "citation".
     val prefix = if (all { it.code < 128 }) "\\b" else ""
-    return Regex(prefix + tokens.joinToString("\\s+") { Regex.escape(it) }, RegexOption.IGNORE_CASE)
+    return runCatching {
+        Regex(prefix + tokens.joinToString("\\s+") { Regex.escape(it) }, RegexOption.IGNORE_CASE)
+    }.getOrNull()
 }
 
 private fun Int.wrapIndex(size: Int): Int {
@@ -1317,12 +1329,35 @@ private fun String.previewAround(
     queryLength: Int,
     before: Int,
     after: Int
-): String {
+): String = previewAroundWithMatch(index, queryLength, before, after).first
+
+/**
+ * Builds the [SharedPdfSearchResult.preview] snippet and returns the exact
+ * offset of the matched span inside it, so result rows can bold the query
+ * like Android's FTS/regex snippets do. Whitespace collapsing and trimming
+ * are applied to the prefix before the match to compute the shift.
+ */
+private fun String.previewAroundWithMatch(
+    index: Int,
+    queryLength: Int,
+    before: Int,
+    after: Int
+): Pair<String, Int> {
     val start = (index - before).coerceAtLeast(0)
     val end = (index + queryLength + after).coerceAtMost(length)
     val prefix = if (start > 0) "..." else ""
     val suffix = if (end < length) "..." else ""
-    return prefix + substring(start, end).replace(Regex("\\s+"), " ").trim() + suffix
+    val segment = substring(start, end)
+    val collapsed = segment.replace(Regex("\\s+"), " ")
+    val collapsedPrefixLength = if (index > start) {
+        segment.substring(0, index - start).replace(Regex("\\s+"), " ").length
+    } else {
+        0
+    }
+    val leadingTrimmed = collapsed.length - collapsed.trimStart().length
+    val matchOffset = (prefix.length + collapsedPrefixLength - leadingTrimmed)
+        .coerceIn(prefix.length, prefix.length + collapsed.trim().length)
+    return prefix + collapsed.trim() + suffix to matchOffset
 }
 
 private fun String.searchTokens(): List<String> {

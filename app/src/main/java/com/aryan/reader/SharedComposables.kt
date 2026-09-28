@@ -1058,7 +1058,21 @@ fun TagSelectionBottomSheet(
         if (searchQuery.isBlank()) allTags else allTags.filter { it.name.contains(searchQuery, ignoreCase = true) }
     }
 
-    val exactMatch = allTags.any { it.name.equals(searchQuery.trim(), ignoreCase = true) }
+    val exactMatch = remember(allTags, searchQuery) {
+        allTags.any { it.name.equals(searchQuery.trim(), ignoreCase = true) }
+    }
+
+    // Membership precomputed once per selection/library change: the per-row
+    // loop below used to run an O(selectedBooks * library) find for every
+    // visible row on every recomposition (scroll, keystroke).
+    val tagMembership = remember(selectedBookIds, booksWithTags) {
+        val byBookId = booksWithTags.associateBy { it.bookId }
+        selectedBookIds.mapNotNull { bookId ->
+            byBookId[bookId]?.let { book ->
+                bookId to book.tags.mapTo(mutableSetOf()) { it.id }
+            }
+        }.toMap()
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).heightIn(max = 500.dp)) {
@@ -1080,10 +1094,10 @@ fun TagSelectionBottomSheet(
                 if (searchQuery.isNotBlank() && !exactMatch) {
                     item {
                         Row(
-                            modifier = Modifier.fillMaxWidth().clickable {
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp).clickable {
                                 onCreateAndAssign(searchQuery)
                                 searchQuery = ""
-                            }.padding(vertical = 12.dp),
+                            },
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(Icons.Default.Add, null, tint = MaterialTheme.colorScheme.primary)
@@ -1094,11 +1108,7 @@ fun TagSelectionBottomSheet(
                 }
 
                 items(filteredTags, key = { it.id }) { tag ->
-                    var checkedCount = 0
-                    selectedBookIds.forEach { bookId ->
-                        val book = booksWithTags.find { it.bookId == bookId }
-                        if (book?.tags?.any { it.id == tag.id } == true) checkedCount++
-                    }
+                    val checkedCount = tagMembership.values.count { tag.id in it }
 
                     val state = when (checkedCount) {
                         0 -> ToggleableState.Off
@@ -1107,10 +1117,10 @@ fun TagSelectionBottomSheet(
                     }
 
                     Row(
-                        modifier = Modifier.fillMaxWidth().clickable {
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable {
                             val assign = state != ToggleableState.On
                             onToggleTag(tag.id, assign)
-                        }.padding(vertical = 4.dp),
+                        },
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         TriStateCheckbox(state = state, onClick = null)

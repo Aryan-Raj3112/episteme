@@ -26,8 +26,16 @@ fun resolveCloudSyncSetupIntent(
     isProUser: Boolean,
     providers: Set<AccountAuthProvider>,
     hasGoogleDrivePermission: Boolean,
+    /**
+     * Drive/Firestore backends require the Google identity that owns the app
+     * data. iOS's pure-CloudKit backend does not, so it passes false and the
+     * only remaining gate is the Pro entitlement. Defaults true so Android
+     * (the benchmark) keeps its exact behavior unchanged.
+     */
+    requiresGoogle: Boolean = true,
 ): CloudSyncSetupIntent = when {
     !isProUser -> CloudSyncSetupIntent.NEEDS_PRO
+    !requiresGoogle -> CloudSyncSetupIntent.READY
     AccountAuthProvider.GOOGLE !in providers -> CloudSyncSetupIntent.NEEDS_GOOGLE_LINK
     !hasGoogleDrivePermission -> CloudSyncSetupIntent.NEEDS_DRIVE_AUTH
     else -> CloudSyncSetupIntent.READY

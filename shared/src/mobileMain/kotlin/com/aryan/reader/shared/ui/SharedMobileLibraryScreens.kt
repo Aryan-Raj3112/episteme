@@ -232,6 +232,8 @@ fun SharedMobileUnifiedLibraryScreen(
     onTtsSpeedChange: (Float) -> Unit = {},
     onTtsSleepTimer: (Int?) -> Unit = {},
     onStopTtsPlayback: () -> Unit = {},
+    // Platform Listen voice-settings opener. Null hides the player menu entry.
+    onOpenTtsVoiceSettings: (() -> Unit)? = null,
     /** Dedicated Listen import actions. Null keeps the legacy generic import fallback. */
     onAddAudiobookFile: (() -> Unit)? = null,
     onAddAudiobookMultiple: (() -> Unit)? = null,
@@ -880,6 +882,7 @@ fun SharedMobileUnifiedLibraryScreen(
                 onCustomSleepTimerMinutesChange = onCustomSleepTimerMinutesChange,
                 onStopPlayback = onStopTtsPlayback,
                 onDismiss = { showTtsPlayerSheet = false },
+                onOpenVoiceSettings = onOpenTtsVoiceSettings,
             )
         }
     }
@@ -968,6 +971,8 @@ fun SharedMobileHomeScreen(
     importedCoverPath: String? = null,
     showTopBar: Boolean = true,
     homeOverflowCapabilities: SharedMobileHomeOverflowCapabilities = SharedMobileHomeOverflowCapabilities(),
+    fpsOverlayEnabled: Boolean = false,
+    onFpsOverlayToggle: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val selectedIds = state.selectedBookIds
@@ -1049,6 +1054,8 @@ fun SharedMobileHomeScreen(
                         onToggleReaderAi = actions::toggleReaderAi,
                         onClearReflowCache = actions::clearReflowCache,
                         onExportLogs = actions::exportLogs,
+                        fpsOverlayEnabled = fpsOverlayEnabled,
+                        onFpsOverlayToggle = onFpsOverlayToggle,
                     )
                 }
             }
@@ -2402,8 +2409,8 @@ private fun SharedMobileTagSelectionSheet(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onToggleTag(tag.id, toggleState != ToggleableState.On) }
-                            .padding(vertical = 4.dp),
+                            .padding(vertical = 4.dp)
+                            .clickable { onToggleTag(tag.id, toggleState != ToggleableState.On) },
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         TriStateCheckbox(state = toggleState, onClick = null)
@@ -2700,6 +2707,8 @@ private fun SharedMobileHomeTopBar(
     onToggleReaderAi: () -> Unit,
     onClearReflowCache: () -> Unit,
     onExportLogs: () -> Unit,
+    fpsOverlayEnabled: Boolean = false,
+    onFpsOverlayToggle: () -> Unit = {},
 ) {
     var showOptionsMenu by remember { mutableStateOf(false) }
     val overflowItems = sharedMobileHomeOverflowItems(
@@ -2709,6 +2718,7 @@ private fun SharedMobileHomeTopBar(
             strictFileFilterEnabled = useStrictFileFilter,
             usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
             hideReaderAi = hideReaderAi,
+            fpsOverlayEnabled = fpsOverlayEnabled,
         ),
         capabilities = homeOverflowCapabilities,
     )
@@ -2763,6 +2773,10 @@ private fun SharedMobileHomeTopBar(
             "Export Logs (Last 5000 lines)",
             5000,
         )
+        SharedMobileHomeOverflowAction.SHOW_FPS_OVERLAY -> readerString(
+            "debug_show_fps_overlay",
+            "Show FPS overlay",
+        )
         SharedMobileHomeOverflowAction.DEVICE_MANAGEMENT -> readerString(
             "debug_show_device_management",
             "Device management",
@@ -2788,6 +2802,7 @@ private fun SharedMobileHomeTopBar(
             SharedMobileHomeOverflowAction.TEST_PANEL_DETECTION -> Unit
             SharedMobileHomeOverflowAction.TEST_SPEECH_BUBBLE_DETECTION -> Unit
             SharedMobileHomeOverflowAction.EXPORT_LOGS -> onExportLogs()
+            SharedMobileHomeOverflowAction.SHOW_FPS_OVERLAY -> onFpsOverlayToggle()
             SharedMobileHomeOverflowAction.DEVICE_MANAGEMENT -> Unit
             SharedMobileHomeOverflowAction.CLEAR_CLOUD_LOCAL_DATA -> Unit
         }

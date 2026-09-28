@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 data class ProUpgradeState(
     val productDetails: ProductDetailsEntity? = null,
-    val creditProducts: List<ProductDetailsEntity> = emptyList(),
+    val topupProducts: List<ProductDetailsEntity> = emptyList(),
     val hasValidPurchase: Boolean = false,
     val activePurchases: List<PurchaseEntity> = emptyList(),
     val hasAccountConflict: Boolean = false,

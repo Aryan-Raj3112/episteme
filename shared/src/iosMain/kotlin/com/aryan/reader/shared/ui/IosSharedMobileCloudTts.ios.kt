@@ -23,6 +23,16 @@ import com.aryan.reader.shared.readerTtsCacheSpeakerId
 import com.aryan.reader.shared.LocalTtsInterruptionAction
 import com.aryan.reader.shared.LocalTtsInterruptionEvent
 import com.aryan.reader.shared.LocalTtsInterruptionState
+import com.aryan.reader.shared.FISH_TTS_MODEL
+import com.aryan.reader.shared.FISH_TTS_MODEL_ID
+import com.aryan.reader.shared.formatMicrosUsd
+import com.aryan.reader.shared.formatSpendGuardCountdown
+import com.aryan.reader.shared.hasSpendableBalance
+import com.aryan.reader.shared.parseSpendGuardError
+import com.aryan.reader.shared.parseSpendGuardSentinel
+import com.aryan.reader.shared.spendGuardSentinel
+import com.aryan.reader.shared.ios.IOS_TTS_WORKER_URL
+import com.aryan.reader.shared.ios.IosReaderAiHttpClient
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.sha256
 import com.aryan.reader.shared.ios.IosTtsAudioInterruption
@@ -117,6 +127,10 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     private var isSignedIn = false
     private var isProUser = false
     private var credits = 0
+    private var walletMicros = 0L
+    private var walletMigrated = false
+    private var sessionSpendMicros = 0L
+    private var rateLimitRetriesLeft = 0
     private var authToken: String? = null
     private var workerUrl = ""
     private var chunks: List<ReaderTtsChunk> = emptyList()
@@ -153,6 +167,8 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         credits: Int,
         authToken: String?,
         workerUrl: String,
+        walletMicros: Long,
+        walletMigrated: Boolean,
     ) {
         val sanitized = settings.sanitized()
         val speakerChanged = this.settings.ttsSpeakerId != sanitized.ttsSpeakerId
@@ -162,6 +178,8 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         this.isSignedIn = isSignedIn
         this.isProUser = isProUser
         this.credits = credits.coerceAtLeast(0)
+        this.walletMicros = walletMicros.coerceAtLeast(0L)
+        this.walletMigrated = walletMigrated
         this.authToken = authToken
         this.workerUrl = workerUrl.trim()
         if (speakerChanged || modeChanged || accessChanged) {
@@ -171,7 +189,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
             closeWebSocket()
         }
         state = state.copy(
-            isAvailable = cloudTtsModeEnabled() && (byokAvailable() || workerAvailable()),
+            isAvailable = cloudTtsModeEnabled() && (byokAvailable() || fishByokAvailable() || workerAvailable()),
             errorMessage = null,
             cacheSummary = state.cacheSummary,
         )
@@ -190,7 +208,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         val gateError = startGateError()
         if (gateError != null) {
             state = state.copy(
-                isAvailable = cloudTtsModeEnabled() && (byokAvailable() || workerAvailable()),
+                isAvailable = cloudTtsModeEnabled() && (byokAvailable() || fishByokAvailable() || workerAvailable()),
                 isPlaying = false,
                 isLoading = false,
                 isPaused = false,
@@ -205,6 +223,9 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         this.currentChunkIndex = startChunkIndex.coerceIn(0, readable.lastIndex)
         this.sessionId += 1
         this.wantsPlayback = playWhenReady
+        // Fresh listen keeps its own spend line (Android benchmark parity).
+        this.sessionSpendMicros = 0L
+        this.rateLimitRetriesLeft = 1
         val requestedSession = sessionId
         state = state.copy(
             isAvailable = true,
@@ -529,7 +550,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
             while (scope.isActive && requestedSession == sessionId) {
                 val chunk = chunks.getOrNull(currentChunkIndex) ?: break
                 state = state.copy(
-                    isAvailable = cloudTtsModeEnabled() && (byokAvailable() || workerAvailable()),
+                    isAvailable = cloudTtsModeEnabled() && (byokAvailable() || fishByokAvailable() || workerAvailable()),
                     isLoading = true,
                     isPlaying = false,
                     isPaused = false,
@@ -539,8 +560,26 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
                         currentChunkIndex = currentChunkIndex,
                     ),
                 )
-                val audio = generationMutex.withLock {
-                    loadOrGenerate(chunk, requestedSession)
+                val audio = try {
+                    generationMutex.withLock {
+                        loadOrGenerate(chunk, requestedSession)
+                    }
+                } catch (throttled: FishRateLimited) {
+                    // Velocity throttle: wait out the window and retry this
+                    // chunk once (Android benchmark parity). Anything further
+                    // fails with the friendly countdown text.
+                    if (requestedSession != sessionId || rateLimitRetriesLeft <= 0) throw throttled
+                    rateLimitRetriesLeft -= 1
+                    state = state.copy(
+                        isLoading = true,
+                        errorMessage = "Slowing down — retrying in ${formatSpendGuardCountdown(throttled.retryAfterSeconds)}…",
+                    )
+                    delay(throttled.retryAfterSeconds.coerceIn(1, 120) * 1000L)
+                    if (requestedSession != sessionId) return
+                    state = state.copy(errorMessage = null)
+                    generationMutex.withLock {
+                        loadOrGenerate(chunk, requestedSession)
+                    }
                 }
                 if (requestedSession != sessionId) return
                 if (audio == null || audio.size <= WAV_HEADER_SIZE) return
@@ -578,6 +617,11 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
             return cached
         }
         state = state.copy(statusMessage = "Preparing audio")
+        // Fish REST (Android benchmark parity): credited worker synthesis and
+        // Fish BYOK direct. Gemini BYOK keeps the legacy WebSocket below.
+        if (useFishRest()) {
+            return fishSynthesize(chunk, requestedSession)
+        }
         ensureConnected()
         val payload = buildJsonObject {
             put("realtimeInput", buildJsonObject { put("text", chunk.spokenText) })
@@ -612,6 +656,102 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         }
         refreshCacheSummary()
         return wav
+    }
+
+    /**
+     * Fish Audio synthesis (Android `FishRestTtsClient` parity). One request =
+     * one mp3 chunk, cached under the existing chunk filename (AVAudioPlayer
+     * sniffs content, so the `.wav` name is cosmetic and cache browsers keep
+     * working). Throws [FishRateLimited] so the loop can wait out the window
+     * and retry once; all other failures go through [fail].
+     */
+    private suspend fun fishSynthesize(chunk: ReaderTtsChunk, requestedSession: Long): ByteArray? {
+        val file = cacheFile(chunk)
+        val byok = fishByokAvailable()
+        val url = if (byok) {
+            "https://api.fish.audio/v1/tts"
+        } else {
+            IOS_TTS_WORKER_URL.removeSuffix("/") + "/v2/tts"
+        }
+        val headers = if (byok) {
+            mapOf(
+                "Authorization" to "Bearer ${settings.fishKey}",
+                "model" to FISH_TTS_MODEL,
+            )
+        } else {
+            mapOf("Authorization" to "Bearer ${authToken.orEmpty()}")
+        }
+        val body = if (byok) {
+            buildJsonObject {
+                put("text", chunk.spokenText)
+                put("reference_id", settings.ttsSpeakerId)
+                put("format", "mp3")
+                put("mp3_bitrate", 128)
+                put("normalize", true)
+                put("latency", "normal")
+                put("chunk_length", 300)
+                put("min_chunk_length", 50)
+                put("condition_on_previous_chunks", true)
+                put("max_new_tokens", 1024)
+                put("temperature", 0.7)
+                put("top_p", 0.7)
+                put("repetition_penalty", 1.2)
+                put("prosody", buildJsonObject {
+                    put("speed", 1)
+                    put("volume", 0)
+                    put("normalize_loudness", true)
+                })
+            }.toString()
+        } else {
+            buildJsonObject {
+                put("text", chunk.spokenText)
+                put("voiceId", settings.ttsSpeakerId)
+                put("format", "mp3")
+                put("latency", "normal")
+            }.toString()
+        }
+        val response = try {
+            withTimeout(CLOUD_TTS_TIMEOUT_MILLIS) {
+                IosReaderAiHttpClient.postBytes(url, body, headers)
+            }
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            if (requestedSession != sessionId) throw CancellationException()
+            fail("Fish TTS request failed: ${error.message.orEmpty()}")
+            return null
+        }
+        if (requestedSession != sessionId) throw CancellationException()
+        if (response.statusCode == 429) {
+            val retry = parseSpendGuardError(response.body)?.second ?: 30
+            throw FishRateLimited(retry)
+        }
+        if (response.statusCode == 402) {
+            val guard = parseSpendGuardError(response.body)
+            if (guard?.first == "DAILY_SPEND_LIMIT") {
+                fail(spendGuardSentinel(guard.first, guard.second))
+            } else {
+                fail("INSUFFICIENT_CREDITS")
+            }
+            return null
+        }
+        if (response.statusCode !in 200..299 || response.bodyBytes.size < 1024) {
+            fail("Fish TTS error ${response.statusCode}")
+            return null
+        }
+        // Worker-reported USD cost for the session-spend line (BYOK is $0
+        // here; the user's own Fish key is billed by Fish directly).
+        response.headers["x-tts-cost-micros"]?.toLongOrNull()?.let { cost ->
+            if (cost > 0) {
+                sessionSpendMicros += cost
+                state = state.copy(cloudSessionSpendMicros = sessionSpendMicros)
+            }
+        }
+        withContext(Dispatchers.Default) {
+            writeFileAtomically(file, response.bodyBytes)
+            pruneCacheIfNeeded()
+        }
+        refreshCacheSummary()
+        return response.bodyBytes
     }
 
     private suspend fun playAudioAndWait(audio: ByteArray, requestedSession: Long): Boolean {
@@ -852,22 +992,38 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         closeWebSocket()
     }
 
+    /** Velocity throttle from the Fish path; the loop waits and retries once. */
+    private class FishRateLimited(val retryAfterSeconds: Int) : IllegalStateException("RATE_LIMITED:$retryAfterSeconds")
+
     private fun startGateError(): String? {
         if (!cloudTtsModeEnabled()) return "Choose Cloud TTS in AI settings first."
-        if (!byokAvailable() && !workerAvailable()) {
+        if (!byokAvailable() && !fishByokAvailable() && !workerAvailable()) {
             if (isSignedIn && authToken.isNullOrBlank()) return "Sign in again to use cloud TTS."
             return if (!isSignedIn) "Sign in to use cloud TTS, or configure a Gemini key."
             else "Cloud TTS is not configured."
         }
-        if (!byokAvailable() && !isProUser && credits <= 0) return "Cloud TTS needs credits."
+        // Android benchmark parity: no Pro free pass — everyone spends the
+        // wallet (migrated) or legacy credits. The worker enforces the same.
+        if (!byokAvailable() && !fishByokAvailable() && !hasSpendableBalance(credits, walletMicros)) {
+            return if (walletMigrated) "Cloud TTS needs balance. Top up your wallet to continue."
+            else "Cloud TTS needs credits."
+        }
         return null
     }
 
     private fun byokAvailable(): Boolean = settings.geminiKey.isNotBlank() && settings.ttsModel == GEMINI_CLOUD_TTS_MODEL_ID
 
+    private fun fishByokAvailable(): Boolean = settings.isFishByokTtsAvailable
+
     private fun workerAvailable(): Boolean = isSignedIn && !authToken.isNullOrBlank() && workerUrl.isNotBlank()
 
-    private fun cloudTtsModeEnabled(): Boolean = settings.ttsModel == GEMINI_CLOUD_TTS_MODEL_ID
+    private fun workerFishAvailable(): Boolean =
+        isSignedIn && !authToken.isNullOrBlank() && !byokAvailable() && !fishByokAvailable()
+
+    private fun useFishRest(): Boolean = cloudTtsModeEnabled() && (workerFishAvailable() || fishByokAvailable())
+
+    private fun cloudTtsModeEnabled(): Boolean =
+        settings.ttsModel == GEMINI_CLOUD_TTS_MODEL_ID || settings.ttsModel == com.aryan.reader.shared.FISH_TTS_MODEL_ID
 
     private fun hasActiveSession(): Boolean = chunks.isNotEmpty() && (state.isLoading || state.isPlaying || state.isPaused)
 
@@ -1013,9 +1169,29 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     )?.toString().orEmpty()
 
     private fun normalizeCloudError(raw: String): String {
+        // Worker spend-guard sentinels first (Android benchmark parity), then
+        // legacy substring matches. Wallet-aware copy throughout.
+        parseSpendGuardSentinel(raw)?.let { (kind, retry) ->
+            return if (kind == "RATE_LIMITED") {
+                "Slowing down — please retry in ${formatSpendGuardCountdown(retry)}."
+            } else {
+                "Daily spending cap reached — resets in ${formatSpendGuardCountdown(retry)}. " +
+                    "Balance: ${formatMicrosUsd(walletMicros)}."
+            }
+        }
+        parseSpendGuardError(raw)?.let { (kind, retry) ->
+            return if (kind == "RATE_LIMITED") {
+                "Slowing down — please retry in ${formatSpendGuardCountdown(retry)}."
+            } else {
+                "Daily spending cap reached — resets in ${formatSpendGuardCountdown(retry)}. " +
+                    "Balance: ${formatMicrosUsd(walletMicros)}."
+            }
+        }
         val lower = raw.lowercase()
         return when {
-            "insufficient_credits" in lower || "402" in lower -> "Out of credits."
+            "insufficient_credits" in lower || "402" in lower ->
+                if (walletMigrated) "You're out of balance. Top up your wallet to continue."
+                else "Out of credits."
             "unauthorized" in lower || "authentication" in lower -> "Sign in again to use cloud TTS."
             else -> raw.ifBlank { "Cloud TTS failed." }
         }

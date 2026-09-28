@@ -62,6 +62,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.data.ProductDetailsEntity
+import com.aryan.reader.shared.formatMicrosUsd
 import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.util.Currency
@@ -242,8 +243,8 @@ fun ProScreen(
                     1 -> {
                         if (BuildConfig.FLAVOR == "pro") {
                             CreditTierCard(
-                                credits = uiState.credits,
-                                creditProducts = proUpgradeState.creditProducts,
+                                walletMicros = uiState.walletMicros,
+                                topupProducts = proUpgradeState.topupProducts,
                                 isVerifying = proUpgradeState.isVerifying,
                                 isUserSignedIn = uiState.currentUser != null,
                                 onSignInRequiredClick = { showSignInRequiredDialog = true },
@@ -602,8 +603,8 @@ fun SignInRequiredDialog(onSignInClick: () -> Unit, onDismiss: () -> Unit) {
 
 @Composable
 private fun CreditTierCard(
-    credits: Int,
-    creditProducts: List<ProductDetailsEntity>,
+    walletMicros: Long,
+    topupProducts: List<ProductDetailsEntity>,
     isVerifying: Boolean,
     isUserSignedIn: Boolean,
     onSignInRequiredClick: () -> Unit,
@@ -623,7 +624,7 @@ private fun CreditTierCard(
             Text(stringResource(R.string.credits_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "$credits",
+                text = formatMicrosUsd(walletMicros),
                 style = MaterialTheme.typography.displaySmall.copy(fontSize = 48.sp),
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
@@ -635,10 +636,10 @@ private fun CreditTierCard(
             if (isVerifying) {
                 CircularProgressIndicator(modifier = Modifier.padding(16.dp))
                 Text(stringResource(R.string.verifying_purchase), style = MaterialTheme.typography.bodySmall)
-            } else if (creditProducts.isEmpty()) {
+            } else if (topupProducts.isEmpty()) {
                 Text(stringResource(R.string.loading_price), modifier = Modifier.padding(16.dp))
             } else {
-                creditProducts.forEach { product ->
+                topupProducts.forEach { product ->
                     OutlinedCard(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
                         onClick = {

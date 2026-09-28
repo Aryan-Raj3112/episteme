@@ -54,6 +54,17 @@ fun isPdfTextDockTopAnchored(
 ): Boolean = dockLocation == DockLocation.TOP && !isDragging
 
 /**
+ * Whether the text dock hugs a vertical screen edge. Mirrors
+ * [isSharedPdfAnnotationDockSide]: side docks render as a vertical
+ * semi-circle-capped bar and open popups to the side instead of above/below.
+ */
+fun isPdfTextDockSideDocked(dockLocation: DockLocation): Boolean =
+    dockLocation == DockLocation.LEFT || dockLocation == DockLocation.RIGHT
+
+fun isPdfTextDockVertical(dockLocation: DockLocation): Boolean =
+    isPdfTextDockSideDocked(dockLocation)
+
+/**
  * Lift (px) applied to a floating or in-drag text dock so an open keyboard
  * never covers it, mirroring the bottom-docked behavior of sitting above the
  * keyboard. Zero when the keyboard is closed, when the dock is sticky (inset

@@ -64,6 +64,18 @@ class FolderSyncWorker(
     private val pendingAnnotationExports =
         com.aryan.reader.data.AppDatabase.getDatabase(appContext).pendingFolderAnnotationExportDao()
 
+    /**
+     * Run-scoped set of linked folder URIs, built once in [doWork] from the
+     * already-decoded folder list. The in-loop still-linked guards (per
+     * directory / per 100 files / per book) used to re-read SharedPreferences
+     * + re-parse the folder JSON (+ a second prefs file on miss) on every
+     * check; now they are O(1) set lookups. Freshness trade: an unlink that
+     * lands mid-run is honored at the next per-folder gate (which stays a
+     * fresh read before any DB write) or the next run at the latest.
+     */
+    @Volatile
+    private var linkedUriSnapshot: Set<String>? = null
+
     companion object {
         const val WORK_NAME = "FolderSyncWorker"
         const val WORK_NAME_ONETIME = "FolderSyncWorker_OneTime"
@@ -71,6 +83,7 @@ class FolderSyncWorker(
         const val KEY_TARGET_FOLDER_URI = "key_target_folder_uri"
         private const val KEY_CLOUD_ACCOUNT_ID = "key_cloud_account_id"
         private const val CLOUD_INDEX_WORK_PREFIX = "FolderSyncWorker_CloudIndex"
+        private const val WORK_RETRY_BACKOFF_SECONDS = 30L
         private val syncMutex = Mutex()
 
         /** Index a completed app-private cloud materialization after download. */
@@ -97,6 +110,13 @@ class FolderSyncWorker(
                         .putString(KEY_TARGET_FOLDER_URI, targetUri)
                         .putString(KEY_CLOUD_ACCOUNT_ID, normalizedAccount)
                         .build()
+                )
+                // Retry timing only: no constraints, because local SAF
+                // indexing is explicitly offline-capable.
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL,
+                    WORK_RETRY_BACKOFF_SECONDS,
+                    TimeUnit.SECONDS
                 )
                 .build()
             SafeWorkManager.enqueueUniqueWork(
@@ -177,6 +197,11 @@ class FolderSyncWorker(
                 .map { it.toSyncedFolder(appContext.filesDir) }
         }.orEmpty()
         val folders = configuredFolders + appManagedFolders
+        // Snapshot for the in-loop guards below (app-managed entries resolve
+        // localSyncEnabled=true, so one enabled-filter covers both kinds).
+        linkedUriSnapshot = folders
+            .filter { it.localSyncEnabled }
+            .mapTo(mutableSetOf()) { it.uriString }
 
         if (folders.isEmpty()) {
             cloudFolderLogD(
@@ -1188,7 +1213,10 @@ class FolderSyncWorker(
     }
 
     private fun isFolderStillLinked(folder: SyncedFolder): Boolean {
-        if (!folder.isAppManaged) return isFolderStillLinked(folder.uriString)
+        // Per-folder gates (before scans / before DB writes) stay exact:
+        // unlinking cancels the run via isStopped, and this fresh read is the
+        // backstop, so it must never serve a stale snapshot.
+        if (!folder.isAppManaged) return isFolderStillLinked(folder.uriString, useSnapshot = false)
         val accountId = AuthRepository(appContext).getSignedInUser()?.uid?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: return false
@@ -1200,7 +1228,13 @@ class FolderSyncWorker(
         return isFolderStillLinked(folderUriString)
     }
 
-    private fun isFolderStillLinked(folderUriString: String): Boolean {
+    private fun isFolderStillLinked(folderUriString: String, useSnapshot: Boolean = true): Boolean {
+        // Fast path for the in-loop guards (per directory / per 100 files /
+        // per book): O(1) against the run snapshot instead of a prefs read +
+        // JSON parse (+ a second prefs file on miss) per check.
+        if (useSnapshot) {
+            linkedUriSnapshot?.let { return folderUriString in it }
+        }
         val prefs = appContext.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
         if (SyncedFolderPrefs.isLocalSyncEnabled(
             jsonString = prefs.getString(SyncedFolderPrefs.KEY_SYNCED_FOLDERS_JSON, null),

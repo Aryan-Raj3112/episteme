@@ -65,6 +65,7 @@ import com.aryan.reader.tts.ACTION_BOOK_TTS_NEXT_CHAPTER
 import com.aryan.reader.tts.ACTION_BOOK_TTS_SELECT_CHAPTER
 import com.aryan.reader.tts.ACTION_BOOK_TTS_SLEEP_TIMER
 import com.aryan.reader.tts.ACTION_BOOK_TTS_CANCEL_SLEEP_TIMER
+import com.aryan.reader.tts.EXTRA_BOOK_TTS_AUTH_TOKEN
 import com.aryan.reader.tts.EXTRA_BOOK_TTS_BOOK_ID
 import com.aryan.reader.tts.EXTRA_BOOK_TTS_START_POLICY
 import com.aryan.reader.tts.EXTRA_BOOK_TTS_CHAPTER_INDEX
@@ -116,7 +117,13 @@ data class ListeningChapter(
     val index: Int,
     val id: String,
     val title: String,
-    val estimatedCharacters: Int
+    val estimatedCharacters: Int,
+    /**
+     * Raw chapter title used for the TTS cache + service session, matching the
+     * Reader TTS strings exactly so identical chunks share cache files.
+     * Display [title] may carry a friendly fallback instead.
+     */
+    val cacheTitle: String = title
 )
 
 data class ListeningBook(
@@ -125,7 +132,13 @@ data class ListeningBook(
     val author: String?,
     val coverPath: String?,
     val type: FileType,
-    val chapters: List<ListeningChapter>
+    val chapters: List<ListeningChapter>,
+    /**
+     * Canonical book title for the TTS cache + service session, derived from
+     * the same source as the Reader TTS book title (file metadata, not the
+     * possibly user-renamed library title) so identical chunks share cache.
+     */
+    val cacheTitle: String = title
 )
 
 data class ListeningChapterContent(
@@ -171,9 +184,23 @@ class BookTtsContentRepository(context: Context) {
         val uri = Uri.parse(item.uriString)
         if (item.type == FileType.PDF) {
             val document = DocumentFactory.loadDocument(appContext, uri, FileType.PDF, null, PdfiumCoreProvider.core)
-            val count = try { document.getPageCount() } finally { document.close() }
-            val chapters = (0 until count).map { page -> ListeningChapter(page, "page-$page", "Page ${page + 1}", 0) }
-            return ListeningBookSource.Pdf(item.listeningMetadata(chapters), uri)
+            // Same book title derivation as the Reader PDF TTS path so cloud
+            // cache files are shared for identical chunks. Read before close.
+            val (count, pdfMetaTitle) = try {
+                document.getPageCount() to
+                    (document as? com.aryan.reader.pdf.PdfDocumentWrapper)
+                        ?.pdfDocument?.getDocumentMeta()?.title?.takeIf { it.isNotBlank() }
+            } finally {
+                document.close()
+            }
+            val cacheTitle = pdfMetaTitle
+                ?: uri.lastPathSegment
+                ?: appContext.getString(com.aryan.reader.R.string.default_document_title)
+            val chapters = (0 until count).map { page ->
+                val pageTitle = appContext.getString(com.aryan.reader.R.string.pdf_page_short, page + 1)
+                ListeningChapter(page, "page-$page", pageTitle, 0, cacheTitle = pageTitle)
+            }
+            return ListeningBookSource.Pdf(item.listeningMetadata(chapters, cacheTitle = cacheTitle), uri)
         }
         require(item.type in REFLOW_TYPES) { "${item.type.name} does not expose readable text for audiobook playback" }
         val book = openInput(uri).use { input -> parseReflow(item, input) }
@@ -182,11 +209,18 @@ class BookTtsContentRepository(context: Context) {
                 index = index,
                 id = chapter.chapterId.ifBlank { "chapter-$index" },
                 title = chapter.title.ifBlank { "Chapter ${index + 1}" },
-                estimatedCharacters = chapter.plainTextLength
+                estimatedCharacters = chapter.plainTextLength,
+                // Raw parsed title, exactly what the Reader EPUB TTS path
+                // passes, so identical chunks share cache files.
+                cacheTitle = chapter.title
             )
         }
         require(chapters.isNotEmpty()) { "No readable chapters were found" }
-        return ListeningBookSource.Reflow(item.listeningMetadata(chapters), book)
+        // Parsed file title, the same string the Reader EPUB TTS path uses.
+        return ListeningBookSource.Reflow(
+            item.listeningMetadata(chapters, cacheTitle = book.title),
+            book
+        )
     }
 
     private suspend fun parseReflow(item: RecentFileEntity, input: InputStream): EpubBook = when (item.type) {
@@ -271,13 +305,17 @@ class BookTtsContentRepository(context: Context) {
             ?: error("The book file is unavailable")
     }
 
-    private fun RecentFileEntity.listeningMetadata(chapters: List<ListeningChapter>) = ListeningBook(
+    private fun RecentFileEntity.listeningMetadata(
+        chapters: List<ListeningChapter>,
+        cacheTitle: String
+    ) = ListeningBook(
         bookId = bookId,
         title = title?.takeIf(String::isNotBlank) ?: displayName.substringBeforeLast('.'),
         author = author,
         coverPath = coverImagePath,
         type = type,
-        chapters = chapters
+        chapters = chapters,
+        cacheTitle = cacheTitle
     )
 
     companion object {
@@ -308,6 +346,9 @@ class BookTtsSessionCoordinator(
     private var transitionJob: Job? = null
     private var persistJob: Job? = null
     private var lastPersistedPosition: Pair<Int, Int>? = null
+    // Fresh Firebase token per session start; reused for chapter hops inside
+    // the same session so cloud synthesis keeps working throughout.
+    private var cachedAuthToken: String? = null
 
     init {
         scope.launch {
@@ -318,8 +359,10 @@ class BookTtsSessionCoordinator(
     fun start(
         bookId: String,
         startPolicy: String = START_RESUME,
-        selectedChapterIndex: Int? = null
+        selectedChapterIndex: Int? = null,
+        authToken: String? = null
     ) {
+        authToken?.takeIf { it.isNotBlank() }?.let { cachedAuthToken = it }
         val playback = playbackManager.ttsState.value
         if (
             startPolicy == START_RESUME &&
@@ -384,6 +427,7 @@ class BookTtsSessionCoordinator(
         playbackManager.stopBookListeningSession()
     }
 
+    @androidx.annotation.OptIn(UnstableApi::class)
     private suspend fun playChapter(
         chapterIndex: Int,
         startChunkIndex: Int,
@@ -429,7 +473,12 @@ class BookTtsSessionCoordinator(
             startChunkIndex = progress.chunkIndex,
             continueSession = continueSession,
             speechRate = progress.speechRate,
-            pitch = progress.pitch
+            pitch = progress.pitch,
+            // Listen voice is independent from the Reader voice: the service
+            // must use the Listen prefs, never its Reader-synced state.
+            ttsMode = com.aryan.reader.tts.loadListenTtsMode(appContext),
+            speakerId = com.aryan.reader.tts.loadListenTtsSpeaker(appContext),
+            authToken = cachedAuthToken
         )
         Timber.tag(TAG).i("Playing book=${book.bookId} chapter=$playableChapterIndex chunk=${progress.chunkIndex}")
     }
@@ -565,7 +614,10 @@ data class BookTtsAudiobookUiState(
     val error: String? = null
 )
 
-class BookTtsAudiobookController(context: Context) {
+class BookTtsAudiobookController(
+    context: Context,
+    private val authTokenProvider: (suspend () -> String?)? = null
+) {
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Main)
     private val repository = BookTtsContentRepository(appContext)
@@ -620,13 +672,19 @@ class BookTtsAudiobookController(context: Context) {
             )
             SharedListeningHandoff.STOP_TTS -> Unit
         }
-        val intent = Intent(appContext, TtsService::class.java).apply {
-            action = ACTION_START_BOOK_TTS
-            putExtra(EXTRA_BOOK_TTS_BOOK_ID, bookId)
-            putExtra(EXTRA_BOOK_TTS_START_POLICY, policy)
-            chapterIndex?.let { putExtra(EXTRA_BOOK_TTS_CHAPTER_INDEX, it) }
+        scope.launch {
+            // Fresh token per session so worker-credited cloud synthesis works
+            // for Listen exactly like it does for the Reader path.
+            val token = runCatching { authTokenProvider?.invoke() }.getOrNull()
+            val intent = Intent(appContext, TtsService::class.java).apply {
+                action = ACTION_START_BOOK_TTS
+                putExtra(EXTRA_BOOK_TTS_BOOK_ID, bookId)
+                putExtra(EXTRA_BOOK_TTS_START_POLICY, policy)
+                chapterIndex?.let { putExtra(EXTRA_BOOK_TTS_CHAPTER_INDEX, it) }
+                token?.takeIf { it.isNotBlank() }?.let { putExtra(EXTRA_BOOK_TTS_AUTH_TOKEN, it) }
+            }
+            ContextCompat.startForegroundService(appContext, intent)
         }
-        ContextCompat.startForegroundService(appContext, intent)
     }
 
     fun togglePlay() {

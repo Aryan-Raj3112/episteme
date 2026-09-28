@@ -66,13 +66,14 @@ class IosReaderAiAdaptersTest {
 
         assertEquals("Sign in to use this AI feature.", adapter.summarize("text").error)
         assertEquals("Sign in to use this AI feature.", adapter.recap("context").error)
-        // Android parity (PdfViewerScreen.onDictionaryLookup): multi-word
-        // without Pro needs the upsell, even signed-out — no sign-in gate.
-        assertEquals("Multi-word smart dictionary requires Pro.", adapter.define("two words").error)
+        // Android parity (PdfViewerScreen.onDictionaryLookup): smart
+        // dictionary is Pro-only for every length — no sign-in gate, the
+        // Pro error surfaces even signed-out.
+        assertEquals("Smart dictionary requires Pro.", adapter.define("two words").error)
     }
 
     @Test
-    fun multiWordDefineCountsWordsLikeAndroid() = runTest {
+    fun defineRequiresProForAllLengths() = runTest {
         val adapter = IosReaderAiAdapter(
             settingsProvider = { ReaderAiByokSettings() },
             accountStateProvider = { IosReaderAiAccountState() },
@@ -80,11 +81,11 @@ class IosReaderAiAdaptersTest {
             workerUrlProvider = { "" },
         )
 
-        // Single word falls through the Pro gate to the BYOK missing-model
-        // error instead of the multi-word Pro error.
-        assertEquals("Choose a model for Smart dictionary in AI settings.", adapter.define("word").error)
-        assertEquals("Multi-word smart dictionary requires Pro.", adapter.define("two  words").error)
-        assertEquals("Multi-word smart dictionary requires Pro.", adapter.define("  two words  ").error)
+        // Single words hit the same Pro gate as phrases now (worker /define
+        // is Pro-only); BYOK is the only non-Pro path.
+        assertEquals("Smart dictionary requires Pro.", adapter.define("word").error)
+        assertEquals("Smart dictionary requires Pro.", adapter.define("two  words").error)
+        assertEquals("Smart dictionary requires Pro.", adapter.define("  two words  ").error)
     }
 
     @Test

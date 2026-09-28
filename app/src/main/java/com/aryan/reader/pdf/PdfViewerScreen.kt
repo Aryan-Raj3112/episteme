@@ -37,6 +37,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.print.PrintManager
+import com.aryan.reader.appCheckHeaderMap
 import android.util.Base64
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -46,6 +47,7 @@ import androidx.annotation.OptIn
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -125,7 +127,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -180,6 +182,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalView
@@ -199,8 +202,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.toSize
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.createBitmap
 import androidx.core.view.WindowCompat
@@ -235,6 +240,10 @@ import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.shared.ReaderSearchState
 import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.SummarizationResult
+import com.aryan.reader.shared.formatSpendGuardCountdown
+import com.aryan.reader.shared.hasSpendableBalance
+import com.aryan.reader.shared.parseSpendGuardSentinel
+import com.aryan.reader.shared.spendableDisplayText
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.TtsWordReplacementsSheet
@@ -242,6 +251,8 @@ import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.areReaderAiFeaturesEnabled
 import com.aryan.reader.callByokGeminiInlineAi
+import com.aryan.reader.isByokModelReady
+import com.aryan.reader.isByokTtsReady
 import com.aryan.reader.cardTitle
 import com.aryan.reader.epubreader.AutoScrollControls
 import com.aryan.reader.epubreader.DictionarySettingsDialog
@@ -271,6 +282,8 @@ import com.aryan.reader.pdf.data.PdfAnnotationRepository
 import com.aryan.reader.pdf.data.PdfHighlightRepository
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.PdfTextBoxRepository
+import com.aryan.reader.pdf.PdfTextBoxMenuAction
+import com.aryan.reader.pdf.PDF_TEXT_BOX_DUPLICATE_GAP_REL
 import com.aryan.reader.pdf.data.PdfTextRepository
 import com.aryan.reader.pdf.data.SmartSearchResult
 import com.aryan.reader.pdf.data.TextStyleConfig
@@ -290,8 +303,20 @@ import com.aryan.reader.saveTtsReplacementPreferences
 import com.aryan.reader.scaledToCanvasLimit
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.HighlightStyle
+import androidx.compose.ui.text.TextRange
+import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
+import com.aryan.reader.shared.pdf.RichParagraphUiState
+import com.aryan.reader.shared.pdf.isSharedPdfTextBoxTapHit
+import com.aryan.reader.shared.pdf.SharedPdfRichDocument
 import com.aryan.reader.shared.pdf.SharedPdfRichListType
+import com.aryan.reader.shared.pdf.sharedPdfRichPagesToTextBoxes
+import com.aryan.reader.shared.pdf.SharedPdfRichTextAlign
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxAnnotatedString
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxDockState
+import com.aryan.reader.shared.pdf.sharedPdfToggleTextBoxList
+import com.aryan.reader.shared.pdf.sharedPdfSetTextBoxAlignmentState
+import com.aryan.reader.shared.pdf.trimmedRichParagraphs
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.pdf.PdfNavigationReason
 import com.aryan.reader.shared.pdf.RealisticPdfPageTurnAnimationSpec
@@ -299,7 +324,17 @@ import com.aryan.reader.shared.pdf.pdfPaginatedPagePaperColor
 import com.aryan.reader.shared.pdf.shouldPlayRealisticPdfPageTurn
 import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
 import com.aryan.reader.shared.pdf.pdfDoubleTapTargetScale
+import com.aryan.reader.shared.pdf.isPdfTextDockSideDocked
 import com.aryan.reader.shared.pdf.isPdfTextDockTopAnchored
+import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockSide
+import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockSticky
+import com.aryan.reader.shared.pdf.launchSharedPdfDockGlide
+import com.aryan.reader.shared.pdf.SharedPdfSideWheelWidth
+import com.aryan.reader.shared.pdf.SharedPdfSideWheelHeight
+import com.aryan.reader.shared.pdf.resolveSharedPdfBarDropX
+import com.aryan.reader.shared.pdf.resolveSharedPdfDockSnapLocation
+import com.aryan.reader.shared.pdf.resolveSharedPdfSideWheelClearOfBarBand
+import com.aryan.reader.shared.pdf.resolveSharedPdfSideWheelDropY
 import com.aryan.reader.shared.pdf.pdfTextDockKeyboardLiftPx
 import com.aryan.reader.shared.pdf.pdfTextDockRestingBottomPadding
 import com.aryan.reader.shared.pdf.shouldShowPdfTextDock
@@ -311,6 +346,8 @@ import com.aryan.reader.shared.pdf.animatesPagination
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.ui.ReaderMinimalSlider
 import com.aryan.reader.shared.ui.realisticPageCurl
+import com.aryan.reader.shared.ui.sharedPaginatedCurlTranslationX
+import com.aryan.reader.shared.ui.sharedPaginatedPagerRightToLeft
 import com.aryan.reader.shared.ui.SharedPdfRichTextHiddenInput
 import com.aryan.reader.shared.ui.SharedMobileReaderDrawer
 import com.aryan.reader.shared.ui.SharedMobileReaderScaffold
@@ -541,13 +578,13 @@ fun PdfViewerScreen(
     var isBackgroundIndexing by remember { mutableStateOf(false) }
     var backgroundIndexingProgress by remember { mutableFloatStateOf(0f) }
 
-    val uiState by viewModel.uiState.collectAsState()
-    val customFonts by viewModel.customFonts.collectAsState()
-    val bubbleZoomDownloadProgress by viewModel.speechBubbleModelDownloadProgress.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val customFonts by viewModel.customFonts.collectAsStateWithLifecycle()
+    val bubbleZoomDownloadProgress by viewModel.speechBubbleModelDownloadProgress.collectAsStateWithLifecycle()
     val annotationSettingsRepo = remember(context) { AnnotationSettingsRepository(context) }
-    val toolSettings by annotationSettingsRepo.settings.collectAsState()
+    val toolSettings by annotationSettingsRepo.settings.collectAsStateWithLifecycle()
     val ttsController = ttsControllerOverride ?: rememberTtsController()
-    val ttsState by ttsController.ttsState.collectAsState()
+    val ttsState by ttsController.ttsState.collectAsStateWithLifecycle()
     val surfaceState = remember { PdfViewerSurfaceState() }
     val documentSetup = remember(
         uiState,
@@ -1300,26 +1337,32 @@ private fun PdfViewerScreenContent(
         }.takeIf { it >= 0 }
     }
 
+    // Currently retired: page rich text is hidden on Android, so tool style
+    // is no longer mirrored into the page controller (boxes read the dock
+    // default directly). Kept structure for one-line re-enable.
+    @Suppress("DEPRECATION")
     LaunchedEffect(richTextController, toolSettings.textStyle) {
-        richTextController?.let { controller ->
-            val config = toolSettings.textStyle
-            val style = SpanStyle(
-                color = Color(config.colorArgb),
-                background = Color(config.backgroundColorArgb),
-                fontSize = config.fontSize.sp,
-                fontWeight = if (config.isBold) FontWeight.Bold else FontWeight.Normal,
-                fontStyle = if (config.isItalic) FontStyle.Italic else FontStyle.Normal,
-                fontFamily = PdfFontCache.getFontFamily(config.fontPath),
-                textDecoration = run {
-                    val decorations = mutableListOf<TextDecoration>()
-                    if (config.isUnderline) decorations.add(TextDecoration.Underline)
-                    if (config.isStrikeThrough) decorations.add(TextDecoration.LineThrough)
-                    if (decorations.isEmpty()) TextDecoration.None
-                    else TextDecoration.combine(decorations)
-                })
+        if (ENABLE_PAGE_RICH_TEXT) {
+            richTextController?.let { controller ->
+                val config = toolSettings.textStyle
+                val style = SpanStyle(
+                    color = Color(config.colorArgb),
+                    background = Color(config.backgroundColorArgb),
+                    fontSize = config.fontSize.sp,
+                    fontWeight = if (config.isBold) FontWeight.Bold else FontWeight.Normal,
+                    fontStyle = if (config.isItalic) FontStyle.Italic else FontStyle.Normal,
+                    fontFamily = PdfFontCache.getFontFamily(config.fontPath),
+                    textDecoration = run {
+                        val decorations = mutableListOf<TextDecoration>()
+                        if (config.isUnderline) decorations.add(TextDecoration.Underline)
+                        if (config.isStrikeThrough) decorations.add(TextDecoration.LineThrough)
+                        if (decorations.isEmpty()) TextDecoration.None
+                        else TextDecoration.combine(decorations)
+                    })
 
-            if (controller.currentStyle != style || controller.currentFontPath != config.fontPath) {
-                controller.updateCurrentStyle(style, config.fontPath, config.fontName)
+                if (controller.currentStyle != style || controller.currentFontPath != config.fontPath) {
+                    controller.updateCurrentStyle(style, config.fontPath, config.fontName)
+                }
             }
         }
     }
@@ -1800,42 +1843,29 @@ private fun PdfViewerScreenContent(
         }
     }
 
-    val onInsertTextBox = {
-        val currentP = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
-
-        Timber.tag("PdfTextBoxDebug").d("Viewer: onInsertTextBox triggered. Target Page: $currentP, DisplayMode: $displayMode")
-        Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
-            "event=insert_request page=$currentP displayMode=$displayMode " +
-                "textBoxEditMode=$isDrawingActive selectedTextBoxId=${selectedTextBoxId ?: "none"}"
-        )
-
-        val defaultWidth = 0.4f
-        val defaultHeight = 0.1f
-        val startX = 0.3f
-        val startY = 0.45f
-
+    // Page rich text is retired: boxes are the only text annotation and a tap
+    // in TEXT mode creates one anchored at the tap (docs/...retirement.md).
+    // Both display modes share this core; callers differ only in how they
+    // learn the tap point.
+    val insertTextBoxAtPage = { pageIndex: Int, centerXRel: Float, centerYRel: Float ->
         val newStyle = toolSettings.textStyle
 
-        val pageRatio = displayPageRatios.getOrElse(currentP) { 1f }
+        val pageRatio = displayPageRatios.getOrElse(pageIndex) { 1f }
         val screenWidthPx = view.width.toFloat().takeIf { it > 0f } ?: with(density) { 360.dp.toPx() }
-        val estimatedPageHeightPx = if (pageRatio > 0) screenWidthPx / pageRatio else screenWidthPx
-        val newFontSizePx = with(density) { newStyle.fontSize.sp.toPx() }
-        val fontSizeNorm = if (estimatedPageHeightPx > 0) newFontSizePx / estimatedPageHeightPx else 0.02f
+        val fontSizeNorm = pdfTextBoxFontSizeNorm(
+            displayFontSizeSp = newStyle.fontSize,
+            spToPx = { sp -> with(density) { sp.sp.toPx() } },
+            pageRatio = pageRatio,
+            containerWidthPx = screenWidthPx,
+        )
 
-        val newBox = PdfTextBox(
+        val newBox = buildTextBoxAtTap(
             id = generateShortId(),
-            pageIndex = currentP,
-            relativeBounds = Rect(startX, startY, startX + defaultWidth, startY + defaultHeight),
-            text = "",
-            color = Color(newStyle.colorArgb),
-            backgroundColor = Color(newStyle.backgroundColorArgb),
-            fontSize = fontSizeNorm,
-            isBold = newStyle.isBold,
-            isItalic = newStyle.isItalic,
-            isUnderline = newStyle.isUnderline,
-            isStrikeThrough = newStyle.isStrikeThrough,
-            fontPath = newStyle.fontPath,
-            fontName = newStyle.fontName
+            pageIndex = pageIndex,
+            xRel = centerXRel,
+            yRel = centerYRel,
+            style = newStyle,
+            fontSizeNorm = fontSizeNorm,
         )
 
         textBoxes.add(newBox)
@@ -1849,6 +1879,67 @@ private fun PdfViewerScreenContent(
         pdfRichLayoutDiag("exit.path=textBoxInsertCreated id=${newBox.id}")
         richTextController?.clearSelection()
         showBars = false
+    }
+
+    val onInsertTextBox = {
+        val currentP = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
+
+        Timber.tag("PdfTextBoxDebug").d("Viewer: onInsertTextBox triggered. Target Page: $currentP, DisplayMode: $displayMode")
+        Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+            "event=insert_request page=$currentP displayMode=$displayMode " +
+                "textBoxEditMode=$isDrawingActive selectedTextBoxId=${selectedTextBoxId ?: "none"}"
+        )
+
+        // Retired icon path (hidden): fixed default rect, same as before.
+        insertTextBoxAtPage(currentP, 0.3f + PDF_TEXT_BOX_DEFAULT_WIDTH_REL / 2f, 0.45f + PDF_TEXT_BOX_DEFAULT_HEIGHT_REL / 2f)
+    }
+
+    val onTextBoxCreateAtTap = { pageIndex: Int, xRel: Float, yRel: Float ->
+        Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+            "event=insert_tap page=$pageIndex rel=($xRel,$yRel) " +
+                "textBoxEditMode=$isDrawingActive selectedTextBoxId=${selectedTextBoxId ?: "none"}"
+        )
+        insertTextBoxAtPage(pageIndex, xRel, yRel)
+    }
+
+    val onTextBoxMenuAction = { action: PdfTextBoxMenuAction ->
+        val boxId = selectedTextBoxId
+        val source = boxId?.let { id -> textBoxes.find { it.id == id } }
+        if (source != null) {
+            when (action) {
+                PdfTextBoxMenuAction.DELETE -> {
+                    Timber.tag("PdfTextBoxDebug").i("Viewer: TextBox menu delete [ID: $boxId]")
+                    textBoxes.remove(source)
+                    selectedTextBoxId = null
+                }
+                PdfTextBoxMenuAction.DUPLICATE -> {
+                    // Offset below the original, clamped into the page; keeps
+                    // text, styles, paragraphs, and lock state (a locked
+                    // duplicate stays locked where it lands).
+                    val width = source.relativeBounds.width.coerceAtLeast(0f)
+                    val height = source.relativeBounds.height.coerceAtLeast(0f)
+                    val newLeft = (source.relativeBounds.left)
+                        .coerceIn(0f, (1f - width).coerceAtLeast(0f))
+                    val newTop = (source.relativeBounds.bottom + PDF_TEXT_BOX_DUPLICATE_GAP_REL)
+                        .coerceIn(0f, (1f - height).coerceAtLeast(0f))
+                    val duplicate = source.copy(
+                        id = generateShortId(),
+                        relativeBounds = Rect(newLeft, newTop, newLeft + width, newTop + height),
+                    )
+                    Timber.tag("PdfTextBoxDebug").i(
+                        "Viewer: TextBox menu duplicate [ID: $boxId -> ${duplicate.id}] bounds=${duplicate.relativeBounds}"
+                    )
+                    textBoxes.add(duplicate)
+                    selectedTextBoxId = duplicate.id
+                }
+                PdfTextBoxMenuAction.LOCK -> {
+                    val next = !source.isLocked
+                    Timber.tag("PdfTextBoxDebug").i("Viewer: TextBox menu lock [ID: $boxId] locked=$next")
+                    val idx = textBoxes.indexOfFirst { it.id == boxId }
+                    if (idx != -1) textBoxes[idx] = source.copy(isLocked = next)
+                }
+            }
+        }
     }
 
     val onSingleTapStable = remember {
@@ -2249,7 +2340,7 @@ private fun PdfViewerScreenContent(
         }
     }
 
-    val reflowInfo by viewModel.reflowWorkInfo.collectAsState(initial = null)
+    val reflowInfo by viewModel.reflowWorkInfo.collectAsStateWithLifecycle(initialValue = null)
 
     val isReflowingThisBook by remember(reflowInfo, bookId) {
         derivedStateOf {
@@ -2610,15 +2701,18 @@ private fun PdfViewerScreenContent(
         }
     }
 
-    val onDictionaryLookupStable = remember(executeWithOcrCheck, useOnlineDictionary, selectedDictPackage, uiState.credits, isProUser, ownsPaneGlobals) {
+    val onDictionaryLookupStable = remember(executeWithOcrCheck, useOnlineDictionary, selectedDictPackage, uiState.credits, uiState.walletMicros, isProUser, ownsPaneGlobals) {
         { text: String ->
             if (ownsPaneGlobals) {
                 executeWithOcrCheck {
                     val effectiveUseOnline = areReaderAiFeaturesEnabled(context) && useOnlineDictionary
 
                     if (effectiveUseOnline) {
-                        val wordCount = com.aryan.reader.countWords(text)
-                        if (BuildConfig.FLAVOR != "oss" && wordCount > 1 && !isProUser) {
+                        // Smart Dictionary is Pro-only (worker enforces it
+                        // too). No upsell when the user's own key covers
+                        // definitions: the request routes through BYOK and
+                        // never touches credits.
+                        if (BuildConfig.FLAVOR != "oss" && !isProUser && !isByokModelReady(context, AiFeature.DEFINE)) {
                             showDictionaryUpsellDialog = true
                         } else {
                             selectedTextForAi = text
@@ -2640,7 +2734,24 @@ private fun PdfViewerScreenContent(
                                             showAiDefinitionPopup = false
                                             isAiDefinitionLoading = false
                                         } else {
-                                            aiDefinitionResult = AiDefinitionResult(error = error)
+                                            val guard = parseSpendGuardSentinel(error)
+                                            if (guard != null) {
+                                                surfaceState.spendNotice = guard
+                                                isAiDefinitionLoading = false
+                                                if (guard.first == "DAILY_SPEND_LIMIT") {
+                                                    showAiDefinitionPopup = false
+                                                } else {
+                                                    surfaceState.showBanner(
+                                                        context.getString(
+                                                            R.string.snackbar_rate_limited_retry,
+                                                            formatSpendGuardCountdown(guard.second)
+                                                        ),
+                                                        isError = true
+                                                    )
+                                                }
+                                            } else {
+                                                aiDefinitionResult = AiDefinitionResult(error = error)
+                                            }
                                         }
                                     },
                                     onFinish = { isAiDefinitionLoading = false },
@@ -2754,6 +2865,25 @@ private fun PdfViewerScreenContent(
             "Starting summarization for PDF page: $pdfPageIndex (Display Page: $currentPageIndex)"
         )
 
+        suspend fun summarizeImageViaByok(base64: String) {
+            val fullText = StringBuilder()
+            callByokGeminiInlineAi(
+                context = context,
+                feature = AiFeature.SUMMARIZE,
+                mimeType = "image/jpeg",
+                base64Data = base64,
+                systemInstruction = "You are an expert in analyzing visual content. You will be given an image of a page. Describe what is happening, identify key information, and summarize the text. Do not add a preamble.",
+                temperature = 0.2,
+                maxTokens = 8192,
+                onUpdate = {
+                    fullText.append(it)
+                    onUpdate(SummarizationResult(summary = fullText.toString()))
+                },
+                onError = { onUpdate(SummarizationResult(error = it)) }
+            )
+            onFinish()
+        }
+
         withContext(Dispatchers.IO) {
             var pageBitmap: Bitmap? = null
             var connection: HttpURLConnection? = null
@@ -2772,22 +2902,14 @@ private fun PdfViewerScreenContent(
 
                 @Suppress("KotlinConstantConditions")
                 if (BuildConfig.FLAVOR == "oss") {
-                    val fullText = StringBuilder()
-                    callByokGeminiInlineAi(
-                        context = context,
-                        feature = AiFeature.SUMMARIZE,
-                        mimeType = "image/jpeg",
-                        base64Data = base64Image,
-                        systemInstruction = "You are an expert in analyzing visual content. You will be given an image of a page. Describe what is happening, identify key information, and summarize the text. Do not add a preamble.",
-                        temperature = 0.2,
-                        maxTokens = 8192,
-                        onUpdate = {
-                            fullText.append(it)
-                            onUpdate(SummarizationResult(summary = fullText.toString()))
-                        },
-                        onError = { onUpdate(SummarizationResult(error = it)) }
-                    )
-                    onFinish()
+                    summarizeImageViaByok(base64Image)
+                    return@withContext
+                }
+
+                // Pro parity with iOS: a configured BYOK model+key for
+                // summaries bypasses the credited worker for this request.
+                if (isByokModelReady(context, AiFeature.SUMMARIZE)) {
+                    summarizeImageViaByok(base64Image)
                     return@withContext
                 }
 
@@ -2808,14 +2930,24 @@ private fun PdfViewerScreenContent(
                 if (authToken != null) {
                     connection.setRequestProperty("Authorization", "Bearer $authToken")
                 }
+                // Attestation (omitted when unavailable; the server logs the miss).
+                appCheckHeaderMap().forEach { (name, value) -> connection.setRequestProperty(name, value) }
                 connection.outputStream.use { os ->
                     os.write(jsonPayload.toString().toByteArray(Charsets.UTF_8))
                 }
 
                 val responseCode = connection.responseCode
                 Timber.d("Summarization API response code: $responseCode")
-                if (responseCode == 402) {
-                    onUpdate(SummarizationResult(error = "INSUFFICIENT_CREDITS"))
+                if (responseCode == 402 || responseCode == 429) {
+                    val errorBody = try {
+                        connection.errorStream?.bufferedReader()?.use { it.readText() }
+                    } catch (_: Exception) { null }
+                    onUpdate(
+                        SummarizationResult(
+                            error = com.aryan.reader.epubreader.mapAiHttpError(responseCode, errorBody)
+                                ?: "INSUFFICIENT_CREDITS"
+                        )
+                    )
                     onFinish()
                     return@withContext
                 }
@@ -2848,7 +2980,7 @@ private fun PdfViewerScreenContent(
                                     onUpdate(lastResult!!)
                                 }
                                 jsonResponse.optString("error").takeIf { it.isNotEmpty() }?.let {
-                                    lastResult = SummarizationResult(error = it, cost = currentCost, freeRemaining = currentFreeRemaining)
+                                    lastResult = SummarizationResult(error = com.aryan.reader.epubreader.mapAiStreamError(jsonResponse), cost = currentCost, freeRemaining = currentFreeRemaining)
                                     onUpdate(lastResult)
                                 }
                             } catch (e: Exception) {
@@ -2978,7 +3110,8 @@ private fun PdfViewerScreenContent(
         if (isSplitPane && !isPaneFocused) {
             return
         }
-        if (BuildConfig.FLAVOR != "oss" && currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && uiState.credits <= 0) {
+        // BYOK TTS never spends credits, so it bypasses the balance gate.
+        if (BuildConfig.FLAVOR != "oss" && currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && !hasSpendableBalance(uiState.credits, uiState.walletMicros) && !isByokTtsReady(context)) {
             showInsufficientCreditsDialog = true
             return
         }
@@ -4267,6 +4400,8 @@ private fun PdfViewerScreenContent(
         surfaceState.zoomIndicatorPercentage = zoomIndicatorPercentage
         surfaceState.toolSettings = toolSettings
         surfaceState.onInsertTextBox = onInsertTextBox
+        surfaceState.onTextBoxCreateAt = onTextBoxCreateAtTap
+        surfaceState.onTextBoxMenuAction = onTextBoxMenuAction
         surfaceState.customFonts = customFonts
         surfaceState.onSingleTapStable = onSingleTapStable
     }
@@ -4568,7 +4703,9 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
             isSummarizationLoading = isSummarizationLoading,
             onClearSummary = { summarizationResult = null },
             onGenerateSummary = { force ->
-                if (BuildConfig.FLAVOR != "oss" && !isProUser && uiState.credits <= 0) {
+                // No upsell when the user's own key covers summaries: the
+                // request routes through BYOK and never touches credits.
+                if (BuildConfig.FLAVOR != "oss" && !isProUser && !hasSpendableBalance(uiState.credits, uiState.walletMicros) && !isByokModelReady(context, AiFeature.SUMMARIZE)) {
                     showInsufficientCreditsDialog = true
                     showAiHubSheet = false
                 } else {
@@ -4592,7 +4729,23 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                                     showAiHubSheet = false
                                     isSummarizationLoading = false
                                 } else {
-                                    summarizationResult = result
+                                    val guard = parseSpendGuardSentinel(result.error)
+                                    if (guard != null) {
+                                        surfaceState.spendNotice = guard
+                                        showAiHubSheet = false
+                                        isSummarizationLoading = false
+                                        if (guard.first == "RATE_LIMITED") {
+                                            surfaceState.showBanner(
+                                                context.getString(
+                                                    R.string.snackbar_rate_limited_retry,
+                                                    formatSpendGuardCountdown(guard.second)
+                                                ),
+                                                isError = true
+                                            )
+                                        }
+                                    } else {
+                                        summarizationResult = result
+                                    }
                                 }
                             },
                             {
@@ -4618,6 +4771,8 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
             isMainTtsActive = isTtsSessionActive,
             getAuthToken = { viewModel.getAuthToken() },
             credits = uiState.credits,
+            walletMicros = uiState.walletMicros,
+            walletMigrated = uiState.walletMigrated,
             isProUser = isProUser
         )
     }
@@ -4668,6 +4823,23 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                 onNavigateToPro()
             },
             onDismiss = { showInsufficientCreditsDialog = false },
+        )
+    }
+
+    if (surfaceState.spendNotice?.first == "DAILY_SPEND_LIMIT") {
+        val retryAfter = surfaceState.spendNotice?.second ?: 0
+        SharedMobileInfoConfirmationDialog(
+            title = stringResource(R.string.dialog_daily_spend_limit_title),
+            body = stringResource(
+                R.string.dialog_daily_spend_limit_desc,
+                spendableDisplayText(uiState.credits, uiState.walletMicros, uiState.walletMigrated),
+                formatSpendGuardCountdown(retryAfter)
+            ),
+            confirmLabel = stringResource(R.string.action_ok),
+            dismissLabel = stringResource(R.string.action_cancel),
+            icon = { Icon(painterResource(id = R.drawable.crown), contentDescription = null) },
+            onConfirm = { surfaceState.spendNotice = null },
+            onDismiss = { surfaceState.spendNotice = null },
         )
     }
 
@@ -5920,7 +6092,15 @@ private fun PdfViewerDocumentSetup(
                 showInsufficientCreditsDialog = true
                 ttsController.stop()
             } else {
-                showBanner(message, isError = true)
+                val guard = parseSpendGuardSentinel(message)
+                if (guard != null) {
+                    surfaceState.spendNotice = guard
+                    // Spend cap halts like an empty wallet; rate limit auto-retries
+                    // once in the playback manager and shows in the TTS overlay.
+                    if (guard.first == "DAILY_SPEND_LIMIT") ttsController.stop()
+                } else {
+                    showBanner(message, isError = true)
+                }
             }
         }
     }
@@ -6563,6 +6743,9 @@ private class PdfViewerSurfaceState {
     lateinit var bookId: String
     lateinit var ttsController: TtsController
     var isTtsPlayingOrLoading: Boolean by androidx.compose.runtime.mutableStateOf(false)
+    // Worker spend-guard notice: ("RATE_LIMITED"|"DAILY_SPEND_LIMIT", retryAfterSeconds).
+    // Single source of truth for the PDF AI/TTS surfaces; cleared on dismiss.
+    var spendNotice: Pair<String, Int>? by androidx.compose.runtime.mutableStateOf(null)
     lateinit var context: Context
     var totalDisplayPages: Int by androidx.compose.runtime.mutableStateOf(0)
     lateinit var paginationSpreadStarts: List<Int>
@@ -6630,6 +6813,14 @@ private class PdfViewerSurfaceState {
     var dynamicBeyondViewportPageCount: Int by androidx.compose.runtime.mutableStateOf(0)
     lateinit var textBoxes: androidx.compose.runtime.snapshots.SnapshotStateList<PdfTextBox>
     lateinit var paginationDraggingBoxId: PdfViewerMutableValue<String?>
+    var textBoxParagraphUiState: RichParagraphUiState? by androidx.compose.runtime.mutableStateOf(null)
+    var textBoxSelection: TextRange by androidx.compose.runtime.mutableStateOf(TextRange.Zero)
+    var textBoxSelectionBoxId: String? by androidx.compose.runtime.mutableStateOf(null)
+    // One-shot post-toggle cursor (see TextBoxPendingSelection): consumed
+    // once by the field, so it can never go stale and yank the cursor.
+    // textBoxSelection above remains the toggle INPUT (last-known cursor).
+    var textBoxPendingSelection: TextBoxPendingSelection? by androidx.compose.runtime.mutableStateOf(null)
+    var textBoxPendingSelectionToken: Long by androidx.compose.runtime.mutableStateOf(0L)
     var isDrawingActive: Boolean by androidx.compose.runtime.mutableStateOf(false)
     lateinit var viewConfiguration: androidx.compose.ui.platform.ViewConfiguration
     lateinit var currentActiveScale: PdfViewerMutableValue<Float>
@@ -6778,6 +6969,16 @@ private class PdfViewerSurfaceState {
     lateinit var textDockLocation: PdfViewerMutableValue<DockLocation>
     lateinit var textDockOffset: PdfViewerMutableValue<Offset>
     lateinit var isTextDockDragging: PdfViewerMutableValue<Boolean>
+    // Settle glides for the draggable docks, shared across chrome functions
+    // so a landing bar can nudge a side-hugging wheel clear with the same
+    // glide instead of overlapping it.
+    val annotationDockGlide = Animatable(Offset.Zero, Offset.VectorConverter)
+    val textDockGlide = Animatable(Offset.Zero, Offset.VectorConverter)
+    // Last measured root-space rects of both dock boxes (null while dragging
+    // or before first layout): the overlap solver uses them so a dropped
+    // dock never covers the other dock.
+    var annotationDockMeasuredRect: Rect? by androidx.compose.runtime.mutableStateOf(null)
+    var textDockMeasuredRect: Rect? by androidx.compose.runtime.mutableStateOf(null)
     var highlighterPalette: List<Color> by androidx.compose.runtime.mutableStateOf(emptyList())
     var penPalette: List<Color> by androidx.compose.runtime.mutableStateOf(emptyList())
     var activeToolThickness: Float by androidx.compose.runtime.mutableStateOf(0f)
@@ -6799,6 +7000,13 @@ private class PdfViewerSurfaceState {
     var zoomIndicatorPercentage: Int by mutableStateOf(0)
     var toolSettings: AnnotationToolSettings by androidx.compose.runtime.mutableStateOf(AnnotationToolSettings())
     lateinit var onInsertTextBox: () -> Unit
+    /**
+     * Currently retired page editor: taps in TEXT mode create a text box at
+     * the tap (page index + relative 0..1 coords). Bound in content scope.
+     */
+    lateinit var onTextBoxCreateAt: (pageIndex: Int, xRel: Float, yRel: Float) -> Unit
+    /** Compact text box menu (delete / duplicate / lock), bound in content scope. */
+    lateinit var onTextBoxMenuAction: (PdfTextBoxMenuAction) -> Unit
     lateinit var customFonts: List<CustomFontEntity>
     lateinit var ttsOverlaySize: PdfViewerMutableValue<ReaderTtsOverlaySize>
     lateinit var currentTtsMode: PdfViewerMutableValue<TtsPlaybackManager.TtsMode>
@@ -6914,6 +7122,74 @@ private fun <T> pdfViewerMutableValue(
     getter: () -> T,
     setter: (T) -> Unit,
 ): PdfViewerMutableValue<T> = PdfViewerMutableValue(getter, setter)
+
+/**
+ * Text-box paragraph ops (Android benchmark, shared-first): same L/C/R +
+ * BULLET/NUMBERED semantics as page rich text, applied to the selected box
+ * using its last-known cursor selection (falls back to end-of-text).
+ *
+ * Alignment is a pure paragraph-state update (no text change, no ZWSP
+ * anchor): the annotated round-trip cannot represent alignment on empty
+ * text and would silently drop it.
+ */
+private fun applyTextBoxAlignment(
+    textBoxes: androidx.compose.runtime.snapshots.SnapshotStateList<PdfTextBox>,
+    selectedTextBoxId: String?,
+    surfaceState: PdfViewerSurfaceState,
+    align: SharedPdfRichTextAlign,
+) {
+    val box = textBoxes.find { it.id == selectedTextBoxId } ?: return
+    val selection = if (surfaceState.textBoxSelectionBoxId == box.id) {
+        surfaceState.textBoxSelection
+    } else {
+        TextRange(box.text.length)
+    }
+    val paragraphs = sharedPdfSetTextBoxAlignmentState(box.text, box.paragraphs, selection, align)
+    Timber.tag(TEXT_BOX_TRACE_TAG).d(
+        "dock_align id=${box.id} align=$align sel=$selection textLen=${box.text.length} " +
+            "parasIn=${pdfTextBoxTraceParagraphs(box.paragraphs)} " +
+            "parasOut=${pdfTextBoxTraceParagraphs(paragraphs)}"
+    )
+    val idx = textBoxes.indexOfFirst { it.id == box.id }
+    if (idx != -1) textBoxes[idx] = box.copy(paragraphs = paragraphs)
+}
+
+private fun applyTextBoxListType(
+    textBoxes: androidx.compose.runtime.snapshots.SnapshotStateList<PdfTextBox>,
+    selectedTextBoxId: String?,
+    surfaceState: PdfViewerSurfaceState,
+    type: com.aryan.reader.shared.pdf.SharedPdfRichListType,
+) {
+    val box = textBoxes.find { it.id == selectedTextBoxId } ?: return
+    val selection = if (surfaceState.textBoxSelectionBoxId == box.id) {
+        surfaceState.textBoxSelection
+    } else {
+        TextRange(box.text.length)
+    }
+    val annotated = sharedPdfTextBoxAnnotatedString(box.text, box.paragraphs)
+    val result = sharedPdfToggleTextBoxList(annotated, selection, type)
+    surfaceState.textBoxPendingSelectionToken += 1
+    val token = surfaceState.textBoxPendingSelectionToken
+    Timber.tag(TEXT_BOX_TRACE_TAG).d(
+        "dock_list id=${box.id} type=$type selIn=$selection " +
+            "textIn=${pdfTextBoxTraceText(box.text)} textOut=${pdfTextBoxTraceText(result.text)} " +
+            "selOut=${result.selection} parasOut=${pdfTextBoxTraceParagraphs(result.paragraphs)} " +
+            "token=$token"
+    )
+    val idx = textBoxes.indexOfFirst { it.id == box.id }
+    if (idx != -1) {
+        textBoxes[idx] = box.copy(
+            text = result.text,
+            paragraphs = result.paragraphs.trimmedRichParagraphs()
+        )
+        // Forward the post-toggle cursor (shifted past inserted markers)
+        // as a one-shot token. The live mirror below stays the toggle
+        // INPUT for the next tap — it is never fed back into the field.
+        surfaceState.textBoxPendingSelection = TextBoxPendingSelection(result.selection, token)
+        surfaceState.textBoxSelection = result.selection
+        surfaceState.textBoxSelectionBoxId = box.id
+    }
+}
 
 // Deliberately non-inline: the bounded calls above compile to small capture
 // methods instead of inlining every bridge write into PdfViewerScreenContent.
@@ -7105,7 +7381,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     if (richTextController != null) {
         SharedPdfRichTextHiddenInput(
             controller = richTextController.sharedDelegate,
-            enabled = hiddenRichTextInputEnabled,
+            // Currently retired: page rich text never takes the IME on Android.
+            enabled = hiddenRichTextInputEnabled && ENABLE_PAGE_RICH_TEXT,
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
@@ -7156,7 +7433,15 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                         }
 
                         Box(modifier = Modifier.fillMaxSize().clipToBounds()) {
-                            var pageTurnTouchY by remember { mutableStateOf<Float?>(null) }
+                            // Draw-phase state: the curl's fold corner Y. Held as a
+                            // state object and passed to pages as a provider so the
+                            // per-event writes below NEVER recompose the pager pages —
+                            // the value is only read inside realisticPageCurl's
+                            // drawWithContent. Reading it in composition made every
+                            // pressed pointer event (every pinch/pen move) recompose
+                            // all visible pages, which starve zoom and ink whenever
+                            // the realistic page turn is enabled.
+                            val pageTurnTouchYState = remember { mutableStateOf<Float?>(null) }
                             val paginationUserScrollEnabled =
                                 (currentPageScale == 1f || (isScrollLocked && displayMode == DisplayMode.PAGINATION)) &&
                                     !isTtsPlayingOrLoading &&
@@ -7191,7 +7476,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                                     while (true) {
                                                         val event = awaitPointerEvent(PointerEventPass.Initial)
                                                         event.changes.firstOrNull { it.pressed }?.let { down ->
-                                                            pageTurnTouchY = down.position.y
+                                                            pageTurnTouchYState.value = down.position.y
                                                         }
                                                     }
                                                 }
@@ -7211,7 +7496,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                     paginationPageState = paginationPageState,
                                     pagerPageIndex = pagerPageIndex,
                                     pageTurnAnimationEnabled = pageTurnAnimationEnabled,
-                                    pageTurnTouchY = pageTurnTouchY,
+                                    pageTurnTouchYProvider = { pageTurnTouchYState.value },
+                                    onTextBoxCreateAt = surfaceState.onTextBoxCreateAt,
                                 )
                             }
 
@@ -7253,7 +7539,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                             scale = currentActiveScale,
                                             handlePosition = overlayHandlePos,
                                             onBoundsChanged = {},
-                                            onTextChanged = {},
+                                            onTextChanged = { _, _ -> },
                                             onSelect = {},
                                             onDragStart = {},
                                             onDrag = { _, _ -> },
@@ -7792,10 +8078,27 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                     )
                                     if (idx != -1) textBoxes[idx] = updatedBox
                                 },
+                                onTextBoxMenuAction = surfaceState.onTextBoxMenuAction,
+                                onTextBoxParagraphUiStateChanged = { state, selection ->
+                                    surfaceState.textBoxParagraphUiState = state
+                                    surfaceState.textBoxSelection = selection
+                                    surfaceState.textBoxSelectionBoxId = selectedTextBoxId
+                                    Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                                        "mirror_write path=vertical boxId=$selectedTextBoxId " +
+                                            "state=${pdfTextBoxTraceDockState(state)} sel=$selection"
+                                    )
+                                },
+                                textBoxPendingSelection = surfaceState.textBoxPendingSelection?.takeIf {
+                                    surfaceState.textBoxSelectionBoxId == selectedTextBoxId
+                                },
+                                onTextBoxCreateAt = surfaceState.onTextBoxCreateAt,
                                 onTextBoxSelect = { id ->
                                     Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
                                         "event=viewer_select path=vertical id=$id " +
                                             "selectedBefore=${selectedTextBoxId ?: "none"} textBoxEditMode=$isDrawingActive"
+                                    )
+                                    Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                                        "select path=vertical id=$id selectedBefore=${selectedTextBoxId ?: "none"}"
                                     )
                                     selectedTextBoxId = id
                                     pdfRichLayoutDiag("exit.path=textBoxSelect path=vertical id=$id")
@@ -9060,6 +9363,11 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         val isOss = surfaceState.isOss
         var dockLocation by surfaceState.dockLocation
         var dockOffset by surfaceState.dockOffset
+        // Text dock placement (the text dock UI lives in PdfViewerChromeTts,
+        // but overlap resolution needs its slot here when the pen dock lands).
+        var textDockLocation by surfaceState.textDockLocation
+        var textDockOffset by surfaceState.textDockOffset
+        var isTextDockDragging by surfaceState.isTextDockDragging
         val highlighterPalette = surfaceState.highlighterPalette
         val penPalette = surfaceState.penPalette
         val activeToolThickness = surfaceState.activeToolThickness
@@ -9245,29 +9553,87 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         val density = LocalDensity.current
 
         val popupPlacementConfig =
-            remember(dockLocation, dockOffset, boxMaxHeightFloat, dockHeightPx) {
+            remember(dockLocation, dockOffset, boxMaxHeightFloat, dockHeightPx, isDockDragging) {
                 val margin = 16.dp
-                val dockTopY = when (dockLocation) {
-                    DockLocation.TOP -> 0f
-                    DockLocation.BOTTOM -> boxMaxHeightFloat - dockHeightPx
-                    DockLocation.FLOATING -> dockOffset.y
-                }
-
-                val dockBottomY = dockTopY + dockHeightPx
-                val dockCenterY = dockTopY + (dockHeightPx / 2f)
-                val isDockInBottomHalf = dockCenterY > (boxMaxHeightFloat / 2f)
-
-                if (isDockInBottomHalf) {
-                    val distFromBottom = boxMaxHeightFloat - dockTopY
-                    val paddingBottom = with(density) { distFromBottom.toDp() } + margin
-                    Triple(Alignment.BottomCenter, 0.dp, paddingBottom.coerceAtLeast(0.dp))
+                val isSideDocked = isSharedPdfAnnotationDockSide(dockLocation) && !isDockDragging
+                if (isSideDocked) {
+                    // Side wheels pin to the top edge; live pads beside the
+                    // wheel are computed below so the popup rides the wheel.
+                    Triple(
+                        if (dockLocation == DockLocation.LEFT) Alignment.TopStart else Alignment.TopEnd,
+                        0.dp,
+                        0.dp,
+                    )
                 } else {
-                    val paddingTop = with(density) { dockBottomY.toDp() } + margin
-                    Triple(Alignment.TopCenter, paddingTop.coerceAtLeast(0.dp), 0.dp)
+                    val dockTopY = when (dockLocation) {
+                        DockLocation.TOP -> 0f
+                        DockLocation.BOTTOM -> boxMaxHeightFloat - dockHeightPx
+                        DockLocation.LEFT, DockLocation.RIGHT -> dockOffset.y
+                        DockLocation.FLOATING -> dockOffset.y
+                    }
+
+                    val dockBottomY = dockTopY + dockHeightPx
+                    val dockCenterY = dockTopY + (dockHeightPx / 2f)
+                    val isDockInBottomHalf = dockCenterY > (boxMaxHeightFloat / 2f)
+
+                    if (isDockInBottomHalf) {
+                        val distFromBottom = boxMaxHeightFloat - dockTopY
+                        val paddingBottom = with(density) { distFromBottom.toDp() } + margin
+                        Triple(Alignment.BottomCenter, 0.dp, paddingBottom.coerceAtLeast(0.dp))
+                    } else {
+                        val paddingTop = with(density) { dockBottomY.toDp() } + margin
+                        Triple(Alignment.TopCenter, paddingTop.coerceAtLeast(0.dp), 0.dp)
+                    }
                 }
             }
 
         val (popupAlign, popupTopPad, popupBottomPad) = popupPlacementConfig
+        val isAnnotationSideDocked = isSharedPdfAnnotationDockSide(dockLocation) && !isDockDragging
+        // Settle glides + measured rects live on the surface state so the
+        // text dock section (another chrome function) shares them: a landing
+        // bar can nudge a side-hugging wheel clear with the same glide.
+        val annotationGlide = surfaceState.annotationDockGlide
+        val textGlide = surfaceState.textDockGlide
+        // Overlap gap between two docks (stacking / nudges).
+        val dockOverlapGapPx = with(density) { 8.dp.toPx() }
+        val annotationWheelWidthPx = with(density) { SharedPdfSideWheelWidth.toPx() }
+        val annotationWheelHeightPx = with(density) { SharedPdfSideWheelHeight.toPx() }
+        val annotationStatusTopPx = with(density) {
+            if (systemUiMode == SystemUiMode.DEFAULT) statusBarHeightDp.toPx() else 0f
+        }
+        val annotationNavBottomPx = if (systemUiMode == SystemUiMode.DEFAULT) {
+            navBarHeight.toFloat()
+        } else {
+            0f
+        }
+        // Side wheels slide freely along the edge: Y lives in the drag
+        // offset, clamped clear of the status and navigation bars.
+        fun annotationSideSlotX(location: DockLocation): Float = when (location) {
+            DockLocation.RIGHT -> boxMaxWidthFloat - annotationWheelWidthPx
+            else -> 0f
+        }
+        // Settle glide: on every drop the dock eases from the release point
+        // into its slot instead of jumping (hoisted above so a landing bar
+        // can nudge the other dock's wheel clear).
+        // Live wheel geometry so the tool-settings popup rides beside the
+        // wheel (top- or bottom-anchored to stay on screen).
+        val annotationWheelYpx = (dockOffset.y + annotationGlide.value.y).coerceIn(
+            annotationStatusTopPx,
+            (boxMaxHeightFloat - annotationWheelHeightPx).coerceAtLeast(annotationStatusTopPx),
+        )
+        val annotationWheelInBottomHalf =
+            annotationWheelYpx + annotationWheelHeightPx / 2f > boxMaxHeightFloat / 2f
+        val popupSidePad = if (isAnnotationSideDocked) SharedPdfSideWheelWidth + 16.dp else 0.dp
+        val popupSideTopPad = if (isAnnotationSideDocked && !annotationWheelInBottomHalf) {
+            with(density) { annotationWheelYpx.toDp() }
+        } else {
+            0.dp
+        }
+        val popupSideBottomPad = if (isAnnotationSideDocked && annotationWheelInBottomHalf) {
+            with(density) { (boxMaxHeightFloat - annotationWheelYpx - annotationWheelHeightPx).toDp() }
+        } else {
+            0.dp
+        }
 
         Box(modifier = Modifier.fillMaxSize()) {
             AnimatedVisibility(
@@ -9276,7 +9642,12 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                 exit = fadeOut(),
                 modifier = Modifier
                     .align(popupAlign)
-                    .padding(top = popupTopPad, bottom = popupBottomPad)
+                    .padding(
+                        top = popupTopPad + popupSideTopPad,
+                        bottom = popupBottomPad + popupSideBottomPad,
+                        start = if (isAnnotationSideDocked && dockLocation == DockLocation.LEFT) popupSidePad else 0.dp,
+                        end = if (isAnnotationSideDocked && dockLocation == DockLocation.RIGHT) popupSidePad else 0.dp,
+                    )
                     .testTag("ToolSettingsPopup")
             ) {
                 val currentPalette =
@@ -9317,16 +9688,32 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
             }
 
             snapPreviewLocation?.let { location ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(dockHeight)
-                        .align(
-                            if (location == DockLocation.TOP) Alignment.TopCenter
-                            else Alignment.BottomCenter
-                        )
-                        .background(Color.Black)
-                )
+                when (location) {
+                    DockLocation.LEFT -> Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .width(SharedPdfSideWheelWidth)
+                            .align(Alignment.CenterStart)
+                            .background(Color.Black)
+                    )
+                    DockLocation.RIGHT -> Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .width(SharedPdfSideWheelWidth)
+                            .align(Alignment.CenterEnd)
+                            .background(Color.Black)
+                    )
+                    else -> Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(dockHeight)
+                            .align(
+                                if (location == DockLocation.TOP) Alignment.TopCenter
+                                else Alignment.BottomCenter
+                            )
+                            .background(Color.Black)
+                    )
+                }
             }
 
             Box(
@@ -9341,8 +9728,20 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                         }
                     )
             ) {
+                val isTopBottomSticky = (dockLocation == DockLocation.TOP || dockLocation == DockLocation.BOTTOM) && !isDockDragging
+                val isSideSticky = isSharedPdfAnnotationDockSide(dockLocation) && !isDockDragging
+                // While dragging, the dock renders as it will land (preview
+                // edge or floating): hovering the right edge flips the wheel
+                // to its right-edge appearance live.
+                val annotationDragPreview =
+                    if (isDockDragging) snapPreviewLocation else null
+                val annotationRenderLocation = annotationDragPreview ?: dockLocation
+                val renderSideWhileDragging = isDockDragging &&
+                    isSharedPdfAnnotationDockSide(annotationRenderLocation)
+                val renderTopBottomWhileDragging = isDockDragging &&
+                    (annotationRenderLocation == DockLocation.TOP || annotationRenderLocation == DockLocation.BOTTOM)
                 val dragModifier =
-                    if (isDockDragging || dockLocation == DockLocation.FLOATING) {
+                    if (isDockDragging || dockLocation == DockLocation.FLOATING || isSideSticky) {
                         Modifier.offset {
                             IntOffset(
                                 dockOffset.x.roundToInt(), dockOffset.y.roundToInt()
@@ -9351,44 +9750,176 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                     } else {
                         Modifier
                     }
+                // Settle glide applied under the live drag offset: the dock
+                // eases into its slot instead of jumping.
+                val glideModifier =
+                    if (isDockDragging) {
+                        Modifier
+                    } else {
+                        Modifier.offset {
+                            IntOffset(
+                                annotationGlide.value.x.roundToInt(),
+                                annotationGlide.value.y.roundToInt(),
+                            )
+                        }
+                    }
 
                 val alignModifier = when {
                     isDockDragging || dockLocation == DockLocation.FLOATING -> Modifier
                     dockLocation == DockLocation.TOP -> Modifier.align(Alignment.TopCenter)
                     dockLocation == DockLocation.BOTTOM -> Modifier.align(Alignment.BottomCenter)
+                    // Side wheels pin to the top edge; the stored offset
+                    // carries the free Y slide.
+                    dockLocation == DockLocation.LEFT -> Modifier.align(Alignment.TopStart)
+                    dockLocation == DockLocation.RIGHT -> Modifier.align(Alignment.TopStart)
                     else -> Modifier
                 }
 
-                val widthModifier =
-                    if ((dockLocation == DockLocation.TOP || dockLocation == DockLocation.BOTTOM) && !isDockDragging) {
-                        Modifier.fillMaxWidth()
-                    } else {
-                        Modifier.padding(
-                            horizontal = 16.dp
-                        )
-                    }
+                val widthModifier = when {
+                    isTopBottomSticky -> Modifier.fillMaxWidth()
+                    isSideSticky -> Modifier
+                    renderTopBottomWhileDragging -> Modifier.fillMaxWidth()
+                    renderSideWhileDragging -> Modifier
+                    else -> Modifier.padding(horizontal = 16.dp)
+                }
 
                 val effectiveNavBarForDock = if (systemUiMode == SystemUiMode.DEFAULT) with(density) { navBarHeight.toDp() } else 0.dp
-                val paddingModifier =
-                    if ((dockLocation == DockLocation.TOP || dockLocation == DockLocation.BOTTOM) && !isDockDragging) {
-                        Modifier.padding(
-                            bottom = if (dockLocation == DockLocation.BOTTOM) effectiveNavBarForDock else 0.dp,
-                            top = if (dockLocation == DockLocation.TOP && systemUiMode == SystemUiMode.DEFAULT) statusBarHeightDp else 0.dp
-                        )
-                    } else {
-                        Modifier.padding(vertical = 16.dp)
-                    }
+                val paddingModifier = when {
+                    isTopBottomSticky -> Modifier.padding(
+                        bottom = if (dockLocation == DockLocation.BOTTOM) effectiveNavBarForDock else 0.dp,
+                        top = if (dockLocation == DockLocation.TOP && systemUiMode == SystemUiMode.DEFAULT) statusBarHeightDp else 0.dp
+                    )
+                    isSideSticky -> Modifier
+                    renderTopBottomWhileDragging -> Modifier.padding(
+                        bottom = if (annotationRenderLocation == DockLocation.BOTTOM) effectiveNavBarForDock else 0.dp,
+                        top = if (annotationRenderLocation == DockLocation.TOP && systemUiMode == SystemUiMode.DEFAULT) statusBarHeightDp else 0.dp
+                    )
+                    renderSideWhileDragging -> Modifier
+                    else -> Modifier.padding(vertical = 16.dp)
+                }
 
-                val isSticky =
-                    (dockLocation == DockLocation.TOP || dockLocation == DockLocation.BOTTOM) && !isDockDragging
+                val isSticky = isSharedPdfAnnotationDockSticky(dockLocation, isDockDragging)
 
                 Box(
                     modifier = Modifier
                         .then(alignModifier)
                         .then(dragModifier)
+                        .then(glideModifier)
+                        .onGloballyPositioned {
+                            if (!isDockDragging) {
+                                surfaceState.annotationDockMeasuredRect =
+                                    Rect(it.localToRoot(Offset.Zero), it.size.toSize())
+                            }
+                        }
                         .pointerInput(dockLocation, isDockMinimized) {
+                            // Settles the drop with a glide: eases from the
+                            // release point into the new slot.
+                            fun glideToDocked(docked: Offset) {
+                                val delta = dockOffset - docked
+                                dockOffset = docked
+                                coroutineScope.launch {
+                                    annotationGlide.stop()
+                                    annotationGlide.snapTo(delta)
+                                    annotationGlide.animateTo(
+                                        Offset.Zero,
+                                        tween(durationMillis = 300),
+                                    )
+                                }
+                            }
+                            fun settleTo(target: DockLocation) {
+                                isDockDragging = false
+                                dockLocation = target
+                                // Docked slot for the glide: full-width bars
+                                // pin to the edge, side wheels keep their
+                                // drop Y — slid above or below the text dock
+                                // when they would overlap it (same-side
+                                // stacking or a top/bottom text bar).
+                                val docked = when (target) {
+                                    DockLocation.TOP -> Offset(0f, 0f)
+                                    DockLocation.BOTTOM -> Offset(
+                                        0f,
+                                        boxMaxHeightFloat - dockHeightPx - annotationNavBottomPx,
+                                    )
+                                    DockLocation.LEFT, DockLocation.RIGHT -> {
+                                        val slotX = annotationSideSlotX(target)
+                                        Offset(
+                                            slotX,
+                                            resolveSharedPdfSideWheelDropY(
+                                                proposedY = dockOffset.y,
+                                                ownLeftPx = slotX,
+                                                ownWidthPx = annotationWheelWidthPx,
+                                                ownHeightPx = annotationWheelHeightPx,
+                                                edgeTopPx = annotationStatusTopPx,
+                                                edgeBottomPx = boxMaxHeightFloat - annotationNavBottomPx,
+                                                gapPx = dockOverlapGapPx,
+                                                other = surfaceState.textDockMeasuredRect,
+                                            ),
+                                        )
+                                    }
+                                    DockLocation.FLOATING -> Offset(
+                                        resolveSharedPdfBarDropX(
+                                            proposedX = dockOffset.x.coerceIn(0f, boxMaxWidthFloat - 100f),
+                                            ownTopPx = dockOffset.y,
+                                            ownWidthPx = size.width.toFloat(),
+                                            ownHeightPx = size.height.toFloat(),
+                                            rootWidthPx = boxMaxWidthFloat,
+                                            gapPx = dockOverlapGapPx,
+                                            sideWheel = surfaceState.textDockMeasuredRect
+                                                ?.takeIf {
+                                                    isPdfTextDockSideDocked(textDockLocation) &&
+                                                        !isTextDockDragging
+                                                },
+                                        ),
+                                        dockOffset.y.coerceIn(0f, boxMaxHeightFloat - dockHeightPx),
+                                    )
+                                }
+                                glideToDocked(docked)
+                                saveDockState(context, dockLocation, dockOffset)
+                                // A full-width bar cannot shift sideways, so
+                                // a side-hugging text wheel slides clear of
+                                // the landed bar instead (with a glide).
+                                if ((target == DockLocation.TOP || target == DockLocation.BOTTOM) &&
+                                    isPdfTextDockSideDocked(textDockLocation) && !isTextDockDragging
+                                ) {
+                                    val landedBarHeightPx = with(density) { dockHeight.toPx() }
+                                    val barFromY = if (target == DockLocation.TOP) {
+                                        0f
+                                    } else {
+                                        boxMaxHeightFloat - annotationNavBottomPx - landedBarHeightPx
+                                    }
+                                    val barToY = if (target == DockLocation.TOP) {
+                                        annotationStatusTopPx + landedBarHeightPx
+                                    } else {
+                                        boxMaxHeightFloat
+                                    }
+                                    val clearedY = resolveSharedPdfSideWheelClearOfBarBand(
+                                        wheelY = textDockOffset.y,
+                                        // Both wheels share the same geometry.
+                                        wheelHeightPx = annotationWheelHeightPx,
+                                        edgeTopPx = annotationStatusTopPx,
+                                        edgeBottomPx = boxMaxHeightFloat - annotationNavBottomPx,
+                                        gapPx = dockOverlapGapPx,
+                                        barFromYPx = barFromY,
+                                        barToYPx = barToY,
+                                    )
+                                    if (clearedY != textDockOffset.y) {
+                                        launchSharedPdfDockGlide(
+                                            scope = coroutineScope,
+                                            glide = textGlide,
+                                            current = textDockOffset,
+                                            docked = Offset(
+                                                annotationSideSlotX(textDockLocation),
+                                                clearedY,
+                                            ),
+                                            setOffset = { textDockOffset = it },
+                                        )
+                                        saveTextDockState(context, textDockLocation, textDockOffset)
+                                    }
+                                }
+                            }
                             val onDragStart: (Offset) -> Unit = {
                                 isDockDragging = true
+                                coroutineScope.launch { annotationGlide.stop() }
 
                                 val startX = (boxMaxWidthFloat / 2) - (size.width / 2)
 
@@ -9398,6 +9929,15 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                     )
                                 } else if (dockLocation == DockLocation.TOP) {
                                     dockOffset = Offset(startX, 50f)
+                                } else if (dockLocation == DockLocation.LEFT ||
+                                    dockLocation == DockLocation.RIGHT
+                                ) {
+                                    // Stay where the wheel sits (free Y
+                                    // slide), just re-pin X to the edge.
+                                    dockOffset = Offset(
+                                        annotationSideSlotX(dockLocation),
+                                        dockOffset.y,
+                                    )
                                 }
                             }
 
@@ -9407,39 +9947,31 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 change.consume()
                                 dockOffset += dragAmount
 
-                                val topSnapThreshold = 150f
-                                val bottomSnapThreshold = boxMaxHeightFloat - 250f
-
-                                snapPreviewLocation = when {
-                                    dockOffset.y < topSnapThreshold -> DockLocation.TOP
-                                    dockOffset.y > bottomSnapThreshold -> DockLocation.BOTTOM
-                                    else -> null
-                                }
-                            }
-
-                            val onDragEnd: () -> Unit = {
-                                isDockDragging = false
-                                if (snapPreviewLocation != null) {
-                                    dockLocation = snapPreviewLocation!!
-                                    snapPreviewLocation = null
-                                } else {
-                                    dockLocation = DockLocation.FLOATING
-                                    val safeX = dockOffset.x.coerceIn(
-                                        0f, boxMaxWidthFloat - 100f
-                                    )
-                                    val safeY = dockOffset.y.coerceIn(
-                                        0f, boxMaxHeightFloat - dockHeightPx
-                                    )
-                                    dockOffset = Offset(safeX, safeY)
-                                }
-                                saveDockState(
-                                    context, dockLocation, dockOffset
+                                // Contact-based: snaps to the edge the dock
+                                // touches most (a wide bar in the corner snaps
+                                // to the bottom, not the side).
+                                snapPreviewLocation = resolveSharedPdfDockSnapLocation(
+                                    dockOffsetX = dockOffset.x,
+                                    dockOffsetY = dockOffset.y,
+                                    boxWidthPx = boxMaxWidthFloat,
+                                    boxHeightPx = boxMaxHeightFloat,
+                                    dockWidthPx = size.width.toFloat(),
+                                    dockHeightPx = size.height.toFloat(),
                                 )
                             }
 
-                            val onDragCancel: () -> Unit = {
-                                isDockDragging = false
+                            val onDragEnd: () -> Unit = {
+                                val preview = snapPreviewLocation
                                 snapPreviewLocation = null
+                                // No edge touched: the bar floats free.
+                                settleTo(preview ?: DockLocation.FLOATING)
+                            }
+
+                            val onDragCancel: () -> Unit = {
+                                // Settle in place so a cancelled drag never
+                                // jumps.
+                                snapPreviewLocation = null
+                                settleTo(dockLocation)
                             }
 
                             if (dockLocation == DockLocation.FLOATING) {
@@ -9648,7 +10180,9 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                             .then(widthModifier)
                             .then(paddingModifier),
                         isMinimized = isDockMinimized,
-                        onToggleMinimize = { isDockMinimized = !isDockMinimized })
+                        onToggleMinimize = { isDockMinimized = !isDockMinimized },
+                        dockLocation = annotationRenderLocation,
+                    )
                 }
             }
         }
@@ -9697,6 +10231,10 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         var isAutoPagingForTts by surfaceState.isAutoPagingForTts
         var dockLocation by surfaceState.dockLocation
         val isDockDragging by surfaceState.isDockDragging
+        // Pen dock offset (the pen dock UI lives in
+        // PdfViewerChromeBottomAndEditing, but overlap resolution needs its
+        // slot here when the text bar lands).
+        var dockOffset by surfaceState.dockOffset
         var textDockLocation by surfaceState.textDockLocation
         var textDockOffset by surfaceState.textDockOffset
         var isTextDockDragging by surfaceState.isTextDockDragging
@@ -9821,6 +10359,25 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         val popupsBelowBar = isPdfTextDockTopAnchored(textDockLocation, isTextDockDragging)
         val isTextStickyBottom = textDockLocation == DockLocation.BOTTOM && !isTextDockDragging
         val isTextFloating = isTextDockDragging || textDockLocation == DockLocation.FLOATING
+        var textSnapPreview by remember { mutableStateOf<DockLocation?>(null) }
+        val textWheelWidthPx = with(density) { SharedPdfSideWheelWidth.toPx() }
+        val textWheelHeightPx = with(density) { SharedPdfSideWheelHeight.toPx() }
+        val textStatusTopPx = with(density) {
+            if (systemUiMode == SystemUiMode.DEFAULT) statusBarHeightDp.toPx() else 0f
+        }
+        val textNavBottomPx = if (systemUiMode == SystemUiMode.DEFAULT) {
+            navBarHeight.toFloat()
+        } else {
+            0f
+        }
+        // Side wheels slide freely along the edge: Y lives in the drag
+        // offset, clamped clear of the status and navigation bars.
+        fun textSideSlotX(location: DockLocation): Float = when (location) {
+            DockLocation.RIGHT -> boxMaxWidthFloat - textWheelWidthPx
+            else -> 0f
+        }
+        // Overlap gap between two docks (stacking / nudges).
+        val textDockOverlapGapPx = with(density) { 8.dp.toPx() }
 
         val currentDensity = LocalDensity.current
         val textDockHeightPx = with(currentDensity) { PdfTextDockHeight.toPx() }
@@ -9843,40 +10400,150 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
             keyboardTopPx = boxMaxHeightFloat - WindowInsets.ime.getBottom(currentDensity),
         )
 
-        val effectiveStyle by remember(selectedTextBoxId, textBoxes, richTextController.currentStyle, displayPageRatios, boxMaxWidthFloat) {
+        // Page rich text is retired: the dock edits text boxes only. With no
+        // box selected it shows the default style new boxes are created with.
+        val effectiveStyle by remember(selectedTextBoxId, textBoxes, toolSettings.textStyle, displayPageRatios, boxMaxWidthFloat) {
             derivedStateOf {
-                if (selectedTextBoxId != null) {
-                    val box = textBoxes.find { it.id == selectedTextBoxId }
-                    if (box != null) {
-                        val pageRatio = displayPageRatios.getOrElse(box.pageIndex) { 1f }
-                        val estimatedPageHeightPx = if (pageRatio > 0) boxMaxWidthFloat / pageRatio else boxMaxWidthFloat
+                val box = textBoxes.find { it.id == selectedTextBoxId }
+                if (box != null) {
+                    val pageRatio = displayPageRatios.getOrElse(box.pageIndex) { 1f }
+                    val estimatedPageHeightPx = if (pageRatio > 0) boxMaxWidthFloat / pageRatio else boxMaxWidthFloat
 
-                        val fontSizePx = box.fontSize * estimatedPageHeightPx
-                        val fontSizeSp = with(currentDensity) { fontSizePx.toSp() }
+                    val fontSizePx = box.fontSize * estimatedPageHeightPx
+                    val fontSizeSp = with(currentDensity) { fontSizePx.toSp() }
 
-                        SpanStyle(
-                            color = box.color,
-                            background = box.backgroundColor,
-                            fontSize = fontSizeSp,
-                            fontWeight = if (box.isBold) FontWeight.Bold else FontWeight.Normal,
-                            fontStyle = if (box.isItalic) FontStyle.Italic else FontStyle.Normal,
-                            textDecoration = run {
-                                val decs = mutableListOf<TextDecoration>()
-                                if (box.isUnderline) decs.add(TextDecoration.Underline)
-                                if (box.isStrikeThrough) decs.add(TextDecoration.LineThrough)
-                                if (decs.isEmpty()) TextDecoration.None else TextDecoration.combine(decs)
-                            }
-                        )
-                    } else richTextController.currentStyle
+                    SpanStyle(
+                        color = box.color,
+                        background = box.backgroundColor,
+                        fontSize = fontSizeSp,
+                        fontWeight = if (box.isBold) FontWeight.Bold else FontWeight.Normal,
+                        fontStyle = if (box.isItalic) FontStyle.Italic else FontStyle.Normal,
+                        textDecoration = run {
+                            val decs = mutableListOf<TextDecoration>()
+                            if (box.isUnderline) decs.add(TextDecoration.Underline)
+                            if (box.isStrikeThrough) decs.add(TextDecoration.LineThrough)
+                            if (decs.isEmpty()) TextDecoration.None else TextDecoration.combine(decs)
+                        }
+                    )
                 } else {
-                    richTextController.currentStyle
+                    val defaults = toolSettings.textStyle
+                    SpanStyle(
+                        color = Color(defaults.colorArgb),
+                        background = Color(defaults.backgroundColorArgb),
+                        fontSize = defaults.fontSize.sp,
+                        fontWeight = if (defaults.isBold) FontWeight.Bold else FontWeight.Normal,
+                        fontStyle = if (defaults.isItalic) FontStyle.Italic else FontStyle.Normal,
+                        textDecoration = run {
+                            val decs = mutableListOf<TextDecoration>()
+                            if (defaults.isUnderline) decs.add(TextDecoration.Underline)
+                            if (defaults.isStrikeThrough) decs.add(TextDecoration.LineThrough)
+                            if (decs.isEmpty()) TextDecoration.None else TextDecoration.combine(decs)
+                        }
+                    )
                 }
             }
         }
 
+        // Legacy page text (retired editor): documents that already carry it
+        // render read-only and must be converted — converting is the only
+        // action offered.
+        var showLegacyConvertDialog by remember { mutableStateOf(false) }
+        var legacyConverting by remember { mutableStateOf(false) }
+        val legacyPageCount = richTextController?.pageLayouts?.count {
+            it.visibleText.text.isNotBlank()
+        } ?: 0
+        val showLegacyBanner = legacyPageCount > 0 && !legacyConverting
+
         Box(modifier = Modifier.fillMaxSize()) {
+            if (showLegacyBanner) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .padding(top = 12.dp, start = 16.dp, end = 16.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    tonalElevation = 4.dp,
+                    shadowElevation = 4.dp,
+                ) {
+                    Row(
+                        modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp, end = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.banner_legacy_page_text, legacyPageCount),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { showLegacyConvertDialog = true }) {
+                            Text(stringResource(R.string.action_convert_to_text_boxes))
+                        }
+                    }
+                }
+            }
+            if (showLegacyConvertDialog) {
+                AlertDialog(
+                    onDismissRequest = {},
+                    title = { Text(stringResource(R.string.dialog_legacy_page_text_title)) },
+                    text = { Text(stringResource(R.string.dialog_legacy_page_text_desc, legacyPageCount)) },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                val controller = richTextController
+                                if (controller != null && !legacyConverting) {
+                                    coroutineScope.launch {
+                                        legacyConverting = true
+                                        try {
+                                            controller.saveImmediate()
+                                            val document = controller.snapshotDocument()
+                                                ?: SharedPdfRichDocument()
+                                            val specs = sharedPdfRichPagesToTextBoxes(
+                                                document,
+                                                controller.pageLayouts,
+                                            ) { pageIndex ->
+                                                val canvasWidthPx = boxMaxWidthFloat.toInt().coerceAtLeast(1)
+                                                val ratio = displayPageRatios.getOrElse(pageIndex) { 1f }
+                                                val canvasHeightPx = (if (ratio > 0) boxMaxWidthFloat / ratio else boxMaxWidthFloat)
+                                                    .toInt().coerceAtLeast(1)
+                                                IntSize(canvasWidthPx, canvasHeightPx)
+                                            }
+                                            specs.forEach { spec ->
+                                                textBoxes.add(buildTextBoxFromSpec(spec, generateShortId()))
+                                            }
+                                            Timber.tag("PdfTextBoxDebug").i(
+                                                "Legacy page text converted: ${specs.size} boxes"
+                                            )
+                                            controller.sharedDelegate.replaceDocument(SharedPdfRichDocument())
+                                            controller.saveImmediate()
+                                        } catch (e: Exception) {
+                                            Timber.tag("PdfTextBoxDebug").e(e, "Legacy page text conversion failed")
+                                        } finally {
+                                            legacyConverting = false
+                                            showLegacyConvertDialog = false
+                                        }
+                                    }
+                                } else {
+                                    showLegacyConvertDialog = false
+                                }
+                            }
+                        ) { Text(stringResource(R.string.action_convert_to_text_boxes)) }
+                    }
+                )
+            }
+            val isTextTopBottomSticky =
+                (textDockLocation == DockLocation.TOP || textDockLocation == DockLocation.BOTTOM) && !isTextDockDragging
+            val isTextSideSticky = isPdfTextDockSideDocked(textDockLocation) && !isTextDockDragging
+            // While dragging, the bar renders as it will land (preview edge
+            // or floating): hovering a side edge flips it to the wheel
+            // appearance live.
+            val textDragPreview =
+                if (isTextDockDragging) textSnapPreview else null
+            val textRenderLocation = textDragPreview ?: textDockLocation
+            val renderTextSideWhileDragging = isTextDockDragging &&
+                isPdfTextDockSideDocked(textRenderLocation)
+            val renderTextTopBottomWhileDragging = isTextDockDragging &&
+                (textRenderLocation == DockLocation.TOP || textRenderLocation == DockLocation.BOTTOM)
             val dragModifier =
-                if (isTextFloating) {
+                if (isTextFloating || isTextSideSticky) {
                     Modifier.offset {
                         IntOffset(
                             textDockOffset.x.roundToInt(), (textDockOffset.y - textDockLiftPx).roundToInt()
@@ -9885,19 +10552,41 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                 } else {
                     Modifier
                 }
+            // Settle glide applied under the live drag offset: the dock
+            // eases into its slot instead of jumping (shared on the surface
+            // state so the pen dock section can nudge this wheel clear).
+            val textGlide = surfaceState.textDockGlide
+            val textGlideModifier =
+                if (isTextDockDragging) {
+                    Modifier
+                } else {
+                    Modifier.offset {
+                        IntOffset(
+                            textGlide.value.x.roundToInt(),
+                            textGlide.value.y.roundToInt(),
+                        )
+                    }
+                }
 
             val alignModifier = when {
                 isTextFloating -> Modifier
                 popupsBelowBar -> Modifier.align(Alignment.TopCenter)
+                // Side wheels pin to the top edge; the stored offset
+                // carries the free Y slide.
+                isTextSideSticky && textDockLocation == DockLocation.LEFT ->
+                    Modifier.align(Alignment.TopStart)
+                isTextSideSticky && textDockLocation == DockLocation.RIGHT ->
+                    Modifier.align(Alignment.TopStart)
                 else -> Modifier.align(Alignment.BottomCenter)
             }
 
-            val widthModifier =
-                if ((textDockLocation == DockLocation.TOP || textDockLocation == DockLocation.BOTTOM) && !isTextDockDragging) {
-                    Modifier.fillMaxWidth()
-                } else {
-                    Modifier.padding(horizontal = 16.dp)
-                }
+            val widthModifier = when {
+                isTextTopBottomSticky -> Modifier.fillMaxWidth()
+                isTextSideSticky -> Modifier
+                renderTextTopBottomWhileDragging -> Modifier.fillMaxWidth()
+                renderTextSideWhileDragging -> Modifier
+                else -> Modifier.padding(horizontal = 16.dp)
+            }
 
             val insetsModifier =
                 if (isTextStickyBottom) {
@@ -9909,9 +10598,19 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                     Modifier
                 }
 
+            // Same-side stacking replaced the old inward push-to-center: a
+            // text wheel dropped onto the pen wheel's edge slides above or
+            // below it at drop time (see settleTextTo), so both wheels stay
+            // flush to the edge.
             val paddingModifier = when {
                 isTextStickyBottom -> Modifier.padding(bottom = bottomPadding)
                 popupsBelowBar -> Modifier.padding(top = topPadding)
+                isTextSideSticky -> Modifier
+                renderTextTopBottomWhileDragging && textRenderLocation == DockLocation.TOP ->
+                    Modifier.padding(top = topPadding)
+                renderTextTopBottomWhileDragging ->
+                    Modifier.padding(bottom = bottomPadding)
+                renderTextSideWhileDragging -> Modifier
                 else -> Modifier.padding(vertical = textDockFloatPad)
             }
 
@@ -9922,6 +10621,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
             val textDockDragGesture = Modifier.pointerInput(textDockLocation) {
                         val onDragStart: (Offset) -> Unit = {
                             isTextDockDragging = true
+                            coroutineScope.launch { textGlide.stop() }
 
                             val measured = textDockMeasuredOffset
                             if (measured != null) {
@@ -9935,6 +10635,137 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                     )
                                 } else if (textDockLocation == DockLocation.TOP) {
                                     textDockOffset = Offset(startX, 50f)
+                                } else if (textDockLocation == DockLocation.LEFT ||
+                                    textDockLocation == DockLocation.RIGHT
+                                ) {
+                                    // Stay where the wheel sits (free Y
+                                    // slide), just re-pin X to the edge.
+                                    textDockOffset = Offset(
+                                        textSideSlotX(textDockLocation),
+                                        textDockOffset.y,
+                                    )
+                                }
+                            }
+                        }
+
+                        // Shared drop decision so the snap preview always
+                        // shows where the drop will land.
+                        fun decideTextDock(preview: DockLocation?, y: Float): DockLocation {
+                            val bottomSnapThreshold = boxMaxHeightFloat -
+                                navBarHeight.toFloat() -
+                                with(currentDensity) { bottomPadding.toPx() } -
+                                textDockHeightPx -
+                                with(currentDensity) { 24.dp.toPx() }
+                            return when {
+                                preview == DockLocation.LEFT || preview == DockLocation.RIGHT -> preview!!
+                                y < 150f -> DockLocation.TOP
+                                y > bottomSnapThreshold -> DockLocation.BOTTOM
+                                else -> DockLocation.FLOATING
+                            }
+                        }
+                        // Settles the drop with a glide: eases from the
+                        // release point into the new slot.
+                        fun glideTextToDocked(docked: Offset) {
+                            val delta = textDockOffset - docked
+                            textDockOffset = docked
+                            coroutineScope.launch {
+                                textGlide.stop()
+                                textGlide.snapTo(delta)
+                                textGlide.animateTo(
+                                    Offset.Zero,
+                                    tween(durationMillis = 300),
+                                )
+                            }
+                        }
+                        fun settleTextTo(target: DockLocation) {
+                            isTextDockDragging = false
+                            textDockLocation = target
+                            // Side wheels keep their drop Y — slid above or
+                            // below the pen dock when they would overlap it
+                            // (same-side stacking or a top/bottom pen bar).
+                            val docked = when (target) {
+                                DockLocation.TOP -> Offset(0f, 0f)
+                                DockLocation.BOTTOM -> Offset(
+                                    0f,
+                                    boxMaxHeightFloat - textDockHeightPx -
+                                        with(currentDensity) { bottomPadding.toPx() } -
+                                        navBarHeight.toFloat(),
+                                )
+                                DockLocation.LEFT, DockLocation.RIGHT -> {
+                                    val slotX = textSideSlotX(target)
+                                    Offset(
+                                        slotX,
+                                        resolveSharedPdfSideWheelDropY(
+                                            proposedY = textDockOffset.y,
+                                            ownLeftPx = slotX,
+                                            ownWidthPx = textWheelWidthPx,
+                                            ownHeightPx = textWheelHeightPx,
+                                            edgeTopPx = textStatusTopPx,
+                                            edgeBottomPx = boxMaxHeightFloat - textNavBottomPx,
+                                            gapPx = textDockOverlapGapPx,
+                                            other = surfaceState.annotationDockMeasuredRect,
+                                        ),
+                                    )
+                                }
+                                DockLocation.FLOATING -> Offset(
+                                    resolveSharedPdfBarDropX(
+                                        proposedX = textDockOffset.x.coerceIn(0f, boxMaxWidthFloat - 100f),
+                                        ownTopPx = textDockOffset.y,
+                                        ownWidthPx = size.width.toFloat(),
+                                        ownHeightPx = size.height.toFloat(),
+                                        rootWidthPx = boxMaxWidthFloat,
+                                        gapPx = textDockOverlapGapPx,
+                                        sideWheel = surfaceState.annotationDockMeasuredRect
+                                            ?.takeIf {
+                                                isSharedPdfAnnotationDockSide(dockLocation) &&
+                                                    !isDockDragging
+                                            },
+                                    ),
+                                    textDockOffset.y.coerceIn(0f, boxMaxHeightFloat - textDockHeightPx),
+                                )
+                            }
+                            glideTextToDocked(docked)
+                            saveTextDockState(context, textDockLocation, textDockOffset)
+                            // A full-width bar cannot shift sideways, so a
+                            // side-hugging pen wheel slides clear of the
+                            // landed bar instead (with a glide).
+                            if ((target == DockLocation.TOP || target == DockLocation.BOTTOM) &&
+                                isSharedPdfAnnotationDockSide(dockLocation) && !isDockDragging
+                            ) {
+                                val topPadPx = with(currentDensity) { topPadding.toPx() }
+                                val bottomPadPx = with(currentDensity) { bottomPadding.toPx() }
+                                val barFromY = if (target == DockLocation.TOP) {
+                                    0f
+                                } else {
+                                    boxMaxHeightFloat - navBarHeight.toFloat() - bottomPadPx - textDockHeightPx
+                                }
+                                val barToY = if (target == DockLocation.TOP) {
+                                    topPadPx + textDockHeightPx
+                                } else {
+                                    boxMaxHeightFloat
+                                }
+                                val clearedY = resolveSharedPdfSideWheelClearOfBarBand(
+                                    wheelY = dockOffset.y,
+                                    // Both wheels share the same geometry.
+                                    wheelHeightPx = textWheelHeightPx,
+                                    edgeTopPx = textStatusTopPx,
+                                    edgeBottomPx = boxMaxHeightFloat - textNavBottomPx,
+                                    gapPx = textDockOverlapGapPx,
+                                    barFromYPx = barFromY,
+                                    barToYPx = barToY,
+                                )
+                                if (clearedY != dockOffset.y) {
+                                    launchSharedPdfDockGlide(
+                                        scope = coroutineScope,
+                                        glide = surfaceState.annotationDockGlide,
+                                        current = dockOffset,
+                                        docked = Offset(
+                                            textSideSlotX(dockLocation),
+                                            clearedY,
+                                        ),
+                                        setOffset = { dockOffset = it },
+                                    )
+                                    saveDockState(context, dockLocation, dockOffset)
                                 }
                             }
                         }
@@ -9944,40 +10775,37 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                         ) -> Unit = { change, dragAmount ->
                             change.consume()
                             textDockOffset += dragAmount
-                        }
-
-                        val onDragEnd: () -> Unit = {
-                            isTextDockDragging = false
-                            val topSnapThreshold = 150f
-                            // Bottom snaps only at/below the docked band (resting
-                            // bar position minus a grab margin): dropping the bar
-                            // over the pen dock stays floating instead.
-                            val bottomSnapThreshold = boxMaxHeightFloat -
-                                navBarHeight.toFloat() -
-                                with(currentDensity) { bottomPadding.toPx() } -
-                                textDockHeightPx -
-                                with(currentDensity) { 24.dp.toPx() }
-                            textDockLocation = when {
-                                textDockOffset.y < topSnapThreshold -> DockLocation.TOP
-                                textDockOffset.y > bottomSnapThreshold -> DockLocation.BOTTOM
-                                else -> DockLocation.FLOATING
-                            }
-                            if (textDockLocation == DockLocation.FLOATING) {
-                                val safeX = textDockOffset.x.coerceIn(
-                                    0f, boxMaxWidthFloat - 100f
-                                )
-                                val safeY = textDockOffset.y.coerceIn(
-                                    0f, boxMaxHeightFloat - textDockHeightPx
-                                )
-                                textDockOffset = Offset(safeX, safeY)
-                            }
-                            saveTextDockState(
-                                context, textDockLocation, textDockOffset
+                            // Contact-based preview: the edge the bar
+                            // touches most.
+                            textSnapPreview = resolveSharedPdfDockSnapLocation(
+                                dockOffsetX = textDockOffset.x,
+                                dockOffsetY = textDockOffset.y,
+                                boxWidthPx = boxMaxWidthFloat,
+                                boxHeightPx = boxMaxHeightFloat,
+                                dockWidthPx = size.width.toFloat(),
+                                dockHeightPx = size.height.toFloat(),
                             )
                         }
 
+                        val onDragEnd: () -> Unit = {
+                            val preview = textSnapPreview
+                            textSnapPreview = null
+                            // No edge touched: the bar floats free (the
+                            // shared decision keeps the top threshold and
+                            // the bottom band guarding the pen dock).
+                            val target = if (preview != null) {
+                                decideTextDock(preview, textDockOffset.y)
+                            } else {
+                                DockLocation.FLOATING
+                            }
+                            settleTextTo(target)
+                        }
+
                         val onDragCancel: () -> Unit = {
-                            isTextDockDragging = false
+                            // Settle in place so a cancelled drag never
+                            // jumps.
+                            textSnapPreview = null
+                            settleTextTo(textDockLocation)
                         }
 
                         if (textDockLocation == DockLocation.FLOATING) {
@@ -9997,12 +10825,52 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                         }
                     }
 
+            // Edge preview while dragging (parity with the pen dock):
+            // shows where the drop will land.
+            textSnapPreview?.let { location ->
+                when (location) {
+                    DockLocation.LEFT -> Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .width(SharedPdfSideWheelWidth)
+                            .align(Alignment.CenterStart)
+                            .background(Color.Black)
+                    )
+                    DockLocation.RIGHT -> Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .width(SharedPdfSideWheelWidth)
+                            .align(Alignment.CenterEnd)
+                            .background(Color.Black)
+                    )
+                    DockLocation.TOP -> Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(PdfTextDockHeight)
+                            .align(Alignment.TopCenter)
+                            .background(Color.Black)
+                    )
+                    else -> Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(PdfTextDockHeight)
+                            .align(Alignment.BottomCenter)
+                            .background(Color.Black)
+                    )
+                }
+            }
+
             Box(
                 modifier = Modifier
                     .then(alignModifier)
                     .then(dragModifier)
+                    .then(textGlideModifier)
                     .onGloballyPositioned {
-                        if (!isTextDockDragging) textDockMeasuredOffset = it.positionInParent()
+                        if (!isTextDockDragging) {
+                            textDockMeasuredOffset = it.positionInParent()
+                            surfaceState.textDockMeasuredRect =
+                                Rect(it.localToRoot(Offset.Zero), it.size.toSize())
+                        }
                     }
                     .then(widthModifier)
                     .then(insetsModifier)
@@ -10021,7 +10889,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                 },
                 onUpdateStyle = { newStyle ->
                     Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
-                        "event=style_update target=${if (selectedTextBoxId == null) "page_rich_text" else "legacy_text_box"} " +
+                        "event=style_update target=text_box " +
                             "selectedTextBoxId=${selectedTextBoxId ?: "none"} fontSize=${newStyle.fontSize.value} " +
                             "bold=${newStyle.fontWeight == FontWeight.Bold} italic=${newStyle.fontStyle == FontStyle.Italic} " +
                             "underline=${newStyle.textDecoration?.contains(TextDecoration.Underline) == true} " +
@@ -10038,6 +10906,9 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                         fontPath = toolSettings.textStyle.fontPath,
                         fontName = toolSettings.textStyle.fontName
                     )
+                    // Always persists the default (new boxes inherit it);
+                    // additionally updates the selected box. Page rich text
+                    // is retired, so there is no page-controller branch.
                     annotationSettingsRepo.updateTextStyle(newConfig)
 
                     if (selectedTextBoxId != null) {
@@ -10060,8 +10931,6 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 isStrikeThrough = newStyle.textDecoration?.contains(TextDecoration.LineThrough) == true
                             )
                         }
-                    } else {
-                        richTextController.updateCurrentStyle(newStyle)
                     }
                 },
                 onApplyToSelection = {},
@@ -10075,7 +10944,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                 onFontSelected = { name, path ->
                     Timber.tag("PdfFontDebug").i("UI Action: Font Selected -> Name: $name, Path: $path")
                     Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
-                        "event=style_font_update target=${if (selectedTextBoxId == null) "page_rich_text" else "legacy_text_box"} " +
+                        "event=style_font_update target=text_box " +
                             "selectedTextBoxId=${selectedTextBoxId ?: "none"}"
                     )
                     val currentConfig = toolSettings.textStyle
@@ -10088,24 +10957,6 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                             val oldBox = textBoxes[idx]
                             textBoxes[idx] = oldBox.copy(fontPath = path, fontName = name)
                         }
-                    } else {
-                        richTextController.let { controller ->
-                            val style = SpanStyle(
-                                color = Color(newConfig.colorArgb),
-                                background = Color(newConfig.backgroundColorArgb),
-                                fontSize = newConfig.fontSize.sp,
-                                fontWeight = if (newConfig.isBold) FontWeight.Bold else FontWeight.Normal,
-                                fontStyle = if (newConfig.isItalic) FontStyle.Italic else FontStyle.Normal,
-                                textDecoration = run {
-                                    val decs = mutableListOf<TextDecoration>()
-                                    if (newConfig.isUnderline) decs.add(TextDecoration.Underline)
-                                    if (newConfig.isStrikeThrough) decs.add(TextDecoration.LineThrough)
-                                    if (decs.isEmpty()) TextDecoration.None else TextDecoration.combine(decs)
-                                },
-                                fontFamily = PdfFontCache.getFontFamily(path)
-                            )
-                            controller.updateCurrentStyle(style, path, name)
-                        }
                     }
                 },
                 currentFontName = remember(selectedTextBoxId, textBoxes, toolSettings.textStyle) {
@@ -10117,22 +10968,57 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                     }
                 },
                 popupsBelowBar = popupsBelowBar,
-                // Paragraph row is page-rich-text only; legacy text boxes
-                // stay on the single-row bar.
+                dockLocation = textRenderLocation,
+                spinEnabled = !isTextDockDragging,
+                // Page rich text is retired: the paragraph row belongs to the
+                // selected text box only; hidden when nothing is selected.
                 paragraphState = if (selectedTextBoxId != null) {
-                    null
+                    val box = textBoxes.find { it.id == selectedTextBoxId }
+                    if (box == null) {
+                        null
+                    } else {
+                        val selection = if (surfaceState.textBoxSelectionBoxId == box.id) {
+                            surfaceState.textBoxSelection
+                        } else {
+                            TextRange(box.text.length)
+                        }
+                        sharedPdfTextBoxDockState(box.text, box.paragraphs, selection)
+                    }
                 } else {
-                    richTextController.richParagraphUiState()
+                    null
                 },
                 onNumberedListClick = {
-                    richTextController.toggleRichListType(SharedPdfRichListType.NUMBERED)
+                    if (selectedTextBoxId != null) {
+                        applyTextBoxListType(
+                            textBoxes = textBoxes,
+                            selectedTextBoxId = selectedTextBoxId,
+                            surfaceState = surfaceState,
+                            type = SharedPdfRichListType.NUMBERED
+                        )
+                    }
                 },
                 onBulletedListClick = {
-                    richTextController.toggleRichListType(SharedPdfRichListType.BULLET)
+                    if (selectedTextBoxId != null) {
+                        applyTextBoxListType(
+                            textBoxes = textBoxes,
+                            selectedTextBoxId = selectedTextBoxId,
+                            surfaceState = surfaceState,
+                            type = SharedPdfRichListType.BULLET
+                        )
+                    }
                 },
                 onAlignmentSelected = { align ->
-                    richTextController.setRichParagraphAlignment(align)
+                    if (selectedTextBoxId != null) {
+                        applyTextBoxAlignment(
+                            textBoxes = textBoxes,
+                            selectedTextBoxId = selectedTextBoxId,
+                            surfaceState = surfaceState,
+                            align = align
+                        )
+                    }
                 },
+                // Page editor retired: boxes are created by tapping the page.
+                showInsertTextBox = false,
             )
             }
         }
@@ -10188,7 +11074,9 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                 ttsController.stop()
                 isAutoPagingForTts = false
             },
-            credits = uiState.credits
+            credits = uiState.credits,
+            walletMicros = uiState.walletMicros,
+            walletMigrated = uiState.walletMigrated
         )
     }
 
@@ -10317,7 +11205,14 @@ private fun PdfViewerPaginationPage(
     paginationPageState: PdfViewerPaginationPageState,
     pagerPageIndex: Int,
     pageTurnAnimationEnabled: Boolean,
-    pageTurnTouchY: Float?,
+    // Provider, not a value: see pageTurnTouchYState above. The curl reads the
+    // fold corner Y during the draw phase only.
+    pageTurnTouchYProvider: () -> Float?,
+    /**
+     * Currently retired page editor: taps in TEXT mode create a text box at
+     * the tap instead of focusing page rich text. Relative 0..1 coords.
+     */
+    onTextBoxCreateAt: (pageIndex: Int, xRel: Float, yRel: Float) -> Unit = { _, _, _ -> },
 ) {
     val surfaceState = paginationPageState.surfaceState
     val diagPaneContext = "pane=${surfaceState.paneBookId ?: "solo"} session=${surfaceState.paneSessionId}"
@@ -10502,9 +11397,16 @@ private fun PdfViewerPaginationPage(
     val spreadPageGapPx = with(density) { spreadPageGap.toPx() }
     val spreadPageCount = spreadPageIndices.size
     var spreadPanFlingJob by remember { mutableStateOf<Job?>(null) }
+    // The pager mirror the curl has to cancel: reverseLayout plus the extra
+    // placeRelative flip an Rtl host applies. See sharedPaginatedPagerRightToLeft.
+    val pagerRightToLeft = sharedPaginatedPagerRightToLeft(
+        reverseLayout = rightToLeftPagination,
+        layoutDirectionIsRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    )
     // Pager natural position: the curl's counter-translation cancels the pager's own
     // translation while |offset| < 1 (Android benchmark), and the curling page draws
-    // above the incoming one.
+    // above the incoming one. A right-to-left pager mirrors its placement, so the
+    // counter-translation flips sign with it.
     val turnPageOffset =
         if (realisticPageTurnActive) {
             (pagerPageIndex - pagerState.currentPage) - pagerState.currentPageOffsetFraction
@@ -10516,7 +11418,11 @@ private fun PdfViewerPaginationPage(
             .zIndex(-turnPageOffset)
             .graphicsLayer {
                 if (turnPageOffset <= 1f && turnPageOffset > -1f) {
-                    translationX = -turnPageOffset * size.width
+                    translationX = sharedPaginatedCurlTranslationX(
+                        pageOffset = turnPageOffset,
+                        slotWidth = size.width,
+                        rightToLeftPagination = pagerRightToLeft
+                    )
                 }
             }
     } else {
@@ -10533,8 +11439,9 @@ private fun PdfViewerPaginationPage(
             }
             .realisticPageCurl(
                 pageOffsetProvider = { turnPageOffset },
-                touchYProvider = { pageTurnTouchY },
-                paperColor = pagePaperColor
+                touchYProvider = pageTurnTouchYProvider,
+                paperColor = pagePaperColor,
+                rightToLeft = pagerRightToLeft
             )
     } else {
         Modifier
@@ -10592,7 +11499,13 @@ private fun PdfViewerPaginationPage(
                                 canStartOneHandZoom = {
                                     useSharedSpreadZoom && !isDrawingActive && !isScrollLocked
                                 },
-                                canHandleQuickDoubleTap = { !isScrollLocked },
+                                // Edit mode owns every gesture: the ink/tap
+                                // detectors on each page must not fight a
+                                // double-tap zoom classifier that treats a fast
+                                // second stroke as a quick-double-tap (dropped
+                                // strokes) or a held pen as a one-hand zoom
+                                // (blocked drawing).
+                                canHandleQuickDoubleTap = { !isScrollLocked && !isDrawingActive },
                                 consumeSingleTap = false,
                                 onTap = { offset ->
                                     Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
@@ -11154,6 +12067,92 @@ private fun PdfViewerPaginationPage(
         )
         else VirtualPage.PdfPage(pageIndex)
 
+    // Page rich text is retired: taps in TEXT mode (no box selected) create a
+    // text box at the tap. Mirrors the vertical reader's tap lambda.
+    // Box-area taps select the box instead (Android benchmark ResizableTextBox:
+    // the whole padded content frame is the select target). The legacy bounds
+    // check missed the half-handle frame band and finger slop around a box,
+    // so taps there fell through to create-at-tap and stacked a new box on
+    // top of the tapped one.
+    val onRichTextTapForBoxes = { tappedIndex: Int, xBitmap: Float, yBitmap: Float, bitmapW: Float, bitmapH: Float ->
+        if (!isEditMode || selectedTool != InkType.TEXT || selectedTextBoxId != null || bitmapW <= 0f || bitmapH <= 0f) {
+            false
+        } else {
+            val hitBox = visibleTextBoxesByPage[tappedIndex].orEmpty().firstOrNull { box ->
+                val rb = box.relativeBounds
+                PdfPageBounds(rb.left, rb.top, rb.right, rb.bottom).isSharedPdfTextBoxTapHit(
+                    x = xBitmap / bitmapW,
+                    y = yBitmap / bitmapH,
+                    pageWidthPx = bitmapW,
+                    pageHeightPx = bitmapH,
+                )
+            }
+            if (hitBox != null) {
+                selectedTextBoxId = hitBox.id
+                richTextController?.clearSelection()
+                true
+            } else {
+                val marginX = bitmapW * 0.1f
+                val marginY = bitmapH * 0.08f
+                val editorX = xBitmap - marginX
+                val editorY = yBitmap - marginY
+                if (editorX < 0f || editorY < 0f ||
+                    editorX > bitmapW - marginX * 2f ||
+                    editorY > bitmapH - marginY * 2f
+                ) {
+                    false
+                } else {
+                    onTextBoxCreateAt(
+                        tappedIndex,
+                        (xBitmap / bitmapW).coerceIn(0f, 1f),
+                        (yBitmap / bitmapH).coerceIn(0f, 1f)
+                    )
+                    true
+                }
+            }
+        }
+    }
+
+    // 2-page spread: report the shared Row camera plus this slot's placement
+    // so the page's high-res tiles track the real viewport under pan/zoom.
+    // The zoom transform lives on the Row's graphicsLayer (scale about the Row
+    // center + translation); slot geometry mirrors the Row's
+    // spacedBy(gap, CenterHorizontally) layout, and the slot fills the Row
+    // height so pageTopInRow = 0. A provider on purpose: the camera state is
+    // read inside the page's tile snapshotFlow instead of recomposing the page
+    // on every pan/zoom frame.
+    val spreadSlotIndex = spreadPageIndices.indexOf(pageIndex)
+    val spreadCameraProvider: (() -> PdfSpreadCameraContext?)? =
+        if (useSharedSpreadZoom && spreadSlotIndex >= 0) {
+            {
+                val slotWidths = spreadPageIndices.map { displayIndex ->
+                    pdfSpreadPageSlotWidth(
+                        containerWidth = boxMaxWidthFloat,
+                        containerHeight = boxMaxHeightFloat,
+                        pageGap = spreadPageGapPx,
+                        spreadPageCount = spreadPageCount,
+                        pageAspectRatio = displayPageRatios.getOrElse(displayIndex) { 1f }
+                    )
+                }
+                val contentLeft = (
+                    boxMaxWidthFloat -
+                        (slotWidths.sum() + spreadPageGapPx * (spreadPageCount - 1))
+                    ) / 2f
+                PdfSpreadCameraContext(
+                    scale = currentActiveScale,
+                    offset = currentActiveOffset,
+                    rowWidth = boxMaxWidthFloat,
+                    rowHeight = boxMaxHeightFloat,
+                    pageLeftInRow = contentLeft +
+                        slotWidths.take(spreadSlotIndex).sum() +
+                        spreadPageGapPx * spreadSlotIndex,
+                    pageTopInRow = 0f,
+                )
+            }
+        } else {
+            null
+        }
+
     PdfPageComposable(
         pdfDocument = stablePdfDocument,
         documentKey = activeDocumentRenderKey,
@@ -11167,6 +12166,7 @@ private fun PdfViewerPaginationPage(
         isScrollLocked = if (useSharedSpreadZoom) false else isScrollLocked,
         customHighlightColors = customHighlightColors,
         externalScale = if (useSharedSpreadZoom) currentActiveScale else 1f,
+        spreadCameraProvider = spreadCameraProvider,
         onPaletteClick = {
             highlightColorPickerInitialSlot = PdfHighlightColor.YELLOW
             showHighlightColorPicker = true
@@ -11198,6 +12198,7 @@ private fun PdfViewerPaginationPage(
         onHighlightLoading = { /* no-op for paginated mode */ },
         onPreSingleTap = onPaginationPreSingleTap,
         onSingleTap = { _ -> onSingleTapStable() },
+        onRichTextTap = onRichTextTapForBoxes,
         isProUser = isProUser,
         onShowDictionaryUpsellDialog = {
             if (useOnlineDictionary) {
@@ -11335,9 +12336,25 @@ private fun PdfViewerPaginationPage(
                 "event=viewer_select path=pagination id=$id " +
                     "selectedBefore=${selectedTextBoxId ?: "none"} textBoxEditMode=$isDrawingActive"
             )
+            Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                "select path=pagination id=$id selectedBefore=${selectedTextBoxId ?: "none"}"
+            )
             selectedTextBoxId = id
             pdfRichLayoutDiag("exit.path=textBoxSelect path=pagination id=$id")
             richTextController?.clearSelection()
+        },
+        onTextBoxMenuAction = surfaceState.onTextBoxMenuAction,
+        onTextBoxParagraphUiStateChanged = { state, selection ->
+            surfaceState.textBoxParagraphUiState = state
+            surfaceState.textBoxSelection = selection
+            surfaceState.textBoxSelectionBoxId = selectedTextBoxId
+            Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                "mirror_write path=pagination boxId=$selectedTextBoxId " +
+                    "state=${pdfTextBoxTraceDockState(state)} sel=$selection"
+            )
+        },
+        textBoxPendingSelection = surfaceState.textBoxPendingSelection?.takeIf {
+            surfaceState.textBoxSelectionBoxId == selectedTextBoxId
         },
         draggingBoxId = paginationDraggingBoxId,
         onTextBoxDragStart = { box, _, _ ->

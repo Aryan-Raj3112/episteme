@@ -106,6 +106,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
@@ -121,7 +122,10 @@ import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.shared.pdf.calculatePdfVerticalPageLayoutPx
+import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
+import com.aryan.reader.shared.pdf.isSharedPdfTextBoxTapHit
+import com.aryan.reader.shared.pdf.RichParagraphUiState
 import com.aryan.reader.shared.pdf.finitePdfZoomValue
 import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
 import com.aryan.reader.shared.pdf.pdfVerticalDoubleTapTargetScale
@@ -312,6 +316,14 @@ internal fun PdfVerticalReader(
     selectedTextBoxId: String? = null,
     onTextBoxChange: (PdfTextBox) -> Unit = {},
     onTextBoxSelect: (String) -> Unit = {},
+    onTextBoxMenuAction: (PdfTextBoxMenuAction) -> Unit = {},
+    onTextBoxParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> },
+    textBoxPendingSelection: TextBoxPendingSelection? = null,
+    /**
+     * Currently retired page editor: taps in TEXT mode create a text box at
+     * the tap instead of focusing page rich text. Relative 0..1 coords.
+     */
+    onTextBoxCreateAt: (pageIndex: Int, xRel: Float, yRel: Float) -> Unit = { _, _, _ -> },
     bottomContentPaddingPx: Float = 0f,
     topContentPaddingPx: Float = 0f,
     onTextBoxMoved: (String, Int, Rect) -> Unit = { _, _, _ -> },
@@ -2664,55 +2676,72 @@ internal fun PdfVerticalReader(
                                 }
                             }
 
-                            // Page rich-text cursor placement (TEXT tool, no box):
-                            // bitmap space == rich-layer space (targetWidth =
-                            // actualBitmapWidthPx), so only the 10%/8% editor
-                            // margins come off. Box taps and out-of-editor taps
+                            // TEXT tool tap (no box selected): page rich text is
+                            // retired, so a tap inside the editor rect creates
+                            // a text box at the tap. bitmap space maps 1:1 to
+                            // relative page coords; only the 10%/8% margins
+                            // come off. A tap on a text box (full padded frame
+                            // plus finger slop, shared isSharedPdfTextBoxTapHit)
+                            // selects that box instead — the old raw-bounds skip
+                            // let frame-band taps fall through and create a new
+                            // box stacked on the tapped one. Out-of-editor taps
                             // fall through to the normal single-tap behavior.
                             val onRichTextTapLambda = remember(
                                 isEditMode,
                                 selectedTool,
                                 selectedTextBoxId,
-                                richTextController,
+                                onTextBoxCreateAt,
+                                onTextBoxSelect,
                                 textBoxes
                             ) {
                                 { tappedIndex: Int, xBitmap: Float, yBitmap: Float, bitmapW: Float, bitmapH: Float ->
-                                    val controller = richTextController
                                     if (!isEditMode || selectedTool != InkType.TEXT ||
-                                        selectedTextBoxId != null || controller == null
+                                        selectedTextBoxId != null ||
+                                        bitmapW <= 0f || bitmapH <= 0f
                                     ) {
-                                        false
-                                    } else if (textBoxes.any { box ->
-                                            box.pageIndex == tappedIndex &&
-                                                xBitmap >= box.relativeBounds.left * bitmapW &&
-                                                xBitmap <= box.relativeBounds.right * bitmapW &&
-                                                yBitmap >= box.relativeBounds.top * bitmapH &&
-                                                yBitmap <= box.relativeBounds.bottom * bitmapH
-                                        }
-                                    ) {
-                                        pdfRichCursorTrace("tap page=$tappedIndex inBox skip")
                                         false
                                     } else {
-                                        val marginX = bitmapW * 0.1f
-                                        val marginY = bitmapH * 0.08f
-                                        val editorX = xBitmap - marginX
-                                        val editorY = yBitmap - marginY
-                                        if (editorX < 0f || editorY < 0f ||
-                                            editorX > bitmapW - marginX * 2f ||
-                                            editorY > bitmapH - marginY * 2f
-                                        ) {
-                                            pdfRichCursorTrace("tap page=$tappedIndex outsideEditor skip")
-                                            false
-                                        } else {
-                                            pdfRichCursorTrace(
-                                                "tap page=$tappedIndex bitmap=(${xBitmap.roundToInt()},${yBitmap.roundToInt()}) " +
-                                                    "editor=(${editorX.roundToInt()},${editorY.roundToInt()})"
-                                            )
-                                            controller.handleTapOnPage(
-                                                tappedIndex,
-                                                Offset(editorX, editorY)
-                                            )
+                                        val hitBox = textBoxes.firstOrNull { box ->
+                                            box.pageIndex == tappedIndex &&
+                                                PdfPageBounds(
+                                                    box.relativeBounds.left,
+                                                    box.relativeBounds.top,
+                                                    box.relativeBounds.right,
+                                                    box.relativeBounds.bottom,
+                                                ).isSharedPdfTextBoxTapHit(
+                                                    x = xBitmap / bitmapW,
+                                                    y = yBitmap / bitmapH,
+                                                    pageWidthPx = bitmapW,
+                                                    pageHeightPx = bitmapH,
+                                                )
+                                        }
+                                        if (hitBox != null) {
+                                            pdfRichCursorTrace("tap page=$tappedIndex selectBox=${hitBox.id}")
+                                            onTextBoxSelect(hitBox.id)
                                             true
+                                        } else {
+                                            val marginX = bitmapW * 0.1f
+                                            val marginY = bitmapH * 0.08f
+                                            val editorX = xBitmap - marginX
+                                            val editorY = yBitmap - marginY
+                                            if (editorX < 0f || editorY < 0f ||
+                                                editorX > bitmapW - marginX * 2f ||
+                                                editorY > bitmapH - marginY * 2f
+                                            ) {
+                                                pdfRichCursorTrace("tap page=$tappedIndex outsideEditor skip")
+                                                false
+                                            } else {
+                                                pdfRichCursorTrace(
+                                                    "tap page=$tappedIndex bitmap=(${xBitmap.roundToInt()},${yBitmap.roundToInt()}) " +
+                                                        "editor=(${editorX.roundToInt()},${editorY.roundToInt()})"
+                                                )
+                                                onTextBoxCreateAt(
+                                                    tappedIndex,
+                                                    (xBitmap / bitmapW).coerceIn(0f, 1f),
+                                                    (yBitmap / bitmapH).coerceIn(0f, 1f)
+                                                )
+                                                true
+                                            }
                                         }
                                     }
                                 }
@@ -2859,6 +2888,9 @@ internal fun PdfVerticalReader(
                                     selectedTextBoxId = selectedTextBoxId,
                                     onTextBoxChange = onTextBoxChange,
                                     onTextBoxSelect = onTextBoxSelect,
+                                    onTextBoxMenuAction = onTextBoxMenuAction,
+                                    onTextBoxParagraphUiStateChanged = onTextBoxParagraphUiStateChanged,
+                                    textBoxPendingSelection = textBoxPendingSelection,
                                     userHighlights = effectiveUserHighlightsByPage[page.index].orEmpty(),
                                     onHighlightAdd = onHighlightAdd,
                                     onHighlightUpdate = onHighlightUpdate,
@@ -3418,7 +3450,7 @@ internal fun PdfVerticalReader(
                         scale = currentZoom,
                         handlePosition = overlayHandlePos,
                         onBoundsChanged = {},
-                        onTextChanged = {},
+                        onTextChanged = { _, _ -> },
                         onSelect = {},
                         onDragStart = {},
                         onDrag = { _, _ -> },

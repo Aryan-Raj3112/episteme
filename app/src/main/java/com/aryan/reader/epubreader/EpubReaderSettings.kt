@@ -1339,7 +1339,9 @@ fun FormatSlider(
                     val newValue = (value - stepSize).coerceAtLeast(valueRange.start)
                     onValueChange((newValue * 10f).roundToInt() / 10f)
                 },
-                modifier = Modifier.size(32.dp) // Slimmer buttons
+                // 48dp minimum hit target (was 32dp "slimmer" buttons that
+                // missed taps and felt like lag).
+                modifier = Modifier.size(48.dp)
             ) {
                 Icon(Icons.Default.Remove, contentDescription = stringResource(R.string.content_desc_decrease), tint = MaterialTheme.colorScheme.primary)
             }
@@ -1357,7 +1359,8 @@ fun FormatSlider(
                     val newValue = (value + stepSize).coerceAtMost(valueRange.endInclusive)
                     onValueChange((newValue * 10f).roundToInt() / 10f)
                 },
-                modifier = Modifier.size(32.dp) // Slimmer buttons
+                // 48dp minimum hit target (was 32dp "slimmer" buttons).
+                modifier = Modifier.size(48.dp)
             ) {
                 Icon(Icons.Default.Add, contentDescription = stringResource(R.string.content_desc_increase), tint = MaterialTheme.colorScheme.primary)
             }

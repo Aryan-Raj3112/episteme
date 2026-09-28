@@ -24,16 +24,27 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.IconButton
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -66,13 +77,27 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.pdf.data.PdfTextBox
+import com.aryan.reader.shared.pdf.RichParagraphUiState
+import com.aryan.reader.shared.pdf.SharedPdfRichListType
+import com.aryan.reader.shared.pdf.SharedPdfRichParagraph
+import com.aryan.reader.shared.pdf.SharedPdfRichTextAlign
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxAnnotatedString
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxDockState
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxKeystroke
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxParagraphCount
+import com.aryan.reader.shared.pdf.toComposeTextAlign
+import com.aryan.reader.shared.pdf.trimmedRichParagraphs
 import timber.log.Timber
 import kotlin.math.roundToInt
 
@@ -94,15 +119,89 @@ private const val TEXT_BOX_DRAG_PILL_TOUCH_WIDTH_DP = 72f
 private const val TEXT_BOX_DRAG_PILL_TOUCH_HEIGHT_DP = 48f
 private const val TEXT_BOX_DRAG_PILL_GAP_DP = 8f
 
+/** Vertical gap between a duplicated text box and its original (page-relative). */
+const val PDF_TEXT_BOX_DUPLICATE_GAP_REL = 0.04f
+
 /** Stable tag for tracing text-box selection, focus, and IME value delivery. */
 internal const val PDF_TEXT_BOX_INPUT_TRACE_TAG = "PdfTextBoxInputTrace"
+
+/**
+ * Dedicated debug tag for the text-box feature (cursor, alignment, list,
+ * typing echo). Filter logcat with `TextBoxTrace` to follow one session.
+ */
+internal const val TEXT_BOX_TRACE_TAG = "TextBoxTrace"
+
+/** Escaped + truncated text for trace logs (flags a leaked ZWSP anchor). */
+internal fun pdfTextBoxTraceText(text: String, maxLen: Int = 160): String {
+    val escaped = text.replace("\n", "\\n").replace("\u200B", "<ZWSP>")
+    return if (escaped.length <= maxLen) {
+        "\"$escaped\""
+    } else {
+        "\"${escaped.take(maxLen)}…\"(len=${text.length})"
+    }
+}
+
+/** Compact paragraph summary for trace logs: [index:Align/List …]. */
+internal fun pdfTextBoxTraceParagraphs(paragraphs: List<SharedPdfRichParagraph>): String =
+    if (paragraphs.isEmpty()) {
+        "[]"
+    } else {
+        paragraphs.mapIndexed { index, paragraph ->
+            "$index:${paragraph.alignment.name.first()}/${paragraph.listType.name.first()}"
+        }.joinToString(prefix = "[", postfix = "]")
+    }
+
+/** Compact dock-state summary for trace logs. */
+internal fun pdfTextBoxTraceDockState(state: RichParagraphUiState): String =
+    "${state.alignment} b=${state.isBulleted} n=${state.isNumbered}"
+
+/** Compact per-box action menu entries shown above a selected text box. */
+enum class PdfTextBoxMenuAction { DELETE, DUPLICATE, LOCK }
+
+private const val TEXT_BOX_ACTION_BUTTON_SIZE_DP = 24f
+private const val TEXT_BOX_ACTION_DIVIDER_WIDTH_DP = 1f
+private const val TEXT_BOX_ACTION_MENU_HEIGHT_DP = 24f
+
+/**
+ * Exact tight width of the compact text-box action menu: one fixed button
+ * slot per [PdfTextBoxMenuAction] plus one divider between neighbours.
+ * Derived from the entry count (not hardcoded) so adding/removing an action
+ * cannot leave trailing empty space again.
+ */
+internal fun pdfTextBoxActionMenuWidthDp(): Float {
+    val count = PdfTextBoxMenuAction.entries.size
+    if (count <= 0) return 0f
+    return count * TEXT_BOX_ACTION_BUTTON_SIZE_DP +
+        (count - 1) * TEXT_BOX_ACTION_DIVIDER_WIDTH_DP
+}
+
+/**
+ * One-shot post-toggle cursor for a text box (Android only).
+ *
+ * The dock list toggle inserts markers around the field, so the correct
+ * cursor (shifted past "• "/"1. ") is computed parent-side. A plain
+ * [TextRange] mirror cannot be used: it goes stale within a frame (the
+ * mirror only learns the field's own reports) and re-adopting it yanked
+ * the cursor to 0 on every keystroke. The [token] is bumped per toggle
+ * and consumed once, so later syncs never re-adopt a stale cursor.
+ */
+data class TextBoxPendingSelection(
+    val range: TextRange,
+    val token: Long,
+)
 
 /** A selected legacy text box owns the IME instead of the page rich-text editor. */
 internal fun isPdfRichTextInputEnabled(
     isEditMode: Boolean,
     selectedTool: InkType,
     selectedTextBoxId: String?,
-): Boolean = isEditMode && selectedTool == InkType.TEXT && selectedTextBoxId == null
+): Boolean {
+    // Currently retired: page rich text is hidden on Android, text boxes only
+    // (docs/android-page-rich-text-retirement.md). The page editor never owns
+    // the IME; a selected box owns its own field. Kept (not deleted) so
+    // re-enabling is a one-line change via ENABLE_PAGE_RICH_TEXT.
+    return false
+}
 
 // Eagerly consumes pointer events so parent scaled pan/zoom gestures don't intercept it
 suspend fun PointerInputScope.detectEagerDragGestures(
@@ -157,14 +256,24 @@ fun ResizableTextBox(
     pageHeightPx: Float,
     scale: Float = 1f,
     onBoundsChanged: (Rect) -> Unit,
-    onTextChanged: (String) -> Unit,
+    onTextChanged: (String, List<SharedPdfRichParagraph>) -> Unit,
     onSelect: () -> Unit,
     onDragStart: (Offset) -> Unit,
     onDrag: (Offset, Rect) -> Unit,
     onDragEnd: () -> Unit,
     modifier: Modifier = Modifier,
     onDragCancel: () -> Unit = {},
-    handlePosition: HandlePosition = HandlePosition.AUTO
+    handlePosition: HandlePosition = HandlePosition.AUTO,
+    onParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> },
+    // One-shot post-toggle cursor from the parent (e.g. list markers
+    // inserted around the field): adopted once on the next external sync
+    // so the caret lands AFTER "• "/"1. " instead of staying at its stale
+    // pre-toggle offset. Never the live mirror — see
+    // TextBoxPendingSelection.
+    pendingSelection: TextBoxPendingSelection? = null,
+    // Compact box menu (delete / duplicate / lock). Null hides the menu
+    // (e.g. the pagination drag preview where actions make no sense).
+    onTextBoxMenuAction: ((PdfTextBoxMenuAction) -> Unit)? = null,
 ) {
     if (pageWidthPx <= 0 || pageHeightPx <= 0) return
 
@@ -204,6 +313,141 @@ fun ResizableTextBox(
                 "Cursive" -> FontFamily.Cursive
                 else -> FontFamily.Default
             }
+        }
+    }
+    val currentOnParagraphUiStateChanged by rememberUpdatedState(onParagraphUiStateChanged)
+    // Box-level style as the AnnotatedString base; per-paragraph alignment
+    // and list tags come from shared helpers (same model as rich text).
+    val boxSpanStyle = SpanStyle(
+        color = box.color,
+        background = box.backgroundColor,
+        fontFamily = fontFamily,
+        fontWeight = if (box.isBold) FontWeight.Bold else FontWeight.Normal,
+        fontStyle = if (box.isItalic) FontStyle.Italic else FontStyle.Normal,
+        textDecoration = run {
+            val decs = mutableListOf<TextDecoration>()
+            if (box.isUnderline) decs.add(TextDecoration.Underline)
+            if (box.isStrikeThrough) decs.add(TextDecoration.LineThrough)
+            if (decs.isEmpty()) TextDecoration.None else TextDecoration.combine(decs)
+        }
+    )
+    val externalAnnotated = remember(box.text, box.paragraphs, boxSpanStyle) {
+        sharedPdfTextBoxAnnotatedString(box.text, box.paragraphs, boxSpanStyle)
+    }
+    var fieldValue by remember(box.id) {
+        mutableStateOf(TextFieldValue(externalAnnotated)).also {
+            Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                "field_init id=${box.id} text=${pdfTextBoxTraceText(box.text)} " +
+                    "paras=${pdfTextBoxTraceParagraphs(box.paragraphs)}"
+            )
+        }
+    }
+    // Paragraphs backing the field text. Kept in lockstep with fieldValue so
+    // rapid keystrokes always reconcile against their true predecessor even
+    // before the parent recomposes with the updated box.
+    var fieldParagraphs by remember(box.id) { mutableStateOf(box.paragraphs) }
+    // Sync external changes (dock alignment/list toggles, undo, reload)
+    // into the field. Three rules keep live typing intact:
+    // 1. A fresh toggle token adopts the post-toggle text + cursor once,
+    //    then is consumed (never re-adopted).
+    // 2. While the IME session is active, parent text is NEVER adopted:
+    //    the echo of our own keystrokes always lags a frame, and adopting
+    //    it reverted fresh input and pinned the cursor. The field wins;
+    //    paragraphs are still adopted when the paragraph count matches
+    //    (dock alignment tapped mid-lag), which is index-safe.
+    // 3. Idle (unfocused) fields adopt parent text: background merges apply
+    //    when nobody is typing, and the blur race self-heals because the
+    //    parent always holds our synchronous echoes.
+    // Span-only mismatches (IME autocorrect underlines) rebuild the
+    // annotated string but keep the current cursor and composition.
+    var consumedSelectionToken by remember(box.id) { mutableStateOf(-1L) }
+    LaunchedEffect(box.id, externalAnnotated, pendingSelection, box.paragraphs, isTextFieldFocused) {
+        val current = fieldValue
+        val token = pendingSelection?.takeIf { it.token != consumedSelectionToken }
+        if (token != null) {
+            val wanted = TextRange(
+                token.range.min.coerceIn(0, externalAnnotated.length),
+                token.range.max.coerceIn(0, externalAnnotated.length)
+            )
+            Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                "sync_token id=${box.id} token=${token.token} sel=$wanted " +
+                    "boxText=${pdfTextBoxTraceText(externalAnnotated.text)} " +
+                    "boxParas=${pdfTextBoxTraceParagraphs(box.paragraphs)}"
+            )
+            fieldValue = TextFieldValue(externalAnnotated, wanted, null)
+            fieldParagraphs = box.paragraphs.trimmedRichParagraphs()
+            consumedSelectionToken = token.token
+            return@LaunchedEffect
+        }
+        val textChanged = current.text != externalAnnotated.text
+        if (textChanged && isTextFieldFocused) {
+            // Paragraphs-only external changes (dock alignment tapped
+            // mid-lag) are still safe to adopt when the paragraph count
+            // matches — indices line up, and the echo case is a no-op
+            // because the parent echoes our paragraphs verbatim.
+            if (sharedPdfTextBoxParagraphCount(current.text) ==
+                sharedPdfTextBoxParagraphCount(externalAnnotated.text)
+            ) {
+                fieldParagraphs = box.paragraphs.trimmedRichParagraphs()
+            }
+            Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                "sync_skip_echo_guard id=${box.id} " +
+                    "fieldText=${pdfTextBoxTraceText(current.text)} " +
+                    "boxText=${pdfTextBoxTraceText(externalAnnotated.text)} " +
+                    "currentSel=${current.selection} " +
+                    "fieldParas=${pdfTextBoxTraceParagraphs(fieldParagraphs)}"
+            )
+            return@LaunchedEffect
+        }
+        val parasChanged = fieldParagraphs.trimmedRichParagraphs() !=
+            box.paragraphs.trimmedRichParagraphs()
+        val spansChanged = current.annotatedString != externalAnnotated
+        if (!textChanged && !parasChanged && !spansChanged) {
+            Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                "sync id=${box.id} decision=SKIP currentSel=${current.selection}"
+            )
+            return@LaunchedEffect
+        }
+        val wantedSelection = TextRange(
+            current.selection.min.coerceIn(0, externalAnnotated.length),
+            current.selection.max.coerceIn(0, externalAnnotated.length)
+        )
+        val composition = if (!textChanged) current.composition else null
+        Timber.tag(TEXT_BOX_TRACE_TAG).d(
+            "sync id=${box.id} textChanged=$textChanged parasChanged=$parasChanged " +
+                "spansChanged=$spansChanged focused=$isTextFieldFocused " +
+                "currentSel=${current.selection} wantedSel=$wantedSelection " +
+                "fieldText=${pdfTextBoxTraceText(current.text)} " +
+                "boxText=${pdfTextBoxTraceText(externalAnnotated.text)} " +
+                "fieldParas=${pdfTextBoxTraceParagraphs(fieldParagraphs)} " +
+                "boxParas=${pdfTextBoxTraceParagraphs(box.paragraphs)} decision=RESET"
+        )
+        fieldValue = TextFieldValue(externalAnnotated, wantedSelection, composition)
+        fieldParagraphs = box.paragraphs.trimmedRichParagraphs()
+        Timber.tag(TEXT_BOX_TRACE_TAG).d(
+            "synced id=${box.id} sel=$wantedSelection compositionKept=${composition != null}"
+        )
+    }
+    // Report dock state for the selected box (alignment + list actives).
+    // Stored-aware: empty paragraphs report their stored alignment, which
+    // the anchor-free buffer alone cannot represent.
+    LaunchedEffect(fieldValue.text, fieldParagraphs, fieldValue.selection, isSelected) {
+        if (isSelected) {
+            val dockState = sharedPdfTextBoxDockState(fieldValue.text, fieldParagraphs, fieldValue.selection)
+            Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                "dock_report id=${box.id} state=${pdfTextBoxTraceDockState(dockState)} " +
+                    "sel=${fieldValue.selection} textLen=${fieldValue.text.length} " +
+                    "paras=${pdfTextBoxTraceParagraphs(fieldParagraphs)} " +
+                    "emptyFallback=${if (fieldValue.text.isEmpty()) {
+                        fieldParagraphs.getOrElse(0) { SharedPdfRichParagraph() }.alignment
+                    } else {
+                        "n/a"
+                    }}"
+            )
+            currentOnParagraphUiStateChanged(
+                dockState,
+                fieldValue.selection
+            )
         }
     }
     androidx.compose.runtime.SideEffect {
@@ -308,6 +552,12 @@ fun ResizableTextBox(
     val dragPillWidthPx = with(density) { dragPillTouchWidth.toPx() }
     val dragPillHeightPx = with(density) { dragPillTouchHeight.toPx() }
     val dragPillGapPx = with(density) { (TEXT_BOX_DRAG_PILL_GAP_DP / scale).dp.toPx() }
+    // Compact action menu: constant on-screen size, opposite end from the pill.
+    val showActionMenu = isSelected && onTextBoxMenuAction != null
+    val actionMenuWidthDp = pdfTextBoxActionMenuWidthDp().dp
+    val actionMenuHeightDp = TEXT_BOX_ACTION_MENU_HEIGHT_DP.dp
+    val actionMenuWidthPx = with(density) { actionMenuWidthDp.toPx() / scale }
+    val actionMenuHeightPx = with(density) { actionMenuHeightDp.toPx() / scale }
     val chromeLayout = calculateTextBoxChromeLayout(
         textBoundsPx = currentRectPx,
         isSelected = isSelected,
@@ -315,7 +565,10 @@ fun ResizableTextBox(
         handleSizePx = handleSizePx,
         dragPillWidthPx = dragPillWidthPx,
         dragPillHeightPx = dragPillHeightPx,
-        dragPillGapPx = dragPillGapPx
+        dragPillGapPx = dragPillGapPx,
+        hasActionMenu = showActionMenu,
+        actionMenuWidthPx = actionMenuWidthPx,
+        actionMenuHeightPx = actionMenuHeightPx,
     )
 
     Box(
@@ -364,15 +617,99 @@ fun ResizableTextBox(
                     )
             ) {
                 BasicTextField(
-                    value = box.text,
-                    onValueChange = { newText ->
+                    value = fieldValue,
+                    onValueChange = { newValue ->
                         Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
                             "event=value_change id=${box.id} page=${box.pageIndex} " +
-                                "oldLength=${box.text.length} newLength=${newText.length} " +
+                                "oldLength=${fieldValue.text.length} newLength=${newValue.text.length} " +
                                 "selected=$isSelected editMode=$isEditMode enabled=$isTextInputEnabled " +
                                 "focused=$isTextFieldFocused"
                         )
-                        currentOnTextChanged(newText)
+                        // Route every keystroke through shared list/alignment
+                        // maintenance (same Samsung-Notes rules as rich text:
+                        // marker relocation, Enter inheritance, backspace exit,
+                        // numbered renumber) plus stored-alignment preservation
+                        // for empty paragraphs. Plain typing inside unchanged
+                        // structure flows through UNTOUCHED: rebuilding the
+                        // AnnotatedString on every keystroke (and dropping
+                        // TextFieldValue.composition) interrupts the IME
+                        // pipeline — predictive text, autocorrect and
+                        // space-commit silently swallow characters.
+                        // Paragraph base: when the field text matches the box,
+                        // the box paragraphs are freshest (they include our
+                        // echoes plus any dock change that landed after our
+                        // last keystroke — using stale field paragraphs here
+                        // is what wiped empty-line alignment on the next
+                        // keystroke). When they differ the parent echo is
+                        // lagging, so the field paragraphs are newer.
+                        val oldFieldText = fieldValue.text
+                        val useBoxParagraphs = oldFieldText == box.text
+                        val baseParagraphs = if (useBoxParagraphs) box.paragraphs else fieldParagraphs
+                        val result = sharedPdfTextBoxKeystroke(
+                            oldText = oldFieldText,
+                            oldParagraphs = baseParagraphs,
+                            newText = newValue.text,
+                            newSelection = newValue.selection,
+                            markerFallbackStyle = boxSpanStyle
+                        )
+                        val newParagraphs = result.paragraphs.trimmedRichParagraphs()
+                        val textSame = result.text == newValue.text
+                        val selSame = result.selection == newValue.selection
+                        val parasSame = newParagraphs == fieldParagraphs
+                        val structural = result.shifts.isNotEmpty() ||
+                            !textSame ||
+                            !selSame ||
+                            !parasSame
+                        // Span authority: IME edits fragment or drop our
+                        // ParagraphStyle runs (typing at a run end falls
+                        // outside the style) and list tags. Until the next
+                        // sync the field then renders LEFT (flicker) and the
+                        // fragmented boundaries split MultiParagraph into
+                        // phantom lines. So boxes with any non-default
+                        // paragraph always rebuild from the normalized
+                        // result, restoring clean merged runs. Text and
+                        // selection are identical here, so the composition
+                        // offsets stay valid and the IME session survives.
+                        // Plain boxes have no paragraph spans to lose and
+                        // keep the untouched passthrough.
+                        val hasNonDefault = newParagraphs.any {
+                            it.alignment != SharedPdfRichTextAlign.LEFT ||
+                                it.listType != SharedPdfRichListType.NONE
+                        }
+                        val needsRebuild = structural || hasNonDefault
+                        Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                            "value_change id=${box.id} newText=${pdfTextBoxTraceText(newValue.text)} " +
+                                "newSel=${newValue.selection} composition=${newValue.composition} " +
+                                "baseSrc=${if (useBoxParagraphs) "box" else "field"} " +
+                                "resultText=${pdfTextBoxTraceText(result.text)} resultSel=${result.selection} " +
+                                "shifts=${result.shifts.size} paras=${pdfTextBoxTraceParagraphs(newParagraphs)} " +
+                                "textSame=$textSame selSame=$selSame parasSame=$parasSame " +
+                                "inPStyles=${newValue.annotatedString.paragraphStyles.size} " +
+                                "structural=$structural spanFixup=${hasNonDefault && !structural} " +
+                                "rebuild=$needsRebuild"
+                        )
+                        fieldValue = if (needsRebuild) {
+                            // Rebuild annotated from the normalized result;
+                            // box style covers marker spans. Composition is
+                            // only valid when the text itself is unchanged
+                            // (offsets still line up).
+                            val normalized = sharedPdfTextBoxAnnotatedString(
+                                result.text,
+                                result.paragraphs,
+                                boxSpanStyle
+                            )
+                            val composition =
+                                if (result.text == newValue.text) newValue.composition else null
+                            Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                                "rebuild id=${box.id} sel=${result.selection} " +
+                                    "compositionKept=${composition != null}"
+                            )
+                            TextFieldValue(normalized, result.selection, composition)
+                        } else {
+                            newValue
+                        }
+                        fieldParagraphs = newParagraphs
+                        currentOnTextChanged(result.text, fieldParagraphs)
                     },
                     modifier = Modifier
                         .fillMaxSize()
@@ -392,6 +729,18 @@ fun ResizableTextBox(
                         color = box.color,
                         background = box.backgroundColor,
                         fontFamily = fontFamily,
+                        // Empty text carries no paragraph style range, so the
+                        // caret would always sit left: fall back to the stored
+                        // alignment so it renders center/right as selected.
+                        // Non-empty text is covered by explicit paragraph
+                        // spans, which take precedence over this.
+                        textAlign = if (fieldValue.text.isEmpty()) {
+                            fieldParagraphs.getOrElse(0) {
+                                SharedPdfRichParagraph()
+                            }.alignment.toComposeTextAlign()
+                        } else {
+                            TextAlign.Unspecified
+                        },
                         fontSize = with(LocalDensity.current) {
                             (box.fontSize * pageHeightPx).toSp()
                         },
@@ -410,7 +759,7 @@ fun ResizableTextBox(
                 )
             }
 
-            if (isSelected) {
+            if (isSelected && !box.isLocked) {
                 val handles = ResizeHandle.entries.filter { it != ResizeHandle.NONE }
 
                 fun getHandleCenter(handle: ResizeHandle, w: Float, h: Float): Offset {
@@ -506,7 +855,7 @@ fun ResizableTextBox(
             }
         }
 
-        if (isSelected) {
+        if (isSelected && !box.isLocked) {
             DragPill(
                 isDarkMode = isDarkMode,
                 scale = scale,
@@ -555,6 +904,96 @@ fun ResizableTextBox(
                         }
                     }
             )
+        }
+
+        if (showActionMenu) {
+            TextBoxActionMenu(
+                isLocked = box.isLocked,
+                isDarkMode = isDarkMode,
+                scale = scale,
+                onAction = onTextBoxMenuAction,
+                modifier = Modifier
+                    .offset {
+                        IntOffset(
+                            chromeLayout.actionMenuLeftPx.roundToInt(),
+                            chromeLayout.actionMenuTopPx.roundToInt()
+                        )
+                    }
+                    .zIndex(20f)
+            )
+        }
+    }
+}
+
+/**
+ * Compact action menu floating at the end of a selected text box opposite the
+ * drag pill: delete, duplicate, and lock/unlock. Constant on-screen size
+ * (like the handles), destructive action tinted with the theme error color.
+ */
+@Composable
+private fun TextBoxActionMenu(
+    isLocked: Boolean,
+    isDarkMode: Boolean,
+    scale: Float,
+    onAction: (PdfTextBoxMenuAction) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val safeScale = scale.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val menuWidth = (pdfTextBoxActionMenuWidthDp() / safeScale).dp
+    val menuHeight = (TEXT_BOX_ACTION_MENU_HEIGHT_DP / safeScale).dp
+    Row(
+        modifier = modifier.width(menuWidth).height(menuHeight),
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape((12f / safeScale).dp),
+            color = if (isDarkMode) Color(0xFF2A2A2A) else Color.White,
+            contentColor = if (isDarkMode) Color.White else Color.Black,
+            tonalElevation = (3f / safeScale).dp,
+            shadowElevation = (4f / safeScale).dp,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                PdfTextBoxMenuAction.entries.forEachIndexed { index, action ->
+                    if (index > 0) {
+                        Box(
+                            Modifier
+                                .width((TEXT_BOX_ACTION_DIVIDER_WIDTH_DP / safeScale).dp)
+                                .height((16f / safeScale).dp)
+                                .background(
+                                    (if (isDarkMode) Color.White else Color.Black).copy(alpha = 0.15f)
+                                )
+                        )
+                    }
+                    IconButton(
+                        onClick = { onAction(action) },
+                        modifier = Modifier.size((TEXT_BOX_ACTION_BUTTON_SIZE_DP / safeScale).dp)
+                    ) {
+                        Icon(
+                            imageVector = when (action) {
+                                PdfTextBoxMenuAction.DELETE -> Icons.Default.Delete
+                                PdfTextBoxMenuAction.DUPLICATE -> Icons.Default.ContentCopy
+                                PdfTextBoxMenuAction.LOCK ->
+                                    if (isLocked) Icons.Default.LockOpen else Icons.Default.Lock
+                            },
+                            contentDescription = stringResource(
+                                when (action) {
+                                    PdfTextBoxMenuAction.DELETE -> R.string.textbox_menu_delete
+                                    PdfTextBoxMenuAction.DUPLICATE -> R.string.textbox_menu_duplicate
+                                    PdfTextBoxMenuAction.LOCK ->
+                                        if (isLocked) R.string.textbox_menu_unlock else R.string.textbox_menu_lock
+                                }
+                            ),
+                            tint = if (action == PdfTextBoxMenuAction.DELETE) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                Color.Unspecified
+                            },
+                            modifier = Modifier.size((13f / safeScale).dp)
+                        )
+                    }
+                }
+            }
         }
     }
 }

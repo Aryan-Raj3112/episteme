@@ -370,6 +370,8 @@ internal fun SharedSemanticBlockStack(
     settings: ReaderSettings,
     includeTrailingBottomMargin: Boolean,
     onReaderTap: () -> Unit,
+    onReaderHorizontalTap: ((horizontalFraction: Float, touchY: Float) -> Unit)? = null,
+    immediateDragSelectEnabled: Boolean = true,
     onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
     onSelectionGestureActiveChange: (Boolean) -> Unit,
     onHighlightSelected: (String) -> Unit,
@@ -401,6 +403,8 @@ internal fun SharedSemanticBlockStack(
                 0.dp
             },
             onReaderTap = onReaderTap,
+            onReaderHorizontalTap = onReaderHorizontalTap,
+            immediateDragSelectEnabled = immediateDragSelectEnabled,
             onSelectionChange = onSelectionChange,
             onSelectionGestureActiveChange = onSelectionGestureActiveChange,
             onHighlightSelected = onHighlightSelected,
@@ -432,6 +436,8 @@ internal fun SharedSemanticBlockView(
     marginTop: Dp,
     marginBottom: Dp,
     onReaderTap: () -> Unit,
+    onReaderHorizontalTap: ((horizontalFraction: Float, touchY: Float) -> Unit)? = null,
+    immediateDragSelectEnabled: Boolean = true,
     onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
     onSelectionGestureActiveChange: (Boolean) -> Unit,
     onHighlightSelected: (String) -> Unit,
@@ -498,6 +504,8 @@ internal fun SharedSemanticBlockView(
                     settings = settings,
                     fontWeight = FontWeight.Bold,
                     onReaderTap = onReaderTap,
+                    onReaderHorizontalTap = onReaderHorizontalTap,
+                    immediateDragSelectEnabled = immediateDragSelectEnabled,
                     onSelectionChange = onSelectionChange,
                     onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                     onHighlightSelected = onHighlightSelected,
@@ -507,9 +515,9 @@ internal fun SharedSemanticBlockView(
                 )
             }
 
-            is SemanticParagraph -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut)
-            is SemanticListItem -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut)
-            is SemanticTextBlock -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut)
+            is SemanticParagraph -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onReaderHorizontalTap = onReaderHorizontalTap, immediateDragSelectEnabled = immediateDragSelectEnabled, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut)
+            is SemanticListItem -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onReaderHorizontalTap = onReaderHorizontalTap, immediateDragSelectEnabled = immediateDragSelectEnabled, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut)
+            is SemanticTextBlock -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onReaderHorizontalTap = onReaderHorizontalTap, immediateDragSelectEnabled = immediateDragSelectEnabled, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut)
 
             is SemanticList -> {
                 Column(modifier = contentModifier, verticalArrangement = Arrangement.Top) {
@@ -599,14 +607,16 @@ internal fun SharedSemanticBlockView(
                                 fallbackTextAlign = fallbackTextAlign,
                                 fallbackFontFamily = fallbackFontFamily,
                                 settings = settings,
-                                onReaderTap = onReaderTap,
-                                onSelectionChange = onSelectionChange,
-                                onSelectionGestureActiveChange = onSelectionGestureActiveChange,
-                                onHighlightSelected = onHighlightSelected,
-                                onLinkClicked = onLinkClicked,
-                                selectionLayouts = selectionLayouts,
-                                onTextLaidOut = onTextLaidOut
-                            )
+                    onReaderTap = onReaderTap,
+                    onReaderHorizontalTap = onReaderHorizontalTap,
+                    immediateDragSelectEnabled = immediateDragSelectEnabled,
+                    onSelectionChange = onSelectionChange,
+                    onSelectionGestureActiveChange = onSelectionGestureActiveChange,
+                    onHighlightSelected = onHighlightSelected,
+                    onLinkClicked = onLinkClicked,
+                    selectionLayouts = selectionLayouts,
+                    onTextLaidOut = onTextLaidOut
+                )
                         }
                         previous = item
                     }
@@ -637,6 +647,8 @@ internal fun SharedSemanticBlockView(
                                     settings = settings,
                                     includeTrailingBottomMargin = true,
                                     onReaderTap = onReaderTap,
+                                    onReaderHorizontalTap = onReaderHorizontalTap,
+                                    immediateDragSelectEnabled = immediateDragSelectEnabled,
                                     onSelectionChange = onSelectionChange,
                                     onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                                     onHighlightSelected = onHighlightSelected,
@@ -669,6 +681,8 @@ internal fun SharedSemanticBlockView(
                             settings = settings,
                             includeTrailingBottomMargin = true,
                             onReaderTap = onReaderTap,
+                            onReaderHorizontalTap = onReaderHorizontalTap,
+                            immediateDragSelectEnabled = immediateDragSelectEnabled,
                             onSelectionChange = onSelectionChange,
                             onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                             onHighlightSelected = onHighlightSelected,
@@ -698,6 +712,7 @@ internal fun SharedSemanticBlockView(
                     settings = settings,
                     imageContent = imageContent,
                     onReaderTap = onReaderTap,
+                    onReaderHorizontalTap = onReaderHorizontalTap,
                     onSelectionChange = onSelectionChange,
                     onHighlightSelected = onHighlightSelected,
                     onLinkClicked = onLinkClicked
@@ -783,6 +798,8 @@ internal fun SharedSemanticBlockView(
                                             settings = settings,
                                             includeTrailingBottomMargin = true,
                                             onReaderTap = onReaderTap,
+                                            onReaderHorizontalTap = onReaderHorizontalTap,
+                                            immediateDragSelectEnabled = immediateDragSelectEnabled,
                                             onSelectionChange = onSelectionChange,
                                             onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                                             onHighlightSelected = onHighlightSelected,
@@ -933,6 +950,7 @@ internal fun SharedNativeWrappingBlock(
     settings: ReaderSettings,
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?,
     onReaderTap: () -> Unit,
+    onReaderHorizontalTap: ((horizontalFraction: Float, touchY: Float) -> Unit)? = null,
     onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
     onHighlightSelected: (String) -> Unit,
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit
@@ -1024,7 +1042,15 @@ internal fun SharedNativeWrappingBlock(
                             }
                         }
                         if (latestActiveSelection.value == null) {
-                            onReaderTap()
+                            val tapWidth = size.width
+                            if (onReaderHorizontalTap != null && tapWidth > 0) {
+                                onReaderHorizontalTap(
+                                    sharedNativeTapHorizontalFraction(offset.x, tapWidth.toFloat()),
+                                    offset.y
+                                )
+                            } else {
+                                onReaderTap()
+                            }
                         }
                         onSelectionChange(null)
                     }

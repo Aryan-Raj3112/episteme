@@ -11,7 +11,13 @@ import com.aryan.reader.shared.ReaderByokTextRequestResult
 import com.aryan.reader.shared.ReaderByokTextRequests
 import com.aryan.reader.shared.RecapResult
 import com.aryan.reader.shared.SummarizationResult
+import com.aryan.reader.shared.formatMicrosUsd
+import com.aryan.reader.shared.formatSpendGuardCountdown
+import com.aryan.reader.shared.hasSpendableBalance
+import com.aryan.reader.shared.isFishVoiceListCacheFresh
+import com.aryan.reader.shared.parseSpendGuardError
 import com.aryan.reader.shared.maskedReaderAiKey
+import kotlin.time.Clock
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.interpretCPointer
@@ -22,10 +28,16 @@ import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -77,6 +89,8 @@ import platform.Security.errSecSuccess
  * state without putting Keychain or NSURLSession details in shared UI.
  */
 internal const val IOS_READER_AI_WORKER_URL = "https://reader-ai.aryanrajttps.workers.dev"
+// Fish Cloud TTS worker (same deployment the Android app uses as TTS_WORKER_URL).
+internal const val IOS_TTS_WORKER_URL = "https://reader-tts-proxy.aryanrajivyms.workers.dev"
 
 private fun String.toNSData(): NSData {
     val bytes = encodeToByteArray()
@@ -88,6 +102,16 @@ private fun String.toNSData(): NSData {
     return data
 }
 
+internal fun NSData.iosToByteArray(): ByteArray {
+    val size = length.toInt()
+    if (size <= 0) return ByteArray(0)
+    return ByteArray(size).also { output ->
+        output.usePinned { pinned ->
+            memcpy(pinned.addressOf(0), bytes, size.toULong())
+        }
+    }
+}
+
 internal data class IosReaderAiUsage(
     val cost: Double? = null,
     val freeRemaining: Int? = null,
@@ -97,6 +121,8 @@ internal data class IosReaderAiAccountState(
     val isSignedIn: Boolean = false,
     val isProUser: Boolean = false,
     val credits: Int = 0,
+    val walletMicros: Long = 0L,
+    val walletMigrated: Boolean = false,
 )
 
 internal class IosReaderAiSettingsStore(
@@ -162,6 +188,58 @@ internal class IosReaderAiSettingsStore(
         const val KEY_TTS_SPEAKER = "reader.ai.tts_speaker.v1"
         const val KEY_HIDE_READER_AI = "reader.ai.hide_features.v1"
     }
+}
+
+/**
+ * Starred TTS voice ids (device + cloud reference ids share one set, same
+ * as Android's TTS prefs). Favorites are not secrets: NSUserDefaults, not
+ * the Keychain.
+ */
+private const val IOS_TTS_FAVORITE_VOICES_KEY = "reader.tts.favoriteVoices"
+
+internal fun iosLoadTtsFavoriteVoices(): Set<String> {
+    val stored = NSUserDefaults.standardUserDefaults.arrayForKey(IOS_TTS_FAVORITE_VOICES_KEY) as? List<*>
+    return stored?.mapNotNull { it as? String }?.toSet().orEmpty()
+}
+
+internal fun iosSaveTtsFavoriteVoices(favorites: Set<String>) {
+    NSUserDefaults.standardUserDefaults.setObject(favorites.toList(), forKey = IOS_TTS_FAVORITE_VOICES_KEY)
+}
+
+/** Persisted Fish voice language filter (raw selection, validated by the UI). */
+private const val IOS_FISH_LANGUAGE_FILTER_KEY = "reader.tts.fish_language_filter"
+
+internal fun iosLoadFishLanguageFilter(): String? {
+    return NSUserDefaults.standardUserDefaults.stringForKey(IOS_FISH_LANGUAGE_FILTER_KEY)?.takeIf { it.isNotBlank() }
+}
+
+internal fun iosSaveFishLanguageFilter(selection: String) {
+    NSUserDefaults.standardUserDefaults.setObject(selection, forKey = IOS_FISH_LANGUAGE_FILTER_KEY)
+}
+
+/**
+ * Process-lifetime Fish voice-list cache (TTL is shared). Keyed by
+ * credential for BYOK and by base URL for the worker (whose response
+ * carries no per-user data); empty results are never cached.
+ */
+private data class IosCachedFishVoices(
+    val voices: List<com.aryan.reader.shared.ReaderFishVoice>,
+    val fetchedAtMs: Long
+)
+
+private val iosFishVoicesCache = mutableMapOf<String, IosCachedFishVoices>()
+
+private fun iosCachedFishVoices(cacheKey: String): List<com.aryan.reader.shared.ReaderFishVoice>? {
+    val cached = iosFishVoicesCache[cacheKey] ?: return null
+    if (!isFishVoiceListCacheFresh(cached.fetchedAtMs, Clock.System.now().toEpochMilliseconds())) {
+        iosFishVoicesCache.remove(cacheKey)
+        return null
+    }
+    return cached.voices
+}
+
+private fun iosStoreFishVoices(cacheKey: String, voices: List<com.aryan.reader.shared.ReaderFishVoice>) {
+    iosFishVoicesCache[cacheKey] = IosCachedFishVoices(voices, Clock.System.now().toEpochMilliseconds())
 }
 
 /** Small Keychain wrapper; values never enter NSUserDefaults or cloud snapshots. */
@@ -283,14 +361,12 @@ internal class IosReaderAiAdapter(
     ): AiDefinitionResult {
         val trimmed = text.trim()
         if (trimmed.isBlank()) return AiDefinitionResult(error = "There is no text to define.")
-        // Android parity (PdfViewerScreen.onDictionaryLookup + worker
-        // handleDefine): multi-word smart dictionary is Pro-only. BYOK
-        // bypasses the worker gate exactly like Android OSS, so a configured
-        // define model allows phrases without Pro. No sign-in or credits
-        // check here — single-word works signed-out via the worker.
+        // Android parity (worker /define): smart dictionary is Pro-only.
+        // BYOK bypasses the worker gate exactly like Android, so a
+        // configured define model allows definitions without Pro.
         val account = accountStateProvider()
-        if (iosCountWords(trimmed) > 1 && !account.isProUser && !hasByokModel(ReaderAiFeature.DEFINE)) {
-            return AiDefinitionResult(error = "Multi-word smart dictionary requires Pro.")
+        if (!account.isProUser && !hasByokModel(ReaderAiFeature.DEFINE)) {
+            return AiDefinitionResult(error = "Smart dictionary requires Pro.")
         }
         return textRequest(ReaderAiFeature.DEFINE, trimmed.take(2400), context, onUpdate).let { result ->
             AiDefinitionResult(definition = result.text, error = result.error)
@@ -360,8 +436,11 @@ internal class IosReaderAiAdapter(
         if (settings.hideReaderAiFeatures) return "Reader AI features are hidden."
         if (!networkAccess()) return "AI features are unavailable while offline."
         if (!account.isSignedIn && !hasByokModel(feature)) return "Sign in to use this AI feature."
-        if (!hasByokModel(feature) && !(freeProSummaryAllowed && account.isProUser) && account.credits <= 0) {
-            return "This action needs credits."
+        // Android benchmark parity: migrated users spend the USD wallet,
+        // legacy users spend credits.
+        if (!hasByokModel(feature) && !(freeProSummaryAllowed && account.isProUser) && !hasSpendableBalance(account.credits, account.walletMicros)) {
+            return if (account.walletMigrated) "This action needs balance. Top up your wallet to continue."
+            else "This action needs credits."
         }
         return null
     }
@@ -398,7 +477,9 @@ internal class IosReaderAiAdapter(
         onUsageReceived: (cost: Double?, freeRemaining: Int?) -> Unit,
         pastSummaries: List<String>,
     ): IosReaderAiTextResult {
-        val authRequired = feature != ReaderAiFeature.DEFINE
+        // Every worker feature (including /define) requires auth now; the
+        // adapter pro gate above keeps this a friendly client-side error.
+        val authRequired = true
         val token = authTokenProvider()
         if (authRequired && token.isNullOrBlank()) {
             return IosReaderAiTextResult(error = "Sign in again to use this AI feature.")
@@ -428,10 +509,29 @@ internal class IosReaderAiAdapter(
             )
         }.getOrElse { error -> return IosReaderAiTextResult(error = error.message ?: "AI request failed.") }
         if (response.statusCode == 401) return IosReaderAiTextResult(error = "Sign in again to use this AI feature.")
+        // Spend guards (Android benchmark parity): velocity throttle (429) and
+        // daily spend fraud cap (402 DAILY_SPEND_LIMIT) surface user-facing
+        // countdown text; an empty wallet keeps the legacy message.
+        if (response.statusCode == 429) {
+            val retry = parseSpendGuardError(response.body)?.second ?: 30
+            return IosReaderAiTextResult(error = "Slowing down — please retry in ${formatSpendGuardCountdown(retry)}.")
+        }
         val workerError = workerErrorMessage(response.body)
         if (response.statusCode == 402 || response.body.contains("INSUFFICIENT_CREDITS", ignoreCase = true)) {
             onUsageReported(IosReaderAiUsage())
-            return IosReaderAiTextResult(error = workerError ?: "Out of credits.")
+            val spendGuard = parseSpendGuardError(response.body)
+            if (spendGuard?.first == "DAILY_SPEND_LIMIT") {
+                val account = accountStateProvider()
+                return IosReaderAiTextResult(
+                    error = "Daily spending cap reached — resets in ${formatSpendGuardCountdown(spendGuard.second)}. " +
+                        "Balance: ${formatMicrosUsd(account.walletMicros)}."
+                )
+            }
+            val account = accountStateProvider()
+            return IosReaderAiTextResult(
+                error = workerError ?: if (account.walletMigrated) "You're out of balance. Top up your wallet to continue."
+                else "Out of credits."
+            )
         }
         if (response.statusCode !in 200..299) {
             if (response.statusCode == 401) return IosReaderAiTextResult(error = "Sign in again to use this AI feature.")
@@ -522,8 +622,16 @@ internal class IosReaderAiAdapter(
                 output.append(chunk)
                 onUpdate(chunk)
             }
-            obj["error"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let {
-                return IosReaderAiTextResult(text = output.toString(), error = it, cost = cost, freeRemaining = freeRemaining)
+            obj["error"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { streamError ->
+                // Concurrency-slot throttle arrives as a stream payload
+                // ({error, retry_after_seconds}); surface the countdown.
+                val retry = obj["retry_after_seconds"]?.jsonPrimitive?.intOrNull ?: 0
+                val text = when (streamError) {
+                    "RATE_LIMITED" -> "Slowing down — please retry in ${formatSpendGuardCountdown(retry)}."
+                    "DAILY_SPEND_LIMIT" -> "Daily spending cap reached — resets in ${formatSpendGuardCountdown(retry)}."
+                    else -> streamError
+                }
+                return IosReaderAiTextResult(text = output.toString(), error = text, cost = cost, freeRemaining = freeRemaining)
             }
             obj["cost_deducted"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()?.let { cost = it }
             obj["free_summaries_remaining"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()?.let { freeRemaining = it }
@@ -618,24 +726,6 @@ private data class IosReaderAiTextResult(
     val freeRemaining: Int? = null,
 )
 
-/**
- * Android parity (countWords): whitespace-transition count so the
- * multi-word Pro gate matches PdfViewerScreen/EpubReaderScreen exactly.
- */
-internal fun iosCountWords(text: String): Int {
-    var count = 0
-    var inWord = false
-    for (char in text) {
-        if (char.isWhitespace()) {
-            inWord = false
-        } else if (!inWord) {
-            count++
-            inWord = true
-        }
-    }
-    return count
-}
-
 private val IosReaderAiJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
 private fun workerErrorMessage(body: String): String? {
@@ -643,8 +733,8 @@ private fun workerErrorMessage(body: String): String? {
     return when {
         "insufficient_credits" in normalized -> "Out of credits."
         "summary_limit" in normalized || ("free summar" in normalized && "limit" in normalized) ->
-            "Free summaries are used up for today. More summaries need credits."
-        "multi_word_requires_pro" in normalized -> "Multi-word smart dictionary requires Pro."
+            "Free summaries are used up for today."
+        "define_requires_pro" in normalized -> "Smart dictionary requires Pro."
         "authentication required" in normalized || "unauthorized" in normalized ->
             "Sign in again to use this AI feature."
         else -> runCatching {
@@ -653,6 +743,144 @@ private fun workerErrorMessage(body: String): String? {
                 ?: json["detail"]?.jsonPrimitive?.contentOrNull
         }.getOrNull()
     }
+}
+
+/**
+ * Fish Official's author id: the professional voices Fish themselves post
+ * (the `licensed=true` pool is only 7 voices and a subset of this catalog).
+ */
+private const val FISH_OFFICIAL_AUTHOR_ID = "d8b0991f96b44e489422ca2ddf0bd31d"
+
+/**
+ * Fish voice catalog for the iOS voice picker (Android `fetchFishVoices` +
+ * `fetchCloudFishVoices` parity). BYOK Fish key lists the user's own voice
+ * library plus Fish Official's own catalog; otherwise the credited worker
+ * catalog (`GET /v2/voices`). Empty when neither credential is available or
+ * the call fails.
+ */
+internal suspend fun iosFetchFishVoices(
+    fishKey: String,
+    workerBaseUrl: String,
+    authToken: String?,
+): List<com.aryan.reader.shared.ReaderFishVoice> {
+    if (fishKey.isNotBlank()) {
+        val cacheKey = "byok:$fishKey"
+        iosCachedFishVoices(cacheKey)?.let { return it }
+        // Own + public fetch concurrently; each side degrades independently
+        // so one slow/failed listing still leaves the other instead of an
+        // empty picker.
+        val (own, public) = coroutineScope {
+            awaitAll(
+                async { runCatching { iosFetchFishModelPages(fishKey, selfOnly = true) }.getOrDefault(emptyList()) },
+                async { runCatching { iosFetchFishModelPages(fishKey, selfOnly = false) }.getOrDefault(emptyList()) },
+            )
+        }
+        val seen = own.mapTo(mutableSetOf()) { it.referenceId }
+        val merged = own + public.filter { it.referenceId.isNotBlank() && seen.add(it.referenceId) }
+        if (merged.isNotEmpty()) {
+            iosStoreFishVoices(cacheKey, merged)
+            return merged
+        }
+    }
+    val base = workerBaseUrl.trim().removeSuffix("/")
+    val token = authToken
+    if (base.isBlank() || token.isNullOrBlank()) return emptyList()
+    // The worker response carries no per-user data (auth only gates access),
+    // so it is cached by base URL, not by token.
+    val workerCacheKey = "worker:$base"
+    iosCachedFishVoices(workerCacheKey)?.let { return it }
+    val response = runCatching {
+        IosReaderAiHttpClient.get(
+            "$base/v2/voices",
+            mapOf("Authorization" to "Bearer $token"),
+        )
+    }.getOrNull() ?: return emptyList()
+    if (response.statusCode !in 200..299) return emptyList()
+    val voices = runCatching {
+        IosReaderAiJson.parseToJsonElement(response.body).jsonObject["voices"]?.jsonArray
+    }.getOrNull() ?: return emptyList()
+    return voices.mapNotNull { element ->
+        val voice = element.jsonObject
+        val referenceId = voice["reference_id"]?.jsonPrimitive?.contentOrNull
+            ?.ifBlank { voice["id"]?.jsonPrimitive?.contentOrNull }
+            .orEmpty()
+        if (referenceId.isBlank()) return@mapNotNull null
+        com.aryan.reader.shared.ReaderFishVoice(
+            id = voice["id"]?.jsonPrimitive?.contentOrNull?.ifBlank { referenceId } ?: referenceId,
+            referenceId = referenceId,
+            title = voice["name"]?.jsonPrimitive?.contentOrNull
+                ?.ifBlank { voice["title"]?.jsonPrimitive?.contentOrNull }
+                ?: referenceId,
+            description = voice["description"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            languages = voice["languages"]?.jsonArray?.mapNotNull {
+                it.jsonPrimitive.contentOrNull?.takeIf(String::isNotBlank)
+            }.orEmpty(),
+            sampleAudioUrl = voice["sample_audio"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        )
+    }.also { if (it.isNotEmpty()) iosStoreFishVoices(workerCacheKey, it) }
+}
+
+private suspend fun iosFetchFishModelPages(
+    fishKey: String,
+    selfOnly: Boolean,
+    maxPages: Int = 4,
+    pageSize: Int = 100,
+): List<com.aryan.reader.shared.ReaderFishVoice> {
+    val voices = mutableListOf<com.aryan.reader.shared.ReaderFishVoice>()
+    repeat(maxPages) { index ->
+        // NOTE: the listing endpoint is NOT under /v1 (/v1/model 404s).
+        // Fish Official's catalog for the public side: the professional
+        // voices Fish themselves post, no random user clones.
+        val scopeParam = if (selfOnly) "&self=true" else "&author_id=$FISH_OFFICIAL_AUTHOR_ID"
+        val response = runCatching {
+            IosReaderAiHttpClient.get(
+                "https://api.fish.audio/model?page_size=$pageSize&page_number=${index + 1}$scopeParam",
+                mapOf("Authorization" to "Bearer $fishKey"),
+            )
+        }.getOrNull() ?: return voices
+        if (response.statusCode !in 200..299) return voices
+        val body = runCatching {
+            IosReaderAiJson.parseToJsonElement(response.body).jsonObject
+        }.getOrNull() ?: return voices
+        val items = body["items"]?.jsonArray ?: return voices
+        items.mapNotNullTo(voices) { iosFishVoiceFromModel(it) }
+        val hasMore = body["has_more"]?.jsonPrimitive?.booleanOrNull
+            ?: (items.size >= pageSize)
+        if (!hasMore) return voices
+    }
+    return voices
+}
+
+private fun iosFishVoiceFromModel(element: JsonElement): com.aryan.reader.shared.ReaderFishVoice? {
+    val model = runCatching { element.jsonObject }.getOrNull() ?: return null
+    // Skip voices that cannot synthesize; `state` is absent on older entries.
+    val state = model["state"]?.jsonPrimitive?.contentOrNull
+    if (!state.isNullOrBlank() && state != "trained") return null
+    // Only TTS-capable models belong in a TTS picker (`type` is absent on
+    // older entries — those are kept).
+    val type = model["type"]?.jsonPrimitive?.contentOrNull
+    if (!type.isNullOrBlank() && type != "tts") return null
+    val rawRef = model["_id"]?.jsonPrimitive?.contentOrNull
+        ?: model["id"]?.jsonPrimitive?.contentOrNull
+        ?: model["reference_id"]?.jsonPrimitive?.contentOrNull
+        ?: return null
+    val referenceId = rawRef.replace("-", "")
+    if (referenceId.isBlank()) return null
+    val languages = model["languages"]?.jsonArray?.mapNotNull {
+        it.jsonPrimitive.contentOrNull?.takeIf(String::isNotBlank)
+    }.orEmpty()
+    return com.aryan.reader.shared.ReaderFishVoice(
+        id = referenceId,
+        referenceId = referenceId,
+        title = model["title"]?.jsonPrimitive?.contentOrNull
+            ?: model["name"]?.jsonPrimitive?.contentOrNull
+            ?: "Fish voice",
+        description = model["description"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        languages = languages,
+        sampleAudioUrl = model["samples"]?.jsonArray
+            ?.mapNotNull { it.jsonObject["audio"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank) }
+            ?.firstOrNull().orEmpty(),
+    )
 }
 
 /** Gemini's stream endpoint may return adjacent JSON objects rather than NDJSON. */
@@ -687,19 +915,47 @@ private fun parseConcatenatedJsonObjects(body: String): List<JsonObject> {
     return objects
 }
 
-private object IosReaderAiHttpClient {
+/**
+ * App Check token source, a plain (non-suspend) provider so the declaration
+ * stays representable to Swift. Swift pushes fresh tokens into the bridge
+ * (see ReaderIosBridge.updateAppCheckToken) and ReaderIosApp wires the
+ * cached value here. Null until wired — requests then simply omit the header
+ * and the server logs the miss while enforcement is off.
+ */
+internal var iosAppCheckTokenProvider: (() -> String?)? = null
+
+internal object IosReaderAiHttpClient {
     suspend fun post(url: String, body: String, headers: Map<String, String>): IosReaderAiHttpResponse {
+        return request(url = url, method = "POST", body = body.toNSData(), headers = headers)
+    }
+
+    suspend fun get(url: String, headers: Map<String, String> = emptyMap()): IosReaderAiHttpResponse {
+        return request(url = url, method = "GET", body = null, headers = headers)
+    }
+
+    suspend fun postBytes(url: String, body: String, headers: Map<String, String>): IosReaderAiHttpResponse {
+        return request(url = url, method = "POST", body = body.toNSData(), headers = headers)
+    }
+
+    private suspend fun request(
+        url: String,
+        method: String,
+        body: platform.Foundation.NSData?,
+        headers: Map<String, String>,
+    ): IosReaderAiHttpResponse {
         val nsUrl = NSURL.URLWithString(url) ?: error("Invalid AI URL")
         val request = NSMutableURLRequest.requestWithURL(
             URL = nsUrl,
             cachePolicy = NSURLRequestReloadIgnoringLocalCacheData,
             timeoutInterval = 120.0,
         ).apply {
-            HTTPMethod = "POST"
+            HTTPMethod = method
             setValue("application/json; charset=UTF-8", forHTTPHeaderField = "Content-Type")
             setValue("application/json", forHTTPHeaderField = "Accept")
             headers.forEach { (name, value) -> setValue(value, forHTTPHeaderField = name) }
-            setHTTPBody(body.toNSData())
+            // Attestation (omitted when unavailable; the server logs the miss).
+            iosAppCheckTokenProvider?.invoke()?.let { setValue(it, forHTTPHeaderField = "X-Firebase-AppCheck") }
+            if (body != null) setHTTPBody(body)
         }
         return suspendCancellableCoroutine { continuation ->
             val delegate = IosReaderAiHttpDelegate { result ->
@@ -720,12 +976,16 @@ private object IosReaderAiHttpClient {
     }
 }
 
-private data class IosReaderAiHttpResponse(
+internal data class IosReaderAiHttpResponse(
     val statusCode: Int,
     val body: String,
+    // Raw bytes (TTS audio) + lowercased response headers (cost metadata).
+    // Text callers keep using `body`; binary callers use `bodyBytes`.
+    val bodyBytes: ByteArray = ByteArray(0),
+    val headers: Map<String, String> = emptyMap(),
 )
 
-private class IosReaderAiHttpDelegate(
+internal class IosReaderAiHttpDelegate(
     private val onComplete: (Result<IosReaderAiHttpResponse>) -> Unit,
 ) : NSObject(), NSURLSessionDataDelegateProtocol {
     private var response: NSURLResponse? = null
@@ -749,12 +1009,20 @@ private class IosReaderAiHttpDelegate(
     override fun URLSession(session: NSURLSession, task: NSURLSessionTask, didCompleteWithError: platform.Foundation.NSError?) {
         if (completed) return
         completed = true
-        val status = (response as? NSHTTPURLResponse)?.statusCode?.toInt() ?: 0
+        val httpResponse = response as? NSHTTPURLResponse
+        val status = httpResponse?.statusCode?.toInt() ?: 0
         val body = NSString.create(data = data, encoding = NSUTF8StringEncoding)?.toString().orEmpty()
+        // Header names are case-insensitive; lowercase once for lookups.
+        val headers = (httpResponse?.allHeaderFields as? Map<Any?, Any?>).orEmpty()
+            .mapNotNull { (key, value) ->
+                val name = (key as? String)?.lowercase()
+                val stringValue = value as? String
+                if (name != null && stringValue != null) name to stringValue else null
+            }.toMap()
         if (didCompleteWithError != null && status == 0) {
             onComplete(Result.failure(IllegalStateException(didCompleteWithError.localizedDescription)))
         } else {
-            onComplete(Result.success(IosReaderAiHttpResponse(status, body)))
+            onComplete(Result.success(IosReaderAiHttpResponse(status, body, data.iosToByteArray(), headers)))
         }
         session.finishTasksAndInvalidate()
     }

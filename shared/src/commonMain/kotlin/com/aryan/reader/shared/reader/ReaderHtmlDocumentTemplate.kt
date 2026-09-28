@@ -40,9 +40,11 @@ internal fun document(
     } else {
         ""
     }
+    // Temporary: the menu carries a single Define entry (in-app AI, falling
+    // back to the browser define search). The separate Dictionary button is
+    // gone until the external-apps story is figured out.
     val externalLookupButtons = if (externalLookupEnabled) {
-        readerSelectionActionButton("dictionary", "Dictionary", ReaderSelectionIconDefinePath) +
-            readerSelectionActionButton("translate", "Translate", ReaderSelectionIconTranslatePath) +
+        readerSelectionActionButton("translate", "Translate", ReaderSelectionIconTranslatePath) +
             readerSelectionActionButton("web-search", "Search", ReaderSelectionIconSearchPath)
     } else {
         ""

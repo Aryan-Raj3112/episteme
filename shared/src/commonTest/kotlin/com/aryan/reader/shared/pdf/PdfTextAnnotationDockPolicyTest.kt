@@ -81,6 +81,20 @@ class PdfTextAnnotationDockPolicyTest {
         assertEquals(16.dp, pdfTextDockRestingBottomPadding(false, DockLocation.BOTTOM, true))
         assertEquals(16.dp, pdfTextDockRestingBottomPadding(false, DockLocation.TOP, false))
         assertEquals(16.dp, pdfTextDockRestingBottomPadding(false, DockLocation.FLOATING, false))
+        // Side-docked pen bars hug the edge: the text bar needs no bottom
+        // clearance for them.
+        assertEquals(16.dp, pdfTextDockRestingBottomPadding(false, DockLocation.LEFT, false))
+        assertEquals(16.dp, pdfTextDockRestingBottomPadding(false, DockLocation.RIGHT, false))
+    }
+
+    @Test
+    fun textDockSideDetectionMatchesAnnotationDock() {
+        assertTrue(isPdfTextDockSideDocked(DockLocation.LEFT))
+        assertTrue(isPdfTextDockSideDocked(DockLocation.RIGHT))
+        assertTrue(isPdfTextDockVertical(DockLocation.LEFT))
+        assertFalse(isPdfTextDockSideDocked(DockLocation.TOP))
+        assertFalse(isPdfTextDockSideDocked(DockLocation.BOTTOM))
+        assertFalse(isPdfTextDockSideDocked(DockLocation.FLOATING))
     }
 
     @Test

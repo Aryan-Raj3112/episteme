@@ -65,6 +65,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -89,6 +90,7 @@ import com.aryan.reader.shared.ui.SharedPdfRichTextLayer
 import com.aryan.reader.shared.ui.sharedSelectionMenuPlacement
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.pdf.PdfReverseColorRect
+import com.aryan.reader.shared.pdf.RichParagraphUiState
 import com.aryan.reader.shared.pdf.invertPdfArgbIfUnprotected
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -1133,6 +1135,11 @@ internal fun PdfPageRenderer(
     selectedTextBoxId: String?,
     onTextBoxChange: (PdfTextBox) -> Unit,
     onTextBoxSelect: (String) -> Unit,
+    onTextBoxMenuAction: (PdfTextBoxMenuAction) -> Unit = {},
+    onTextBoxParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> },
+    // One-shot post-toggle cursor for the selected box (see
+    // TextBoxPendingSelection). Null = keep field cursor.
+    textBoxPendingSelection: TextBoxPendingSelection? = null,
     onTextBoxDragStart: (PdfTextBox, Offset, Offset) -> Unit,
     onTextBoxDrag: (Offset) -> Unit,
     onTextBoxDragEnd: () -> Unit,
@@ -1315,7 +1322,10 @@ internal fun PdfPageRenderer(
                             centeringOffsetX = staticData.centeringOffsetX,
                             centeringOffsetY = staticData.centeringOffsetY,
                             isDarkMode = staticData.isDarkMode,
-                            isScrolling = isScrolling
+                            isScrolling = isScrolling,
+                            // Currently retired: page rich text never handles
+                            // taps on Android (taps create text boxes).
+                            tapHandlingEnabled = false,
                         )
                     }
                 }
@@ -1348,14 +1358,22 @@ internal fun PdfPageRenderer(
                                     Timber.tag("PdfTextBoxDebug").d("PdfPageRenderer onBoundsChanged IGNORED because box[ID: ${box.id}] is being dragged globally")
                                 }
                             },
-                            onTextChanged = { newText ->
+                            onTextChanged = { newText, newParagraphs ->
                                 Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
                                     "event=renderer_value_change id=${box.id} page=${box.pageIndex} " +
                                         "oldLength=${box.text.length} newLength=${newText.length} " +
                                         "selected=${box.id == selectedTextBoxId} editMode=$isEditMode " +
                                         "dragging=${draggingBoxId == box.id}"
                                 )
-                                onTextBoxChange(box.copy(text = newText))
+                                Timber.tag(TEXT_BOX_TRACE_TAG).d(
+                                    "renderer_value id=${box.id} oldLen=${box.text.length} " +
+                                        "newLen=${newText.length} newText=${pdfTextBoxTraceText(newText)} " +
+                                        "paras=${pdfTextBoxTraceParagraphs(newParagraphs)} " +
+                                        "pendingSel=${
+                                            textBoxPendingSelection?.takeIf { box.id == selectedTextBoxId }
+                                        }"
+                                )
+                                onTextBoxChange(box.copy(text = newText, paragraphs = newParagraphs))
                             },
                             onSelect = {
                                 Timber.tag("PdfTextBoxDebug").d("PdfPageRenderer onSelect propagated[ID: ${box.id}]")
@@ -1365,6 +1383,7 @@ internal fun PdfPageRenderer(
                                 )
                                 onTextBoxSelect(box.id)
                             },
+                            onTextBoxMenuAction = onTextBoxMenuAction,
                             onDragStart = { touchOffset ->
                                 Timber.tag("PdfTextBoxDebug").d("PdfPageRenderer onDragStart[ID: ${box.id}] isVerticalScroll=$isVerticalScroll | offset=$touchOffset")
                                 if (isVerticalScroll) {
@@ -1399,6 +1418,14 @@ internal fun PdfPageRenderer(
                             onDragEnd = {
                                 Timber.tag("PdfTextBoxDebug").d("PdfPageRenderer onDragEnd[ID: ${box.id}]")
                                 onTextBoxDragEnd()
+                            },
+                            onParagraphUiStateChanged = { state, selection ->
+                                if (box.id == selectedTextBoxId) {
+                                    onTextBoxParagraphUiStateChanged(state, selection)
+                                }
+                            },
+                            pendingSelection = textBoxPendingSelection?.takeIf {
+                                box.id == selectedTextBoxId
                             },
                             onDragCancel = {
                                 Timber.tag("PdfTextBoxDebug").d("PdfPageRenderer onDragCancel [ID: ${box.id}]")

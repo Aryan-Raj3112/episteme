@@ -74,15 +74,21 @@ fun canEnableGoogleDriveSync(
  *
  * Other Pro features are intentionally provider agnostic: an Apple-authenticated
  * Pro account remains eligible for them.
+ *
+ * [requiresGoogle] is false for backends that do not depend on Google Drive
+ * (iOS pure-CloudKit sync), in which case only the Pro entitlement gates sync.
+ * The default keeps Android's Drive behavior byte-identical.
  */
 fun canUseCloudSync(
     providers: Set<AccountAuthProvider>,
     hasGoogleDrivePermission: Boolean,
     isProUser: Boolean,
+    requiresGoogle: Boolean = true,
 ): Boolean = resolveCloudSyncSetupIntent(
     isProUser = isProUser,
     providers = providers,
     hasGoogleDrivePermission = hasGoogleDrivePermission,
+    requiresGoogle = requiresGoogle,
 ) == CloudSyncSetupIntent.READY
 
 fun canUseProFeature(

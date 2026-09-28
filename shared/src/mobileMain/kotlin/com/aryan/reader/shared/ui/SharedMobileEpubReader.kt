@@ -40,7 +40,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
@@ -116,7 +115,6 @@ import com.aryan.reader.shared.shouldFollowReaderTtsChunk
 import com.aryan.reader.shared.pageInfoBarBottomReserve
 import com.aryan.reader.shared.shouldReserveEpubPageInfoBarSpace
 import com.aryan.reader.shared.shouldShowEpubPageInfoBar
-import com.aryan.reader.shared.toSharedReaderFontFamily
 import com.aryan.reader.shared.withTtsReplacements
 import com.aryan.reader.shared.withReaderFormatFrom
 import com.aryan.reader.shared.reader.ReaderBookmark
@@ -129,6 +127,8 @@ import com.aryan.reader.shared.reader.sharedReaderPageInfo
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
+import com.aryan.reader.shared.reader.SharedReaderOrientationRestoreDelayMillis
+import com.aryan.reader.shared.reader.sharedReaderViewportFlippedOrientation
 import com.aryan.reader.shared.reader.ReaderSearchOptions
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSpreadLayout
@@ -230,6 +230,8 @@ fun SharedMobileEpubReaderScreen(
     onOpenAiHub: () -> Unit = {},
     summaryCache: SharedSummaryCache? = null,
     aiCredits: Int? = null,
+    walletMicros: Long = 0L,
+    walletMigrated: Boolean = false,
     readerBrightness: Float? = null,
     readerCustomBrightness: Float = com.aryan.reader.shared.DefaultReaderCustomBrightness,
     readerBrightnessSupported: Boolean = false,
@@ -352,6 +354,9 @@ fun SharedMobileEpubReaderScreen(
     // instead of letterboxing at the persisted/desktop pageWidth (760 default).
     // Pagination and rendering share this instance so they stay identical.
     val paginatedSettings = remember(settings) { settings.withUncappedPageWidth() }
+    // Measurement and rendering must share one real typeface (notably the
+    // bundled Lato/Lexend files) or pagination drifts from what is drawn.
+    val readerFontFamily = rememberSharedReaderFontFamily(settings.fontFamily)
     var pages by remember(book.id) { mutableStateOf<List<ReaderPage>>(emptyList()) }
     var measuredPagesApplied by remember(book.id) { mutableStateOf(false) }
     var currentLocator by remember(book.id) { mutableStateOf(book.readerPosition) }
@@ -483,13 +488,14 @@ fun SharedMobileEpubReaderScreen(
         readerDensity,
         settings.fontFamily,
         settings.customFontPath,
+        readerFontFamily,
         epubPaginationCache,
         paginationCacheWriteScope
     ) {
         SharedMeasuredEpubPaginator(
             textMeasurer = readerTextMeasurer,
             density = readerDensity,
-            fontFamily = settings.toSharedReaderFontFamily(),
+            fontFamily = readerFontFamily,
             pageCache = epubPaginationCache,
             cacheWriteScope = paginationCacheWriteScope
         )
@@ -692,6 +698,45 @@ fun SharedMobileEpubReaderScreen(
             ?: currentPageIndex.coerceIn(0, measuredPages.lastIndex.coerceAtLeast(0))
         pages = measuredPages
         currentPageIndex = targetIndex
+    }
+
+    // Android parity (EpubReaderScreen LaunchedEffect(configuration.orientation)):
+    // a rotation reflows the vertical document, so the retained pixel scroll
+    // offset lands somewhere else. Android waits 300 ms for that relayout and
+    // then scrolls the WebView back to the position it held — and it does this
+    // only for the WebView branch; the native vertical flow keeps its position
+    // through LazyListState index retention on both platforms. The shared
+    // readers take the same anchor as a fresh position request: the WebView
+    // re-runs its scroll-to-locator script (which also engages the document's
+    // pending-restore guard while WebKit reflows).
+    var previousVerticalViewport by remember(book.id) { mutableStateOf(ReaderViewportSpec(0, 0)) }
+    LaunchedEffect(readerViewport, settings.readingMode, useNativeVerticalRenderer) {
+        val previous = previousVerticalViewport
+        previousVerticalViewport = readerViewport
+        if (settings.readingMode != ReaderReadingMode.VERTICAL) return@LaunchedEffect
+        if (useNativeVerticalRenderer) return@LaunchedEffect
+        if (!sharedReaderViewportFlippedOrientation(
+                previousWidthPx = previous.widthPx,
+                previousHeightPx = previous.heightPx,
+                currentWidthPx = readerViewport.widthPx,
+                currentHeightPx = readerViewport.heightPx,
+            )
+        ) {
+            return@LaunchedEffect
+        }
+        // Capture before the wait: the reflowed document reports a drifted
+        // position, and the pre-rotation anchor is the one to restore.
+        val anchor = currentLocator ?: return@LaunchedEffect
+        val requestIdAtFlip = navigationRequestId
+        delay(SharedReaderOrientationRestoreDelayMillis)
+        // A jump, page turn, or TTS follow during the wait owns the reader now.
+        if (navigationRequestId != requestIdAtFlip) return@LaunchedEffect
+        explicitNavigationLocator = anchor
+        explicitNavigationFragment = null
+        explicitNavigationChunkIndex = null
+        explicitNavigationChunkHtml = null
+        currentLocator = anchor
+        navigationRequestId++
     }
 
     LaunchedEffect(keepScreenOn) { onKeepScreenOnChange(keepScreenOn) }
@@ -1020,6 +1065,11 @@ fun SharedMobileEpubReaderScreen(
         val epub = loadedBook ?: return
         val targetChapterIndex = (currentChapterIndex + direction).coerceIn(0, epub.chapters.lastIndex)
         if (targetChapterIndex == currentChapterIndex) return
+        // The JS pull gesture posts its progress:0 reset just before the
+        // boundary message, but the chapter reload can win the race and drop
+        // it (stuck indicator). Clearing here is the single source of truth.
+        pullDirection = null
+        pullProgress = 0f
         val chapterPages = pages.filter { it.chapterIndex == targetChapterIndex }
         val targetPage = if (direction < 0) chapterPages.lastOrNull() else chapterPages.firstOrNull()
         val locator = targetPage?.toMobileEpubLocator(epub) ?: ReaderLocator(
@@ -1284,7 +1334,12 @@ fun SharedMobileEpubReaderScreen(
         drawerState = drawerState,
         gesturesEnabled = drawerState.isOpen,
         drawerContent = {
-            ModalDrawerSheet(Modifier.fillMaxWidth(0.86f)) {
+            // SharedReaderDrawerSheet sizes the sheet from the measured window
+            // (fraction of width, capped): CMP's ModalDrawerSheet caps at 360.dp
+            // internally, so a fractional constraint fights the cap on wide
+            // screens — landscape phones/tablets rendered a squeezed, clipped
+            // sheet. Android's benchmark passes no width modifier at all.
+            SharedReaderDrawerSheet {
                 val drawerScope = rememberCoroutineScope()
                 Text(
                     loadedBook?.title ?: book.displayName,
@@ -1403,7 +1458,7 @@ fun SharedMobileEpubReaderScreen(
             ) {
                 when {
                     loadState.isLoading -> SharedMobileEpubLoading("Opening EPUB…")
-                    loadState.errorMessage != null -> SharedMobileEpubError(loadState.errorMessage)
+                    loadState.errorMessage != null -> SharedMobileEpubError(loadState.errorMessage, onBack = ::closeReader)
                     loadedBook != null && pages.isEmpty() -> SharedMobileEpubLoading("Preparing book layout…")
                     loadedBook != null -> {
                         if (paginatedSettings.readingMode == ReaderReadingMode.PAGINATED) {
@@ -1455,10 +1510,13 @@ fun SharedMobileEpubReaderScreen(
                                     activePageTurn = null
                                     return@LaunchedEffect
                                 }
-                                val direction = sharedPaginatedTransitionDirection(
+                                // Curled turns stay in pager-index space: the outgoing sheet
+                                // always peels away and the fold mirrors for RTL (see
+                                // sharedPaginatedCurlTurnDirection). Only the flat slide
+                                // follows the physical pager direction.
+                                val direction = sharedPaginatedCurlTurnDirection(
                                     outgoingPages.minOf { it.pageIndex },
-                                    visiblePages.minOf { it.pageIndex },
-                                    settings.rightToLeftPagination
+                                    visiblePages.minOf { it.pageIndex }
                                 )
                                 lastTurnedPages = visiblePages
                                 activePageTurn = SharedMobileEpubActivePageTurn(
@@ -1651,7 +1709,8 @@ fun SharedMobileEpubReaderScreen(
                                             fraction = pageTurnFraction.value
                                         )
                                     },
-                                    touchY = turn.touchY
+                                    touchY = turn.touchY,
+                                    rightToLeft = settings.rightToLeftPagination
                                 )
                             }
                             val outgoingTurnSpec = activeTurn?.let { turn ->
@@ -1664,7 +1723,8 @@ fun SharedMobileEpubReaderScreen(
                                             fraction = pageTurnFraction.value
                                         )
                                     },
-                                    touchY = turn.touchY
+                                    touchY = turn.touchY,
+                                    rightToLeft = settings.rightToLeftPagination
                                 )
                             }
                             // Android only renders the curl while realistic page turns are
@@ -1693,7 +1753,8 @@ fun SharedMobileEpubReaderScreen(
                                         )
                                     },
                                     touchY = pageTurnTouchY,
-                                    curlEnabled = dragCurlEnabled
+                                    curlEnabled = dragCurlEnabled,
+                                    rightToLeft = settings.rightToLeftPagination
                                 )
                             } else {
                                 null
@@ -1709,7 +1770,8 @@ fun SharedMobileEpubReaderScreen(
                                         )
                                     },
                                     touchY = pageTurnTouchY,
-                                    curlEnabled = dragCurlEnabled
+                                    curlEnabled = dragCurlEnabled,
+                                    rightToLeft = settings.rightToLeftPagination
                                 )
                             } else {
                                 null
@@ -1762,7 +1824,7 @@ fun SharedMobileEpubReaderScreen(
                                 if (overlayPlan != null && overlaySpec != null) {
                                     SharedNativePaginatedPageTurnOverlay(
                                         renderPlan = overlayPlan,
-                                        readerFontFamily = settings.toSharedReaderFontFamily(),
+                                        readerFontFamily = readerFontFamily,
                                         searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
                                         selectionHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
                                         pageTurn = overlaySpec,
@@ -1798,7 +1860,7 @@ fun SharedMobileEpubReaderScreen(
                                 }
                                 SharedNativePaginatedReader(
                                     renderPlan = paginatedRenderPlan,
-                                    readerFontFamily = settings.toSharedReaderFontFamily(),
+                                    readerFontFamily = readerFontFamily,
                                     searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
                                     onVisiblePageChanged = { pageIndex, locator ->
                                         currentPageIndex = pageIndex.coerceIn(0, pageCount - 1)
@@ -1862,6 +1924,10 @@ fun SharedMobileEpubReaderScreen(
                                     // Android benchmark parity: flat spread
                                     // pages with the gutter crease only.
                                     pageChromeEnabled = false,
+                                    // Android benchmark parity: selection
+                                    // starts on long-press/handles only, so
+                                    // taps report positions for page turns.
+                                    immediateDragSelectEnabled = false,
                                     // Native-vertical parity (:1809): without this the paginated
                                     // reader falls back to alt-text/file-name labels.
                                     imageContent = { image, imageModifier ->
@@ -1923,7 +1989,7 @@ fun SharedMobileEpubReaderScreen(
                                     highlights + chunk.toHighlight(localTts.progress.sessionId)
                                 } ?: highlights
                             ),
-                            readerFontFamily = settings.toSharedReaderFontFamily(),
+                            readerFontFamily = readerFontFamily,
                             searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
                             onVisiblePageChanged = { pageIndex, locator ->
                                 currentPageIndex = pageIndex.coerceIn(0, pageCount - 1)
@@ -1967,6 +2033,10 @@ fun SharedMobileEpubReaderScreen(
                             onReaderTap = {
                                 if (!(autoScrollMusicianMode && autoScrollModeActive)) showChrome = !showChrome
                             },
+                            // Android benchmark parity: selection starts on
+                            // long-press/handles only so scroll gestures
+                            // reach the LazyColumn instead of selecting text.
+                            immediateDragSelectEnabled = false,
                             imageContent = { image, imageModifier ->
                                 if (!settings.hideImages) {
                                     SharedMobileEpubNativeImage(
@@ -2212,6 +2282,9 @@ fun SharedMobileEpubReaderScreen(
                                     SharedMobileEpubHighlightShiftBridgeMethod -> payload.sharedMobileEpubHighlightShiftMessageOrNull()?.let { message ->
                                         writeSharedReaderDiagnostic(SharedMobileEpubHighlightShiftTag, message)
                                     }
+                                    SharedMobileEpubSelectionShiftBridgeMethod -> payload.sharedMobileEpubSelectionShiftMessageOrNull()?.let { message ->
+                                        writeSharedReaderDiagnostic(SharedMobileEpubSelectionShiftTag, message)
+                                    }
                                     "readerHighlightClicked" -> payload.sharedMobileEpubHighlightIdOrNull()?.let { id ->
                                         editingHighlight = highlights.firstOrNull { it.id == id }
                                     }
@@ -2222,6 +2295,10 @@ fun SharedMobileEpubReaderScreen(
                                             // shared palette manager without touching the selection.
                                             selection.action == "palette" -> showHighlightPaletteManager = true
                                             selection.action == "define" && sharedDictActionUsesAi(readerAiAvailable) -> onAiAction(ReaderAiFeature.DEFINE, selection.text)
+                                            // Temporary: no separate Dictionary menu entry — Define
+                                            // without AI falls back to the external/browser define
+                                            // lookup instead of doing nothing.
+                                            selection.action == "define" -> openSharedMobileEpubLookup(ReaderExternalLookupAction.DICTIONARY, selection.text)
                                             lookupAction != null -> openSharedMobileEpubLookup(lookupAction, selection.text)
                                             selection.action == "speak" -> {
                                                 val locator = selection.locator ?: currentLocator ?: return@let
@@ -2674,10 +2751,52 @@ fun SharedMobileEpubReaderScreen(
                 val canPullDirection = (pullDirection == "previous" && currentChapterIndex > 0) ||
                     (pullDirection == "next" && currentChapterIndex < (loadedBook?.chapters?.lastIndex ?: -1))
                 if (pullProgress > 0.05f && settings.pullToTurnEnabled && canPullDirection) {
+                    // The indicator must clear the same stack it overlays: the
+                    // top one sits below the status bar, the top toolbar (55.dp
+                    // like the TOP PageInfo offset above), and the TOP PageInfo
+                    // bar when visible; the bottom one sits above the toolbar +
+                    // safe inset and the BOTTOM PageInfo bar when visible.
+                    val pullIsPrevious = pullDirection == "previous"
+                    val pullTopReserve = (if (showChrome) 55.dp else 0.dp) +
+                        (if (pageInfoVisible && settings.pageInfoPosition == PageInfoPosition.TOP) {
+                            SharedMobileEpubPageInfoBarContentHeight
+                        } else {
+                            0.dp
+                        })
+                    val pullBottomReserve = (if (showChrome) {
+                        sharedMobileEpubBottomChromePadding(epubEffectiveBottomInset)
+                    } else {
+                        0.dp
+                    }) +
+                        (if (pageInfoVisible && settings.pageInfoPosition == PageInfoPosition.BOTTOM) {
+                            SharedMobileEpubPageInfoBarContentHeight
+                        } else {
+                            0.dp
+                        })
                     SharedMobileEpubChapterChangeIndicator(
                         direction = pullDirection.orEmpty(),
                         progress = pullProgress,
-                        modifier = Modifier.align(if (pullDirection == "previous") Alignment.TopCenter else Alignment.BottomCenter).padding(8.dp)
+                        modifier = Modifier
+                            .align(if (pullIsPrevious) Alignment.TopCenter else Alignment.BottomCenter)
+                            .then(
+                                if (pullIsPrevious) {
+                                    if (!systemUiHidden) {
+                                        Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                                    } else {
+                                        Modifier
+                                    }
+                                } else {
+                                    if (!navigationUiHidden) {
+                                        Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+                                    } else {
+                                        Modifier
+                                    }
+                                }
+                            )
+                            .padding(
+                                top = if (pullIsPrevious) 8.dp + pullTopReserve else 0.dp,
+                                bottom = if (pullIsPrevious) 0.dp else 8.dp + pullBottomReserve
+                            )
                     )
                 }
                 // Android parity (EpubReaderScreen effectiveTopPadding): the search
@@ -2989,6 +3108,7 @@ fun SharedMobileEpubReaderScreen(
                 ttsBookTitle = book.displayName,
                 onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
                 showUsageBadge = aiCredits != null,
+                walletMigrated = walletMigrated,
             )
         }
     }
@@ -3008,6 +3128,8 @@ fun SharedMobileEpubReaderScreen(
             cacheEntries = hubCacheEntries,
             showCacheTab = summaryCache != null,
             credits = aiCredits,
+            walletMicros = walletMicros,
+            walletMigrated = walletMigrated,
             aiResult = readerExtrasState.aiResult,
             isMainTtsActive = localTts.isSessionActive,
             onGenerateSummary = {

@@ -37,6 +37,140 @@ enum class SharedPdfTextResizeHandle {
     LEFT_CENTER
 }
 
+/**
+ * Center of a resize handle in page px, on the padded content frame
+ * (Android benchmark ResizableTextBox handle layout): the frame origin plus
+ * half a handle, plus the text size on the handle's axes.
+ */
+fun sharedPdfTextBoxHandleCenter(
+    handle: SharedPdfTextResizeHandle,
+    contentLeftPx: Float,
+    contentTopPx: Float,
+    halfHandlePx: Float,
+    widthPx: Float,
+    heightPx: Float,
+): Offset = when (handle) {
+    SharedPdfTextResizeHandle.TOP_LEFT ->
+        Offset(contentLeftPx + halfHandlePx, contentTopPx + halfHandlePx)
+    SharedPdfTextResizeHandle.TOP_CENTER ->
+        Offset(contentLeftPx + halfHandlePx + widthPx / 2f, contentTopPx + halfHandlePx)
+    SharedPdfTextResizeHandle.TOP_RIGHT ->
+        Offset(contentLeftPx + halfHandlePx + widthPx, contentTopPx + halfHandlePx)
+    SharedPdfTextResizeHandle.RIGHT_CENTER ->
+        Offset(contentLeftPx + halfHandlePx + widthPx, contentTopPx + halfHandlePx + heightPx / 2f)
+    SharedPdfTextResizeHandle.BOTTOM_RIGHT ->
+        Offset(contentLeftPx + halfHandlePx + widthPx, contentTopPx + halfHandlePx + heightPx)
+    SharedPdfTextResizeHandle.BOTTOM_CENTER ->
+        Offset(contentLeftPx + halfHandlePx + widthPx / 2f, contentTopPx + halfHandlePx + heightPx)
+    SharedPdfTextResizeHandle.BOTTOM_LEFT ->
+        Offset(contentLeftPx + halfHandlePx, contentTopPx + halfHandlePx + heightPx)
+    SharedPdfTextResizeHandle.LEFT_CENTER ->
+        Offset(contentLeftPx + halfHandlePx, contentTopPx + halfHandlePx + heightPx / 2f)
+}
+
+/**
+ * Compact per-box action menu entries (Android benchmark:
+ * PdfTextBoxMenuAction DELETE / DUPLICATE / LOCK). Shared-first so Android
+ * and iOS stay in sync; the menu width is derived from the entry count so
+ * adding/removing an action cannot leave trailing empty space.
+ */
+enum class SharedPdfTextBoxMenuAction { DELETE, DUPLICATE, LOCK }
+
+const val SharedPdfTextBoxActionButtonSizeDp = 24f
+const val SharedPdfTextBoxActionDividerWidthDp = 1f
+const val SharedPdfTextBoxActionMenuHeightDp = 24f
+
+/**
+ * Extra finger tolerance for committed text-box tap hits, in screen px at
+ * zoom 1 (see [PdfPageBounds.isSharedPdfTextBoxTapHit]): half the editor
+ * handle (5dp) plus a 4dp finger margin. The call site converts it to a
+ * normalized pad per axis with page px and the live zoom.
+ */
+const val SharedPdfTextBoxTapHitSlopPx = 9f
+
+/**
+ * Exact tight width of the compact text-box action menu: one fixed button
+ * slot per [SharedPdfTextBoxMenuAction] plus one divider between neighbours.
+ */
+fun sharedPdfTextBoxActionMenuWidthDp(): Float {
+    val count = SharedPdfTextBoxMenuAction.entries.size
+    if (count <= 0) return 0f
+    return count * SharedPdfTextBoxActionButtonSizeDp +
+        (count - 1) * SharedPdfTextBoxActionDividerWidthDp
+}
+
+/**
+ * Hit-test target for box-chrome gestures: every touch starting on chrome is
+ * classified once on down, then driven directly (resize / move / menu tap).
+ */
+sealed interface SharedPdfTextBoxChromeTarget {
+    data class Resize(val handle: SharedPdfTextResizeHandle) : SharedPdfTextBoxChromeTarget
+    data object Move : SharedPdfTextBoxChromeTarget
+    data class Menu(val action: SharedPdfTextBoxMenuAction) : SharedPdfTextBoxChromeTarget
+}
+
+/**
+ * Classifies a page-px touch against a selected text box's chrome, using the
+ * same numbers that position the visuals so touch always matches sight.
+ * Geometry (handles + pill) is skipped when [allowGeometry] is false
+ * (locked box); menu slots are tested only for [menuActions] (null hides).
+ */
+fun sharedPdfTextBoxChromeHitTest(
+    position: Offset,
+    contentLeftPx: Float,
+    contentTopPx: Float,
+    halfHandlePx: Float,
+    widthPx: Float,
+    heightPx: Float,
+    handleTouchPx: Float,
+    pillLeftPx: Float,
+    pillTopPx: Float,
+    pillTouchWidthPx: Float,
+    pillTouchHeightPx: Float,
+    menuLeftPx: Float,
+    menuTopPx: Float,
+    menuButtonPx: Float,
+    menuDividerPx: Float,
+    menuHeightPx: Float,
+    allowGeometry: Boolean,
+    menuActions: List<SharedPdfTextBoxMenuAction>?,
+): SharedPdfTextBoxChromeTarget? {
+    if (allowGeometry) {
+        SharedPdfTextResizeHandle.entries.forEach { handle ->
+            val center = sharedPdfTextBoxHandleCenter(
+                handle = handle,
+                contentLeftPx = contentLeftPx,
+                contentTopPx = contentTopPx,
+                halfHandlePx = halfHandlePx,
+                widthPx = widthPx,
+                heightPx = heightPx,
+            )
+            if (position.x in (center.x - handleTouchPx / 2f)..(center.x + handleTouchPx / 2f) &&
+                position.y in (center.y - handleTouchPx / 2f)..(center.y + handleTouchPx / 2f)
+            ) {
+                return SharedPdfTextBoxChromeTarget.Resize(handle)
+            }
+        }
+        if (position.x in pillLeftPx..(pillLeftPx + pillTouchWidthPx) &&
+            position.y in pillTopPx..(pillTopPx + pillTouchHeightPx)
+        ) {
+            return SharedPdfTextBoxChromeTarget.Move
+        }
+    }
+    if (menuActions != null) {
+        val stepPx = menuButtonPx + menuDividerPx
+        menuActions.forEachIndexed { index, action ->
+            val start = menuLeftPx + index * stepPx
+            if (position.x in start..(start + stepPx) &&
+                position.y in menuTopPx..(menuTopPx + menuHeightPx)
+            ) {
+                return SharedPdfTextBoxChromeTarget.Menu(action)
+            }
+        }
+    }
+    return null
+}
+
 @Serializable
 data class SharedPdfTextDraft(
     val id: String,
@@ -45,8 +179,18 @@ data class SharedPdfTextDraft(
     val text: String = "",
     val style: SharedPdfTextStyleConfig = SharedPdfTextStyleConfig(),
     val createdAt: Long = 0L,
-    val isManuallySized: Boolean = false
+    val isManuallySized: Boolean = false,
+    val paragraphs: List<SharedPdfRichParagraph> = emptyList(),
+    /**
+     * Position lock carried from the source annotation while editing
+     * (Android benchmark: locked boxes stay text-editable but hide resize
+     * handles and the drag pill). New drafts default to unlocked.
+     */
+    val isLocked: Boolean = false,
 )
+
+/** Vertical gap between a duplicated text box and its original (page-relative, Android benchmark). */
+const val SharedPdfTextBoxDuplicateGapRel = 0.04f
 
 object SharedPdfTextAnnotationDefaults {
     private const val AndroidTextBoxFontReferencePx = 500f
@@ -233,6 +377,23 @@ fun SharedPdfTextDraft.withText(
     )
 }
 
+/**
+ * Keystroke/dock companion to [withText]: replaces text AND paragraph
+ * attributes in one atomic draft update (Android benchmark:
+ * ResizableTextBox onTextChanged(text, paragraphs)). Paragraphs are
+ * trimmed like every other producer; bounds recompute exactly like
+ * [withText].
+ */
+fun SharedPdfTextDraft.withTextAndParagraphs(
+    text: String,
+    paragraphs: List<SharedPdfRichParagraph>,
+    canvasSize: IntSize
+): SharedPdfTextDraft {
+    return withText(text, canvasSize).copy(
+        paragraphs = paragraphs.trimmedRichParagraphs()
+    )
+}
+
 fun SharedPdfTextDraft.withStyle(
     style: SharedPdfTextStyleConfig,
     canvasSize: IntSize
@@ -276,7 +437,9 @@ fun SharedPdfTextDraft.toAnnotation(): SharedPdfAnnotation {
         isStrikeThrough = style.isStrikeThrough,
         fontPath = style.fontPath,
         fontName = style.fontName,
-        createdAt = createdAt
+        createdAt = createdAt,
+        paragraphs = paragraphs.trimmedRichParagraphs(),
+        isLocked = isLocked,
     )
 }
 
@@ -340,6 +503,38 @@ fun PdfPageBounds.resizedBy(
 /** True when the normalized point (0..1 page coordinates) falls inside this bounds rect. */
 fun PdfPageBounds.containsNormalizedPoint(x: Float, y: Float): Boolean {
     return x in left..right && y in top..bottom
+}
+
+/**
+ * True when a normalized point is inside the tap target of a committed text
+ * box. Android is the benchmark: a tap on ANY part of the box — the padded
+ * content frame, empty space around the text, the stored bounds — selects the
+ * box (PdfTextBox's content-body `detectTapGestures` covers the whole frame;
+ * the legacy-paginated fallback checks raw `relativeBounds`). Before this the
+ * shared tap flow only tested strict bounds containment, so taps in the
+ * padding or blank regions inside a box missed and the host fell through to
+ * tap-to-create, stacking a new box on top of the tapped one.
+ *
+ * A small finger-slop pad is added around the bounds so edge taps land on
+ * the box instead of spawning a fresh one right next to it. [tapSlopPx] is
+ * fixed in SCREEN px, so the normalized pad divides by [zoomScale] as well —
+ * one page px renders as `zoom` screen px, the same conversion the
+ * counter-scaled editor chrome uses to stay constant on screen.
+ */
+fun PdfPageBounds.isSharedPdfTextBoxTapHit(
+    x: Float,
+    y: Float,
+    pageWidthPx: Float,
+    pageHeightPx: Float,
+    zoomScale: Float = 1f,
+    tapSlopPx: Float = SharedPdfTextBoxTapHitSlopPx,
+): Boolean {
+    if (pageWidthPx <= 0f || pageHeightPx <= 0f) return containsNormalizedPoint(x, y)
+    val safeScale = zoomScale.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val safeSlopPx = tapSlopPx.takeIf { it.isFinite() && it >= 0f } ?: 0f
+    val padX = safeSlopPx / (safeScale * pageWidthPx)
+    val padY = safeSlopPx / (safeScale * pageHeightPx)
+    return x in (left - padX)..(right + padX) && y in (top - padY)..(bottom + padY)
 }
 
 fun PdfPageBounds.movedBy(

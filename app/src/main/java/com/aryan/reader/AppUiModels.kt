@@ -74,6 +74,9 @@ data class ReaderScreenState(
     val isAuthMenuExpanded: Boolean = false,
     val isProUser: Boolean = false,
     val credits: Int = 0,
+    /** USD wallet balance in micro-dollars (new). Legacy `credits` kept for old flows. */
+    val walletMicros: Long = 0L,
+    val walletMigrated: Boolean = false,
     val isSyncEnabled: Boolean = false,
     val isFolderSyncEnabled: Boolean = false,
     val bannerMessage: BannerMessage? = null,

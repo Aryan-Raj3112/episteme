@@ -1,7 +1,6 @@
 package com.aryan.reader.pdf
 
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PdfTextBoxInputOwnershipTest {
@@ -18,8 +17,11 @@ class PdfTextBoxInputOwnershipTest {
     }
 
     @Test
-    fun pageRichTextInputRemainsEnabledWhenNoLegacyTextBoxIsSelected() {
-        assertTrue(
+    fun pageRichTextInputStaysDisabledWhenNoLegacyTextBoxIsSelected() {
+        // Currently retired: page rich text is hidden on Android, text boxes
+        // only (docs/android-page-rich-text-retirement.md). The page editor
+        // never owns the IME, even with no box selected.
+        assertFalse(
             isPdfRichTextInputEnabled(
                 isEditMode = true,
                 selectedTool = InkType.TEXT,

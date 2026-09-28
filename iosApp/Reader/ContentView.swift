@@ -197,6 +197,9 @@ struct ContentView: View {
             sweepStaleTemporaryFiles()
             localStoreKit.attach(to: bridge)
             localAccount.attach(to: bridge)
+            // Pure-CloudKit library sync is Pro-gated. Forward StoreKit truth;
+            // sync data plane itself needs no login (iCloud identity only).
+            localAccount.setProSyncEnabled(localStoreKit.proSyncEnabled)
             localAccount.setLocalCloudDataClearHandler {
                 bridge.clearLocalCloudData()
             }
@@ -326,6 +329,9 @@ struct ContentView: View {
                 cloudFolderSync.requestSyncAll(replace: false)
                 await cloudFolderSync.awaitIdle()
             }
+        }
+        .onChange(of: localStoreKit.proSyncEnabled) { _, isPro in
+            localAccount.setProSyncEnabled(isPro)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {

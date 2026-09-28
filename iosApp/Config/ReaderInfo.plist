@@ -86,6 +86,11 @@
 	<string>692770553179-q7ruh5abg77r6v8tb6909dc8kl2ls9dd.apps.googleusercontent.com</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>googletranslate</string>
+		<string>itranslate</string>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>

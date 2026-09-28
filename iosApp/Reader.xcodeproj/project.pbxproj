@@ -103,6 +103,7 @@
 				A11CE1062FFE500000000001 /* GoogleSignIn */,
 				A11CE1082FFE500000000001 /* FirebaseFirestore */,
 				A11CE1092FFE500000000001 /* FirebaseCrashlytics */,
+				A11CE10C2FFE500000000001 /* FirebaseAppCheck */,
 			);
 			productName = Reader;
 			productReference = 9284F59D2FFE342F0088D5CA /* Reader.app */;
@@ -125,6 +126,9 @@
 								enabled = 1;
 							};
 							com.apple.SignInWithApple = {
+								enabled = 1;
+							};
+							com.apple.iCloud = {
 								enabled = 1;
 							};
 						};
@@ -374,7 +378,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = Reader/Reader.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 8;
 				DEVELOPMENT_TEAM = 9RA349538L;
 				ENABLE_PREVIEWS = YES;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -389,7 +393,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -419,7 +423,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 8;
 				DEVELOPMENT_TEAM = "";
 				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = 9RA349538L;
 				ENABLE_PREVIEWS = YES;
@@ -435,7 +439,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.3;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -519,6 +523,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A11CE1032FFE500000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseCrashlytics;
+		};
+		A11CE10C2FFE500000000001 /* FirebaseAppCheck */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A11CE1032FFE500000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAppCheck;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -40,7 +40,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -113,6 +112,8 @@ import com.aryan.reader.shared.pdf.PdfTextDockPopup as ActivePopup
 import com.aryan.reader.shared.pdf.RichParagraphUiState
 import com.aryan.reader.shared.pdf.SharedPdfRichTextAlign
 import com.aryan.reader.shared.pdf.androidPdfTextDockBuiltInFontPath
+import com.aryan.reader.shared.pdf.isPdfTextDockSideDocked
+import com.aryan.reader.shared.pdf.SharedPdfSideWheelWidth
 import com.aryan.reader.shared.pdf.parsePdfTextDockHexColorOrNull
 import com.aryan.reader.shared.pdf.rememberPdfTextDockState
 import com.aryan.reader.shared.ui.SharedPdfTextDockColorPickerLabels
@@ -121,6 +122,7 @@ import com.aryan.reader.shared.ui.SharedPdfTextDockFormattingButton
 import com.aryan.reader.shared.ui.SharedPdfTextDockPopup
 import com.aryan.reader.shared.ui.SharedPdfTextDockFontPanel
 import com.aryan.reader.shared.ui.SharedPdfTextDockPopupHost
+import com.aryan.reader.shared.ui.SharedPdfTextDockPopupOffsetDp
 import com.aryan.reader.shared.ui.SharedPdfTextDockAlignmentPopupContent
 import com.aryan.reader.shared.ui.SharedPdfTextDockParagraphControls
 import com.aryan.reader.shared.ui.SharedPdfTextDockPopupLabels
@@ -144,6 +146,12 @@ fun TextAnnotationDock(
     onInsertTextBox: () -> Unit,
     bottomDockPadding: androidx.compose.ui.unit.Dp = 0.dp,
     popupsBelowBar: Boolean = false,
+    // Side-docked bars render vertically with semi-circle caps and open
+    // popups beside the bar instead of above/below it.
+    dockLocation: DockLocation = DockLocation.BOTTOM,
+    isVertical: Boolean = isPdfTextDockSideDocked(dockLocation),
+    /** False while a dock move is in progress so moves never spin the wheel. */
+    spinEnabled: Boolean = true,
     // Drag/long-press detection owned by the caller; applied to the bar only so
     // surrounding empty padding stays touch-transparent for controls beneath.
     dragGestureModifier: Modifier = Modifier,
@@ -152,11 +160,16 @@ fun TextAnnotationDock(
     currentFontName: String? = null,
     onFontSelected: (String, String?) -> Unit = { _, _ -> },
     // Second-row paragraph controls (lists + alignment). Null hides the row
-    // (legacy text boxes stay on the single-row bar).
+    // (shown for the selected text box; hidden when nothing is selected).
     paragraphState: RichParagraphUiState? = null,
     onNumberedListClick: () -> Unit = {},
     onBulletedListClick: () -> Unit = {},
     onAlignmentSelected: (SharedPdfRichTextAlign) -> Unit = {},
+    /**
+     * Currently retired on Android (page editor hidden, tap creates boxes):
+     * false hides the insert-text-box cell. Defaults true.
+     */
+    showInsertTextBox: Boolean = true,
 ) {
     val dockState = rememberPdfTextDockState(onPopupStateChange)
 
@@ -167,12 +180,25 @@ fun TextAnnotationDock(
 
     val fontSizes = AndroidPdfTextDockFontSizes
 
-    Box(modifier = Modifier.fillMaxWidth().then(dragGestureModifier), contentAlignment = Alignment.BottomCenter) {
+    val sidePopupAlignment = when (dockLocation) {
+        DockLocation.LEFT -> Alignment.CenterStart
+        DockLocation.RIGHT -> Alignment.CenterEnd
+        else -> null
+    }
+    val sidePopupOffsetX = when (dockLocation) {
+        DockLocation.LEFT -> SharedPdfSideWheelWidth + 8.dp
+        DockLocation.RIGHT -> -(SharedPdfSideWheelWidth + 8.dp)
+        else -> null
+    }
+    val boxModifier = if (isVertical) Modifier.width(SharedPdfSideWheelWidth).then(dragGestureModifier) else Modifier.fillMaxWidth().then(dragGestureModifier)
+    Box(modifier = boxModifier, contentAlignment = if (isVertical) Alignment.Center else Alignment.BottomCenter) {
         SharedPdfTextDockPopupHost(
             state = dockState,
             bottomDockPadding = bottomDockPadding,
-            popupAlignment = if (popupsBelowBar) Alignment.TopCenter else Alignment.BottomCenter,
-            popupOffsetY = if (popupsBelowBar) 48.dp + 8.dp else null,
+            popupAlignment = sidePopupAlignment
+                ?: if (popupsBelowBar) Alignment.TopCenter else Alignment.BottomCenter,
+            popupOffsetY = if (isVertical) 0.dp else if (popupsBelowBar) 48.dp + 8.dp else null,
+            popupOffsetX = sidePopupOffsetX,
             currentStyle = currentStyle,
             textColorPalette = textColorPalette,
             onTextColorPaletteChange = onTextColorPaletteChange,
@@ -288,6 +314,10 @@ fun TextAnnotationDock(
                 onUpdateStyle(currentStyle.copy(textDecoration = next, fontFamily = currentStyle.fontFamily)); onApplyToSelection()
             },
             onInsertTextBox = { Timber.tag("PdfTextBoxDebug").d("Dock: Insert Text Box icon clicked"); onInsertTextBox() },
+            showInsertTextBox = showInsertTextBox,
+            dockLocation = dockLocation,
+            isVertical = isVertical,
+            spinEnabled = spinEnabled,
             paragraphControls = paragraphState?.let { state ->
                 SharedPdfTextDockParagraphControls(
                     state = state,
@@ -299,20 +329,38 @@ fun TextAnnotationDock(
             },
             alignmentPopup = {
                 if (dockState.popup == ActivePopup.ALIGNMENT && paragraphState != null) {
-                    DockBubblePopup(onDismissRequest = dockState::dismiss,
-                        offsetY = if (popupsBelowBar) 55.dp else (-55).dp,
-                        alignment = if (popupsBelowBar) Alignment.BottomCenter else Alignment.TopCenter,
-                        focusable = false) {
-                        SharedPdfTextDockAlignmentPopupContent(
-                            selected = paragraphState.alignment,
-                            alignLeftPainter = painterResource(R.drawable.format_align_left),
-                            alignCenterPainter = painterResource(R.drawable.format_align_center),
-                            alignRightPainter = painterResource(R.drawable.format_align_right),
-                            alignLeftDescription = stringResource(R.string.content_desc_align_left),
-                            alignCenterDescription = stringResource(R.string.content_desc_align_center),
-                            alignRightDescription = stringResource(R.string.content_desc_align_right),
-                            onSelected = { onAlignmentSelected(it); dockState.dismiss() },
-                        )
+                    if (isVertical) {
+                        DockSideBubblePopup(onDismissRequest = dockState::dismiss,
+                            offsetX = sidePopupOffsetX ?: 0.dp,
+                            alignment = sidePopupAlignment ?: Alignment.TopCenter,
+                            focusable = false) {
+                            SharedPdfTextDockAlignmentPopupContent(
+                                selected = paragraphState.alignment,
+                                alignLeftPainter = painterResource(R.drawable.format_align_left),
+                                alignCenterPainter = painterResource(R.drawable.format_align_center),
+                                alignRightPainter = painterResource(R.drawable.format_align_right),
+                                alignLeftDescription = stringResource(R.string.content_desc_align_left),
+                                alignCenterDescription = stringResource(R.string.content_desc_align_center),
+                                alignRightDescription = stringResource(R.string.content_desc_align_right),
+                                onSelected = { onAlignmentSelected(it); dockState.dismiss() },
+                            )
+                        }
+                    } else {
+                        DockBubblePopup(onDismissRequest = dockState::dismiss,
+                            offsetY = if (popupsBelowBar) 55.dp else (-55).dp,
+                            alignment = if (popupsBelowBar) Alignment.BottomCenter else Alignment.TopCenter,
+                            focusable = false) {
+                            SharedPdfTextDockAlignmentPopupContent(
+                                selected = paragraphState.alignment,
+                                alignLeftPainter = painterResource(R.drawable.format_align_left),
+                                alignCenterPainter = painterResource(R.drawable.format_align_center),
+                                alignRightPainter = painterResource(R.drawable.format_align_right),
+                                alignLeftDescription = stringResource(R.string.content_desc_align_left),
+                                alignCenterDescription = stringResource(R.string.content_desc_align_center),
+                                alignRightDescription = stringResource(R.string.content_desc_align_right),
+                                onSelected = { onAlignmentSelected(it); dockState.dismiss() },
+                            )
+                        }
                     }
                 }
             },
@@ -326,39 +374,47 @@ fun TextAnnotationDock(
             },
             fontSizePopup = {
                 if (dockState.popup == ActivePopup.FONT_SIZE) {
-                    DockBubblePopup(onDismissRequest = dockState::dismiss,
-                        offsetY = if (popupsBelowBar) 55.dp else (-55).dp,
-                        alignment = if (popupsBelowBar) Alignment.BottomCenter else Alignment.TopCenter,
-                        focusable = false) {
-                        LazyColumn(Modifier.heightIn(max = 200.dp).width(80.dp).background(Color(0xFF1E1E1E), RoundedCornerShape(16.dp))) {
-                            items(fontSizes) { size ->
-                                val selected = currentStyle.fontSize == size
-                                Box(Modifier.fillMaxWidth().clickable {
-                                    onUpdateStyle(currentStyle.copy(fontSize = size, fontFamily = currentStyle.fontFamily)); onApplyToSelection(); dockState.dismiss()
-                                }.background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = .1f) else Color.Transparent).padding(vertical = 12.dp),
-                                    contentAlignment = Alignment.Center) {
-                                    Text(size.value.toInt().toString(), style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (selected) MaterialTheme.colorScheme.primary else Color.White)
-                                }
-                            }
+                    if (isVertical) {
+                        DockSideBubblePopup(onDismissRequest = dockState::dismiss,
+                            offsetX = sidePopupOffsetX ?: 0.dp,
+                            alignment = sidePopupAlignment ?: Alignment.TopCenter,
+                            focusable = false) {
+                            TextDockFontSizeList(currentStyle, onUpdateStyle, onApplyToSelection, dockState::dismiss)
+                        }
+                    } else {
+                        DockBubblePopup(onDismissRequest = dockState::dismiss,
+                            offsetY = if (popupsBelowBar) 55.dp else (-55).dp,
+                            alignment = if (popupsBelowBar) Alignment.BottomCenter else Alignment.TopCenter,
+                            focusable = false) {
+                            TextDockFontSizeList(currentStyle, onUpdateStyle, onApplyToSelection, dockState::dismiss)
                         }
                     }
                 }
             },
         )
-        // Drag-handle affordance: straddles the bar's outer edge (top when
-        // bottom-docked/floating, bottom when top-docked) so the bar reads as
-        // draggable. Touch-transparent; the dock container owns drag gestures.
-        Box(
-            modifier = Modifier
-                .align(if (popupsBelowBar) Alignment.BottomCenter else Alignment.TopCenter)
-                .offset(y = if (popupsBelowBar) 2.dp else (-2).dp)
-                .width(32.dp)
-                .height(4.dp)
-                .clip(RoundedCornerShape(50))
-                .background(Color.Black.copy(alpha = 0.25f))
-        )
+    }
+}
+
+@Composable
+private fun TextDockFontSizeList(
+    currentStyle: SpanStyle,
+    onUpdateStyle: (SpanStyle) -> Unit,
+    onApplyToSelection: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val fontSizes = AndroidPdfTextDockFontSizes
+    LazyColumn(Modifier.heightIn(max = 200.dp).width(80.dp).background(Color(0xFF1E1E1E), RoundedCornerShape(16.dp))) {
+        items(fontSizes) { size ->
+            val selected = currentStyle.fontSize == size
+            Box(Modifier.fillMaxWidth().clickable {
+                onUpdateStyle(currentStyle.copy(fontSize = size, fontFamily = currentStyle.fontFamily)); onApplyToSelection(); onDismiss()
+            }.background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = .1f) else Color.Transparent).padding(vertical = 12.dp),
+                contentAlignment = Alignment.Center) {
+                Text(size.value.toInt().toString(), style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                    color = if (selected) MaterialTheme.colorScheme.primary else Color.White)
+            }
+        }
     }
 }
 
@@ -383,4 +439,15 @@ private fun DockBubblePopup(
     val density = LocalDensity.current
     val offsetPx = with(density) { offsetY.roundToPx() }
     SharedPdfTextDockPopup(onDismissRequest, alignment, offsetPx, focusable, content)
+}
+
+@Composable
+private fun DockSideBubblePopup(
+    onDismissRequest: () -> Unit,
+    alignment: Alignment = Alignment.CenterStart,
+    offsetX: androidx.compose.ui.unit.Dp,
+    focusable: Boolean = false,
+    content: @Composable () -> Unit
+) {
+    SharedPdfTextDockPopupOffsetDp(onDismissRequest, alignment, offsetX = offsetX, offsetY = 0.dp, focusable = focusable, content = content)
 }

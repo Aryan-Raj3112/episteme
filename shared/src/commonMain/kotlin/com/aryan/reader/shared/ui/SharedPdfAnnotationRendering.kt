@@ -30,7 +30,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -53,6 +52,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -68,14 +68,16 @@ import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
+import com.aryan.reader.shared.pdf.sharedPdfTextBoxAnnotatedString
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfInkRenderData
 import com.aryan.reader.shared.pdf.SharedPdfInkRenderer
 import com.aryan.reader.shared.pdf.SharedPdfTextAnnotationDefaults
+import com.aryan.reader.pdf.SharedPdfTextBoxHandleSizeDp
+import com.aryan.reader.pdf.SharedPdfTextBoxInnerPaddingDp
 import com.aryan.reader.shared.pdf.SharedPdfTextFontPreset
-import com.aryan.reader.shared.pdf.SharedPdfTextResizeHandle
 import com.aryan.reader.shared.pdf.SharedPdfTextStyleConfig
 import com.aryan.reader.shared.pdf.sharedPdfTextFontSizePx
 import kotlin.math.roundToInt
@@ -92,7 +94,11 @@ fun SharedPdfAnnotationOverlay(
     selectedAnnotationId: String? = null,
     eraserPosition: Offset? = null,
     showEraserIndicator: Boolean = false,
-    eraserStrokeWidth: Float = SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER).strokeWidth
+    eraserStrokeWidth: Float = SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER).strokeWidth,
+    // Counter-scales the text-box content frame exactly like the selected
+    // editor overlay (Android benchmark), so toggling selection never shifts
+    // the text.
+    zoomScale: Float = 1f,
 ) {
     if (canvasSize.width <= 0 || canvasSize.height <= 0) return
     val density = LocalDensity.current
@@ -112,15 +118,10 @@ fun SharedPdfAnnotationOverlay(
                         SharedPdfInkRenderer.createRenderData(annotation, canvasSize)?.let(::drawInkRenderData)
                     }
                     PdfAnnotationKind.TEXT -> {
-                        val bounds = annotation.bounds ?: return@forEach
-                        if (!annotation.backgroundArgb.isTransparentArgb()) {
-                            drawRoundRect(
-                                color = Color(annotation.backgroundArgb),
-                                topLeft = bounds.topLeft(canvasSize),
-                                size = bounds.size(canvasSize),
-                                cornerRadius = CornerRadius(4f, 4f)
-                            )
-                        }
+                        // No canvas fill: like Android's ResizableTextBox (and
+                        // the selected editor overlay) the fill travels in the
+                        // text spans, so it hugs the glyphs instead of filling
+                        // the whole box rect. The Text below carries it.
                     }
                 }
             }
@@ -164,8 +165,36 @@ fun SharedPdfAnnotationOverlay(
                 val widthPx = ((bounds.right - bounds.left) * canvasSize.width).coerceAtLeast(24f)
                 val heightPx = ((bounds.bottom - bounds.top) * canvasSize.height).coerceAtLeast(18f)
                 val fontSizePx = annotation.sharedPdfTextFontSizePx(canvasSize)
+                // Same content frame as the selected editor overlay (Android
+                // benchmark ResizableTextBox): the frame starts half a handle
+                // outside the bounds, pads half a handle, then the inner
+                // field padding. Any deviation shifts the text on
+                // select/deselect.
+                val safeScale = zoomScale.takeIf { it.isFinite() && it > 0f } ?: 1f
+                val halfHandlePad = (SharedPdfTextBoxHandleSizeDp / 2f / safeScale).dp
+                val halfHandlePx = with(density) { halfHandlePad.toPx() }
+                // Android parity (ResizableTextBox boxSpanStyle): the fill
+                // travels in the spans so deselected boxes hug the text lines
+                // exactly like the selected editor — never the whole box rect.
+                val committedBaseStyle = SpanStyle(
+                    color = Color(annotation.colorArgb),
+                    background = Color(annotation.backgroundArgb),
+                    fontFamily = annotation.sharedPdfTextFontFamily(customFontFamilies),
+                    fontWeight = if (annotation.isBold) FontWeight.Bold else FontWeight.Normal,
+                    fontStyle = if (annotation.isItalic) FontStyle.Italic else FontStyle.Normal,
+                    textDecoration = annotation.textDecoration,
+                )
                 Text(
-                    text = annotation.text,
+                    // Paragraph runs (alignment) travel in the annotated
+                    // value; box color/fonts ride both the Text params and
+                    // the spans, background in the spans (Android benchmark:
+                    // committed boxes render stored alignment). List markers
+                    // live in the text itself.
+                    text = sharedPdfTextBoxAnnotatedString(
+                        annotation.text,
+                        annotation.paragraphs,
+                        committedBaseStyle
+                    ),
                     color = Color(annotation.colorArgb),
                     fontSize = with(density) { fontSizePx.toSp() },
                     lineHeight = with(density) { (fontSizePx * 1.25f).toSp() },
@@ -176,13 +205,19 @@ fun SharedPdfAnnotationOverlay(
                     overflow = TextOverflow.Ellipsis,
                     maxLines = SharedPdfTextAnnotationDefaults.estimateLineCount(annotation.text, fontSizePx, widthPx),
                     modifier = Modifier
-                        .offset { IntOffset(leftPx.roundToInt(), topPx.roundToInt()) }
-                        .width(with(density) { widthPx.toDp() })
+                        .offset {
+                            IntOffset(
+                                (leftPx - halfHandlePx).roundToInt(),
+                                (topPx - halfHandlePx).roundToInt()
+                            )
+                        }
+                        .width(with(density) { (widthPx + halfHandlePx * 2f).toDp() })
                         .heightIn(
-                            min = with(density) { heightPx.toDp() },
-                            max = with(density) { heightPx.toDp() }
+                            min = with(density) { (heightPx + halfHandlePx * 2f).toDp() },
+                            max = with(density) { (heightPx + halfHandlePx * 2f).toDp() }
                         )
-                        .padding(horizontal = 6.dp, vertical = 4.dp)
+                        .padding(halfHandlePad)
+                        .padding(SharedPdfTextBoxInnerPaddingDp.dp)
                 )
             }
     }
@@ -1309,24 +1344,6 @@ internal fun SharedPdfAnnotation.sharedPdfTextFontFamily(
 ): FontFamily? {
     return sharedPdfFontFamily(fontPath, customFontFamilies)
         ?: sharedPdfFontFamily(fontName, customFontFamilies)
-}
-
-internal fun SharedPdfTextResizeHandle.centerOffset(
-    leftPx: Float,
-    topPx: Float,
-    widthPx: Float,
-    heightPx: Float
-): Offset {
-    return when (this) {
-        SharedPdfTextResizeHandle.TOP_LEFT -> Offset(leftPx, topPx)
-        SharedPdfTextResizeHandle.TOP_CENTER -> Offset(leftPx + widthPx / 2f, topPx)
-        SharedPdfTextResizeHandle.TOP_RIGHT -> Offset(leftPx + widthPx, topPx)
-        SharedPdfTextResizeHandle.RIGHT_CENTER -> Offset(leftPx + widthPx, topPx + heightPx / 2f)
-        SharedPdfTextResizeHandle.BOTTOM_RIGHT -> Offset(leftPx + widthPx, topPx + heightPx)
-        SharedPdfTextResizeHandle.BOTTOM_CENTER -> Offset(leftPx + widthPx / 2f, topPx + heightPx)
-        SharedPdfTextResizeHandle.BOTTOM_LEFT -> Offset(leftPx, topPx + heightPx)
-        SharedPdfTextResizeHandle.LEFT_CENTER -> Offset(leftPx, topPx + heightPx / 2f)
-    }
 }
 
 internal fun SharedPdfTextStyleConfig.withFontPreset(preset: SharedPdfTextFontPreset): SharedPdfTextStyleConfig {

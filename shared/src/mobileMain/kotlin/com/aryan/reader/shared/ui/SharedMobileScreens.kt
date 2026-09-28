@@ -31,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Surface
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -61,6 +62,12 @@ fun SharedMobileAppDrawerContent(
     },
     isSyncEnabled: Boolean,
     isFolderSyncEnabled: Boolean,
+    /**
+     * True while a cloud pass is in flight; the Sync row shows a spinner in
+     * place of the Switch. Defaults false so Android (which owns its sync
+     * progress in `MainViewModel`) is unchanged.
+     */
+    isCloudSyncing: Boolean = false,
     onSignInClick: () -> Unit,
     onSignOutClick: () -> Unit,
     onSyncToggle: (Boolean) -> Unit,
@@ -81,9 +88,13 @@ fun SharedMobileAppDrawerContent(
     // hide cloud sync rows while keeping the sync logic. Defaults stay true
     // so Android behavior remains the benchmark.
     showSyncControls: Boolean = true,
-    // Temporary iOS launch scope (see IosFeatureGating): iOS passes false to
-    // hide the credits balance badge and show Pro status instead, while the
-    // credits data and purchase logic stay intact. Defaults stay true.
+    /**
+     * Folder backup/mirror row visibility. Defaults to [showSyncControls] so
+     * Android (which keeps both on) is unchanged; iOS can keep library sync on
+     * while its Drive-based folder sync remains hidden.
+     */
+    showFolderSyncControls: Boolean = showSyncControls,
+    // Wallet/spendable-balance badge next to Pro status. Defaults stay true.
     showCreditsBalance: Boolean = true,
     modifier: Modifier = Modifier
 ) {
@@ -92,6 +103,8 @@ fun SharedMobileAppDrawerContent(
             val currentUser = account.currentUser
             val isProUser = account.isProUser
             val credits = account.credits
+            val walletMicros = account.walletMicros
+            val walletMigrated = account.walletMigrated
             val edition = account.edition
             if (currentUser != null) {
                 Column(
@@ -132,16 +145,14 @@ fun SharedMobileAppDrawerContent(
                                     edition == MobileAppEdition.STANDARD -> {
                                         readerString("drawer_standard_version", "Standard version")
                                     }
-                                    // Intentional temporary iOS scope: hide credits
-                                    // balance and emphasize Pro status instead.
-                                    // Credits data/logic is kept for later.
+                                    // No balance badge: emphasize Pro status instead.
                                     !showCreditsBalance -> if (isProUser) {
-                                        readerString("drawer_pro_unlocked", "Pro unlocked")
+                                        readerString("drawer_pro_unlocked", "Episteme Pro and Credits")
                                     } else {
-                                        readerString("drawer_upgrade_pro", "Upgrade to Pro")
+                                        readerString("drawer_upgrade_pro", "Episteme Pro and Credits")
                                     }
                                     else -> {
-                                        readerString("credits_count", "%1\$d Credits", credits)
+                                        com.aryan.reader.shared.spendableDisplayText(credits, walletMicros, walletMigrated)
                                     }
                                 },
                                 style = MaterialTheme.typography.labelMedium
@@ -237,8 +248,8 @@ fun SharedMobileAppDrawerContent(
                     Text(
                         when {
                             edition == MobileAppEdition.STANDARD -> readerString("drawer_standard_version", "Standard version")
-                            isProUser -> readerString("drawer_pro_unlocked", "Pro unlocked")
-                            else -> readerString("drawer_upgrade_pro", "Upgrade to Pro")
+                            isProUser -> readerString("drawer_pro_unlocked", "Episteme Pro and Credits")
+                            else -> readerString("drawer_upgrade_pro", "Episteme Pro and Credits")
                         }
                     )
                 },
@@ -274,9 +285,15 @@ fun SharedMobileAppDrawerContent(
                                     tint = MaterialTheme.colorScheme.primary,
                                 )
                             }
+                            if (isCloudSyncing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                            }
                             Switch(
                                 checked = isSyncEnabled,
-                                enabled = isProUser,
+                                enabled = isProUser && !isCloudSyncing,
                                 onCheckedChange = { enabled ->
                                     if (isProUser) onSyncToggle(enabled) else onProClick()
                                 },
@@ -289,7 +306,7 @@ fun SharedMobileAppDrawerContent(
 
             // Temporary iOS scope: folder backup is part of cloud sync and is
             // hidden together with the library sync row (logic kept).
-            if (currentUser != null && isSyncEnabled && showSyncControls) {
+            if (currentUser != null && isSyncEnabled && showFolderSyncControls) {
                 NavigationDrawerItem(
                     icon = { Icon(Icons.Default.FolderSpecial, contentDescription = null) },
                     label = {

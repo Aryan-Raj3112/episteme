@@ -45,6 +45,7 @@ data class SharedAndroidHomeTopBarStrings(
     val testPanelDetection: String,
     val testSpeechBubbleDetection: String,
     val exportLogs: String,
+    val fpsOverlay: String = "Show FPS overlay",
     val showDeviceManagement: String,
     val clearCloudAndLocalData: String,
 )
@@ -83,6 +84,9 @@ fun SharedAndroidHomeTopBar(
     onShowDeviceManagement: () -> Unit,
     onClearCloudAndLocalData: () -> Unit,
     appThemeIcon: @Composable () -> Unit,
+    showFpsOverlayOption: Boolean = false,
+    fpsOverlayEnabled: Boolean = false,
+    onFpsOverlayToggle: () -> Unit = {},
 ) {
     var optionsExpanded by remember { mutableStateOf(false) }
     var limitsExpanded by remember { mutableStateOf(false) }
@@ -94,6 +98,7 @@ fun SharedAndroidHomeTopBar(
             strictFileFilterEnabled = strictFileFilterEnabled,
             usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
             hideReaderAi = hideReaderAi,
+            fpsOverlayEnabled = fpsOverlayEnabled,
         ),
         capabilities = SharedMobileHomeOverflowCapabilities(
             screenCaptureProtection = true,
@@ -102,6 +107,7 @@ fun SharedAndroidHomeTopBar(
             clearReflowCache = true,
             testMlDiagnostics = showDebugActions,
             exportLogs = showDebugActions,
+            fpsOverlay = showFpsOverlayOption,
             deviceManagement = showDebugCloudActions,
             clearCloudAndLocalData = showDebugCloudActions,
         ),
@@ -125,6 +131,7 @@ fun SharedAndroidHomeTopBar(
         SharedMobileHomeOverflowAction.TEST_PANEL_DETECTION -> strings.testPanelDetection
         SharedMobileHomeOverflowAction.TEST_SPEECH_BUBBLE_DETECTION -> strings.testSpeechBubbleDetection
         SharedMobileHomeOverflowAction.EXPORT_LOGS -> strings.exportLogs
+        SharedMobileHomeOverflowAction.SHOW_FPS_OVERLAY -> strings.fpsOverlay
         SharedMobileHomeOverflowAction.DEVICE_MANAGEMENT -> strings.showDeviceManagement
         SharedMobileHomeOverflowAction.CLEAR_CLOUD_LOCAL_DATA -> strings.clearCloudAndLocalData
     }
@@ -147,6 +154,7 @@ fun SharedAndroidHomeTopBar(
             SharedMobileHomeOverflowAction.TEST_PANEL_DETECTION -> onTestPanelDetection()
             SharedMobileHomeOverflowAction.TEST_SPEECH_BUBBLE_DETECTION -> onTestSpeechBubbleDetection()
             SharedMobileHomeOverflowAction.EXPORT_LOGS -> onExportLogs()
+            SharedMobileHomeOverflowAction.SHOW_FPS_OVERLAY -> onFpsOverlayToggle()
             SharedMobileHomeOverflowAction.DEVICE_MANAGEMENT -> onShowDeviceManagement()
             SharedMobileHomeOverflowAction.CLEAR_CLOUD_LOCAL_DATA -> onClearCloudAndLocalData()
         }

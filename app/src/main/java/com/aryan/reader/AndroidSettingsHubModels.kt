@@ -13,7 +13,10 @@ fun androidSettingsHubInput(
     hideReaderAi: Boolean = false
 ): SharedSettingsHubInput {
     val supportsSync = !isOssBuild && !isOfflineBuild
-    val supportsOssAiKeys = isOssBuild && !isOfflineBuild
+    // AI keys and models ship on every online build (iOS parity): OSS
+    // keeps its BYOK-only path while Pro routes through the credited
+    // worker unless a BYOK model+key overrides the feature.
+    val supportsAiKeys = !isOfflineBuild
     val featurePolicy = if (isOfflineBuild) {
         SharedFeaturePolicy.OssOffline
     } else if (isOssBuild) {
@@ -35,7 +38,7 @@ fun androidSettingsHubInput(
             CloudSyncSetupIntent.NEEDS_PRO
         },
         folderSyncAvailable = supportsSync,
-        aiSettingsAvailable = supportsOssAiKeys,
+        aiSettingsAvailable = supportsAiKeys,
         ttsSettingsAvailable = true,
         includePdfReaderDefaults = true,
         includeReaderToolbar = true,

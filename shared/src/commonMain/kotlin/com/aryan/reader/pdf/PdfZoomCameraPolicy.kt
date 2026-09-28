@@ -1,6 +1,7 @@
 package com.aryan.reader.pdf
 
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -78,6 +79,72 @@ fun shouldRenderPdfHighResTiles(
     val safeScale = effectiveScale.takeIf { it.isFinite() && it > 0f } ?: 1f
     return if (isVerticalScroll) abs(safeScale - 1f) > verticalScaleTolerance else safeScale > 1f
 }
+
+/**
+ * Shared spread zoom camera plus the page's placement inside the zoomed Row,
+ * captured by the pager-page caller (the only place that knows both).
+ */
+data class PdfSpreadCameraContext(
+    val scale: Float,
+    val offset: Offset,
+    val rowWidth: Float,
+    val rowHeight: Float,
+    val pageLeftInRow: Float,
+    val pageTopInRow: Float,
+)
+
+/**
+ * Visible page-local rect under the shared spread zoom camera (Android 2-page
+ * paginated mode).
+ *
+ * The spread zooms by transforming the whole page Row:
+ * `graphicsLayer { scaleX = s; translationX/Y = cameraOffset }` — a scale
+ * around the Row's center followed by a translation. A page rendered at
+ * `(pageLeftInRow, pageTopInRow)` with its bitmap centered via
+ * `(centeringOffsetX, centeringOffsetY)` must tile the region that the on-screen
+ * viewport maps back to through that transform. Per-page zoom inversion cannot
+ * do this: the spread passes the page `offset = Zero`, which resolves every
+ * pan/zoom position to the page center (the "only the center goes high-res"
+ * bug).
+ */
+fun pdfSpreadVisiblePageRect(
+    cameraScale: Float,
+    cameraOffset: Offset,
+    rowWidth: Float,
+    rowHeight: Float,
+    pageLeftInRow: Float,
+    pageTopInRow: Float,
+    centeringOffsetX: Float,
+    centeringOffsetY: Float,
+): Rect {
+    val scale = cameraScale.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val rowCenterX = rowWidth / 2f
+    val rowCenterY = rowHeight / 2f
+    fun mapToPage(edge: Float, rowCenter: Float, cameraOffsetComponent: Float, pageOrigin: Float, centering: Float): Float {
+        val rowPoint = ((edge - cameraOffsetComponent) - rowCenter) / scale + rowCenter
+        return rowPoint - pageOrigin - centering
+    }
+    val left = mapToPage(0f, rowCenterX, cameraOffset.x, pageLeftInRow, centeringOffsetX)
+    val right = mapToPage(rowWidth, rowCenterX, cameraOffset.x, pageLeftInRow, centeringOffsetX)
+    val top = mapToPage(0f, rowCenterY, cameraOffset.y, pageTopInRow, centeringOffsetY)
+    val bottom = mapToPage(rowHeight, rowCenterY, cameraOffset.y, pageTopInRow, centeringOffsetY)
+    return Rect(left, top, right, bottom)
+}
+
+fun pdfSpreadVisiblePageRect(
+    camera: PdfSpreadCameraContext,
+    centeringOffsetX: Float,
+    centeringOffsetY: Float,
+): Rect = pdfSpreadVisiblePageRect(
+    cameraScale = camera.scale,
+    cameraOffset = camera.offset,
+    rowWidth = camera.rowWidth,
+    rowHeight = camera.rowHeight,
+    pageLeftInRow = camera.pageLeftInRow,
+    pageTopInRow = camera.pageTopInRow,
+    centeringOffsetX = centeringOffsetX,
+    centeringOffsetY = centeringOffsetY,
+)
 
 fun pdfZoomIndicatorPercent(scale: Float): Int {
     val safeScale = scale.takeIf { it.isFinite() && it > 0f } ?: 1f

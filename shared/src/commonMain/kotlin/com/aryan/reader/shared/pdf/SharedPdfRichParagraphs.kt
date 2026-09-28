@@ -5,6 +5,7 @@ import androidx.compose.ui.text.ParagraphStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.style.TextAlign
+import kotlinx.serialization.Serializable
 
 /**
  * Paragraph-level rich-text model (Samsung-Notes-style lists + alignment),
@@ -24,10 +25,13 @@ import androidx.compose.ui.text.style.TextAlign
  * and selection rendering working unchanged. All marker maintenance runs
  * through the pure functions here so it is unit-testable.
  */
+@Serializable
 enum class SharedPdfRichTextAlign { LEFT, CENTER, RIGHT }
 
+@Serializable
 enum class SharedPdfRichListType { NONE, BULLET, NUMBERED }
 
+@Serializable
 data class SharedPdfRichParagraph(
     val alignment: SharedPdfRichTextAlign = SharedPdfRichTextAlign.LEFT,
     val listType: SharedPdfRichListType = SharedPdfRichListType.NONE,

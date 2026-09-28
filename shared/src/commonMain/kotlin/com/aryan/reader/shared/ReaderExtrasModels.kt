@@ -11,9 +11,24 @@ import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
 import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
+import kotlin.math.floor
+import kotlin.math.roundToInt
 
+// LEGACY pre-Fish live model. Kept so older clients (and their stored
+// tts_model values) keep working against the legacy worker routes.
 const val GEMINI_CLOUD_TTS_MODEL = "gemini-3.1-flash-live-preview"
 const val GEMINI_CLOUD_TTS_MODEL_ID = "gemini:$GEMINI_CLOUD_TTS_MODEL"
+// Proper (non-Live) Gemini TTS models, selectable via AI Keys & Models (BYOK).
+// Listed dynamically from the Gemini ListModels API when possible; these are
+// the manual fallback (prices are never hardcoded — shown only if an API
+// provides them).
+const val GEMINI_TTS_MODEL_LITE = "gemini-3.8-flash-lite-tts"
+const val GEMINI_TTS_MODEL_PREVIEW = "gemini-3.1-flash-tts-preview"
+const val GEMINI_TTS_MODEL_LITE_ID = "gemini:$GEMINI_TTS_MODEL_LITE"
+const val GEMINI_TTS_MODEL_PREVIEW_ID = "gemini:$GEMINI_TTS_MODEL_PREVIEW"
+// Fish TTS via BYOK (user's Fish key, direct api.fish.audio calls, no credits).
+const val FISH_TTS_MODEL = "s2.1-pro"
+const val FISH_TTS_MODEL_ID = "fish:$FISH_TTS_MODEL"
 const val DEFAULT_CLOUD_TTS_SPEAKER_ID = "Aoede"
 const val READER_TTS_CHUNK_MAX_LENGTH = 250
 private const val ReaderTtsStartTraceLogTag = "EpistemeDesktopTtsStartTrace"
@@ -33,14 +48,34 @@ enum class ReaderAiFeature(val displayName: String) {
 data class ReaderAiModelOption(
     val provider: String,
     val name: String,
-    val label: String = "${provider.replaceFirstChar { it.uppercaseChar() }} - $name"
+    val label: String = "${provider.replaceFirstChar { it.uppercaseChar() }} - $name",
+    // Displayed next to the label only when a listing API provides pricing.
+    // Never hardcoded: null means "no price info".
+    val priceLabel: String? = null
 ) {
     val id: String = "$provider:$name"
 }
 
+// A Fish voice as exposed by the Fish API (GET /model) or the worker catalog
+// (GET /v2/voices). [id] is the alias in the worker catalog or the Fish
+// model _id for BYOK voices; [referenceId] is what TTS requests send.
+data class ReaderFishVoice(
+    val id: String,
+    val referenceId: String,
+    val title: String,
+    val description: String = "",
+    // Language codes from the Fish model catalog (e.g. ["en"]). Empty when
+    // the source carries no language info (static catalog, Gemini rows).
+    val languages: List<String> = emptyList(),
+    // Free pre-generated preview audio (Fish-hosted MP3). Playing it costs
+    // nobody anything; empty when the voice exposes no sample.
+    val sampleAudioUrl: String = ""
+)
+
 data class ReaderAiByokSettings(
     val geminiKey: String = "",
     val groqKey: String = "",
+    val fishKey: String = "",
     val useOneModel: Boolean = true,
     val modelForAll: String = "",
     val defineModel: String = "",
@@ -48,20 +83,23 @@ data class ReaderAiByokSettings(
     val recapModel: String = "",
     val ttsModel: String = "",
     val hideReaderAiFeatures: Boolean = false,
+    // Provider-specific: Gemini prebuilt voice name, or Fish alias/reference_id.
     val ttsSpeakerId: String = DEFAULT_CLOUD_TTS_SPEAKER_ID,
     val serverBackedReaderAiFeatures: Boolean = false,
     val serverBackedCloudTts: Boolean = false
 ) {
     fun sanitized(): ReaderAiByokSettings {
         val knownTextModelIds = ReaderAiModelOptions.mapTo(mutableSetOf()) { it.id }
+        val knownTtsModelIds = ReaderTtsByokOptions.mapTo(mutableSetOf()) { it.id } + GEMINI_CLOUD_TTS_MODEL_ID
         return copy(
             geminiKey = geminiKey.trim(),
             groqKey = groqKey.trim(),
+            fishKey = fishKey.trim(),
             modelForAll = modelForAll.takeIf { it in knownTextModelIds }.orEmpty(),
             defineModel = defineModel.takeIf { it in knownTextModelIds }.orEmpty(),
             summarizeModel = summarizeModel.takeIf { it in knownTextModelIds }.orEmpty(),
             recapModel = recapModel.takeIf { it in knownTextModelIds }.orEmpty(),
-            ttsModel = ttsModel.takeIf { it == GEMINI_CLOUD_TTS_MODEL_ID }.orEmpty(),
+            ttsModel = ttsModel.takeIf { it in knownTtsModelIds }.orEmpty(),
             ttsSpeakerId = ttsSpeakerId.ifBlank { DEFAULT_CLOUD_TTS_SPEAKER_ID }
         )
     }
@@ -82,15 +120,36 @@ data class ReaderAiByokSettings(
         return when (provider) {
             "gemini" -> geminiKey
             "groq" -> groqKey
+            "fish" -> fishKey
             else -> ""
         }.trim()
     }
 
-    val hasAnyAiKey: Boolean get() = geminiKey.isNotBlank() || groqKey.isNotBlank()
+    // Provider selected for BYOK TTS ("gemini", "fish", or "" when unset).
+    val ttsProvider: String get() = ttsModel.substringBefore(':', "").takeIf { ttsModel.contains(':') }.orEmpty()
+
+    val hasAnyAiKey: Boolean get() = geminiKey.isNotBlank() || groqKey.isNotBlank() || fishKey.isNotBlank()
     val areReaderAiFeaturesAvailable: Boolean get() = !hideReaderAiFeatures && (serverBackedReaderAiFeatures || hasAnyAiKey)
+    // LEGACY: pre-Fish live-model check. Kept for older clients (notably iOS,
+    // which still gates on it); Android uses isAnyByokTtsAvailable.
     val isByokCloudTtsAvailable: Boolean get() = geminiKey.isNotBlank() && ttsModel == GEMINI_CLOUD_TTS_MODEL_ID
-    val isCloudTtsAvailable: Boolean get() = serverBackedCloudTts || isByokCloudTtsAvailable
+    val isGeminiRestByokTtsAvailable: Boolean get() =
+        geminiKey.isNotBlank() && (ttsModel == GEMINI_TTS_MODEL_LITE_ID || ttsModel == GEMINI_TTS_MODEL_PREVIEW_ID)
+    val isFishByokTtsAvailable: Boolean get() = fishKey.isNotBlank() && ttsModel == FISH_TTS_MODEL_ID
+    val isAnyByokTtsAvailable: Boolean get() = isByokCloudTtsAvailable || isGeminiRestByokTtsAvailable || isFishByokTtsAvailable
+    val isCloudTtsAvailable: Boolean get() = serverBackedCloudTts || isAnyByokTtsAvailable
 }
+
+/**
+ * Manual fallback for the BYOK TTS model picker. Clients prefer a live list:
+ * Gemini ListModels filtered to TTS-capable models, Fish voices from the Fish
+ * API — both with prices only when the API provides them.
+ */
+val ReaderTtsByokOptions = listOf(
+    ReaderAiModelOption("gemini", GEMINI_TTS_MODEL_LITE),
+    ReaderAiModelOption("gemini", GEMINI_TTS_MODEL_PREVIEW),
+    ReaderAiModelOption("fish", FISH_TTS_MODEL)
+)
 
 val ReaderAiModelOptions = listOf(
     ReaderAiModelOption("groq", "qwen/qwen3-32b"),
@@ -140,6 +199,89 @@ val ReaderCloudTtsSpeakers = ReaderCloudTtsVoices.map { it.id }
 
 fun readerCloudTtsVoiceById(id: String): ReaderCloudTtsVoice? {
     return ReaderCloudTtsVoices.firstOrNull { it.id == id }
+}
+
+/**
+ * Whether the user can spend on metered features: either legacy credits
+ * (older balances, older app versions) or the USD wallet (micro-dollars).
+ */
+fun hasSpendableBalance(credits: Int, walletMicros: Long): Boolean {
+    return credits > 0 || walletMicros > 0
+}
+
+/**
+ * Balance chip text: USD wallet once migrated, legacy "⭐ N" otherwise.
+ */
+fun spendableDisplayText(credits: Int, walletMicros: Long, walletMigrated: Boolean): String {
+    if (walletMigrated) return formatMicrosUsd(walletMicros)
+    return "⭐ $credits"
+}
+
+/**
+ * Formats an integer micro-dollar wallet balance as USD ("$10.25").
+ * Sub-cent fractions truncate in display only; the ledger keeps micros.
+ */
+fun formatMicrosUsd(micros: Long): String {
+    val negative = micros < 0
+    val abs = if (negative) -micros else micros
+    val dollars = abs / 1_000_000L
+    val cents = (abs % 1_000_000L) / 10_000L
+    return (if (negative) "-$" else "$") + dollars.toString() + "." + cents.toString().padStart(2, '0')
+}
+
+/**
+ * Parses worker spend-guard error bodies:
+ * {"error":"RATE_LIMITED"|"DAILY_SPEND_LIMIT","retry_after_seconds":N}.
+ * Returns (kind, retrySeconds) or null when the body is anything else.
+ */
+fun parseSpendGuardError(body: String?): Pair<String, Int>? {
+    if (body.isNullOrBlank()) return null
+    val kind = Regex("\"error\"\\s*:\\s*\"([A-Z_]+)\"").find(body)?.groupValues?.getOrNull(1)
+        ?: return null
+    if (kind != "RATE_LIMITED" && kind != "DAILY_SPEND_LIMIT") return null
+    val retry = Regex("\"retry_after_seconds\"\\s*:\\s*(\\d+)").find(body)
+        ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+    return kind to retry
+}
+
+/**
+ * Parses the client-side sentinel "RATE_LIMITED:<s>" / "DAILY_SPEND_LIMIT:<s>"
+ * carried through TtsAudioData.error / AI onError strings.
+ */
+fun parseSpendGuardSentinel(sentinel: String?): Pair<String, Int>? {
+    if (sentinel.isNullOrBlank()) return null
+    val head = sentinel.substringBefore(":")
+    if (head != "RATE_LIMITED" && head != "DAILY_SPEND_LIMIT") return null
+    val retry = sentinel.substringAfter(":", "").toIntOrNull() ?: 0
+    return head to retry
+}
+
+fun spendGuardSentinel(kind: String, retryAfterSeconds: Int): String {
+    return "$kind:${retryAfterSeconds.coerceAtLeast(0)}"
+}
+
+/**
+ * cost_deducted unit depends on ledger: migrated users pay dollars, legacy
+ * users pay credits. Never show a raw dollar number as "credits" or vice versa.
+ */
+fun formatAiCostDeducted(cost: Double, walletMigrated: Boolean): String {
+    if (!walletMigrated) {
+        val text = if (cost == floor(cost)) cost.toLong().toString() else cost.toString()
+        return "$text credits"
+    }
+    val cents = (cost * 100).roundToInt().coerceAtLeast(1)
+    return "$" + (cents / 100).toString() + "." + (cents % 100).toString().padStart(2, '0')
+}
+
+/**
+ * Short countdown for rate-limit / spend-cap notices: "45s", "3m 20s", "11h 05m".
+ */
+fun formatSpendGuardCountdown(totalSeconds: Int): String {
+    val s = totalSeconds.coerceAtLeast(0)
+    if (s < 60) return "${s}s"
+    val m = s / 60
+    if (m < 60) return "${m}m ${(s % 60).toString().padStart(2, '0')}s"
+    return "${m / 60}h ${(m % 60).toString().padStart(2, '0')}m"
 }
 
 fun formatReaderTtsBytes(bytes: Long): String {
@@ -195,6 +337,29 @@ fun readerAiModelById(id: String): ReaderAiModelOption? {
     return ReaderAiModelOptions.firstOrNull { it.id == id }
 }
 
+/**
+ * Client-side TTL for Fish voice-list caches (the worker additionally
+ * caches 5 minutes server-side). Voice catalogs change rarely; an hour
+ * avoids refetching on every settings visit without going stale.
+ */
+const val FISH_VOICE_LIST_CACHE_TTL_MS = 60L * 60L * 1000L
+
+/** Pure TTL check for timestamped voice-list cache entries. */
+fun isFishVoiceListCacheFresh(fetchedAtMs: Long, nowMs: Long): Boolean {
+    return nowMs - fetchedAtMs <= FISH_VOICE_LIST_CACHE_TTL_MS
+}
+
+/**
+ * True when the user picked a known model for [feature] and saved that
+ * provider's key, so BYOK overrides the credited worker for the feature
+ * (Pro parity with iOS, whose adapter gates on the same condition).
+ */
+fun ReaderAiByokSettings.hasByokModel(feature: ReaderAiFeature): Boolean {
+    val sanitized = sanitized()
+    val model = readerAiModelById(sanitized.modelIdFor(feature)) ?: return false
+    return sanitized.apiKeyFor(model.provider).isNotBlank()
+}
+
 fun maskedReaderAiKey(value: String): String {
     val trimmed = value.trim()
     return when {
@@ -212,8 +377,24 @@ enum class ReaderExternalLookupAction(val title: String) {
 
 enum class ReaderExternalLookupService(val id: String, val title: String) {
     SYSTEM("system", "System Dictionary"),
+    /**
+     * In-app Safari (SFSafariViewController on iOS): renders the same web URL
+     * as the matching engine but stays inside the reader with a Done button
+     * instead of leaving the app to the default browser. Always available, so
+     * it is the default where a web page is the answer (translate/search).
+     * Shown to users as plain "Browser".
+     */
+    SAFARI("safari", "Browser"),
     GOOGLE("google", "Google"),
     GOOGLE_TRANSLATE("google_translate", "Google Translate"),
+    /**
+     * Installed-app targets, probed by URL scheme. iOS cannot enumerate
+     * installed apps (sandbox), so each entry carries the scheme used to
+     * detect it; entries whose scheme is absent never appear in settings.
+     * Android keeps its own installed-app dropdowns and ignores these.
+     */
+    GOOGLE_TRANSLATE_APP("google_translate_app", "Google Translate App"),
+    ITRANSLATE_APP("itranslate_app", "iTranslate"),
     DUCKDUCKGO("duckduckgo", "DuckDuckGo"),
     BING("bing", "Bing"),
 
@@ -238,10 +419,11 @@ enum class ReaderExternalLookupService(val id: String, val title: String) {
     }
 }
 
+// Temporary (external apps undecided): each action offers just the browser —
+// define keeps Smart AI first with the browser second.
 val ReaderDictionaryServiceOptions = listOf(
     ReaderExternalLookupService.AI,
-    ReaderExternalLookupService.ANY_APP,
-    ReaderExternalLookupService.GOOGLE,
+    ReaderExternalLookupService.SAFARI,
 )
 
 /**
@@ -252,17 +434,65 @@ val ReaderDictionaryServiceOptions = listOf(
 expect var readerLookupUsesAiDictionary: Boolean
 
 val ReaderTranslateServiceOptions = listOf(
-    ReaderExternalLookupService.ANY_APP,
-    ReaderExternalLookupService.GOOGLE_TRANSLATE,
-    ReaderExternalLookupService.BING,
+    ReaderExternalLookupService.SAFARI,
 )
 
 val ReaderSearchServiceOptions = listOf(
-    ReaderExternalLookupService.ANY_APP,
-    ReaderExternalLookupService.GOOGLE,
-    ReaderExternalLookupService.DUCKDUCKGO,
-    ReaderExternalLookupService.BING,
+    ReaderExternalLookupService.SAFARI,
 )
+
+/**
+ * URL scheme used to detect an installed-app service (`googletranslate`,
+ * `itranslate`). Null for services that need no app (web, system, AI,
+ * share sheet) — those are always listed.
+ */
+val ReaderExternalLookupService.appScheme: String?
+    get() = when (this) {
+        ReaderExternalLookupService.GOOGLE_TRANSLATE_APP -> "googletranslate"
+        ReaderExternalLookupService.ITRANSLATE_APP -> "itranslate"
+        else -> null
+    }
+
+/**
+ * Deep link into the installed app for [action] (`googletranslate://…`,
+ * `itranslate://…`). Null when the service is not an installed app or the
+ * action has no app mapping — callers fall back to the web URL / chooser.
+ */
+fun readerExternalLookupAppUrl(
+    service: ReaderExternalLookupService,
+    action: ReaderExternalLookupAction,
+    text: String,
+): String? {
+    val encoded = text.trim().urlEncoded()
+    if (encoded.isEmpty()) return null
+    return when (service) {
+        ReaderExternalLookupService.GOOGLE_TRANSLATE_APP -> when (action) {
+            // Community-documented scheme (sl=auto detects the source).
+            ReaderExternalLookupAction.TRANSLATE -> "googletranslate://?sl=auto&tl=en&text=$encoded"
+            else -> null
+        }
+        ReaderExternalLookupService.ITRANSLATE_APP ->
+            "itranslate://translate?from=auto&to=en&text=$encoded"
+        else -> null
+    }
+}
+
+/**
+ * Settings-visible subset of [options]: scheme-gated apps appear only when
+ * their scheme was probed in [installedSchemes]. The current [selected]
+ * service always stays visible so a stale pick (app since uninstalled) can
+ * still be changed away instead of vanishing.
+ */
+fun visibleReaderLookupOptions(
+    options: List<ReaderExternalLookupService>,
+    selected: ReaderExternalLookupService,
+    installedSchemes: Set<String>,
+): List<ReaderExternalLookupService> {
+    return options.filter { option ->
+        option == selected || option.appScheme == null ||
+            installedSchemes.any { it.equals(option.appScheme, ignoreCase = true) }
+    }
+}
 
 const val ReaderExternalLookupSelectionLimit = 2_000
 
@@ -298,12 +528,23 @@ fun externalLookupUrl(
             ReaderExternalLookupAction.TRANSLATE -> "https://translate.google.com/?sl=auto&tl=en&text=$encoded&op=translate"
             ReaderExternalLookupAction.SEARCH -> "https://www.google.com/search?q=$encoded"
         }
+        // Safari renders the same page as the default engine for the action,
+        // only the presenter differs (in-app Safari vs default browser).
+        ReaderExternalLookupService.SAFARI -> when (action) {
+            ReaderExternalLookupAction.DICTIONARY -> "https://www.google.com/search?q=define+$encoded"
+            ReaderExternalLookupAction.TRANSLATE -> "https://translate.google.com/?sl=auto&tl=en&text=$encoded&op=translate"
+            ReaderExternalLookupAction.SEARCH -> "https://www.google.com/search?q=$encoded"
+        }
         // Android parity (ExternalDictionaryHelper "Any App"): the text is handed
         // to the user's installed apps via the platform chooser/share sheet, so
-        // there is no web URL to open. The caller (openSharedMobileEpubLookup)
-        // handles ANY_APP before reaching this URL builder.
+        // there is no web URL to open. Installed-app entries are opened from
+        // their deep link (readerExternalLookupAppUrl) before reaching here.
+        // The caller (openSharedMobileEpubLookup) handles ANY_APP before
+        // reaching this URL builder.
         ReaderExternalLookupService.ANY_APP,
-        ReaderExternalLookupService.AI -> ""
+        ReaderExternalLookupService.AI,
+        ReaderExternalLookupService.GOOGLE_TRANSLATE_APP,
+        ReaderExternalLookupService.ITRANSLATE_APP -> ""
     }
 }
 
@@ -504,11 +745,14 @@ data class ReaderVoiceSampleState(
 
 /**
  * Android `TtsCacheManager` file-name parity:
- * `cached_chunk_<speaker>_<digest>.wav`. Returns the speaker id or null.
+ * `cached_chunk_<speaker>_<digest>.<ext>` (ext is `wav` for legacy
+ * Gemini-Live chunks, `mp3` for Fish REST chunks). Returns the speaker id or null.
  */
 fun readerTtsCacheSpeakerId(fileName: String): String? {
-    if (!fileName.startsWith("cached_chunk_") || !fileName.endsWith(".wav")) return null
-    return fileName.removePrefix("cached_chunk_").removeSuffix(".wav")
+    if (!fileName.startsWith("cached_chunk_")) return null
+    val ext = fileName.substringAfterLast('.', "")
+    if (ext != "wav" && ext != "mp3") return null
+    return fileName.removePrefix("cached_chunk_").removeSuffix(".$ext")
         .substringBeforeLast('_').takeIf { it.isNotBlank() }
 }
 
@@ -1055,7 +1299,10 @@ data class ReaderCloudTtsState(
     val statusMessage: String? = null,
     val errorMessage: String? = null,
     val progress: ReaderTtsProgress = ReaderTtsProgress(),
-    val cacheSummary: ReaderTtsCacheSummary = ReaderTtsCacheSummary()
+    val cacheSummary: ReaderTtsCacheSummary = ReaderTtsCacheSummary(),
+    // USD session spend in micro-dollars (credited Fish path only; the worker
+    // reports it per chunk via X-Tts-Cost-Micros). Android benchmark parity.
+    val cloudSessionSpendMicros: Long = 0L
 )
 
 data class ReaderCloudTtsControlsModel(

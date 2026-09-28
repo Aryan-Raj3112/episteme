@@ -21,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -49,19 +50,32 @@ fun ThemedBookCover(
             ?.let(::File)
             ?.takeIf { it.isFile }
     }
+    // Stable request identity: without remember, every recomposition builds a
+    // new ImageRequest and Coil restarts the load (flicker + decode churn).
+    // Coil sizes the decode to the laid-out AsyncImage automatically.
+    val coverRequest = remember(coverFile) {
+        coverFile?.let {
+            ImageRequest.Builder(context)
+                .data(it)
+                .memoryCacheKey(it.path)
+                .crossfade(true)
+                .allowHardware(true)
+                .build()
+        }
+    }
 
     Box(modifier = modifier) {
-        GeneratedBookCover(item = item, modifier = Modifier.fillMaxSize())
-        if (coverFile != null) {
+        // Generated art is only a fallback: composing it under an opaque
+        // cover wastes a full gradient + text draw on every card.
+        if (coverRequest != null) {
             AsyncImage(
-                model = ImageRequest.Builder(context)
-                    .data(coverFile)
-                    .crossfade(true)
-                    .build(),
+                model = coverRequest,
                 contentDescription = contentDescription,
                 contentScale = contentScale,
                 modifier = Modifier.fillMaxSize()
             )
+        } else {
+            GeneratedBookCover(item = item, modifier = Modifier.fillMaxSize())
         }
     }
 }
@@ -72,29 +86,32 @@ private fun GeneratedBookCover(
     modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
-    val seed = item.coverColorSeed()
+    val seed = remember(item.bookId, item.displayName) { item.coverColorSeed() }
     val base = generatedBookCoverColor(item)
-    val accentOptions = listOf(
-        colorScheme.primary,
-        colorScheme.secondary,
-        colorScheme.tertiary,
-        colorScheme.inversePrimary
-    )
-    val accent = accentOptions[(seed / 7) % accentOptions.size]
-    val title = item.coverTitle()
-    val author = item.coverAuthor()
+    val accent = remember(colorScheme, seed) {
+        val accentOptions = listOf(
+            colorScheme.primary,
+            colorScheme.secondary,
+            colorScheme.tertiary,
+            colorScheme.inversePrimary
+        )
+        accentOptions[(seed / 7) % accentOptions.size]
+    }
+    val title = remember(item.customName, item.title, item.displayName) { item.coverTitle() }
+    val author = remember(item.author) { item.coverAuthor() }
+    val coverGradient = remember(colorScheme, base, accent) {
+        Brush.linearGradient(
+            colors = listOf(
+                lerp(base, colorScheme.surface, 0.06f),
+                lerp(base, accent, 0.16f),
+                lerp(colorScheme.surfaceContainerHighest, base, 0.34f)
+            )
+        )
+    }
 
     BoxWithConstraints(
         modifier = modifier
-            .background(
-                Brush.linearGradient(
-                    colors = listOf(
-                        lerp(base, colorScheme.surface, 0.06f),
-                        lerp(base, accent, 0.16f),
-                        lerp(colorScheme.surfaceContainerHighest, base, 0.34f)
-                    )
-                )
-            )
+            .background(coverGradient)
             .border(0.5.dp, colorScheme.outlineVariant.copy(alpha = 0.35f))
     ) {
         val compact = maxWidth < 80.dp
@@ -169,16 +186,18 @@ private fun GeneratedBookCover(
 
 /** The stable tonal colour used by the generated cover when no artwork is available. */
 @Composable
-internal fun generatedBookCoverColor(item: RecentFileItem) = run {
+internal fun generatedBookCoverColor(item: RecentFileItem): Color {
     val colorScheme = MaterialTheme.colorScheme
-    val baseOptions = listOf(
-        colorScheme.primaryContainer,
-        colorScheme.secondaryContainer,
-        colorScheme.tertiaryContainer,
-        lerp(colorScheme.primary, colorScheme.surface, 0.30f),
-        lerp(colorScheme.secondary, colorScheme.surface, 0.26f)
-    )
-    baseOptions[item.coverColorSeed() % baseOptions.size]
+    return remember(colorScheme, item.bookId, item.displayName) {
+        val baseOptions = listOf(
+            colorScheme.primaryContainer,
+            colorScheme.secondaryContainer,
+            colorScheme.tertiaryContainer,
+            lerp(colorScheme.primary, colorScheme.surface, 0.30f),
+            lerp(colorScheme.secondary, colorScheme.surface, 0.26f)
+        )
+        baseOptions[item.coverColorSeed() % baseOptions.size]
+    }
 }
 
 private fun RecentFileItem.coverColorSeed(): Int {

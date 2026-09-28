@@ -20,7 +20,11 @@
 package com.aryan.reader.epubreader
 
 import android.content.Context
+import com.aryan.reader.appCheckHeaderMap
 import androidx.compose.foundation.layout.fillMaxWidth
+import com.aryan.reader.shared.parseSpendGuardError
+import com.aryan.reader.shared.parseSpendGuardSentinel
+import com.aryan.reader.shared.spendGuardSentinel
 import timber.log.Timber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -40,6 +44,7 @@ import com.aryan.reader.R
 import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.callByokTextAi
+import com.aryan.reader.isByokModelReady
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.contentFilePath
 import com.aryan.reader.fetchRecap
@@ -57,6 +62,8 @@ import java.net.URL
 /**
  * Handles the raw network streaming for book content summarization.
  */
+private const val SUMMARIZE_SYSTEM_INSTRUCTION = "You are an expert in analyzing written content. Provide a concise, easy-to-read summary of the provided chapter. Identify the main ideas, plot points, and themes. Do not add a preamble like 'Here is the summary:'"
+
 suspend fun summarizeBookContent(
     content: String,
     context: Context,
@@ -83,7 +90,24 @@ suspend fun summarizeBookContent(
         callByokTextAi(
             context = context,
             feature = AiFeature.SUMMARIZE,
-            systemInstruction = "You are an expert in analyzing written content. Provide a concise, easy-to-read summary of the provided chapter. Identify the main ideas, plot points, and themes. Do not add a preamble like 'Here is the summary:'",
+            systemInstruction = SUMMARIZE_SYSTEM_INSTRUCTION,
+            userPrompt = content,
+            temperature = 0.2,
+            maxTokens = 8192,
+            onUpdate = onUpdate,
+            onError = onError
+        )
+        onFinish()
+        return
+    }
+
+    // Pro parity with iOS: a configured BYOK model+key for summaries
+    // bypasses the credited worker for this request.
+    if (isByokModelReady(context, AiFeature.SUMMARIZE)) {
+        callByokTextAi(
+            context = context,
+            feature = AiFeature.SUMMARIZE,
+            systemInstruction = SUMMARIZE_SYSTEM_INSTRUCTION,
             userPrompt = content,
             temperature = 0.2,
             maxTokens = 8192,
@@ -105,6 +129,8 @@ suspend fun summarizeBookContent(
             if (authToken != null) {
                 connection.setRequestProperty("Authorization", "Bearer $authToken")
             }
+            // Attestation (omitted when unavailable; the server logs the miss).
+            appCheckHeaderMap().forEach { (name, value) -> connection.setRequestProperty(name, value) }
             connection.connectTimeout = 15000
             connection.readTimeout = 120000
             connection.doOutput = true
@@ -120,8 +146,11 @@ suspend fun summarizeBookContent(
 
             val responseCode = connection.responseCode
 
-            if (responseCode == 402) {
-                onError("INSUFFICIENT_CREDITS")
+            if (responseCode == 402 || responseCode == 429) {
+                val errorBody = try {
+                    connection.errorStream?.bufferedReader()?.use { it.readText() }
+                } catch (_: Exception) { null }
+                onError(mapAiHttpError(responseCode, errorBody) ?: "INSUFFICIENT_CREDITS")
                 onFinish()
                 return@withContext
             }
@@ -147,7 +176,7 @@ suspend fun summarizeBookContent(
                                 hasReceivedData = true
                             }
                             jsonResponse.optString("error").takeIf { it.isNotEmpty() }?.let {
-                                onError(it)
+                                onError(mapAiStreamError(jsonResponse))
                             }
                         } catch (e: Exception) {
                             Timber.w(e, "Could not parse stream line: $line")
@@ -298,6 +327,65 @@ suspend fun executeRecapLogic(
 }
 
 /**
+ * Maps worker spend-guard HTTP failures to client sentinels. 402 is either an
+ * empty wallet (legacy INSUFFICIENT_CREDITS) or the daily spend fraud cap;
+ * 429 is the velocity throttle. Returns null for anything else.
+ */
+internal fun mapAiHttpError(responseCode: Int, errorBody: String?): String? {
+    if (responseCode == 402) {
+        val parsed = parseSpendGuardError(errorBody)
+        return if (parsed?.first == "DAILY_SPEND_LIMIT") {
+            spendGuardSentinel(parsed.first, parsed.second)
+        } else {
+            "INSUFFICIENT_CREDITS"
+        }
+    }
+    if (responseCode == 429) {
+        val parsed = parseSpendGuardError(errorBody)
+        return spendGuardSentinel("RATE_LIMITED", parsed?.second ?: 30)
+    }
+    return null
+}
+
+/**
+ * Maps a worker stream error payload to a client sentinel, preserving the
+ * retry window for the concurrency-slot path ({error, retry_after_seconds}).
+ */
+internal fun mapAiStreamError(json: org.json.JSONObject): String {
+    val err = json.optString("error")
+    if ((err == "RATE_LIMITED" || err == "DAILY_SPEND_LIMIT") && json.has("retry_after_seconds")) {
+        return spendGuardSentinel(err, json.optInt("retry_after_seconds", 0))
+    }
+    return err
+}
+
+/**
+ * Routes an AI onError string: empty wallet -> legacy dialog path, spend-guard
+ * sentinel -> shared notice (banner for rate limit, dialog with balance for
+ * the daily cap, rendered next to the insufficient-credits dialog),
+ * anything else -> caller's generic error path.
+ */
+internal fun handleAiRequestError(
+    error: String,
+    navigation: EpubReaderNavigationState,
+    onInsufficientCredits: () -> Unit,
+    onGuardNotice: () -> Unit,
+    onOtherError: () -> Unit
+) {
+    if (error == "INSUFFICIENT_CREDITS") {
+        onInsufficientCredits()
+        return
+    }
+    val guard = parseSpendGuardSentinel(error)
+    if (guard != null) {
+        navigation.aiSpendNotice = guard
+        onGuardNotice()
+        return
+    }
+    onOtherError()
+}
+
+/**
  * Container for all AI-related popups and dialogs (Summary, Recap, Definition, Upsells).
  */
 @Composable
@@ -330,6 +418,8 @@ fun EpubReaderAiOverlays(
     onOpenExternalDictionary: (String) -> Unit,
     getAuthToken: suspend () -> String?,
     credits: Int,
+    walletMicros: Long = 0L,
+    walletMigrated: Boolean = false,
     isProUser: Boolean
 ) {
     if (showAiHubSheet) {
@@ -350,6 +440,8 @@ fun EpubReaderAiOverlays(
             isMainTtsActive = isTtsSessionActive,
             getAuthToken = getAuthToken,
             credits = credits,
+            walletMicros = walletMicros,
+            walletMigrated = walletMigrated,
             isProUser = isProUser
         )
     }

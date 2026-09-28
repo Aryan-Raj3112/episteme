@@ -99,7 +99,9 @@ import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.pdf.ocr.OcrElement
 import com.aryan.reader.pdf.ocr.OcrResult
+import androidx.compose.ui.text.TextRange
 import com.aryan.reader.shared.HighlightStyle
+import com.aryan.reader.shared.pdf.RichParagraphUiState
 import com.aryan.reader.shared.pdf.PdfSelectionHandle
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.pdf.PdfSelectionGeometry
@@ -115,6 +117,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -139,6 +142,16 @@ private const val PDF_TILE_SIZE_DP = 256
 private const val PDF_TARGET_TILE_BITMAP_SIZE_PX = 768
 private const val PDF_MAX_VISIBLE_TILE_COUNT = 12
 private const val PDF_TILE_IDLE_RENDER_DELAY_MS = 60L
+
+/**
+ * Grace period after a stroke ends before high-res tile rendering resumes.
+ * Short enough that a genuinely finished stroke sharpens quickly; long enough
+ * that a fast follow-up stroke starts while tiles are still frozen — without
+ * it, the queued catch-up burst (up to 12 tiles per page through one pdfium
+ * mutex, doubled in spread mode) steals the next stroke's frames, which reads
+ * as first-stroke lag or dropped quick strokes.
+ */
+private const val PDF_TILE_STROKE_RESUME_DELAY_MS = 150L
 private const val PDF_TILE_RENDER_IDLE_COOLDOWN_MS = 220L
 private const val PDF_PAGINATION_PAN_FLING_MIN_VELOCITY = 600f
 private const val PDF_PAGINATION_PAN_FLING_MULTIPLIER = 0.72f
@@ -233,6 +246,16 @@ internal fun PdfPageComposable(
     onTwoFingerSwipe: (direction: Int) -> Unit = {},
     placeholderBitmap: Bitmap? = null,
     isZoomEnabled: Boolean = true,
+    // Shared spread zoom camera (2-page paginated mode): the zoom transform
+    // lives on the spread Row's graphicsLayer, so the per-page scale/offset
+    // state cannot describe the visible region. When set, the high-res tile
+    // loop inverts THIS camera (plus the page's placement in the Row) instead
+    // of the per-page transform, so tiles land under the real viewport
+    // wherever the user pans/zooms. Null keeps the legacy per-page behavior.
+    // A provider on purpose: reading the camera state inside the tile
+    // snapshotFlow defers it off composition, so panning never recomposes the
+    // page.
+    spreadCameraProvider: (() -> PdfSpreadCameraContext?)? = null,
     isScrolling: Boolean = false,
     lazyListState: LazyListState? = null,
     isVerticalScroll: Boolean = false,
@@ -264,6 +287,9 @@ internal fun PdfPageComposable(
     selectedTextBoxId: String? = null,
     onTextBoxChange: (PdfTextBox) -> Unit = {},
     onTextBoxSelect: (String) -> Unit = {},
+    onTextBoxMenuAction: (PdfTextBoxMenuAction) -> Unit = {},
+    onTextBoxParagraphUiStateChanged: (RichParagraphUiState, TextRange) -> Unit = { _, _ -> },
+    textBoxPendingSelection: TextBoxPendingSelection? = null,
     onTextBoxDragStart: (PdfTextBox, Offset, Offset) -> Unit = { _, _, _ -> },
     onTextBoxDrag: (Offset) -> Unit = {},
     onTextBoxDragEnd: () -> Unit = {},
@@ -313,6 +339,11 @@ internal fun PdfPageComposable(
     var isTransforming by remember { mutableStateOf(false) }
     var isPaginationPageGestureActive by remember { mutableStateOf(false) }
     var isPageTileRenderIdleCooldownActive by remember { mutableStateOf(false) }
+    // True while an ink stroke is being drawn. High-res tile rendering freezes
+    // for the duration: zoomed pages render up to PDF_MAX_VISIBLE_TILE_COUNT
+    // tiles per page through one serialized pdfium mutex, and that churn made
+    // strokes lag (worst in 2-page spread mode where both pages tile).
+    var isDrawingStroke by remember(targetPageId) { mutableStateOf(false) }
     val initialCamera = initialPdfPageCamera(
         isZoomEnabled = isZoomEnabled,
         isVerticalScroll = isVerticalScroll,
@@ -327,7 +358,8 @@ internal fun PdfPageComposable(
             isTransforming ||
             isPaginationPageGestureActive ||
             paginationPanFlingJob != null ||
-            isPageTileRenderIdleCooldownActive
+            isPageTileRenderIdleCooldownActive ||
+            isDrawingStroke
     val pageMotionActive =
         isScrolling ||
             isTransforming ||
@@ -382,6 +414,7 @@ internal fun PdfPageComposable(
     val tileSizePx = with(LocalDensity.current) { tileSizeDp.toPx().toInt() }
     val latestEffectiveScale by rememberUpdatedState(effectiveScale)
     val latestEffectiveOffset by rememberUpdatedState(effectiveOffset)
+    val latestSpreadCameraProvider by rememberUpdatedState(spreadCameraProvider)
     val latestIsScrolling by rememberUpdatedState(isScrolling)
     val latestIsAutoScrollPlaying by rememberUpdatedState(isAutoScrollPlaying)
     val latestShouldPauseHighResTileRendering by rememberUpdatedState(shouldPauseHighResTileRendering)
@@ -1065,7 +1098,8 @@ internal fun PdfPageComposable(
         canvasHeightPx.floatValue,
         isVerticalScroll,
         virtualPage,
-        isActivePage
+        isActivePage,
+        spreadCameraProvider
     ) {
         var lastTileDiagLogMs = 0L
         if (!needsTilingNow) {
@@ -1126,6 +1160,7 @@ internal fun PdfPageComposable(
             snapshotFlow {
                 val rect = visibleScreenRect()
                 val observedScale = latestEffectiveScale
+                val observedSpreadCamera = latestSpreadCameraProvider?.invoke()
                 val pauseMarker = if (latestShouldPauseHighResTileRendering) 1 else 0
                 if (isVerticalScroll && rect != null) {
                     val qTop = rect.top / (tileSizePx / 2)
@@ -1134,13 +1169,35 @@ internal fun PdfPageComposable(
                     val qRight = rect.right / (tileSizePx / 2)
                     listOf(qTop, qLeft, qBottom, qRight, (pdfZoomRenderScale(observedScale) * 10f).roundToInt(), pauseMarker)
                 } else if (!isVerticalScroll) {
-                    val observedOffset = latestEffectiveOffset
-                    val pivotX = screenWidth / 2f
-                    val pivotY = screenHeight / 2f
-                    val pxTl = (((0 - observedOffset.x) - pivotX) / observedScale + pivotX) - centeringOffsetX
-                    val pyTl = (((0 - observedOffset.y) - pivotY) / observedScale + pivotY) - centeringOffsetY
-                    val pxBr = (((screenWidth - observedOffset.x) - pivotX) / observedScale + pivotX) - centeringOffsetX
-                    val pyBr = (((screenHeight - observedOffset.y) - pivotY) / observedScale + pivotY) - centeringOffsetY
+                    // Spread mode: the visible region comes from the shared Row
+                    // camera (the transform the user actually sees). Per-page
+                    // inversion with offset=Zero would resolve every pan/zoom
+                    // position to the page center — the "only the center goes
+                    // high-res" bug.
+                    val pxTl: Float
+                    val pyTl: Float
+                    val pxBr: Float
+                    val pyBr: Float
+                    val observedSpreadCamera = latestSpreadCameraProvider?.invoke()
+                    if (observedSpreadCamera != null) {
+                        val spreadRect = pdfSpreadVisiblePageRect(
+                            camera = observedSpreadCamera,
+                            centeringOffsetX = centeringOffsetX,
+                            centeringOffsetY = centeringOffsetY,
+                        )
+                        pxTl = spreadRect.left
+                        pyTl = spreadRect.top
+                        pxBr = spreadRect.right
+                        pyBr = spreadRect.bottom
+                    } else {
+                        val observedOffset = latestEffectiveOffset
+                        val pivotX = screenWidth / 2f
+                        val pivotY = screenHeight / 2f
+                        pxTl = (((0 - observedOffset.x) - pivotX) / observedScale + pivotX) - centeringOffsetX
+                        pyTl = (((0 - observedOffset.y) - pivotY) / observedScale + pivotY) - centeringOffsetY
+                        pxBr = (((screenWidth - observedOffset.x) - pivotX) / observedScale + pivotX) - centeringOffsetX
+                        pyBr = (((screenHeight - observedOffset.y) - pivotY) / observedScale + pivotY) - centeringOffsetY
+                    }
 
                     val qTop = pyTl.toInt() / (tileSizePx / 2)
                     val qLeft = pxTl.toInt() / (tileSizePx / 2)
@@ -1186,13 +1243,28 @@ internal fun PdfPageComposable(
                         return@collectLatest
                     }
                 } else {
-                    val pivotX = screenWidth / 2f
-                    val pivotY = screenHeight / 2f
+                    val spreadCamera = latestSpreadCameraProvider?.invoke()
+                    if (spreadCamera != null) {
+                        // Same Row-camera inversion as the snapshot key above:
+                        // tiles must cover the viewport the user actually sees.
+                        val spreadRect = pdfSpreadVisiblePageRect(
+                            camera = spreadCamera,
+                            centeringOffsetX = centeringOffsetX,
+                            centeringOffsetY = centeringOffsetY,
+                        )
+                        pxTl = spreadRect.left
+                        pyTl = spreadRect.top
+                        pxBr = spreadRect.right
+                        pyBr = spreadRect.bottom
+                    } else {
+                        val pivotX = screenWidth / 2f
+                        val pivotY = screenHeight / 2f
 
-                    pxTl = (((0 - renderOffset.x) - pivotX) / renderScale + pivotX) - centeringOffsetX
-                    pyTl = (((0 - renderOffset.y) - pivotY) / renderScale + pivotY) - centeringOffsetY
-                    pxBr = (((screenWidth - renderOffset.x) - pivotX) / renderScale + pivotX) - centeringOffsetX
-                    pyBr = (((screenHeight - renderOffset.y) - pivotY) / renderScale + pivotY) - centeringOffsetY
+                        pxTl = (((0 - renderOffset.x) - pivotX) / renderScale + pivotX) - centeringOffsetX
+                        pyTl = (((0 - renderOffset.y) - pivotY) / renderScale + pivotY) - centeringOffsetY
+                        pxBr = (((screenWidth - renderOffset.x) - pivotX) / renderScale + pivotX) - centeringOffsetX
+                        pyBr = (((screenHeight - renderOffset.y) - pivotY) / renderScale + pivotY) - centeringOffsetY
+                    }
                 }
 
                 val visibleBitmapRect = Rect(pxTl.toInt(), pyTl.toInt(), pxBr.toInt(), pyBr.toInt())
@@ -3359,6 +3431,12 @@ internal fun PdfPageComposable(
                             return@awaitEachGesture
                         }
 
+                        // Any gesture that can become a stroke freezes high-res
+                        // tile rendering until the gesture resolves (see
+                        // shouldPauseHighResTileRendering). Clearing in finally
+                        // covers every exit path: up, cancel, multi-touch bail.
+                        isDrawingStroke = true
+
                         val buttons = currentEvent.buttons
                         Timber.tag("StylusDebug").d(
                             "Page $pageIndex | Type: ${down.type} | isPrimary: ${buttons.isPrimaryPressed} | isSecondary: ${buttons.isSecondaryPressed} | isTertiary: ${buttons.isTertiaryPressed} | buttonsString: $buttons"
@@ -3385,13 +3463,17 @@ internal fun PdfPageComposable(
                                 }
                                 eraserPosition = null
                                 isStylusEraserOverride = false
+                                isDrawingStroke = false
                                 return@awaitEachGesture
                             }
 
                             val change = event.changes.firstOrNull {
                                 it.id == dragPointerId
                             }
-                            if (change == null) return@awaitEachGesture
+                            if (change == null) {
+                                isDrawingStroke = false
+                                return@awaitEachGesture
+                            }
 
                             if (change.changedToUp()) {
                                 change.consume()
@@ -3409,6 +3491,19 @@ internal fun PdfPageComposable(
                                 }
                                 eraserPosition = null
                                 isStylusEraserOverride = false
+                                // Resume tile rendering only after the post-stroke
+                                // commit (persist/undo push in onDrawEnd callers)
+                                // has been composed through. Resuming immediately
+                                // lets the queued zoomed-tile catch-up burst — 12
+                                // tiles per page through one pdfium mutex, doubled
+                                // in spread mode — steal the next stroke's frames,
+                                // which read as first-stroke lag or dropped quick
+                                // strokes between fast separate strokes.
+                                isDrawingStroke = true
+                                coroutineScope.launch {
+                                    delay(PDF_TILE_STROKE_RESUME_DELAY_MS)
+                                    isDrawingStroke = false
+                                }
                                 return@awaitEachGesture
                             }
 
@@ -3467,8 +3562,14 @@ internal fun PdfPageComposable(
                                 }
                             }
                         }
+                        // The gesture loop exited without a return: pointer went
+                        // up outside change handling. Resume tile rendering.
+                        isDrawingStroke = false
                     }
                 } finally {
+                    // Gesture detector torn down (key change / disposal). Tile
+                    // rendering must never stay frozen across detector restarts.
+                    isDrawingStroke = false
                     eraserPosition = null
                     isStylusEraserOverride = false
                 }
@@ -4423,6 +4524,9 @@ internal fun PdfPageComposable(
                         selectedTextBoxId = selectedTextBoxId,
                         onTextBoxChange = onTextBoxChange,
                         onTextBoxSelect = onTextBoxSelect,
+                        onTextBoxMenuAction = onTextBoxMenuAction,
+                        onTextBoxParagraphUiStateChanged = onTextBoxParagraphUiStateChanged,
+                        textBoxPendingSelection = textBoxPendingSelection,
                         onTextBoxDragStart = onTextBoxDragStart,
                         onTextBoxDrag = onTextBoxDrag,
                         onTextBoxDragEnd = onTextBoxDragEnd,

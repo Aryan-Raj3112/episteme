@@ -1,5 +1,6 @@
 package com.aryan.reader.data
 
+import androidx.compose.runtime.Immutable
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -42,6 +43,7 @@ data class BookShelfCrossRef(
 )
 
 @Entity(tableName = "tags")
+@Immutable
 data class TagEntity(
     @PrimaryKey val id: String,
     val name: String,

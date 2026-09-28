@@ -326,11 +326,16 @@ class AudiobookController(context: Context) : Player.Listener {
     private fun loadIfNeeded(controller: MediaController, book: AudiobookPlaybackRequest) {
         if (controller.currentMediaItem?.mediaId == book.bookId) { updateState(); return }
         _state.value = _state.value.copy(isLoading = true, error = null)
+        val artworkUri = book.coverPath?.let { Uri.fromFile(File(it)) }
+        // Decode the cover on IO now: the notification loader serves
+        // synchronously on Main, so a prewarmed cache entry avoids a
+        // content-resolver read + double decode on the touch path.
+        com.aryan.reader.MediaNotificationBitmapLoader.prewarm(context, artworkUri)
         val metadata = MediaMetadata.Builder()
             .setTitle(book.title)
             .setArtist(book.author ?: book.narrator)
             .setAlbumTitle(book.album)
-            .setArtworkUri(book.coverPath?.let { Uri.fromFile(File(it)) })
+            .setArtworkUri(artworkUri)
             .build()
         controller.setMediaItem(
             MediaItem.Builder().setMediaId(book.bookId).setUri(Uri.fromFile(File(book.filePath))).setMediaMetadata(metadata).build(),

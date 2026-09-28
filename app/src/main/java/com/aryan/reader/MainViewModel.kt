@@ -287,6 +287,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val cloudflareRepository = appGraph.cloudflareRepository
     private val remoteConfigRepository = appGraph.remoteConfigRepository
     private var userProfileListener: Any? = null
+    // Uid last offered an eager legacy->USD migration (POST /v2/migrate).
+    // One attempt per sign-in; the worker is idempotent so a retry is safe,
+    // and the lazy paths still convert as a backstop.
+    private var migrationAttemptedForUid: String? = null
     private val _prefsUpdateFlow = MutableStateFlow(0L)
     private val prefsListener: SharedPreferences.OnSharedPreferenceChangeListener
     private val feedbackRepository = appGraph.feedbackRepository
@@ -322,6 +326,38 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     private var panelDetector: com.aryan.reader.ml.IPanelDetector? = null
     private var speechBubbleDetector: ISpeechBubbleDetector? = null
+
+    /**
+     * Cold-start gate: set once the library DB emits, so the splash can stay
+     * until the first projected library is available instead of flashing an
+     * empty Home. A timeout in init flips [startupGatePassed] regardless, so
+     * a slow DB can never pin the splash.
+     */
+    private val _libraryReady = MutableStateFlow(false)
+    val isLibraryReady: StateFlow<Boolean> = _libraryReady.asStateFlow()
+    private val _startupGatePassed = MutableStateFlow(false)
+    val startupGatePassed: StateFlow<Boolean> = _startupGatePassed.asStateFlow()
+
+    /**
+     * Runs [block] on IO after the library DB emits plus [delayMillis].
+     * Keeps folder-sync sweeps, cloud fan-out, and session restore off the
+     * first-frame critical path. Timing only — no work is skipped.
+     */
+    private fun launchPostLibraryReady(
+        delayMillis: Long = 2000,
+        block: suspend () -> Unit,
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                withTimeoutOrNull(10_000) {
+                    libraryFlow.map { it.first }.first()
+                }
+            }
+            delay(delayMillis)
+            runCatching { block() }
+                .onFailure { Timber.e(it, "Post-startup task failed") }
+        }
+    }
 
     private val mlDispatcher = newSingleThreadExecutor().asCoroutineDispatcher()
     private val speechBubbleCacheMutex = Mutex()
@@ -1682,6 +1718,22 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     init {
         Timber.d("ViewModel instance created.")
 
+        // Library readiness drives the splash gate and defers heavy startup
+        // work. Timeout guarantees the gate passes even on a slow DB.
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                withTimeoutOrNull(10_000) {
+                    libraryFlow.map { it.first }.first()
+                }
+            }
+            _libraryReady.value = true
+            _startupGatePassed.value = true
+        }
+        viewModelScope.launch {
+            delay(3000)
+            _startupGatePassed.value = true
+        }
+
         // Durable split identities are only preferences. Reconcile them with
         // the live library and provider as soon as the inventory is available
         // so a deleted or revoked URI cannot remain a broken reader session.
@@ -1692,20 +1744,30 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 .collectLatest(::reconcilePdfSplitWorkspace)
         }
 
-        SafeWorkManager.cancelUniqueWork(application, FolderSyncWorker.WORK_NAME)
-        SafeWorkManager.pruneWork(application)
+        // WorkManager init touches its own Room DB + JobScheduler; keep it
+        // off the init critical path. Timing only.
+        viewModelScope.launch(Dispatchers.IO) {
+            SafeWorkManager.cancelUniqueWork(application, FolderSyncWorker.WORK_NAME)
+            SafeWorkManager.pruneWork(application)
+        }
 
         viewModelScope.launch(Dispatchers.IO) {
             FolderAnnotationExportWorker.scheduleAllPending(appContext)
         }
 
-        val locatorConverter = LocatorConverter(
-            bookCacheDao,
-            ProtoBuf { serializersModule = semanticBlockModule },
-            appContext
-        )
+        // BookCacheDatabase opens on first access; defer it to the collector
+        // thread (IO) instead of the init (Main) thread.
+        val locatorConverter by lazy {
+            LocatorConverter(
+                bookCacheDao,
+                ProtoBuf { serializersModule = semanticBlockModule },
+                appContext
+            )
+        }
 
-        viewModelScope.launch {
+        // TTS controller init (prefs read + engine setup) happens on first
+        // ttsState access; collect on IO so browsing never pays for it on Main.
+        viewModelScope.launch(Dispatchers.IO) {
             var wasSessionFinished = false
             ttsController.ttsState.collect { state ->
                 val isPlaying = state.isPlaying
@@ -1728,7 +1790,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 wasSessionFinished = sessionFinished
             }
         }
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             libraryStore.migrateLegacyShelves()
             if (!prefs.getBoolean(KEY_DEFAULT_TAGS_SEEDED, false)) {
                 libraryStore.seedTagsIfEmpty(buildDefaultTags())
@@ -1746,7 +1808,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
         prefs.registerOnSharedPreferenceChangeListener(prefsListener)
 
-        remoteConfigRepository.init()
+        // Firebase RemoteConfig init (disk + network) stays off Main; values
+        // arrive async. Remote-gated features use defaults for the first
+        // seconds after cold start.
+        viewModelScope.launch(Dispatchers.IO) {
+            delay(2000)
+            runCatching { remoteConfigRepository.init() }
+                .onFailure { Timber.e(it, "RemoteConfig init failed") }
+        }
 
         // Cloud-folder workers run outside the Compose tree and may discover
         // a new root while the user is on any screen.  Refresh repository
@@ -1793,13 +1862,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         if (_internalState.value.syncedFolders.any { it.localSyncEnabled }) {
-            triggerFolderSyncWorker(metadataOnly = false, showFeedback = false)
+            // SAF tree enumeration storms ContentResolver; run after first
+            // paint. Sync badges arrive ~2s later; no data loss.
+            launchPostLibraryReady { triggerFolderSyncWorker(metadataOnly = false, showFeedback = false) }
         }
 
         _internalState.value.currentUser?.uid?.trim()
             ?.takeIf { it.isNotBlank() }
             ?.let { accountId ->
-                viewModelScope.launch(Dispatchers.IO) {
+                launchPostLibraryReady {
                     registerLocalCloudFolders(accountId)
                     refreshCloudFolderSyncState()
                 }
@@ -1807,7 +1878,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 // even when the main sync switch is currently off.  Requeue
                 // it on process start so cancelling a worker during sign-out
                 // cannot strand the account's outbox.
-                viewModelScope.launch(Dispatchers.IO) {
+                launchPostLibraryReady {
                     if (cloudBookDeletePersistence.pending(accountId).isNotEmpty()) {
                         runCatching {
                             CloudBookDeleteWorker.enqueue(appContext, accountId)
@@ -1819,19 +1890,33 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 if (_internalState.value.isSyncEnabled) {
                     // Discovery is metadata-only for unbound roots and is
                     // safe to schedule on every app start.
-                    CloudFolderSyncWorker.enqueuePull(
-                        appContext,
-                        accountId = accountId,
-                        replace = false,
-                    )
+                    launchPostLibraryReady {
+                        CloudFolderSyncWorker.enqueuePull(
+                            appContext,
+                            accountId = accountId,
+                            replace = false,
+                        )
+                    }
                 }
             }
 
-        sweepOrphanedCache()
+        // Cache sweep does a full-table scan + cacheDir walk; pending-removal
+        // cleanup touches Room + files. Both wait for first paint.
+        launchPostLibraryReady { sweepOrphanedCache() }
         cleanupPendingExternalFileRemovals()
-        restoreReaderSessionIfNeeded()
+        // Last-book auto-restore does a full book parse (EPUB) and navigates
+        // to the reader. Still honored, but after the library is ready so
+        // Home paints first. If the splash times out first, Home may be
+        // visible briefly before the reader opens.
+        launchPostLibraryReady(delayMillis = 500) { restoreReaderSessionIfNeeded() }
 
-        viewModelScope.launch { billingClientWrapper.initializeConnection() }
+        // Play billing bind stays off the critical path; Pro status refresh
+        // arrives ~2s later than before.
+        viewModelScope.launch(Dispatchers.IO) {
+            delay(2000)
+            runCatching { billingClientWrapper.initializeConnection() }
+                .onFailure { Timber.e(it, "Billing init failed") }
+        }
 
         viewModelScope.launch {
             authRepository.observeAuthState().collect { newUserData ->
@@ -1867,8 +1952,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             _internalState.update { it.copy(hasUnreadFeedback = hasUnread) }
                         }
 
-                    userProfileListener = firestoreRepository.listenToUserProfile(newUserData.uid) { isProFromBackend, creditsFromBackend ->
-                        _internalState.update { it.copy(isProUser = isProFromBackend, credits = creditsFromBackend) }
+                    userProfileListener = firestoreRepository.listenToUserProfile(newUserData.uid) { isProFromBackend, creditsFromBackend, walletMicrosFromBackend, walletMigratedFromBackend ->
+                        _internalState.update { it.copy(isProUser = isProFromBackend, credits = creditsFromBackend, walletMicros = walletMicrosFromBackend, walletMigrated = walletMigratedFromBackend) }
+
+                            // Eager migration: legacy credits used to convert only
+                            // lazily on first TTS/AI use (or on top-up), so credit
+                            // holders saw a $0 wallet until then. Migrate once at
+                            // sign-in; the profile listener delivers the balance.
+                            if (creditsFromBackend > 0 && !walletMigratedFromBackend && migrationAttemptedForUid != newUserData.uid) {
+                                migrationAttemptedForUid = newUserData.uid
+                                runLegacyMigration()
+                            }
 
                             if (!isProFromBackend) {
                                 // A profile downgrade can arrive while cloud
@@ -1920,7 +2014,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     _cloudFolderBindings.value = emptyMap()
                     _cloudFolderConflicts.value = emptyList()
                     _incomingCloudFolderPrompt.value = null
-                    _internalState.update { it.copy(isProUser = false, credits = 0, isSyncEnabled = false, hasUnreadFeedback = false) }
+                    _internalState.update { it.copy(isProUser = false, credits = 0, walletMicros = 0L, walletMigrated = false, isSyncEnabled = false, hasUnreadFeedback = false) }
                 }
             }
         }
@@ -2496,13 +2590,52 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         showBanner(appContext.getString(R.string.error_sync_drive_permission), isError = true)
     }
 
+    private fun isTopupProduct(productId: String): Boolean {
+        return productId.startsWith("topup_")
+    }
+
+    /**
+     * One-time legacy credit -> USD wallet conversion at sign-in
+     * (POST /v2/migrate on the TTS worker). Fire-and-forget: the worker is
+     * idempotent, the profile listener picks up the new balance, and the
+     * lazy worker paths / top-up grant convert anyway as a backstop.
+     */
+    private fun runLegacyMigration() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val token = getAuthToken() ?: return@launch
+                val base = com.aryan.reader.tts.googleCloudWorkerTtsUrl.trim().removeSuffix("/")
+                if (base.isBlank()) return@launch
+                val connection = java.net.URL("$base/v2/migrate").openConnection() as java.net.HttpURLConnection
+                try {
+                    connection.requestMethod = "POST"
+                    connection.setRequestProperty("Authorization", "Bearer $token")
+                    // Attestation (omitted when unavailable; the server logs the miss).
+                    appCheckHeaderMap().forEach { (name, value) -> connection.setRequestProperty(name, value) }
+                    connection.connectTimeout = 15000
+                    connection.readTimeout = 15000
+                    val code = connection.responseCode
+                    if (code == 200) {
+                        val body = connection.inputStream.bufferedReader().use { it.readText() }
+                        Timber.i("Legacy migration done: $body")
+                    } else {
+                        Timber.w("Legacy migration HTTP $code; lazy paths still apply")
+                    }
+                } finally {
+                    connection.disconnect()
+                }
+            } catch (e: Exception) {
+                Timber.w(e, "Legacy migration failed; lazy paths still apply")
+            }
+        }
+    }
+
     private fun verifyPurchaseWithBackend(
         purchase: PurchaseEntity, isSilentMigrationCheck: Boolean = false
-    ) {
-        viewModelScope.launch {
+    ) {        viewModelScope.launch {
             val productId = purchase.products.firstOrNull()
 
-            if (productId == null || (!productId.startsWith("credits_") && productId != BillingClientWrapper.PRO_LIFETIME_PRODUCT_ID)) {
+            if (productId == null || (!isTopupProduct(productId) && !productId.startsWith("credits_") && productId != BillingClientWrapper.PRO_LIFETIME_PRODUCT_ID)) {
                 Timber.e("Purchase verification failed: Incorrect product ID.")
                 if (!isSilentMigrationCheck) {
                     _internalState.update { it.copy(bannerMessage = BannerMessage(appContext.getString(R.string.error_purchase_general), isError = true)) }
@@ -2524,10 +2657,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 Timber.i("Backend verification successful. Firestore will update the app.")
                 billingClientWrapper.clearAccountConflict()
 
-                if (productId.startsWith("credits_")) {
+                if (isTopupProduct(productId) || productId.startsWith("credits_")) {
                     billingClientWrapper.consumePurchase(purchase.purchaseToken)
                     if (!isSilentMigrationCheck) {
-                        _internalState.update { it.copy(bannerMessage = BannerMessage("Credits successfully added!")) }
+                        val addedMessage = if (isTopupProduct(productId)) {
+                            appContext.getString(R.string.banner_balance_added)
+                        } else {
+                            "Credits successfully added!"
+                        }
+                        _internalState.update { it.copy(bannerMessage = BannerMessage(addedMessage)) }
                     }
                 } else {
                     if (!isSilentMigrationCheck) {
@@ -2539,7 +2677,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 val exception = result.exceptionOrNull()
                 if (exception?.message?.contains("already claimed") == true) {
                     Timber.i("Migration/Refresh check: Purchase token is already claimed. Silently ignoring.")
-                    if (productId.startsWith("credits_")) {
+                    if (isTopupProduct(productId) || productId.startsWith("credits_")) {
                         billingClientWrapper.consumePurchase(purchase.purchaseToken)
                     } else {
                         billingClientWrapper.markAccountConflict()
@@ -4487,7 +4625,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
             .build()
 
-        val request = OneTimeWorkRequestBuilder<FolderSyncWorker>().setInputData(data).build()
+        val request = OneTimeWorkRequestBuilder<FolderSyncWorker>()
+            .setInputData(data)
+            // Retry timing only; local indexing is offline-capable so no constraints.
+            .setBackoffCriteria(
+                androidx.work.BackoffPolicy.EXPONENTIAL,
+                30L,
+                TimeUnit.SECONDS
+            )
+            .build()
 
         val enqueued = SafeWorkManager.enqueueUniqueWork(
             appContext,
@@ -7169,7 +7315,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     .putString(ReflowWorker.KEY_ORIGINAL_TITLE, originalTitle).build()
 
             val request = OneTimeWorkRequestBuilder<ReflowWorker>().setInputData(inputData)
-                .addTag(ReflowWorker.WORK_NAME).addTag("book_$pdfBookId").build()
+                .addTag(ReflowWorker.WORK_NAME).addTag("book_$pdfBookId")
+                // Retry timing only; reflow is local compute, no constraints.
+                .setBackoffCriteria(
+                    androidx.work.BackoffPolicy.EXPONENTIAL,
+                    30L,
+                    TimeUnit.SECONDS
+                )
+                .build()
 
             val enqueued = SafeWorkManager.enqueueUniqueWork(
                 appContext,

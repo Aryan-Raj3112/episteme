@@ -63,8 +63,8 @@ android {
         applicationId = "com.aryan.reader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 61
-        versionName = "1.0.56"
+        versionCode = 62
+        versionName = "1.0.57"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {

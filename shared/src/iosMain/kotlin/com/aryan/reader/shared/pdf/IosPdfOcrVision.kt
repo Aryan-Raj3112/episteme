@@ -114,7 +114,12 @@ private data class IosPdfOcrCacheKey(
     val languages: List<String>,
 )
 
-/** Bounded OCR cache shared by selection, TTS, and search so scanned pages are recognized once. */
+/**
+ * Two-tier OCR cache shared by selection, TTS, and search: an in-memory LRU
+ * for the active session plus the cross-session disk store
+ * ([IosPdfOcrTextStore]), mirroring Android's Room FTS persistence where
+ * recognized page text survives app restarts.
+ */
 internal object IosPdfOcrPageCache {
     private const val MaxEntries = 24
     private val mutex = Mutex()
@@ -128,12 +133,14 @@ internal object IosPdfOcrPageCache {
     ): List<IosPdfOcrWord> {
         val rawPath = path?.trim()?.takeIf { it.isNotBlank() } ?: return emptyList()
         val resolvedPath = resolveIosPdfPath(rawPath)
+        val revision = iosPdfFileRevision(resolvedPath)
+        val distinctLanguages = languages.distinct()
         val key = IosPdfOcrCacheKey(
             path = resolvedPath,
-            fileRevision = iosPdfFileRevision(resolvedPath),
+            fileRevision = revision,
             pageIndex = pageIndex,
             passwordHash = password?.hashCode() ?: 0,
-            languages = languages.distinct(),
+            languages = distinctLanguages,
         )
         mutex.withLock {
             entries[key]?.let {
@@ -141,17 +148,37 @@ internal object IosPdfOcrPageCache {
                 return it
             }
         }
+        // Cross-session tier: text recognized in a previous session. The disk
+        // store lives in this app's sandbox, so password is not part of its
+        // key; loadPage validates revision + languages.
+        IosPdfOcrTextStore.loadPage(resolvedPath, revision, distinctLanguages, pageIndex)
+            ?.let { stored ->
+                mutex.withLock {
+                    entries[key] = stored
+                    while (entries.size > MaxEntries) entries.remove(entries.keys.first())
+                }
+                IosPdfOcrMetrics.recordCacheHit()
+                return stored
+            }
         val startedAt = kotlin.time.TimeSource.Monotonic.markNow()
-        val recognized = recognizeIosPdfPageWords(resolvedPath, pageIndex, password, languages)
+        val recognized = recognizeIosPdfPageWords(resolvedPath, pageIndex, password, distinctLanguages)
         IosPdfOcrMetrics.recordRecognition(startedAt.elapsedNow().inWholeMilliseconds)
         mutex.withLock {
             entries[key] = recognized
             while (entries.size > MaxEntries) entries.remove(entries.keys.first())
         }
+        if (recognized.isNotEmpty()) {
+            IosPdfOcrTextStore.savePage(
+                resolvedPath, revision, distinctLanguages, pageIndex, recognized
+            )
+            IosPdfOcrTextStore.flush(resolvedPath)
+        }
         return recognized
     }
 
-    suspend fun clear() = mutex.withLock { entries.clear() }
+    suspend fun clear() {
+        mutex.withLock { entries.clear() }
+    }
 }
 
 /** Lightweight diagnostics for simulator/device profiling without per-frame log spam. */
@@ -234,13 +261,37 @@ private fun ByteArray.toVisionImage(width: Int, height: Int, stride: Int): CGIma
     )
 }
 
+/**
+ * Vision reports region-qualified codes (`en-US`) on current releases and bare
+ * primaries (`en`) on older ones, so a requested code survives when its primary
+ * language matches a supported entry either way.
+ */
+internal fun filterIosVisionLanguages(
+    requested: List<String>,
+    supported: Set<String>,
+): List<String> {
+    if (supported.isEmpty()) return requested
+    val supportedPrimaries = supported.map { it.primaryLanguageCode() }.toSet()
+    return requested.filter { it.primaryLanguageCode() in supportedPrimaries }
+}
+
+private fun String.primaryLanguageCode(): String =
+    substringBefore('-').lowercase()
+
 private fun recognizeIosPdfWords(
     image: CGImageRef,
     languages: List<String>,
 ): List<IosPdfOcrWord> {
     val request = VNRecognizeTextRequest(null)
     request.recognitionLevel = VNRequestTextRecognitionLevelAccurate
-    languages.takeIf { it.isNotEmpty() }?.let { request.recognitionLanguages = it }
+    // ML Kit v2 on Android applies its language model's correction by default;
+    // match that so copied/searched text parity holds across platforms.
+    request.usesLanguageCorrection = true
+    // Vision degrades on unsupported codes such as `hi-IN` (no Devanagari
+    // model). Keep only codes the live engine supports; if none survive, leave
+    // Vision's device defaults in place instead of passing an empty list.
+    val requested = filterIosVisionLanguages(languages, supportedIosVisionLanguages())
+    if (requested.isNotEmpty()) request.recognitionLanguages = requested
     val handler = VNImageRequestHandler(image, emptyMap<Any?, Any>())
     runCatching { handler.performRequests(listOf<VNRequest>(request), null) }.getOrElse { return emptyList() }
     return request.results.orEmpty().mapNotNull { observation ->

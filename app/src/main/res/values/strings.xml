@@ -202,9 +202,9 @@
     <string name="drawer_sign_in">Sign in with Google</string>
     <string name="drawer_by_signing_in">By signing in,</string>
     <!-- "Episteme Pro" is a product tier name — do not translate "Episteme". -->
-    <string name="drawer_pro_unlocked">Episteme Pro</string>
+    <string name="drawer_pro_unlocked">Episteme Pro and Credits</string>
     <!-- "Episteme Pro" is a product tier name — do not translate "Episteme". -->
-    <string name="drawer_upgrade_pro">Upgrade to Episteme Pro</string>
+    <string name="drawer_upgrade_pro">Episteme Pro and Credits</string>
     <string name="drawer_sync_library">Sync Library</string>
     <string name="drawer_folder_sync">Folder sync</string>
     <string name="drawer_folder_sync_desc">Choose which folders are backed up to Drive.</string>
@@ -415,7 +415,7 @@
     <string name="upgrade_unavailable">Upgrade currently unavailable. Please check your internet and try again.</string>
     <!-- "Google" is a brand name. "Episteme Pro" is the product tier name — do not translate "Episteme". -->
     <string name="sign_in_to_purchase">Please sign in to your Google account to purchase Episteme Pro.</string>
-    <string name="sign_in_to_purchase_credits">Please sign in to your Google account to purchase credits.</string>
+    <string name="sign_in_to_purchase_credits">Please sign in to your Google account to top up your wallet.</string>
     <!-- Progress note shown while Google Play verifies a purchase; reassures the user no action is needed. -->
     <string name="verifying_purchase_desc">This may take a few moments. Your Pro status will be updated automatically.</string>
     <!-- "Pro" refers to the Episteme Pro product tier. -->
@@ -572,6 +572,8 @@
     <string name="debug_show_device_management" translatable="false">[Debug] Show Device Management</string>
     <!-- Debug-only menu item, not shown to regular users. -->
     <string name="debug_clear_cloud_local_data" translatable="false">[Debug] Clear Cloud &amp; Local Data</string>
+    <!-- Debug-only menu item, not shown to regular users. -->
+    <string name="debug_show_fps_overlay" translatable="false">[Debug] Show FPS overlay</string>
     <!-- Debug overlay showing frames per second. %1$d = integer FPS value. Not shown to regular users. Example: "FPS: 60". -->
     <string name="debug_fps" translatable="false">FPS: %1$d</string>
     <string name="error_folder_selection_unsupported">Your device doesn\'t support folder selection. You can still import files individually.</string>
@@ -840,7 +842,7 @@
     <string name="action_learn_more">Learn More</string>
     <string name="ai_unlock_smart_dict">Unlock Smart Dictionary</string>
     <!-- "Pro" refers to the Episteme Pro product tier. -->
-    <string name="ai_unlock_smart_dict_desc">Defining entire phrases and paragraphs up to 2000 characters is a Pro feature. Upgrade to get instant definitions for any selected text.</string>
+    <string name="ai_unlock_smart_dict_desc">Smart Dictionary gives instant AI definitions for any selected text. It is a Pro feature — upgrade to start using it.</string>
 
     <!-- EpubReaderAnnotations.kt -->
     <string name="content_desc_bookmark_icon">Bookmark</string>
@@ -1644,6 +1646,7 @@
     <string name="tts_offline">Offline</string>
     <string name="tts_voice_filter">Voice Filter</string>
     <string name="tts_no_audio_cached_for_voice">No audio cached for this voice.</string>
+    <string name="tts_no_cloud_voices">No cloud voices available right now. Check your connection or API key.</string>
     <!-- Button label. %1$s = selected cloud TTS voice identifier. Example: "Clear Cache for Kore". -->
     <string name="tts_clear_cache_for_voice">Clear Cache for %1$s</string>
     <string name="tts_voice_sample_generic">This is a voice sample.</string>
@@ -1675,23 +1678,32 @@
     <string name="ai_output_title">AI Output</string>
     <string name="ai_regenerate">Regenerate</string>
     <string name="ai_no_cached_summaries">No cached summaries for this book.</string>
-    <string name="credits_tab">Credits</string>
-    <string name="credits_title">AI &amp; Cloud Credits</string>
-    <string name="credits_available">Credits Available</string>
+    <string name="credits_tab">Wallet</string>
+    <string name="credits_title">AI &amp; Cloud Wallet</string>
+    <string name="credits_available">Balance Available</string>
     <!-- Compact account badge. %1$d = remaining credit count. Example: "42 Credits". -->
     <string name="credits_count">%1$d Credits</string>
+    <!-- Compact wallet badge. %1$s = formatted USD balance. Example: "$10.25". -->
+    <string name="wallet_balance">%1$s</string>
+    <string name="banner_balance_added">Balance added!</string>
     <string name="credits_estimated_cost_breakdown">Estimated Cost Breakdown</string>
     <string name="credits_cloud_tts_title">Cloud TTS</string>
     <!-- Cloud TTS credits card. Two paragraphs: cost per minute, then where to enable it — localize the navigation path to match the UI. -->
-    <string name="credits_cloud_tts_desc">Cost: ~3–4 credits per minute of audio generated.\nTo enable: Reader Screen &gt; More &gt; TTS Voice Settings.</string>
+    <string name="credits_cloud_tts_desc">Cost: ~$0.04 per minute of audio generated.\nTo enable: Reader Screen &gt; More &gt; TTS Voice Settings.</string>
     <string name="credits_ai_summaries_title">AI Summaries &amp; Recap</string>
     <!-- AI summaries credits card. Two paragraphs: cost per request (varies with chapter length), then the free daily allowance for Pro users. -->
-    <string name="credits_ai_summaries_desc">Cost: ~1–4 credits per request based on chapter length.\nPro Users get 10 free summaries daily.</string>
+    <string name="credits_ai_summaries_desc">Cost: a few cents per request based on chapter length.\nPro Users get 10 free summaries daily.</string>
     <string name="legal_by_purchasing">By purchasing,</string>
-    <string name="dialog_out_of_credits_title">Out of Credits</string>
+    <string name="dialog_out_of_credits_title">Out of Balance</string>
     <!-- Paywall dialog when out of credits: names what credits unlock (Summaries, Cloud TTS, Story Recap) and the free daily allowance with Pro. -->
-    <string name="dialog_out_of_credits_desc">You don\'t have enough credits. Get Episteme Pro for 10 free Summaries per day, or add more credits to use Summaries, Cloud TTS and Story Recap.</string>
-    <string name="action_get_pro_or_add_credits">Get Pro / Add Credits</string>
+    <string name="dialog_out_of_credits_desc">You don\'t have enough balance. Get Episteme Pro for 10 free Summaries per day, or top up your wallet to use Summaries, Cloud TTS and Story Recap.</string>
+    <string name="snackbar_rate_limited_retry">Slowing down to protect the service — retrying in %1$s…</string>
+    <string name="dialog_daily_spend_limit_title">Daily spending cap reached</string>
+    <string name="dialog_daily_spend_limit_desc">This safety cap protects your wallet from runaway or fraudulent spend. Balance: %1$s. Resets in %2$s.</string>
+    <string name="tts_notice_rate_limited">Slowing down — retrying in %1$s…</string>
+    <string name="tts_notice_spend_limit">Daily cap reached — resets in %1$s</string>
+    <string name="tts_session_spend">This session %1$s • ~$0.04/min</string>
+    <string name="action_get_pro_or_add_credits">Get Pro / Top Up</string>
     <string name="dialog_unlock_page_summarization">Unlock Page Summarization</string>
     <!-- Paywall dialog for page summarization: short benefit statement plus upgrade call to action. -->
     <string name="dialog_unlock_page_summarization_desc">Get concise summaries of any page with Episteme Pro. Upgrade to start using this feature.</string>
@@ -1719,6 +1731,10 @@
     <string name="content_desc_close_image">Close Image</string>
     <string name="content_desc_toggle_search_highlights">Toggle search highlights</string>
     <string name="content_desc_drag_text_box">Drag to move text box</string>
+    <string name="textbox_menu_delete">Delete text box</string>
+    <string name="textbox_menu_duplicate">Duplicate text box</string>
+    <string name="textbox_menu_lock">Lock text box position and size</string>
+    <string name="textbox_menu_unlock">Unlock text box position and size</string>
     <string name="content_desc_no_files_icon">No files icon</string>
     <!-- Accessibility label. %1$s = visible field label being copied. Example: "Copy Title". -->
     <string name="content_desc_copy_value">Copy %1$s</string>
@@ -1802,6 +1818,8 @@
     <string name="provider_gemini" translatable="false">Gemini</string>
     <!-- Provider/product name. Do not translate. -->
     <string name="provider_groq" translatable="false">Groq</string>
+    <!-- Provider/product name. Do not translate. -->
+    <string name="provider_fish" translatable="false">Fish Audio</string>
     <!-- AI = Artificial Intelligence. Keep the acronym "AI" as-is. -->
     <string name="ai_definition_title">AI Definition</string>
     <!-- Chapter label. %1$d = 1-indexed chapter number. Example: "Chapter 4". -->
@@ -1892,7 +1910,7 @@
     <string name="ai_settings_recaps">Recaps</string>
     <string name="ai_settings_recaps_desc">Used for story recap generation.</string>
     <!-- TTS = Text-to-Speech. Gemini is a provider name. %1$s = exact model identifier; do not translate the inserted value. Example: "Uses the saved Gemini key. Only gemini-2.5-flash-preview-tts is supported for now." -->
-    <string name="ai_settings_cloud_tts_desc">Uses the saved Gemini key. Only %1$s is supported for now.</string>
+    <string name="ai_settings_cloud_tts_desc">Uses your saved Gemini or Fish Audio key. Gemini offers proper text-to-speech models; Fish Audio uses your own voices.</string>
     <!-- Provider key confirmation title. %1$s = provider name, such as Gemini or Groq. Example: "Save Gemini key?" -->
     <string name="dialog_save_provider_key">Save %1$s key?</string>
     <!-- Shown after saving an AI API key: only first 3 and last 3 characters stay visible; to change it, replace or delete it. -->
@@ -1906,6 +1924,7 @@
     <string name="content_desc_delete_provider_key">Delete %1$s key</string>
     <string name="label_model">Model</string>
     <string name="ai_settings_no_model_selected">No model selected</string>
+    <string name="ai_settings_no_fish_voices">No Fish voices found. Save a Fish API key and create voices at fish.audio.</string>
     <string name="options_show_ai_in_reader">Show AI in reader</string>
     <string name="options_hide_ai_in_reader">Hide AI in reader</string>
 
@@ -2274,8 +2293,8 @@
     <string name="desktop_pro_required">Pro required</string>
     <!-- Desktop notice for a Pro-gated feature: purchase on Android, then sign in on desktop to use it. -->
     <string name="desktop_pro_required_generic_feature_desc">This feature requires Pro. Pro can only be purchased from the Android app, then desktop will use the upgraded account after sign-in.</string>
-    <!-- Desktop notice: the multi-word smart dictionary needs Pro; purchase on Android, then sign in on desktop. -->
-    <string name="desktop_pro_required_multi_word_dictionary_desc">Multi-word smart dictionary requires Pro. Pro can only be purchased from the Android app, then desktop will use the upgraded account after sign-in.</string>
+    <!-- Desktop notice: the smart dictionary needs Pro; purchase on Android, then sign in on desktop. -->
+    <string name="desktop_pro_required_multi_word_dictionary_desc">Smart dictionary requires Pro. Pro can only be purchased from the Android app, then desktop will use the upgraded account after sign-in.</string>
     <string name="desktop_reader_ai_hidden_desc">Reader AI features are hidden.</string>
     <string name="desktop_ai_not_configured_desc">Desktop AI is not configured for this build.</string>
     <string name="desktop_remove_gap_between_pages_desc">Applies to vertical reading and two-page spreads.</string>
@@ -2289,7 +2308,7 @@
     <string name="desktop_selected_annotation_format">Selected %1$s</string>
     <string name="desktop_show_search_results">Show search results</string>
     <string name="desktop_sign_in_required_generic_feature_desc">Sign in with Google to use this feature on desktop.</string>
-    <string name="desktop_sign_in_required_multi_word_dictionary_desc">Sign in with Google to use multi-word smart dictionary on desktop.</string>
+    <string name="desktop_sign_in_required_multi_word_dictionary_desc">Sign in with Google to use smart dictionary on desktop.</string>
     <string name="desktop_sign_in_required_recaps_desc">Sign in with Google to use recaps on desktop.</string>
     <string name="desktop_sign_in_required_summaries_desc">Sign in with Google to use summaries on desktop.</string>
     <string name="desktop_stopped">Stopped</string>
@@ -2653,4 +2672,10 @@
     <string name="content_desc_save_or_share_image">Save or share image</string>
     <!-- %1$s = the external URL the reader wants to open. -->
     <string name="dialog_external_link_message">You clicked on an external link:\n\n%1$s\n\nWhat would you like to do?</string>
+    <string name="dialog_legacy_page_text_title">Word-like text annotations removed</string>
+    <!-- %1$d = number of pages carrying legacy page text. Example: "Word-like text annotations are retired — only text boxes are available now. …". -->
+    <string name="dialog_legacy_page_text_desc">Word-like text annotations are retired — only text boxes are available now. Convert the legacy text on %1$d pages into text boxes? Alignment and lists carry over; mixed styles collapse to the dominant style.</string>
+    <!-- %1$d = number of pages carrying legacy page text. Example: "Only text boxes are available now — convert legacy text on 3 pages?". -->
+    <string name="banner_legacy_page_text">Only text boxes are available now — convert legacy text on %1$d pages?</string>
+    <string name="action_convert_to_text_boxes">Convert</string>
 </resources>

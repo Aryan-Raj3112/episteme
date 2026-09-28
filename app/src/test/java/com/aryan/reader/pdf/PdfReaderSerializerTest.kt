@@ -11,6 +11,9 @@ import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.TextBoxSerializer
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationComment
+import com.aryan.reader.shared.pdf.SharedPdfRichListType
+import com.aryan.reader.shared.pdf.SharedPdfRichParagraph
+import com.aryan.reader.shared.pdf.SharedPdfRichTextAlign
 import com.aryan.reader.shared.pdf.SharedPdfTextAnnotationDefaults
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -224,6 +227,33 @@ class PdfReaderSerializerTest {
     }
 
     @Test
+    fun `TextBoxSerializer round trips alignment and list paragraphs`() {
+        val boxes = listOf(
+            PdfTextBox(
+                id = "para-box",
+                pageIndex = 0,
+                relativeBounds = Rect(0f, 0f, 0.4f, 0.1f),
+                text = "• a\n1. b",
+                color = Color.Black,
+                backgroundColor = Color.Transparent,
+                fontSize = 16f,
+                paragraphs = listOf(
+                    SharedPdfRichParagraph(
+                        alignment = SharedPdfRichTextAlign.CENTER,
+                        listType = SharedPdfRichListType.BULLET
+                    ),
+                    SharedPdfRichParagraph(listType = SharedPdfRichListType.NUMBERED),
+                )
+            )
+        )
+
+        val decoded = TextBoxSerializer.fromJson(TextBoxSerializer.toJson(boxes)).single()
+
+        assertEquals("• a\n1. b", decoded.text)
+        assertEquals(boxes.single().paragraphs, decoded.paragraphs)
+    }
+
+    @Test
     fun `TextBoxSerializer preserves legacy compact JSON byte shape`() {
         val json = TextBoxSerializer.toJson(
             listOf(
@@ -243,6 +273,48 @@ class PdfReaderSerializerTest {
             "[{\"id\":\"shape\",\"pageIndex\":1,\"text\":\"Text\",\"color\":-16777216,\"backgroundColor\":0,\"fontSize\":16.0,\"isBold\":false,\"isItalic\":false,\"isUnderline\":false,\"isStrikeThrough\":false,\"bounds\":{\"left\":0.0,\"top\":0.25,\"right\":1.0,\"bottom\":0.5}}]",
             json,
         )
+    }
+
+    @Test
+    fun `TextBoxSerializer round trips lock flag and omits it when unlocked`() {
+        val locked = TextBoxSerializer.toJson(
+            listOf(
+                PdfTextBox(
+                    id = "locked-box",
+                    pageIndex = 0,
+                    relativeBounds = Rect(0f, 0f, 0.5f, 0.25f),
+                    text = "Locked",
+                    color = Color.Black,
+                    backgroundColor = Color.Transparent,
+                    fontSize = 14f,
+                    isLocked = true,
+                )
+            )
+        )
+
+        // The flag is only written when true, so locked boxes round-trip and
+        // pre-lock sidecars stay byte-compatible.
+        assertTrue(locked.contains("\"isLocked\":true"))
+
+        val decodedLocked = TextBoxSerializer.fromJson(locked).single()
+        assertTrue(decodedLocked.isLocked)
+
+        // Unlocked boxes must stay byte-identical to pre-lock sidecars.
+        val unlockedJson = TextBoxSerializer.toJson(
+            listOf(
+                PdfTextBox(
+                    id = "shape",
+                    pageIndex = 1,
+                    relativeBounds = Rect(0f, 0.25f, 1f, 0.5f),
+                    text = "Text",
+                    color = Color.Black,
+                    backgroundColor = Color.Transparent,
+                    fontSize = 16f,
+                )
+            )
+        )
+        assertFalse(unlockedJson.contains("isLocked"))
+        assertFalse(TextBoxSerializer.fromJson(unlockedJson).single().isLocked)
     }
 
     @Test

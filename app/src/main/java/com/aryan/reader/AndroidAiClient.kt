@@ -39,6 +39,8 @@ import timber.log.Timber
 import java.net.HttpURLConnection
 import java.net.URL
 
+private const val AI_DEFINE_SYSTEM_INSTRUCTION = "You are an AI-powered dictionary. Your goal is to provide a concise and easy-to-understand definition for the given word, phrase or paragraphs. Keep the explanation brief. Respond only with the definition text, without any preamble. Do not send your thoughts, only the final definition you arrived on. no emoji."
+
 suspend fun fetchAiDefinition(
     text: String,
     context: Context,
@@ -61,11 +63,28 @@ suspend fun fetchAiDefinition(
             onFinish()
             return
         }
-        val systemInstruction = "You are an AI-powered dictionary. Your goal is to provide a concise and easy-to-understand definition for the given word, phrase or paragraphs. Keep the explanation brief. Respond only with the definition text, without any preamble. Do not send your thoughts, only the final definition you arrived on. no emoji."
+        val systemInstruction = AI_DEFINE_SYSTEM_INSTRUCTION
         callByokTextAi(
             context = context,
             feature = AiFeature.DEFINE,
             systemInstruction = systemInstruction,
+            userPrompt = "Define: \"$text\"",
+            temperature = 0.1,
+            maxTokens = 256,
+            onUpdate = onUpdate,
+            onError = onError
+        )
+        onFinish()
+        return
+    }
+
+    // Pro parity with iOS: a configured BYOK model+key for definitions
+    // bypasses the credited worker for this request.
+    if (isByokModelReady(context, AiFeature.DEFINE)) {
+        callByokTextAi(
+            context = context,
+            feature = AiFeature.DEFINE,
+            systemInstruction = AI_DEFINE_SYSTEM_INSTRUCTION,
             userPrompt = "Define: \"$text\"",
             temperature = 0.1,
             maxTokens = 256,
@@ -87,6 +106,8 @@ suspend fun fetchAiDefinition(
             if (authToken != null) {
                 connection.setRequestProperty("Authorization", "Bearer $authToken")
             }
+            // Attestation (omitted when unavailable; the server logs the miss).
+            appCheckHeaderMap().forEach { (name, value) -> connection.setRequestProperty(name, value) }
             connection.connectTimeout = 10000
             connection.readTimeout = 30000
             connection.doOutput = true
@@ -98,8 +119,14 @@ suspend fun fetchAiDefinition(
             }
 
             val responseCode = connection.responseCode
-            if (responseCode == 402) {
-                onError("INSUFFICIENT_CREDITS")
+            if (responseCode == 402 || responseCode == 429) {
+                val errorBody = try {
+                    connection.errorStream?.bufferedReader()?.use { it.readText() }
+                } catch (_: Exception) { null }
+                onError(
+                    com.aryan.reader.epubreader.mapAiHttpError(responseCode, errorBody)
+                        ?: "INSUFFICIENT_CREDITS"
+                )
                 onFinish()
                 return@withContext
             }
@@ -118,7 +145,7 @@ suspend fun fetchAiDefinition(
                                 hasReceivedData = true
                             }
                             jsonResponse.optString("error").takeIf { it.isNotEmpty() }?.let {
-                                onError(it)
+                                onError(com.aryan.reader.epubreader.mapAiStreamError(jsonResponse))
                             }
                         } catch (e: Exception) {
                             Timber.w(e, "Could not parse stream line: $line")
@@ -549,6 +576,24 @@ object MarkdownParser {
     }
 }
 
+private fun recapByokPrompts(pastSummaries: List<String>, currentText: String): Pair<String, String> {
+    val systemInstruction = "You are a sophisticated reading assistant. You have to create a recap. Synthesize the provided past context and current chapter text into a cohesive summary of the reading session so far. Conclude exactly where the user is positioned currently. Do not add a preamble. Also Avoid including or mentioning text from administrative or boilerplate sections such as the introduction, copyright pages, preface, or table of contents; focus strictly on the core story or informative content. If the the book has multiple different short stories that came before then summarize them too, its a recap of the whole book up to this point."
+    val promptContext = buildString {
+        append("--- PREVIOUS CONTEXT (Summaries of read chapters) ---\n")
+        if (pastSummaries.isEmpty()) {
+            append("(None - User is in the first chapter)\n")
+        } else {
+            pastSummaries.forEachIndexed { index, summary ->
+                append("Chapter ${index + 1}: $summary\n\n")
+            }
+        }
+        append("\n--- CURRENT SESSION (Text read in current chapter) ---\n")
+        append(currentText)
+        append("\n\nBased strictly on the above, provide a recap of the content read so far.")
+    }
+    return systemInstruction to promptContext
+}
+
 suspend fun fetchRecap(
     pastSummaries: List<String>,
     currentText: String,
@@ -572,20 +617,25 @@ suspend fun fetchRecap(
             onFinish()
             return
         }
-        val systemInstruction = "You are a sophisticated reading assistant. You have to create a recap. Synthesize the provided past context and current chapter text into a cohesive summary of the reading session so far. Conclude exactly where the user is positioned currently. Do not add a preamble. Also Avoid including or mentioning text from administrative or boilerplate sections such as the introduction, copyright pages, preface, or table of contents; focus strictly on the core story or informative content. If the the book has multiple different short stories that came before then summarize them too, its a recap of the whole book up to this point."
-        val promptContext = buildString {
-            append("--- PREVIOUS CONTEXT (Summaries of read chapters) ---\n")
-            if (pastSummaries.isEmpty()) {
-                append("(None - User is in the first chapter)\n")
-            } else {
-                pastSummaries.forEachIndexed { index, summary ->
-                    append("Chapter ${index + 1}: $summary\n\n")
-                }
-            }
-            append("\n--- CURRENT SESSION (Text read in current chapter) ---\n")
-            append(currentText)
-            append("\n\nBased strictly on the above, provide a recap of the content read so far.")
-        }
+        val (systemInstruction, promptContext) = recapByokPrompts(pastSummaries, currentText)
+        callByokTextAi(
+            context = context,
+            feature = AiFeature.RECAP,
+            systemInstruction = systemInstruction,
+            userPrompt = promptContext,
+            temperature = 0.3,
+            maxTokens = 4096,
+            onUpdate = onUpdate,
+            onError = onError
+        )
+        onFinish()
+        return
+    }
+
+    // Pro parity with iOS: a configured BYOK model+key for recaps
+    // bypasses the credited worker for this request.
+    if (isByokModelReady(context, AiFeature.RECAP)) {
+        val (systemInstruction, promptContext) = recapByokPrompts(pastSummaries, currentText)
         callByokTextAi(
             context = context,
             feature = AiFeature.RECAP,
@@ -611,6 +661,8 @@ suspend fun fetchRecap(
             if (authToken != null) {
                 connection.setRequestProperty("Authorization", "Bearer $authToken")
             }
+            // Attestation (omitted when unavailable; the server logs the miss).
+            appCheckHeaderMap().forEach { (name, value) -> connection.setRequestProperty(name, value) }
             connection.connectTimeout = 15000
             connection.readTimeout = 120000
             connection.doOutput = true
@@ -626,8 +678,14 @@ suspend fun fetchRecap(
             }
 
             val responseCode = connection.responseCode
-            if (responseCode == 402) {
-                onError("INSUFFICIENT_CREDITS")
+            if (responseCode == 402 || responseCode == 429) {
+                val errorBody = try {
+                    connection.errorStream?.bufferedReader()?.use { it.readText() }
+                } catch (_: Exception) { null }
+                onError(
+                    com.aryan.reader.epubreader.mapAiHttpError(responseCode, errorBody)
+                        ?: "INSUFFICIENT_CREDITS"
+                )
                 onFinish()
                 return@withContext
             }
@@ -646,7 +704,7 @@ suspend fun fetchRecap(
                                 hasReceivedData = true
                             }
                             jsonResponse.optString("error").takeIf { it.isNotEmpty() }?.let {
-                                onError(it)
+                                onError(com.aryan.reader.epubreader.mapAiStreamError(jsonResponse))
                             }
                         } catch (e: Exception) {
                             Timber.w(e, "Could not parse stream line: $line")

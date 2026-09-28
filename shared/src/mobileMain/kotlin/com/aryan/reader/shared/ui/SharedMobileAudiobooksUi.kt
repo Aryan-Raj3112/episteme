@@ -56,6 +56,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Sort
@@ -1832,6 +1833,9 @@ fun SharedMobileTtsPlayerSheet(
     onCustomSleepTimerMinutesChange: (List<Int>) -> Unit = {},
     onStopPlayback: () -> Unit,
     onDismiss: () -> Unit,
+    // Platform voice-settings opener (Android TtsSettingsSheet, iOS settings
+    // UI). Null hides the menu entry; Listen keeps its own independent voice.
+    onOpenVoiceSettings: (() -> Unit)? = null,
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var showSpeedDialog by remember { mutableStateOf(false) }
@@ -1890,6 +1894,16 @@ fun SharedMobileTtsPlayerSheet(
                         Icon(Icons.Default.MoreVert, contentDescription = readerString("content_desc_more_options", "More options"))
                     }
                     DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                        if (onOpenVoiceSettings != null) {
+                            DropdownMenuItem(
+                                text = { Text(readerString("menu_tts_voice_settings", "TTS Voice Settings")) },
+                                leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                                onClick = {
+                                    showMenu = false
+                                    onOpenVoiceSettings()
+                                },
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text(readerString("audiobooks_stop_playback", "Stop playback")) },
                             leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },

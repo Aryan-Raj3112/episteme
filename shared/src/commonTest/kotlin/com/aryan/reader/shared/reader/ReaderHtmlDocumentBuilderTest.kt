@@ -63,6 +63,23 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `default alignment renders left and only explicit justify hyphenates`() {
+        val defaultHtml = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(),
+        )
+        assertTrue(defaultHtml.contains("--reader-align: left;"))
+        assertFalse(defaultHtml.contains("-webkit-hyphens: auto !important;"))
+
+        val justifiedHtml = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(textAlign = SharedReaderTextAlign.JUSTIFY),
+        )
+        assertTrue(justifiedHtml.contains("--reader-align: justify;"))
+        assertTrue(justifiedHtml.contains("-webkit-hyphens: auto !important;"))
+    }
+
+    @Test
     fun `reader documents neutralize publication root height rules in both reading modes`() {
         val verticalHtml = ReaderHtmlDocumentBuilder.verticalDocument(
             book = repeatedWordBook("alpha beta"),
@@ -828,9 +845,10 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("""data-action="palette""""))
         assertTrue(html.contains("""aria-label="Search""""))
         assertTrue(html.contains("""<svg viewBox="0 0 960 960""""))
-        assertTrue(html.contains("""data-action="dictionary""""))
+        // Temporary: single Define entry only, no separate Dictionary button.
+        assertFalse(html.contains("""data-action="dictionary""""))
         assertTrue(html.contains("""data-action="translate""""))
-        assertTrue(html.contains("sendSelectionAction('dictionary', text)"))
+        assertFalse(html.contains("sendSelectionAction('dictionary', text)"))
         assertTrue(html.contains("sendSelectionAction('translate', text)"))
         assertTrue(html.contains("""data-action="note""""))
         assertTrue(html.contains("sendSelectionAction('note', text)"))
@@ -1777,6 +1795,25 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `selection shift diagnostics share one tag and bridge method`() {
+        val navigation = readerHtmlNavigationScript("[]")
+        assertTrue(navigation.contains("SEL_SHIFT"))
+        assertTrue(navigation.contains("readerSelectionShiftLog"))
+        assertTrue(navigation.contains("readerSelectionShiftSummary"))
+        assertTrue(navigation.contains("vvScale"))
+        assertTrue(navigation.contains("readerSelectionShiftDuplicates"))
+        assertTrue(navigation.contains("readerSelectionShiftHitTest"))
+        assertTrue(navigation.contains("readerSelectionShiftComputed"))
+        assertTrue(navigation.contains("letter-spacing"))
+        val selection = readerHtmlSelectionScript()
+        assertTrue(selection.contains("readerSelectionShiftLog('menu'"))
+        assertTrue(selection.contains("readerSelectionShiftLog('restore'"))
+        assertTrue(selection.contains("readerSelectionShiftLog('handledrag'"))
+        assertTrue(selection.contains("readerSelectionShiftLog('handles'"))
+        assertTrue(selection.contains("nativeHandles="))
+    }
+
+    @Test
     fun `user highlights paint without dom mutation when registry supported`() {
         val annotation = readerHtmlAnnotationScript()
         assertTrue(annotation.contains("window.CSS.highlights"))
@@ -1806,6 +1843,18 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(annotation.contains("apply_create"))
         assertTrue(annotation.contains("reconcile_before"))
         assertTrue(annotation.contains("reconcile_after"))
+    }
+
+    @Test
+    fun `selection clears on resume only when the platform opts in`() {
+        val annotation = readerHtmlAnnotationScript()
+        assertTrue(annotation.contains("readerIosClearsSelectionOnResume"))
+        assertTrue(annotation.contains("visibilitychange"))
+        // The clear runs unconditionally on becoming visible so stale WebKit
+        // selection paint (model already empty after resume) is dismissed too.
+        assertTrue(annotation.contains("if (selection) selection.removeAllRanges();"))
+        assertTrue(annotation.contains("savedRange = null;"))
+        assertTrue(annotation.contains("hideMenu();"))
     }
 
     @Test

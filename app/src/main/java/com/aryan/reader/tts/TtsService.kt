@@ -20,6 +20,7 @@
 package com.aryan.reader.tts
 
 import android.Manifest
+import com.aryan.reader.appCheckHeaderMap
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -47,7 +48,6 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.aryan.reader.R
 import com.aryan.reader.GEMINI_CLOUD_TTS_MODEL
-import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.loadAiByokSettings
 import com.aryan.reader.logMediaTransport
 import com.aryan.reader.pinPostedPlaybackNotification
@@ -76,6 +76,10 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.util.concurrent.TimeUnit
 import com.google.common.collect.ImmutableList
 import java.util.concurrent.CopyOnWriteArraySet
 import kotlin.time.Duration.Companion.milliseconds
@@ -87,8 +91,12 @@ data class TtsAudioData(
     val serverText: String?,
     val wordTimings: List<WordTimingInfo>?,
     val error: String? = null,
-    val streamUri: String? = null
+    val streamUri: String? = null,
+    val costMicros: Long = 0L
 )
+
+/** Carries a stable cloud error (e.g. INSUFFICIENT_CREDITS) through catch blocks. */
+class TtsCloudException(val ttsError: String) : Exception(ttsError)
 
 data class PageCharacterRange(
     val pageInChapter: Int,
@@ -272,6 +280,7 @@ const val EXTRA_BOOK_TTS_BOOK_ID = "book_tts_book_id"
 const val EXTRA_BOOK_TTS_START_POLICY = "book_tts_start_policy"
 const val EXTRA_BOOK_TTS_CHAPTER_INDEX = "book_tts_chapter_index"
 const val EXTRA_BOOK_TTS_SLEEP_MINUTES = "book_tts_sleep_minutes"
+const val EXTRA_BOOK_TTS_AUTH_TOKEN = "book_tts_auth_token"
 private const val TTS_NOTIFICATION_PREVIOUS_REQUEST_CODE = 4208
 private const val TTS_NOTIFICATION_NEXT_REQUEST_CODE = 4209
 
@@ -688,7 +697,8 @@ class TtsService : MediaSessionService() {
                         bookId = bookId,
                         startPolicy = intent.getStringExtra(EXTRA_BOOK_TTS_START_POLICY)
                             ?: BookTtsSessionCoordinator.START_RESUME,
-                        selectedChapterIndex = intent.getIntExtra(EXTRA_BOOK_TTS_CHAPTER_INDEX, -1).takeIf { it >= 0 }
+                        selectedChapterIndex = intent.getIntExtra(EXTRA_BOOK_TTS_CHAPTER_INDEX, -1).takeIf { it >= 0 },
+                        authToken = intent.getStringExtra(EXTRA_BOOK_TTS_AUTH_TOKEN)
                     )
                 }
                 return START_STICKY
@@ -958,6 +968,184 @@ class TtsService : MediaSessionService() {
         GeminiLiveClient(okHttpClient) { errorMsg ->
             if (::playbackManager.isInitialized) {
                 playbackManager.forceStopWithError(errorMsg)
+            }
+        }
+    }
+
+    // Stateless REST clients for the current (non-Live) Cloud TTS paths.
+    // Longer read timeout: one request synthesizes a whole chunk.
+    private val restHttpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .build()
+    }
+    private val fishRestClient by lazy { FishRestTtsClient(restHttpClient) }
+    private val geminiRestClient by lazy { GeminiRestTtsClient(restHttpClient) }
+
+    /**
+     * Fish Audio synthesis over plain HTTP. Two modes share the wire format:
+     * - credited Cloud TTS via the worker (POST {worker}/v2/tts, Firebase token)
+     * - BYOK via api.fish.audio directly (user's Fish key, `model` header)
+     * Returns raw mp3 bytes; callers run on Dispatchers.IO (blocking calls).
+     */
+    class FishRestTtsClient(private val client: OkHttpClient) {
+        data class Synthesis(
+            val audioBytes: ByteArray?,
+            val error: String?,
+            val costMicros: Long = 0L,
+            val retryAfterSeconds: Int = 0
+        )
+
+        private fun spendGuardSynthesis(code: Int, body: String): Synthesis {
+            val parsed = com.aryan.reader.shared.parseSpendGuardError(body)
+            if (parsed != null) {
+                return Synthesis(
+                    null,
+                    com.aryan.reader.shared.spendGuardSentinel(parsed.first, parsed.second),
+                    retryAfterSeconds = parsed.second
+                )
+            }
+            return Synthesis(null, "Fish TTS error $code")
+        }
+
+        private fun post(url: String, json: String, headers: Map<String, String>): Synthesis {
+            val body = json.toRequestBody("application/json".toMediaType())
+            val builder = Request.Builder().url(url).post(body)
+            headers.forEach { (name, value) -> builder.header(name, value) }
+            client.newCall(builder.build()).execute().use { response ->
+                if (response.code == 402) {
+                    val detail = runCatching { response.body?.string().orEmpty() }.getOrDefault("")
+                    if (detail.isBlank()) return Synthesis(null, "INSUFFICIENT_CREDITS")
+                    // 402 is either an empty wallet (legacy INSUFFICIENT_CREDITS)
+                    // or the daily spend fraud cap (DAILY_SPEND_LIMIT).
+                    val parsed = com.aryan.reader.shared.parseSpendGuardError(detail)
+                    if (parsed != null && parsed.first == "DAILY_SPEND_LIMIT") {
+                        return Synthesis(
+                            null,
+                            com.aryan.reader.shared.spendGuardSentinel(parsed.first, parsed.second),
+                            retryAfterSeconds = parsed.second
+                        )
+                    }
+                    return Synthesis(null, "INSUFFICIENT_CREDITS")
+                }
+                if (response.code == 429) {
+                    val detail = runCatching { response.body?.string().orEmpty() }.getOrDefault("")
+                    return spendGuardSynthesis(429, detail.ifBlank { "{\"error\":\"RATE_LIMITED\",\"retry_after_seconds\":30}" })
+                }
+                if (!response.isSuccessful) {
+                    val detail = runCatching { response.body?.string().orEmpty().take(300) }.getOrDefault("")
+                    Timber.tag("TTS_CLOUD_DIAG").e("Fish TTS failed HTTP ${response.code}: $detail")
+                    return Synthesis(null, "Fish TTS error ${response.code}")
+                }
+                // Per-chunk USD cost for the overlay session-spend line.
+                val costMicros = response.header("X-Tts-Cost-Micros")?.toLongOrNull() ?: 0L
+                val bytes = response.body?.bytes()
+                if (bytes == null || bytes.isEmpty()) return Synthesis(null, "Empty audio response")
+                return Synthesis(bytes, null, costMicros = costMicros)
+            }
+        }
+
+        fun synthesizeViaWorker(baseUrl: String, firebaseToken: String, text: String, voiceId: String): Synthesis {
+            val url = baseUrl.trimEnd('/') + fishWorkerTtsPath
+            val json = JSONObject().apply {
+                put("text", text)
+                put("voiceId", voiceId)
+                put("format", "mp3")
+                put("latency", "normal")
+            }.toString()
+            return post(url, json, mapOf("Authorization" to "Bearer $firebaseToken") + appCheckHeaderMap())
+        }
+
+        fun synthesizeSampleViaWorker(baseUrl: String, firebaseToken: String, text: String, voiceId: String): Synthesis {
+            val url = baseUrl.trimEnd('/') + fishWorkerTtsSamplePath
+            val json = JSONObject().apply {
+                put("text", text)
+                put("voiceId", voiceId)
+                put("format", "mp3")
+                put("latency", "balanced")
+            }.toString()
+            return post(url, json, mapOf("Authorization" to "Bearer $firebaseToken") + appCheckHeaderMap())
+        }
+
+        fun synthesizeViaByok(fishKey: String, text: String, referenceId: String): Synthesis {
+            val json = JSONObject().apply {
+                put("text", text)
+                put("reference_id", referenceId)
+                put("format", "mp3")
+                put("mp3_bitrate", 128)
+                put("normalize", true)
+                put("latency", "normal")
+                put("chunk_length", 300)
+                put("condition_on_previous_chunks", true)
+            }.toString()
+            return post(
+                fishDirectTtsUrl,
+                json,
+                mapOf("Authorization" to "Bearer $fishKey", "model" to FISH_BYOK_MODEL_HEADER)
+            )
+        }
+    }
+
+    /**
+     * Gemini proper (non-Live) TTS over REST (`:generateContent` with
+     * responseModalities AUDIO). BYOK only: called with the user's Gemini key.
+     * Returns wav bytes (PCM wrapped via the shared header helper).
+     */
+    class GeminiRestTtsClient(private val client: OkHttpClient) {
+        data class Synthesis(val wavBytes: ByteArray?, val error: String?)
+
+        fun synthesize(apiKey: String, model: String, voiceName: String, text: String): Synthesis {
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+            val json = JSONObject().apply {
+                put("contents", org.json.JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("parts", org.json.JSONArray().apply {
+                            put(JSONObject().apply { put("text", text) })
+                        })
+                    })
+                })
+                put("generationConfig", JSONObject().apply {
+                    put("responseModalities", org.json.JSONArray().apply { put("AUDIO") })
+                    put("speechConfig", JSONObject().apply {
+                        put("voiceConfig", JSONObject().apply {
+                            put("prebuiltVoiceConfig", JSONObject().apply { put("voiceName", voiceName) })
+                        })
+                    })
+                })
+            }.toString()
+            val body = json.toRequestBody("application/json".toMediaType())
+            client.newCall(Request.Builder().url(url).post(body).build()).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val detail = runCatching { response.body?.string().orEmpty().take(300) }.getOrDefault("")
+                    Timber.tag("TTS_CLOUD_DIAG").e("Gemini TTS failed HTTP ${response.code}: $detail")
+                    return Synthesis(null, "Gemini TTS error ${response.code}")
+                }
+                val responseJson = runCatching {
+                    JSONObject(response.body?.string().orEmpty())
+                }.getOrNull() ?: return Synthesis(null, "Bad Gemini TTS response")
+                val parts = responseJson.optJSONArray("candidates")
+                    ?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
+                    ?: return Synthesis(null, "No audio generated")
+                for (i in 0 until parts.length()) {
+                    val inline = parts.optJSONObject(i)?.optJSONObject("inlineData") ?: continue
+                    val b64 = inline.optString("data")
+                    if (b64.isBlank()) continue
+                    val pcm = try {
+                        android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                    } catch (_: Exception) {
+                        continue
+                    }
+                    val rate = Regex("rate=(\\d+)").find(inline.optString("mimeType"))?.groupValues
+                        ?.getOrNull(1)?.toIntOrNull() ?: 24000
+                    // 16-bit mono PCM is the documented Gemini TTS layout.
+                    val out = ByteArray(44 + pcm.size)
+                    createWavHeaderUnknownLength(rate).copyInto(out)
+                    pcm.copyInto(out, 44)
+                    return Synthesis(out, null)
+                }
+                return Synthesis(null, "No audio generated")
             }
         }
     }
@@ -1252,27 +1440,89 @@ class TtsService : MediaSessionService() {
             cacheManager.saveTotalChunks(bookTitle, chapterTitle, totalChunks)
             when (mode) {
                 TtsMode.CLOUD -> {
-                    val cachedFile = cacheManager.getCacheFile(bookTitle, chapterTitle, text, speaker, mode)
+                    val byok = loadAiByokSettings(this@TtsService)
+                    val useByokFish = byok.isFishByokTtsAvailable
+                    val useByokGemini = !useByokFish && byok.isGeminiRestByokTtsAvailable
+                    // Cache layout mirrors the legacy one; only the container
+                    // differs (mp3 for Fish REST, wav for Gemini REST).
+                    val extension = if (useByokGemini) "wav" else FISH_CLOUD_AUDIO_EXTENSION
+                    val effectiveVoice = if (useByokGemini) {
+                        speaker.takeIf { voice -> GEMINI_TTS_SPEAKERS.any { it.id == voice } }
+                            ?: DEFAULT_SPEAKER_ID
+                    } else {
+                        // Fish accepts UUID reference_ids and `fish-` catalog
+                        // aliases; anything else (e.g. a stale Gemini voice
+                        // name) falls back to the worker's default voice.
+                        speaker.takeIf { voice ->
+                            isFishReferenceId(voice) || voice.startsWith("fish-")
+                        } ?: "default"
+                    }
+                    val cachedFile = cacheManager.getCacheFile(
+                        bookTitle, chapterTitle, text, effectiveVoice, mode, extension
+                    )
+                    val minCachedBytes = if (extension == "mp3") 1024L else 44L
 
-                    if (cachedFile.exists() && cachedFile.length() > 44) {
+                    if (cachedFile.exists() && cachedFile.length() > minCachedBytes) {
                         Timber.tag("TTS_CLOUD_DIAG").i("Using cached audio for chunk $chunkIndex")
                         TtsAudioData(audioFile = cachedFile, serverText = text, wordTimings = emptyList(), error = null, streamUri = null)
                     } else {
                         try {
-                            val directGeminiApiKey = if (isByokCloudTtsAvailable(this@TtsService)) {
-                                loadAiByokSettings(this@TtsService).geminiKey
-                            } else {
-                                null
-                            }
-                            if (directGeminiApiKey.isNullOrBlank() && googleCloudWorkerTtsUrl.isBlank()) {
+                            val hasCreditBackend = googleCloudWorkerTtsUrl.isNotBlank()
+                            if (!useByokFish && !useByokGemini && !hasCreditBackend) {
                                 TtsAudioData(audioFile = null, serverText = null, wordTimings = null, error = getString(R.string.tts_error_cloud_not_configured))
                             } else {
-                                liveClient.ensureConnected(googleCloudWorkerTtsUrl, speaker, authToken, directGeminiApiKey)
-                                liveClient.generateChunk(text, cachedFile)
+                                var chunkCostMicros = 0L
+                                val synthesisBytes: ByteArray? = withContext(Dispatchers.IO) {
+                                    when {
+                                        useByokFish -> {
+                                            val result = fishRestClient.synthesizeViaByok(
+                                                byok.fishKey, text, effectiveVoice
+                                            )
+                                            if (result.error != null) throw TtsCloudException(result.error)
+                                            result.audioBytes
+                                        }
+                                        useByokGemini -> {
+                                            val result = geminiRestClient.synthesize(
+                                                byok.geminiKey, byok.ttsModel.substringAfter(':'),
+                                                effectiveVoice, text
+                                            )
+                                            if (result.error != null) throw TtsCloudException(result.error)
+                                            result.wavBytes
+                                        }
+                                        else -> {
+                                            val result = fishRestClient.synthesizeViaWorker(
+                                                googleCloudWorkerTtsUrl, authToken.orEmpty(),
+                                                text, effectiveVoice
+                                            )
+                                            if (result.error != null) throw TtsCloudException(result.error)
+                                            chunkCostMicros = result.costMicros
+                                            result.audioBytes
+                                        }
+                                    }
+                                }
+                                val bytes = synthesisBytes
+                                if (bytes == null || bytes.isEmpty()) {
+                                    TtsAudioData(audioFile = null, serverText = null, wordTimings = null, error = "Empty audio response")
+                                } else {
+                                    // Same temp-file + rename pattern as the
+                                    // legacy path so partial downloads never
+                                    // poison the cache.
+                                    val tempFile = File(cachedFile.absolutePath + ".tmp")
+                                    tempFile.writeBytes(bytes)
+                                    if (extension == "wav") {
+                                        patchWavHeader(tempFile, bytes.size - 44)
+                                    }
+                                    if (tempFile.renameTo(cachedFile)) {
+                                        Timber.tag("TTS_CLOUD_DIAG").d("Cached chunk $chunkIndex to ${cachedFile.name}")
+                                    }
+                                    TtsAudioData(audioFile = cachedFile, serverText = text, wordTimings = emptyList(), error = null, streamUri = null, costMicros = chunkCostMicros)
+                                }
                             }
                         } catch (e: Exception) {
                             Timber.tag("TTS_CLOUD_DIAG").e(e, "Cloud TTS generation failed")
-                            TtsAudioData(audioFile = null, serverText = null, wordTimings = null, error = e.message ?: "Failed to connect to TTS service")
+                            val message = (e as? TtsCloudException)?.ttsError
+                                ?: e.message ?: "Failed to connect to TTS service"
+                            TtsAudioData(audioFile = null, serverText = null, wordTimings = null, error = message)
                         }
                     }
                 }

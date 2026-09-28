@@ -48,6 +48,9 @@ data class MobileAccountPresentation(
     val supportedSignInProviders: Set<AccountAuthProvider> = setOf(AccountAuthProvider.GOOGLE),
     val isProUser: Boolean = false,
     val credits: Int = 0,
+    // USD wallet (Android benchmark parity: spendableDisplayText).
+    val walletMicros: Long = 0L,
+    val walletMigrated: Boolean = false,
     val edition: MobileAppEdition? = null,
     val signInLabel: String? = null,
     val signedOutDescription: String? = null,
@@ -62,6 +65,8 @@ data class MobileAccountPresentation(
         providers = emptySet(),
         isProUser = false,
         credits = 0,
+        walletMicros = 0L,
+        walletMigrated = false,
     )
 }
 

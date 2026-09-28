@@ -39,6 +39,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -74,6 +76,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.media3.common.util.UnstableApi
+import kotlinx.coroutines.launch
+import com.aryan.reader.shared.ReaderFishVoice
 import com.aryan.reader.shared.ui.SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH
 import com.aryan.reader.shared.ui.sanitizeSharedMobileTtsSampleText
 import com.aryan.reader.shared.ui.toggleSharedMobileTtsVoiceFavorite
@@ -83,6 +87,10 @@ import com.aryan.reader.tts.TtsCacheManager
 import com.aryan.reader.tts.TtsPlaybackManager
 import com.aryan.reader.tts.effectiveTtsPreviewSampleText
 import com.aryan.reader.tts.formatBytes
+import com.aryan.reader.tts.googleCloudWorkerTtsUrl
+import com.aryan.reader.tts.saveTtsSpeakerName
+import com.aryan.reader.tts.loadCloudVoiceLanguage
+import com.aryan.reader.tts.saveCloudVoiceLanguage
 import com.aryan.reader.tts.loadTtsFavoriteVoices
 import com.aryan.reader.tts.loadTtsPreviewSampleText
 import com.aryan.reader.tts.saveTtsFavoriteVoices
@@ -106,7 +114,11 @@ fun TtsSettingsSheet(
     onSpeakerChange: (String) -> Unit,
     isTtsActive: Boolean,
     getAuthToken: suspend () -> String?,
-    bookTitle: String
+    bookTitle: String,
+    // Listen binds these to its independent prefs; Reader uses the defaults.
+    loadDeviceVoiceName: (Context) -> String? = ::loadNativeVoice,
+    saveDeviceVoiceName: (Context, String?) -> Unit = ::saveNativeVoice,
+    saveCloudVoiceName: (Context, String) -> Unit = ::saveTtsSpeakerName
 ) {
     if (!isVisible) return
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -145,7 +157,7 @@ fun TtsSettingsSheet(
 
             if (isOss && !isOssCloudAvailable) {
                 Spacer(Modifier.height(16.dp))
-                DeviceVoicesTab(isTtsActive, context, TtsPlaybackManager.TtsMode.BASE)
+                DeviceVoicesTab(isTtsActive, context, TtsPlaybackManager.TtsMode.BASE, loadDeviceVoiceName, saveDeviceVoiceName)
             } else {
                 Text(stringResource(R.string.tts_active_engine), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.height(8.dp))
@@ -182,8 +194,8 @@ fun TtsSettingsSheet(
                 Spacer(Modifier.height(16.dp))
 
                 when (selectedTabIndex) {
-                    0 -> AiVoicesTab(currentSpeakerId, onSpeakerChange, isTtsActive, samplePlayer, currentMode)
-                    1 -> DeviceVoicesTab(isTtsActive, context, currentMode)
+                    0 -> AiVoicesTab(currentSpeakerId, onSpeakerChange, isTtsActive, samplePlayer, currentMode, getAuthToken, saveCloudVoiceName)
+                    1 -> DeviceVoicesTab(isTtsActive, context, currentMode, loadDeviceVoiceName, saveDeviceVoiceName)
                     2 -> TtsCacheTab(bookTitle, context, currentSpeakerId)
                 }
             }
@@ -191,17 +203,89 @@ fun TtsSettingsSheet(
     }
 }
 
+/** One selectable cloud voice. [fishRef] is null for Gemini prebuilt voices. */
+private data class CloudVoiceRow(
+    val id: String,
+    val name: String,
+    val description: String,
+    val fishRef: String?,
+    val languages: List<String> = emptyList(),
+    // Free pre-generated Fish preview audio; null = synthesize on demand.
+    val sampleAudioUrl: String? = null
+)
+
 @UnstableApi
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AiVoicesTab(
     currentSpeakerId: String,
     onSpeakerChange: (String) -> Unit,
     isTtsActive: Boolean,
     samplePlayer: SpeakerSamplePlayer,
-    currentMode: TtsPlaybackManager.TtsMode
+    currentMode: TtsPlaybackManager.TtsMode,
+    getAuthToken: suspend () -> String? = { null },
+    saveCloudVoiceName: (Context, String) -> Unit = ::saveTtsSpeakerName
 ) {
-    LocalContext.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val isCloudMode = currentMode == TtsPlaybackManager.TtsMode.CLOUD
+    // Voice source follows the active backend: BYOK Gemini -> 30 prebuilt
+    // voices, BYOK Fish -> all voices the Fish API exposes for the saved key,
+    // otherwise credited Fish via the worker catalog.
+    val byok = remember { loadAiByokSettings(context).sanitized() }
+    val useByokFish = byok.isFishByokTtsAvailable
+    val useByokGemini = !useByokFish &&
+        (byok.isGeminiRestByokTtsAvailable || byok.isByokCloudTtsAvailable)
+
+    var fishVoices by remember(useByokFish, useByokGemini) {
+        mutableStateOf<List<ReaderFishVoice>>(emptyList())
+    }
+    var voicesLoading by remember(useByokFish, useByokGemini) { mutableStateOf(false) }
+    LaunchedEffect(useByokFish, useByokGemini) {
+        if (useByokGemini) {
+            fishVoices = emptyList()
+            voicesLoading = false
+            return@LaunchedEffect
+        }
+        voicesLoading = true
+        fishVoices = if (useByokFish) {
+            fetchFishVoices(byok.fishKey)
+        } else {
+            fetchCloudFishVoices(googleCloudWorkerTtsUrl, getAuthToken())
+        }
+        voicesLoading = false
+    }
+
+    val rows: List<CloudVoiceRow> = if (useByokGemini) {
+        GEMINI_TTS_SPEAKERS.map { CloudVoiceRow(it.id, it.name, it.description, null) }
+    } else {
+        fishVoices.map {
+            CloudVoiceRow(it.referenceId, it.title, it.description.ifBlank { it.referenceId }, it.referenceId, it.languages, it.sampleAudioUrl.ifBlank { null })
+        }
+    }
+
+    // Language filter + favorites mirror the device-voices tab. Gemini rows
+    // carry no language info, so the menu offers only Favorites/All there
+    // (every Gemini voice stays visible). Fish rows without language info
+    // are hidden under a specific language filter.
+    val allLanguagesLabel = stringResource(R.string.filter_all)
+    val favoritesLabel = stringResource(R.string.tts_favorites)
+    var selectedLanguage by remember { mutableStateOf(loadCloudVoiceLanguage(context) ?: allLanguagesLabel) }
+    var languageMenuExpanded by remember { mutableStateOf(false) }
+    var favoriteVoices by remember { mutableStateOf(loadTtsFavoriteVoices(context)) }
+    val languages = remember(rows, allLanguagesLabel, favoritesLabel) {
+        listOf(favoritesLabel, allLanguagesLabel) +
+            rows.flatMap { it.languages }.filter { it.isNotBlank() }.distinct().sorted()
+    }
+    val effectiveLanguage = selectedLanguage.takeIf { it in languages } ?: allLanguagesLabel
+    val showingFavorites = effectiveLanguage == favoritesLabel
+    val filteredRows = remember(rows, effectiveLanguage, showingFavorites, favoriteVoices) {
+        val base = when {
+            showingFavorites || effectiveLanguage == allLanguagesLabel -> rows
+            else -> rows.filter { effectiveLanguage in it.languages }
+        }
+        if (showingFavorites) base.filter { it.id in favoriteVoices } else base
+    }
 
     Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Text(stringResource(R.string.tts_select_cloud_voice), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
@@ -212,11 +296,87 @@ fun AiVoicesTab(
         }
     }
 
+    androidx.compose.material3.ExposedDropdownMenuBox(
+        expanded = languageMenuExpanded,
+        onExpandedChange = { if (!isTtsActive) languageMenuExpanded = it },
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+    ) {
+        OutlinedTextField(
+            value = effectiveLanguage,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(stringResource(R.string.tts_language_filter)) },
+            trailingIcon = { androidx.compose.material3.ExposedDropdownMenuDefaults.TrailingIcon(expanded = languageMenuExpanded) },
+            colors = androidx.compose.material3.ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+            modifier = Modifier.fillMaxWidth().menuAnchor(),
+            enabled = !isTtsActive
+        )
+        ExposedDropdownMenu(
+            expanded = languageMenuExpanded,
+            onDismissRequest = { languageMenuExpanded = false }
+        ) {
+            languages.forEach { lang ->
+                DropdownMenuItem(
+                    text = { Text(text = lang) },
+                    leadingIcon = if (lang == favoritesLabel) {
+                        {
+                            Icon(
+                                Icons.Default.Star,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    } else null,
+                    trailingIcon = if (lang == effectiveLanguage) {
+                        { Icon(Icons.Default.Check, contentDescription = null) }
+                    } else null,
+                    onClick = {
+                        selectedLanguage = lang
+                        saveCloudVoiceLanguage(context, lang)
+                        languageMenuExpanded = false
+                    }
+                )
+            }
+        }
+    }
+
     LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp))) {
-        items(GEMINI_TTS_SPEAKERS.size) { index ->
-            val voice = GEMINI_TTS_SPEAKERS[index]
+        if (!useByokGemini && voicesLoading) {
+            item {
+                Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                }
+            }
+        }
+        if (!useByokGemini && !voicesLoading && fishVoices.isEmpty()) {
+            item {
+                Text(
+                    stringResource(R.string.tts_no_cloud_voices),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+        }
+        if (!voicesLoading && rows.isNotEmpty() && filteredRows.isEmpty()) {
+            item {
+                Text(
+                    text = if (showingFavorites) {
+                        stringResource(R.string.tts_no_favorite_voices)
+                    } else {
+                        stringResource(R.string.tts_no_voices_for_language)
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+        }
+        items(filteredRows.size) { index ->
+            val voice = filteredRows[index]
             val isSelected = currentSpeakerId == voice.id
             val isCached = samplePlayer.cachedSpeakers.contains(voice.id)
+            val isFavorite = voice.id in favoriteVoices
 
             ListItem(
                 headlineContent = { Text(voice.name, fontWeight = if (isSelected && isCloudMode) FontWeight.Bold else FontWeight.Normal) },
@@ -229,8 +389,42 @@ fun AiVoicesTab(
                     }
                 },
                 trailingContent = {
-                    if (!isTtsActive) {
-                        IconButton(onClick = { samplePlayer.playOrStop(voice.id) }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = {
+                                favoriteVoices = toggleSharedMobileTtsVoiceFavorite(favoriteVoices, voice.id)
+                                saveTtsFavoriteVoices(context, favoriteVoices)
+                            }
+                        ) {
+                            Icon(
+                                Icons.Default.Star,
+                                contentDescription = if (isFavorite) {
+                                    stringResource(R.string.tts_remove_favorite)
+                                } else {
+                                    stringResource(R.string.tts_add_favorite)
+                                },
+                                tint = if (isFavorite) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (!isTtsActive) {
+                        IconButton(onClick = {
+                            if (voice.fishRef != null) {
+                                scope.launch {
+                                    samplePlayer.playFishSample(
+                                        voiceRef = voice.fishRef,
+                                        displayId = voice.id,
+                                        sampleText = effectiveTtsPreviewSampleText(context),
+                                        workerBaseUrl = googleCloudWorkerTtsUrl.takeIf { !useByokFish },
+                                        authToken = getAuthToken(),
+                                        fishByokKey = byok.fishKey.takeIf { useByokFish },
+                                        sampleAudioUrl = voice.sampleAudioUrl
+                                    )
+                                }
+                            } else {
+                                samplePlayer.playOrStop(voice.id)
+                            }
+                        }) {
                             if (samplePlayer.loadingSpeakerId == voice.id) {
                                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                             } else {
@@ -243,9 +437,13 @@ fun AiVoicesTab(
                                 )
                             }
                         }
+                        }
                     }
                 },
-                modifier = Modifier.clickable(enabled = !isTtsActive && isCloudMode) { onSpeakerChange(voice.id) },
+                modifier = Modifier.clickable(enabled = !isTtsActive && isCloudMode) {
+                    saveCloudVoiceName(context, voice.name)
+                    onSpeakerChange(voice.id)
+                },
                 colors = ListItemDefaults.colors(
                     containerColor = if (isSelected && isCloudMode) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f) else Color.Transparent
                 )
@@ -261,9 +459,11 @@ fun AiVoicesTab(
 fun DeviceVoicesTab(
     isTtsActive: Boolean,
     context: Context,
-    currentMode: TtsPlaybackManager.TtsMode
+    currentMode: TtsPlaybackManager.TtsMode,
+    loadDeviceVoiceName: (Context) -> String? = ::loadNativeVoice,
+    saveDeviceVoiceName: (Context, String?) -> Unit = ::saveNativeVoice
 ) {
-    var savedVoiceName by remember { mutableStateOf(loadNativeVoice(context)) }
+    var savedVoiceName by remember { mutableStateOf(loadDeviceVoiceName(context)) }
     var ttsEngine by remember { mutableStateOf<TextToSpeech?>(null) }
     var allVoices by remember { mutableStateOf<List<Voice>>(emptyList()) }
     var isTtsLoading by remember { mutableStateOf(true) }
@@ -292,7 +492,7 @@ fun DeviceVoicesTab(
             allVoices.any { voice -> voice.name == savedVoiceName && voice.isNetworkConnectionRequired }
         ) {
             savedVoiceName = null
-            saveNativeVoice(context, null)
+            saveDeviceVoiceName(context, null)
         }
     }
 
@@ -348,7 +548,7 @@ fun DeviceVoicesTab(
             .padding(bottom = 16.dp)
             .clickable(enabled = !isTtsActive && isBaseMode) {
                 savedVoiceName = null
-                saveNativeVoice(context, null)
+                saveDeviceVoiceName(context, null)
                 ttsEngine?.apply {
                     try {
                         val defaultLocale = Locale.getDefault()
@@ -415,7 +615,7 @@ fun DeviceVoicesTab(
         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
     )
 
-    androidx.compose.material3.ExposedDropdownMenuBox(
+    ExposedDropdownMenuBox(
         expanded = languageMenuExpanded,
         onExpandedChange = { if (!isTtsActive) languageMenuExpanded = it },
         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
@@ -425,8 +625,8 @@ fun DeviceVoicesTab(
             onValueChange = {},
             readOnly = true,
             label = { Text(stringResource(R.string.tts_language_filter)) },
-            trailingIcon = { androidx.compose.material3.ExposedDropdownMenuDefaults.TrailingIcon(expanded = languageMenuExpanded) },
-            colors = androidx.compose.material3.ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = languageMenuExpanded) },
+            colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
             modifier = Modifier.fillMaxWidth().menuAnchor(),
             enabled = !isTtsActive
         )
@@ -489,7 +689,7 @@ fun DeviceVoicesTab(
                 },
                 modifier = Modifier.clickable(enabled = !isTtsActive && isBaseMode) {
                     savedVoiceName = voice.name
-                    saveNativeVoice(context, voice.name)
+                    saveDeviceVoiceName(context, voice.name)
                 },
                 colors = ListItemDefaults.colors(containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(0.2f) else Color.Transparent),
                 trailingContent = {

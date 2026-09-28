@@ -130,6 +130,53 @@ class ReaderExtrasModelsTest {
     }
 
     @Test
+    fun `fish voice list cache freshness honors the ttl`() {
+        assertTrue(isFishVoiceListCacheFresh(fetchedAtMs = 1000L, nowMs = 1000L + FISH_VOICE_LIST_CACHE_TTL_MS))
+        assertFalse(isFishVoiceListCacheFresh(fetchedAtMs = 1000L, nowMs = 1000L + FISH_VOICE_LIST_CACHE_TTL_MS + 1L))
+        // Future timestamps (clock skew) count as fresh rather than
+        // triggering a refetch storm.
+        assertTrue(isFishVoiceListCacheFresh(fetchedAtMs = 2000L, nowMs = 1000L))
+    }
+
+    @Test
+    fun `hasByokModel is true only with known model and matching provider key`() {
+        assertFalse(ReaderAiByokSettings().hasByokModel(ReaderAiFeature.DEFINE))
+        assertFalse(
+            ReaderAiByokSettings(groqKey = "gsk_test").hasByokModel(ReaderAiFeature.DEFINE)
+        )
+        assertFalse(
+            ReaderAiByokSettings(modelForAll = "groq:qwen/qwen3-32b").hasByokModel(ReaderAiFeature.DEFINE)
+        )
+        assertFalse(
+            ReaderAiByokSettings(
+                geminiKey = "gemini_test",
+                modelForAll = "groq:qwen/qwen3-32b"
+            ).hasByokModel(ReaderAiFeature.DEFINE)
+        )
+        assertTrue(
+            ReaderAiByokSettings(
+                groqKey = "gsk_test",
+                modelForAll = "groq:qwen/qwen3-32b"
+            ).hasByokModel(ReaderAiFeature.DEFINE)
+        )
+        // Per-feature selection is honored when "one model" is off.
+        assertFalse(
+            ReaderAiByokSettings(
+                useOneModel = false,
+                groqKey = "gsk_test",
+                modelForAll = "groq:qwen/qwen3-32b"
+            ).hasByokModel(ReaderAiFeature.SUMMARIZE)
+        )
+        assertTrue(
+            ReaderAiByokSettings(
+                useOneModel = false,
+                geminiKey = "gemini_test",
+                summarizeModel = "gemini:gemini-flash-lite-latest"
+            ).hasByokModel(ReaderAiFeature.SUMMARIZE)
+        )
+    }
+
+    @Test
     fun `reader ai one model setting matches Android model selection logic`() {
         val oneModel = ReaderByokTextRequests.build(
             settings = ReaderAiByokSettings(
@@ -169,6 +216,84 @@ class ReaderExtrasModelsTest {
                 ttsModel = GEMINI_CLOUD_TTS_MODEL_ID
             ).isCloudTtsAvailable
         )
+    }
+
+    @Test
+    fun `proper gemini tts models are available with gemini key`() {
+        assertFalse(ReaderAiByokSettings(geminiKey = "key", ttsModel = GEMINI_TTS_MODEL_LITE_ID).isByokCloudTtsAvailable)
+        assertTrue(ReaderAiByokSettings(geminiKey = "key", ttsModel = GEMINI_TTS_MODEL_LITE_ID).isGeminiRestByokTtsAvailable)
+        assertTrue(ReaderAiByokSettings(geminiKey = "key", ttsModel = GEMINI_TTS_MODEL_PREVIEW_ID).isGeminiRestByokTtsAvailable)
+        assertTrue(ReaderAiByokSettings(geminiKey = "key", ttsModel = GEMINI_TTS_MODEL_LITE_ID).isAnyByokTtsAvailable)
+        assertEquals("gemini", ReaderAiByokSettings(ttsModel = GEMINI_TTS_MODEL_LITE_ID).ttsProvider)
+    }
+
+    @Test
+    fun `fish byok tts is available with fish key and fish model`() {
+        assertFalse(ReaderAiByokSettings(fishKey = "key").isAnyByokTtsAvailable)
+        assertFalse(ReaderAiByokSettings(ttsModel = FISH_TTS_MODEL_ID).isAnyByokTtsAvailable)
+        assertFalse(ReaderAiByokSettings(geminiKey = "key", ttsModel = FISH_TTS_MODEL_ID).isFishByokTtsAvailable)
+
+        val settings = ReaderAiByokSettings(fishKey = "key", ttsModel = FISH_TTS_MODEL_ID)
+        assertTrue(settings.isFishByokTtsAvailable)
+        assertTrue(settings.isAnyByokTtsAvailable)
+        assertTrue(settings.isCloudTtsAvailable)
+        assertTrue(settings.hasAnyAiKey)
+        assertEquals("key", settings.apiKeyFor("fish"))
+        assertEquals("fish", settings.ttsProvider)
+    }
+
+    @Test
+    fun `tts model sanitization keeps proper and legacy models`() {
+        assertEquals(
+            GEMINI_TTS_MODEL_LITE_ID,
+            ReaderAiByokSettings(ttsModel = GEMINI_TTS_MODEL_LITE_ID).sanitized().ttsModel
+        )
+        assertEquals(
+            FISH_TTS_MODEL_ID,
+            ReaderAiByokSettings(ttsModel = FISH_TTS_MODEL_ID).sanitized().ttsModel
+        )
+        assertEquals(
+            GEMINI_CLOUD_TTS_MODEL_ID,
+            ReaderAiByokSettings(ttsModel = GEMINI_CLOUD_TTS_MODEL_ID).sanitized().ttsModel
+        )
+        assertEquals(
+            "",
+            ReaderAiByokSettings(ttsModel = "gemini:unknown-model").sanitized().ttsModel
+        )
+    }
+
+    @Test
+    fun `tts byok options cover both gemini models and fish`() {
+        val ids = ReaderTtsByokOptions.map { it.id }.toSet()
+        assertTrue(ids.contains(GEMINI_TTS_MODEL_LITE_ID))
+        assertTrue(ids.contains(GEMINI_TTS_MODEL_PREVIEW_ID))
+        assertTrue(ids.contains(FISH_TTS_MODEL_ID))
+        assertTrue(ReaderTtsByokOptions.all { it.priceLabel == null })
+    }
+
+    @Test
+    fun `cache speaker parsing supports fish mp3 chunks`() {
+        assertEquals("fish-voice-a", readerTtsCacheSpeakerId("cached_chunk_fish-voice-a_ab12cd34ef56.mp3"))
+        assertEquals("Aoede", readerTtsCacheSpeakerId("cached_chunk_Aoede_ab12cd34ef56.wav"))
+        assertNull(readerTtsCacheSpeakerId("cached_chunk_Aoede_ab12cd34ef56.ogg"))
+    }
+
+    @Test
+    fun `micros wallet formats as usd`() {
+        assertEquals("$10.00", formatMicrosUsd(10_000_000L))
+        assertEquals("$5.25", formatMicrosUsd(5_250_000L))
+        assertEquals("$0.04", formatMicrosUsd(41_670L))
+        assertEquals("$0.00", formatMicrosUsd(7_500L))
+        assertEquals("$0.00", formatMicrosUsd(0L))
+    }
+
+    @Test
+    fun `spendable balance covers legacy credits and usd wallet`() {
+        assertTrue(hasSpendableBalance(10, 0L))
+        assertTrue(hasSpendableBalance(0, 5_000L))
+        assertFalse(hasSpendableBalance(0, 0L))
+        assertEquals("⭐ 10", spendableDisplayText(10, 0L, false))
+        assertEquals("$5.00", spendableDisplayText(0, 5_000_000L, true))
     }
 
     @Test
@@ -668,22 +793,114 @@ class ReaderExtrasModelsTest {
         assertEquals(ReaderExternalLookupService.GOOGLE_TRANSLATE, ReaderExternalLookupService.fromId("google_translate"))
         assertEquals(ReaderExternalLookupService.DUCKDUCKGO, ReaderExternalLookupService.fromId("DUCKDUCKGO"))
         assertEquals(ReaderExternalLookupService.BING, ReaderExternalLookupService.fromId("bing"))
+        assertEquals(ReaderExternalLookupService.SAFARI, ReaderExternalLookupService.fromId("safari"))
+        assertEquals(ReaderExternalLookupService.GOOGLE_TRANSLATE_APP, ReaderExternalLookupService.fromId("google_translate_app"))
+        assertEquals(ReaderExternalLookupService.ITRANSLATE_APP, ReaderExternalLookupService.fromId("itranslate_app"))
         assertEquals(ReaderExternalLookupService.SYSTEM, ReaderExternalLookupService.fromId(null))
         assertEquals(ReaderExternalLookupService.SYSTEM, ReaderExternalLookupService.fromId("unknown"))
     }
 
     @Test
     fun `dictionary service options exclude system for translate and search`() {
-        assertEquals(3, ReaderDictionaryServiceOptions.size)
-        assertEquals(3, ReaderTranslateServiceOptions.size)
-        assertEquals(4, ReaderSearchServiceOptions.size)
-        assertEquals(false, ReaderTranslateServiceOptions.contains(ReaderExternalLookupService.SYSTEM))
-        assertEquals(false, ReaderSearchServiceOptions.contains(ReaderExternalLookupService.SYSTEM))
+        // Temporary (external apps undecided): browser only; define keeps AI first.
+        assertEquals(2, ReaderDictionaryServiceOptions.size)
+        assertEquals(1, ReaderTranslateServiceOptions.size)
+        assertEquals(1, ReaderSearchServiceOptions.size)
         // Android parity: every action can hand off to the user's installed apps,
         // and the dictionary keeps the Smart AI route first.
         assertEquals(ReaderExternalLookupService.AI, ReaderDictionaryServiceOptions.first())
-        assertTrue(ReaderTranslateServiceOptions.contains(ReaderExternalLookupService.ANY_APP))
-        assertTrue(ReaderSearchServiceOptions.contains(ReaderExternalLookupService.ANY_APP))
+        assertEquals(ReaderExternalLookupService.SAFARI, ReaderTranslateServiceOptions.first())
+        assertEquals(ReaderExternalLookupService.SAFARI, ReaderSearchServiceOptions.first())
+        assertTrue(ReaderDictionaryServiceOptions.contains(ReaderExternalLookupService.SAFARI))
+    }
+
+    @Test
+    fun `safari urls match the default engine per action`() {
+        assertEquals(
+            "https://www.google.com/search?q=define+hello",
+            externalLookupUrl(ReaderExternalLookupAction.DICTIONARY, "hello", ReaderExternalLookupService.SAFARI)
+        )
+        assertEquals(
+            "https://translate.google.com/?sl=auto&tl=en&text=hello&op=translate",
+            externalLookupUrl(ReaderExternalLookupAction.TRANSLATE, "hello", ReaderExternalLookupService.SAFARI)
+        )
+        assertEquals(
+            "https://www.google.com/search?q=hello",
+            externalLookupUrl(ReaderExternalLookupAction.SEARCH, "hello", ReaderExternalLookupService.SAFARI)
+        )
+    }
+
+    @Test
+    fun `installed app urls deep link with encoded text`() {
+        assertEquals(
+            "googletranslate://?sl=auto&tl=en&text=hello+world",
+            readerExternalLookupAppUrl(
+                ReaderExternalLookupService.GOOGLE_TRANSLATE_APP,
+                ReaderExternalLookupAction.TRANSLATE,
+                "hello world"
+            )
+        )
+        assertEquals(
+            "itranslate://translate?from=auto&to=en&text=bonjour",
+            readerExternalLookupAppUrl(
+                ReaderExternalLookupService.ITRANSLATE_APP,
+                ReaderExternalLookupAction.TRANSLATE,
+                "bonjour"
+            )
+        )
+        // No app mapping for search/define actions or plain web services.
+        assertNull(
+            readerExternalLookupAppUrl(
+                ReaderExternalLookupService.GOOGLE_TRANSLATE_APP,
+                ReaderExternalLookupAction.SEARCH,
+                "hello"
+            )
+        )
+        assertNull(
+            readerExternalLookupAppUrl(
+                ReaderExternalLookupService.GOOGLE,
+                ReaderExternalLookupAction.TRANSLATE,
+                "hello"
+            )
+        )
+        assertEquals("", externalLookupUrl(ReaderExternalLookupAction.TRANSLATE, "hello", ReaderExternalLookupService.GOOGLE_TRANSLATE_APP))
+    }
+
+    @Test
+    fun `visible lookup options gate installed apps but keep selection`() {
+        val options = listOf(
+            ReaderExternalLookupService.SAFARI,
+            ReaderExternalLookupService.GOOGLE_TRANSLATE,
+            ReaderExternalLookupService.GOOGLE_TRANSLATE_APP,
+            ReaderExternalLookupService.ITRANSLATE_APP,
+            ReaderExternalLookupService.ANY_APP,
+        )
+        // Nothing installed: scheme-gated apps hidden, web/share stay.
+        val bare = visibleReaderLookupOptions(
+            options,
+            ReaderExternalLookupService.SAFARI,
+            emptySet()
+        )
+        assertTrue(bare.contains(ReaderExternalLookupService.SAFARI))
+        assertTrue(bare.contains(ReaderExternalLookupService.GOOGLE_TRANSLATE))
+        assertTrue(bare.contains(ReaderExternalLookupService.ANY_APP))
+        assertEquals(false, bare.contains(ReaderExternalLookupService.GOOGLE_TRANSLATE_APP))
+        assertEquals(false, bare.contains(ReaderExternalLookupService.ITRANSLATE_APP))
+        // Installed: gated entries appear.
+        val installed = visibleReaderLookupOptions(
+            options,
+            ReaderExternalLookupService.SAFARI,
+            setOf("googletranslate")
+        )
+        assertTrue(installed.contains(ReaderExternalLookupService.GOOGLE_TRANSLATE_APP))
+        assertEquals(false, installed.contains(ReaderExternalLookupService.ITRANSLATE_APP))
+        // Stale pick (app since uninstalled) stays selectable so it can be changed.
+        val stale = visibleReaderLookupOptions(
+            options,
+            ReaderExternalLookupService.ITRANSLATE_APP,
+            emptySet()
+        )
+        assertTrue(stale.contains(ReaderExternalLookupService.ITRANSLATE_APP))
     }
 
     @Test
@@ -699,5 +916,45 @@ class ReaderExtrasModelsTest {
         assertEquals("Chapter 1", readerTtsCacheDisplayLabel("Chapter_1_a1b2c3d4e5f60718"))
         assertEquals("Pride and Prejudice", readerTtsCacheDisplayLabel("Pride_and_Prejudice_0123456789abcdef"))
         assertEquals("plain", readerTtsCacheDisplayLabel("plain"))
+    }
+
+    @Test
+    fun `spend guard error body parses kind and retry`() {
+        assertEquals(
+            Pair("RATE_LIMITED", 42),
+            parseSpendGuardError("""{"error":"RATE_LIMITED","retry_after_seconds":42}""")
+        )
+        assertEquals(
+            Pair("DAILY_SPEND_LIMIT", 3600),
+            parseSpendGuardError("""{"error": "DAILY_SPEND_LIMIT", "retry_after_seconds": 3600}""")
+        )
+        assertNull(parseSpendGuardError("""{"error":"INSUFFICIENT_CREDITS"}"""))
+        assertNull(parseSpendGuardError(""))
+        assertNull(parseSpendGuardError(null))
+        assertNull(parseSpendGuardError("not json"))
+    }
+
+    @Test
+    fun `spend guard sentinel round-trips`() {
+        assertEquals(Pair("RATE_LIMITED", 30), parseSpendGuardSentinel(spendGuardSentinel("RATE_LIMITED", 30)))
+        assertEquals(Pair("DAILY_SPEND_LIMIT", 0), parseSpendGuardSentinel("DAILY_SPEND_LIMIT:0"))
+        assertNull(parseSpendGuardSentinel("INSUFFICIENT_CREDITS"))
+        assertNull(parseSpendGuardSentinel(null))
+        assertEquals(Pair("RATE_LIMITED", 0), parseSpendGuardSentinel("RATE_LIMITED"))
+    }
+
+    @Test
+    fun `ai cost deducted formats dollars for wallet and credits for legacy`() {
+        assertEquals("$0.03", formatAiCostDeducted(0.03, true))
+        assertEquals("$0.05", formatAiCostDeducted(0.049, true))
+        assertEquals("2 credits", formatAiCostDeducted(2.0, false))
+        assertEquals("0.5 credits", formatAiCostDeducted(0.5, false))
+    }
+
+    @Test
+    fun `spend guard countdown formats seconds minutes hours`() {
+        assertEquals("45s", formatSpendGuardCountdown(45))
+        assertEquals("3m 20s", formatSpendGuardCountdown(200))
+        assertEquals("11h 05m", formatSpendGuardCountdown(39900))
     }
 }

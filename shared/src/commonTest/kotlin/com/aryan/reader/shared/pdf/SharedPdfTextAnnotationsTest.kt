@@ -308,6 +308,61 @@ class SharedPdfTextAnnotationsTest {
     }
 
     @Test
+    fun `text box tap hit covers full bounds plus finger slop`() {
+        // 300x120 box on a 1000x1500 page (0.3/0.08/0.3/0.08 normalized).
+        val bounds = PdfPageBounds(left = 0.3f, top = 0.08f, right = 0.6f, bottom = 0.16f)
+        val pageW = 1000f
+        val pageH = 1500f
+
+        // Interior hits — including blank space away from painted text.
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.45f, 0.12f, pageW, pageH))
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.31f, 0.155f, pageW, pageH))
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.595f, 0.085f, pageW, pageH))
+
+        // Edges still hit (inclusive), inside and just outside the bounds.
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.3f, 0.12f, pageW, pageH))
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.298f, 0.12f, pageW, pageH))
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.603f, 0.12f, pageW, pageH))
+
+        // Sloppy taps near the box also hit (slop 9 screen px at zoom 1 ->
+        // 9/1000 = 0.009 x-pad, 9/1500 = 0.006 y-pad).
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.2915f, 0.12f, pageW, pageH))
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.5f, 0.0745f, pageW, pageH))
+
+        // Beyond the slop misses: creation stays possible nearby.
+        assertTrue(!bounds.isSharedPdfTextBoxTapHit(0.29f, 0.12f, pageW, pageH))
+        assertTrue(!bounds.isSharedPdfTextBoxTapHit(0.5f, 0.07f, pageW, pageH))
+        assertTrue(!bounds.isSharedPdfTextBoxTapHit(0.5f, 0.18f, pageW, pageH))
+    }
+
+    @Test
+    fun `text box tap hit narrows with zoom so the slop stays fixed on screen`() {
+        val bounds = PdfPageBounds(left = 0.3f, top = 0.08f, right = 0.6f, bottom = 0.16f)
+        val pageW = 1000f
+        val pageH = 1500f
+
+        // At zoom 4 one page px renders as 4 screen px, so the same 9 screen
+        // px of tolerance spans a quarter of the normalized distance
+        // (x-pad = 9/4000 = 0.00225 -> hit boundary 0.29775).
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.298f, 0.12f, pageW, pageH, zoomScale = 4f))
+        assertTrue(!bounds.isSharedPdfTextBoxTapHit(0.296f, 0.12f, pageW, pageH, zoomScale = 4f))
+        // Unzoomed, that miss point was inside the slop (x-pad = 0.009).
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.296f, 0.12f, pageW, pageH, zoomScale = 1f))
+    }
+
+    @Test
+    fun `text box tap hit falls back to bounds when page size is unknown`() {
+        val bounds = PdfPageBounds(left = 0.3f, top = 0.08f, right = 0.6f, bottom = 0.16f)
+
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.5f, 0.12f, 0f, 0f))
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.3f, 0.16f, 0f, 0f))
+        assertTrue(!bounds.isSharedPdfTextBoxTapHit(0.29f, 0.12f, 0f, 0f))
+        // Invalid zoom degrades to zoom-1 tolerance, never throws.
+        assertTrue(bounds.isSharedPdfTextBoxTapHit(0.2915f, 0.12f, 1000f, 1500f, zoomScale = 0f))
+        assertTrue(!bounds.isSharedPdfTextBoxTapHit(0.29f, 0.12f, 1000f, 1500f, zoomScale = 0f))
+    }
+
+    @Test
     fun `Android default insert box lands at fixed relative bounds`() {
         val style = SharedPdfTextStyleConfig(fontSize = 16f)
         val draft = SharedPdfTextDraft(
@@ -397,5 +452,102 @@ class SharedPdfTextAnnotationsTest {
         assertEquals(0f, bounds.top)
         assertEquals(1f, bounds.right)
         assertEquals(1f, bounds.bottom)
+    }
+
+    @Test
+    fun `action menu width tightly fits buttons plus dividers with no trailing space`() {
+        val count = SharedPdfTextBoxMenuAction.entries.size
+        assertEquals(3, count)
+        assertEquals(count * 24f + (count - 1) * 1f, sharedPdfTextBoxActionMenuWidthDp(), 0.0001f)
+        assertEquals(74f, sharedPdfTextBoxActionMenuWidthDp(), 0.0001f)
+    }
+
+    @Test
+    fun `draft lock survives bounds edits and commits to annotation`() {
+        val draft = SharedPdfTextDraft(
+            id = "locked-1",
+            pageIndex = 0,
+            bounds = PdfPageBounds(0.2f, 0.2f, 0.5f, 0.4f),
+            text = "locked",
+            isManuallySized = true,
+            isLocked = true,
+        )
+        assertTrue(draft.withBounds(PdfPageBounds(0.1f, 0.1f, 0.4f, 0.3f)).isLocked)
+        val annotation = draft.toAnnotation()
+        assertTrue(annotation.isLocked)
+        assertEquals("locked", annotation.text)
+    }
+
+    @Test
+    fun `font size change refreshes rendered size despite stale relative size`() {
+        // Regression: the dock set fontSize via raw copy, leaving a stale
+        // pageRelativeFontSize that shadows fontSize in the renderer, so the
+        // change silently did nothing. withSharedPdfTextFontSize refreshes both.
+        val canvasSize = IntSize(1_000, 1_500)
+        val stale = SharedPdfTextStyleConfig(fontSize = 16f, pageRelativeFontSize = 0.032f)
+        assertEquals(48f, stale.sharedPdfTextFontSizePx(canvasSize), 0.0001f)
+
+        val updated = stale.withSharedPdfTextFontSize(24f)
+        assertEquals(24f, updated.fontSize, 0.0001f)
+        assertEquals(0.048f, updated.pageRelativeFontSize ?: 0f, 0.0001f)
+        assertEquals(72f, updated.sharedPdfTextFontSizePx(canvasSize), 0.0001f)
+    }
+
+    @Test
+    fun `chrome hit test classifies handles pill menu slots and misses`() {
+        // Box 200x100 at (100, 200); handles pad 5px with 40px touch;
+        // pill 72x48 at (264, 330); menu 3x24+2 at (213, 140), clear of handles.
+        fun hit(
+            x: Float,
+            y: Float,
+            allowGeometry: Boolean = true,
+            menu: List<SharedPdfTextBoxMenuAction>? = SharedPdfTextBoxMenuAction.entries,
+        ) = sharedPdfTextBoxChromeHitTest(
+            position = Offset(x, y),
+            contentLeftPx = 95f,
+            contentTopPx = 195f,
+            halfHandlePx = 5f,
+            widthPx = 200f,
+            heightPx = 100f,
+            handleTouchPx = 40f,
+            pillLeftPx = 264f,
+            pillTopPx = 330f,
+            pillTouchWidthPx = 72f,
+            pillTouchHeightPx = 48f,
+            menuLeftPx = 213f,
+            menuTopPx = 140f,
+            menuButtonPx = 24f,
+            menuDividerPx = 1f,
+            menuHeightPx = 24f,
+            allowGeometry = allowGeometry,
+            menuActions = menu,
+        )
+        assertEquals(
+            SharedPdfTextBoxChromeTarget.Resize(SharedPdfTextResizeHandle.TOP_LEFT),
+            hit(100f, 200f)
+        )
+        assertEquals(
+            SharedPdfTextBoxChromeTarget.Resize(SharedPdfTextResizeHandle.BOTTOM_RIGHT),
+            hit(300f, 300f)
+        )
+        assertEquals(SharedPdfTextBoxChromeTarget.Move, hit(300f, 350f))
+        assertEquals(
+            SharedPdfTextBoxChromeTarget.Menu(SharedPdfTextBoxMenuAction.DELETE),
+            hit(220f, 150f)
+        )
+        assertEquals(
+            SharedPdfTextBoxChromeTarget.Menu(SharedPdfTextBoxMenuAction.LOCK),
+            hit(275f, 150f)
+        )
+        assertEquals(null, hit(150f, 250f))
+        assertEquals(null, hit(0f, 0f))
+        // Locked: geometry dead, menu alive.
+        assertEquals(null, hit(100f, 200f, allowGeometry = false))
+        assertEquals(
+            SharedPdfTextBoxChromeTarget.Menu(SharedPdfTextBoxMenuAction.DELETE),
+            hit(220f, 150f, allowGeometry = false)
+        )
+        // Hidden menu: menu taps miss.
+        assertEquals(null, hit(220f, 150f, menu = null))
     }
 }

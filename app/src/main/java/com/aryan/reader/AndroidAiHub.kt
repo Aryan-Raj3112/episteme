@@ -3,6 +3,7 @@
 package com.aryan.reader
 
 import com.aryan.reader.shared.SummarizationResult
+import com.aryan.reader.shared.spendableDisplayText
 
 import androidx.compose.material3.ExperimentalMaterial3Api
 
@@ -105,6 +106,8 @@ fun AiHubBottomSheet(
     isMainTtsActive: Boolean,
     getAuthToken: suspend () -> String?,
     credits: Int,
+    walletMicros: Long = 0L,
+    walletMigrated: Boolean = false,
     isProUser: Boolean
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -152,7 +155,7 @@ fun AiHubBottomSheet(
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Text(
-                                text = "⭐ $credits",
+                                text = spendableDisplayText(credits, walletMicros, walletMigrated),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
@@ -212,7 +215,8 @@ fun AiHubBottomSheet(
                             ttsController = ttsController,
                             ttsState = ttsState,
                             getAuthToken = getAuthToken,
-                            onRegenerate = { onGenerateSummary(true) }
+                            onRegenerate = { onGenerateSummary(true) },
+                            walletMigrated = walletMigrated
                         )
                     }
                 }
@@ -245,7 +249,8 @@ fun AiHubBottomSheet(
                             ttsState = ttsState,
                             getAuthToken = getAuthToken,
                             onRegenerate = { onGenerateRecap?.invoke() },
-                            onClear = onClearRecap
+                            onClear = onClearRecap,
+                            walletMigrated = walletMigrated
                         )
                     }
                 }
@@ -273,7 +278,8 @@ fun AiResultContentView(
     ttsState: TtsPlaybackManager.TtsState,
     getAuthToken: suspend () -> String?,
     onRegenerate: (() -> Unit)? = null,
-    onClear: (() -> Unit)? = null
+    onClear: (() -> Unit)? = null,
+    walletMigrated: Boolean = false
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -309,7 +315,10 @@ fun AiResultContentView(
                                     freeRemaining
                                 )
                             } else {
-                                safeStringResource(R.string.ai_generated_cost, cost.toString())
+                                safeStringResource(
+                                    R.string.ai_generated_cost,
+                                    com.aryan.reader.shared.formatAiCostDeducted(cost, walletMigrated)
+                                )
                             }
                         } else {
                             stringResource(R.string.ai_generating_cost_calculating)

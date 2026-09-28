@@ -202,6 +202,52 @@ class SharedPdfAnnotationSerializerTest {
     }
 
     @Test
+    fun `sidecar codec round trips text box lock state`() {
+        val legacyPayload = """
+            {
+              "textBoxes": [
+                {
+                  "id": "box-locked",
+                  "pageIndex": 0,
+                  "text": "Pinned note",
+                  "color": -16777216,
+                  "backgroundColor": 0,
+                  "fontSize": 0.032,
+                  "isLocked": true,
+                  "bounds": {"left":0.1,"top":0.2,"right":0.5,"bottom":0.3}
+                },
+                {
+                  "id": "box-open",
+                  "pageIndex": 0,
+                  "text": "Free note",
+                  "color": -16777216,
+                  "backgroundColor": 0,
+                  "fontSize": 0.032,
+                  "bounds": {"left":0.1,"top":0.4,"right":0.5,"bottom":0.5}
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val canonical = SharedPdfAnnotationSidecarCodec.canonicalizeDataJson(legacyPayload)
+        val annotations = SharedPdfAnnotationSidecarCodec.annotationsFromData(
+            testJson.parseToJsonElement(canonical).jsonObject
+        )
+        assertEquals(2, annotations.size)
+        assertTrue(annotations.first { it.id == "box-locked" }.isLocked)
+        assertTrue(!annotations.first { it.id == "box-open" }.isLocked)
+
+        val legacy = testJson.parseToJsonElement(
+            SharedPdfAnnotationSidecarCodec.legacyAndroidDataJsonFromCanonical(canonical)
+        ).jsonObject
+        val boxes = legacy.getValue("textBoxes").jsonArray
+        assertEquals(true, boxes.first { it.jsonObject.getValue("id").jsonPrimitive.content == "box-locked" }
+            .jsonObject.getValue("isLocked").jsonPrimitive.content.toBoolean())
+        assertTrue("isLocked" !in boxes.first { it.jsonObject.getValue("id").jsonPrimitive.content == "box-open" }
+            .jsonObject)
+    }
+
+    @Test
     fun `sidecar codec treats canonical annotations as authoritative for android legacy expansion`() {
         val canonicalAnnotation = SharedPdfAnnotation(
             id = "desktop-ink",
