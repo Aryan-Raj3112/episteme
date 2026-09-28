@@ -565,11 +565,28 @@ class SpeakerSamplePlayer(
         }
     }
 
+    /** Downloads a static sample file (Fish-hosted preview audio). */
+    private fun downloadSampleFile(url: String, cacheFile: File) {
+        val request = okhttp3.Request.Builder().url(url).get().build()
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw Exception("Sample download HTTP ${response.code}")
+            }
+            val bytes = response.body?.bytes() ?: throw Exception("Empty sample response")
+            if (bytes.size < 1024) throw Exception("Sample too small")
+            val tmp = File(cacheFile.absolutePath + ".tmp")
+            tmp.writeBytes(bytes)
+            if (!tmp.renameTo(cacheFile)) throw Exception("Failed to cache sample")
+        }
+    }
+
     /**
-     * Synthesizes a short Fish voice preview (direct Fish BYOK when the user
-     * provided a key, otherwise the worker sample endpoint) and plays the
-     * returned mp3. Billing matches production synthesis: the user's own key
-     * is always preferred over credits when both are present.
+     * Plays a short Fish voice preview. Priority: the voice's free
+     * pre-generated sample ([sampleAudioUrl], costs nobody anything), then
+     * direct Fish BYOK when the user provided a key, otherwise the worker
+     * sample endpoint. Billing matches production synthesis for the
+     * synthesized paths; a failed free download surfaces an error instead
+     * of silently spending.
      */
     fun playFishSample(
         voiceRef: String,
@@ -577,7 +594,8 @@ class SpeakerSamplePlayer(
         sampleText: String,
         workerBaseUrl: String?,
         authToken: String?,
-        fishByokKey: String?
+        fishByokKey: String?,
+        sampleAudioUrl: String? = null
     ) {
         scope.launch {
             if (sampleMediaPlayer.isPlaying) sampleMediaPlayer.stop()
@@ -588,6 +606,16 @@ class SpeakerSamplePlayer(
             withContext(Dispatchers.IO) {
                 try {
                     val safeRef = voiceRef.replace(Regex("[^A-Za-z0-9-]"), "_").take(48).ifBlank { "voice" }
+                    if (!sampleAudioUrl.isNullOrBlank()) {
+                        // Free static sample under its own cache name so it
+                        // never mixes with synthesized preview bytes.
+                        val cacheFile = File(context.cacheDir, "sample_fish_static_${safeRef}.mp3")
+                        if (!cacheFile.exists() || cacheFile.length() < 1024) {
+                            downloadSampleFile(sampleAudioUrl, cacheFile)
+                        }
+                        presentCachedSample(cacheFile, displayId)
+                        return@withContext
+                    }
                     val cacheFile = File(context.cacheDir, "sample_fish_${safeRef}.mp3")
                     if (!cacheFile.exists() || cacheFile.length() < 1024) {
                         val result = if (!fishByokKey.isNullOrBlank()) {

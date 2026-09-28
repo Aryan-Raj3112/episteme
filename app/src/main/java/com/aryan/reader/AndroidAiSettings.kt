@@ -451,8 +451,22 @@ internal fun fishVoiceFromModel(item: org.json.JSONObject?): FishVoice? {
         referenceId = id,
         title = item.optString("title").ifBlank { item.optString("name").ifBlank { id } },
         description = item.optString("description"),
-        languages = fishLanguages(item.optJSONArray("languages"))
+        languages = fishLanguages(item.optJSONArray("languages")),
+        sampleAudioUrl = fishSampleAudioUrl(item.optJSONArray("samples"))
     )
+}
+
+/**
+ * First pre-generated sample audio URL from a Fish model listing (free to
+ * play; empty when the voice exposes no sample).
+ */
+internal fun fishSampleAudioUrl(samples: org.json.JSONArray?): String {
+    if (samples == null) return ""
+    for (i in 0 until samples.length()) {
+        val url = samples.optJSONObject(i)?.optString("audio").orEmpty()
+        if (url.isNotBlank()) return url
+    }
+    return ""
 }
 
 internal fun fishLanguages(array: org.json.JSONArray?): List<String> {
@@ -501,7 +515,8 @@ suspend fun fetchCloudFishVoices(workerBaseUrl: String, firebaseToken: String?):
                         referenceId = referenceId,
                         title = item.optString("name").ifBlank { item.optString("title").ifBlank { referenceId } },
                         description = item.optString("description"),
-                        languages = fishLanguages(item.optJSONArray("languages"))
+                        languages = fishLanguages(item.optJSONArray("languages")),
+                        sampleAudioUrl = item.optString("sample_audio")
                     )
                 }
                 out.also { if (it.isNotEmpty()) storeFishVoices(cacheKey, it) }

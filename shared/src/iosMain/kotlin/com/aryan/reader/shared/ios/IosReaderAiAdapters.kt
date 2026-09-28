@@ -833,6 +833,7 @@ internal suspend fun iosFetchFishVoices(
             languages = voice["languages"]?.jsonArray?.mapNotNull {
                 it.jsonPrimitive.contentOrNull?.takeIf(String::isNotBlank)
             }.orEmpty(),
+            sampleAudioUrl = voice["sample_audio"]?.jsonPrimitive?.contentOrNull.orEmpty(),
         )
     }.also { if (it.isNotEmpty()) iosStoreFishVoices(workerCacheKey, it) }
 }
@@ -894,6 +895,9 @@ private fun iosFishVoiceFromModel(element: JsonElement): com.aryan.reader.shared
             ?: "Fish voice",
         description = model["description"]?.jsonPrimitive?.contentOrNull.orEmpty(),
         languages = languages,
+        sampleAudioUrl = model["samples"]?.jsonArray
+            ?.mapNotNull { it.jsonObject["audio"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank) }
+            ?.firstOrNull().orEmpty(),
     )
 }
 

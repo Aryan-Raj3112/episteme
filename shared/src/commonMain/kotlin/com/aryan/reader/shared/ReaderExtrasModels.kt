@@ -66,7 +66,10 @@ data class ReaderFishVoice(
     val description: String = "",
     // Language codes from the Fish model catalog (e.g. ["en"]). Empty when
     // the source carries no language info (static catalog, Gemini rows).
-    val languages: List<String> = emptyList()
+    val languages: List<String> = emptyList(),
+    // Free pre-generated preview audio (Fish-hosted MP3). Playing it costs
+    // nobody anything; empty when the voice exposes no sample.
+    val sampleAudioUrl: String = ""
 )
 
 data class ReaderAiByokSettings(

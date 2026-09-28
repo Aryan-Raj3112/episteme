@@ -205,7 +205,9 @@ private data class CloudVoiceRow(
     val name: String,
     val description: String,
     val fishRef: String?,
-    val languages: List<String> = emptyList()
+    val languages: List<String> = emptyList(),
+    // Free pre-generated Fish preview audio; null = synthesize on demand.
+    val sampleAudioUrl: String? = null
 )
 
 @UnstableApi
@@ -253,7 +255,7 @@ fun AiVoicesTab(
         GEMINI_TTS_SPEAKERS.map { CloudVoiceRow(it.id, it.name, it.description, null) }
     } else {
         fishVoices.map {
-            CloudVoiceRow(it.referenceId, it.title, it.description.ifBlank { it.referenceId }, it.referenceId, it.languages)
+            CloudVoiceRow(it.referenceId, it.title, it.description.ifBlank { it.referenceId }, it.referenceId, it.languages, it.sampleAudioUrl.ifBlank { null })
         }
     }
 
@@ -410,7 +412,8 @@ fun AiVoicesTab(
                                         sampleText = effectiveTtsPreviewSampleText(context),
                                         workerBaseUrl = googleCloudWorkerTtsUrl.takeIf { !useByokFish },
                                         authToken = getAuthToken(),
-                                        fishByokKey = byok.fishKey.takeIf { useByokFish }
+                                        fishByokKey = byok.fishKey.takeIf { useByokFish },
+                                        sampleAudioUrl = voice.sampleAudioUrl
                                     )
                                 }
                             } else {

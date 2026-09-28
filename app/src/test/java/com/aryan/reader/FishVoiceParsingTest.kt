@@ -52,6 +52,23 @@ class FishVoiceParsingTest {
     }
 
     @Test
+    fun `parses first sample audio url`() {
+        val voice = fishVoiceFromModel(
+            JSONObject("""{"_id":"a1","samples":[{"audio":"https://example.com/1.mp3"},{"audio":"https://example.com/2.mp3"}]}""")
+        )
+
+        assertNotNull(voice)
+        assertEquals("https://example.com/1.mp3", voice!!.sampleAudioUrl)
+
+        val noSamples = fishVoiceFromModel(JSONObject("""{"_id":"a2"}"""))
+        assertNotNull(noSamples)
+        assertEquals("", noSamples!!.sampleAudioUrl)
+
+        assertEquals("", fishSampleAudioUrl(null))
+        assertEquals("", fishSampleAudioUrl(org.json.JSONArray("[]")))
+    }
+
+    @Test
     fun `skips unsynthesizable voices and blank ids`() {
         assertNull(fishVoiceFromModel(JSONObject("""{"_id":"x","state":"training"}""")))
         assertNull(fishVoiceFromModel(JSONObject("""{"_id":"x","state":"failed"}""")))
