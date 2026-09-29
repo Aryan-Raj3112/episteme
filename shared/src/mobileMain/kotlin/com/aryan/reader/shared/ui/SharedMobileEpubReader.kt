@@ -1144,6 +1144,34 @@ fun SharedMobileEpubReaderScreen(
      * WebView rendering asks the DOM for its current visible locator and falls
      * back to the latest bridge observation while the page is unavailable.
      */
+    /**
+     * Android parity (EpubReaderScreen TTS follow, `keepVisible = true`): speech
+     * follows the reader only when the spoken chunk has actually drifted off
+     * the page being shown.
+     *
+     * Paginated mode turned a page on *every* chunk change, so a chunk boundary
+     * every few seconds yanked the reader forward mid-paragraph — the jarring
+     * auto-scroll around read-aloud. The chunk's own page is usually already the
+     * visible one (chunks are far smaller than pages), so those turns were
+     * almost all no-ops in intent and pure churn in practice. Vertical mode
+     * keeps following: its keep-visible/animated path lives in the document
+     * script (`ttsLocatorNeedsFollowScroll`).
+     */
+    fun followTtsChunkNavigation(chunk: ReaderTtsChunk) {
+        if (settings.readingMode != ReaderReadingMode.PAGINATED) {
+            navigate(chunk.toLocator(), detachFromTts = false)
+            return
+        }
+        val chunkPage = chunk.pageIndex
+        if (chunkPage >= 0 && chunkPage == currentPageIndex) {
+            // Already showing the spoken chunk's page: keep the highlight and
+            // the locator, skip the turn. Mirrors Android's keep-visible follow.
+            publishCapturedEpubLocator(chunk.toLocator())
+            return
+        }
+        navigate(chunk.toLocator(), detachFromTts = false)
+    }
+
     fun captureCurrentEpubLocator(onCaptured: (ReaderLocator?) -> Unit) {
         val chapterCount = loadedBook?.chapters?.size ?: 0
         val nativeLocator = if (
@@ -1298,7 +1326,7 @@ fun SharedMobileEpubReaderScreen(
         // Speech chunks have source offsets and page indices from the same shared planner used
         // by Android. Let them own navigation while reading, so a spoken sentence is always
         // visible in either reader mode.
-        navigate(chunk.toLocator(), detachFromTts = false)
+        followTtsChunkNavigation(chunk)
     }
 
     LaunchedEffect(activeCloudTtsChunk?.index, activeCloudTtsChunk?.chapterIndex, activeCloudTtsChunk?.pageIndex) {
@@ -1306,8 +1334,9 @@ fun SharedMobileEpubReaderScreen(
         if (chunk == null || loadedBook == null) return@LaunchedEffect
         if (!shouldFollowReaderTtsChunk(detachedTtsChunkIndex, chunk.index)) return@LaunchedEffect
         detachedTtsChunkIndex = null
-        navigate(chunk.toLocator(), detachFromTts = false)
+        followTtsChunkNavigation(chunk)
     }
+
 
     // Stuck-highlight clear (vertical WebView) for the cloud engine too:
     // ending a cloud session must push readerSetTtsLocator(null) to the page,

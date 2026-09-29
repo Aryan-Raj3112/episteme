@@ -675,10 +675,15 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
                 if (document.body) void document.body.offsetHeight;
                 if (targetChapter) void targetChapter.offsetHeight;
               }
-              function scrollToTopWithTrace(targetTop, strategy, locator, extra) {
+              function scrollToTopWithTrace(targetTop, strategy, locator, extra, options) {
                 var before = verticalScrollMetrics();
                 var top = Math.max(0, Math.round(Number(targetTop) || 0));
-                window.scrollTo({ top: top, left: 0, behavior: 'auto' });
+                // Follow scrolls animate (Android parity: the native vertical
+                // TTS follow passes an animated scroll request). An instant jump
+                // on every chunk change is what read as a stutter; user-driven
+                // navigation keeps the instant behavior it has always had.
+                var behavior = (options && options.smooth) ? 'smooth' : 'auto';
+                window.scrollTo({ top: top, left: 0, behavior: behavior });
                 var after = verticalScrollMetrics();
                 var clamped = Math.abs(after.scrollY - top) > 2 && (top > after.maxScroll + 2 || top < 0);
                 readerDesktopPositionTraceLog(
@@ -697,6 +702,11 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
               function shouldCenterScrollTarget(options) {
                 return !!(options && options.align === 'center' && isVerticalReaderDocument());
               }
+              /**
+               * Fraction of the viewport kept clear above and below a follow
+               * scroll target, so a chunk is never parked against an edge.
+               */
+              var readerTtsFollowViewportMarginRatio = 0.12;
               function scrollTargetTopFromRect(rect, options) {
                 var documentTop = (rect ? rect.top : 0) + window.scrollY;
                 if (shouldCenterScrollTarget(options)) {
@@ -772,7 +782,7 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
                   : null;
                 if (exactCfi && (activeStart === undefined || activeStart === null)) {
                   var cfiRect = exactCfi.getBoundingClientRect();
-                  scrollToTopWithTrace(scrollTargetTopFromRect(cfiRect, options), 'exact_cfi', locator, scrollTraceExtra('requestedChapter=' + chapterIndex, options));
+                  scrollToTopWithTrace(scrollTargetTopFromRect(cfiRect, options), 'exact_cfi', locator, scrollTraceExtra('requestedChapter=' + chapterIndex, options), options);
                   return;
                 }
                 var exact = activeStart === null
@@ -795,7 +805,7 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
                       var rangeRect = shouldCenterScrollTarget(options) ? exactRange.getBoundingClientRect() : (rangeRects.length ? rangeRects[0] : exactRange.getBoundingClientRect());
                       exactRange.detach && exactRange.detach();
                       if (rangeRect && (rangeRect.top !== 0 || rangeRect.bottom !== 0)) {
-                        var exactResult = scrollToTopWithTrace(scrollTargetTopFromRect(rangeRect, options), 'exact_range', locator, scrollTraceExtra('requestedChapter=' + chapterIndex, options));
+                        var exactResult = scrollToTopWithTrace(scrollTargetTopFromRect(rangeRect, options), 'exact_range', locator, scrollTraceExtra('requestedChapter=' + chapterIndex, options), options);
                         if (!exactResult.clamped || !isVerticalReaderDocument()) {
                           return;
                         }
@@ -815,12 +825,12 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
                     var ratio = Math.max(0, Math.min(1, (activeStart - contentStart) / (contentEnd - contentStart)));
                     var contentRect = content.getBoundingClientRect();
                     var approximateY = contentRect.top + window.scrollY + (content.scrollHeight * ratio);
-                    scrollToTopWithTrace(scrollTargetTopFromY(approximateY, options), 'content_ratio', locator, scrollTraceExtra('requestedChapter=' + chapterIndex + ' ratio=' + ratio.toFixed(4), options));
+                    scrollToTopWithTrace(scrollTargetTopFromY(approximateY, options), 'content_ratio', locator, scrollTraceExtra('requestedChapter=' + chapterIndex + ' ratio=' + ratio.toFixed(4), options), options);
                     return;
                   }
                 }
                 var rect = target.getBoundingClientRect();
-                scrollToTopWithTrace(scrollTargetTopFromRect(rect, options), exact ? 'exact_marker' : (exactBlock ? 'exact_block' : 'host_top'), locator, scrollTraceExtra('requestedChapter=' + chapterIndex, options));
+                scrollToTopWithTrace(scrollTargetTopFromRect(rect, options), exact ? 'exact_marker' : (exactBlock ? 'exact_block' : 'host_top'), locator, scrollTraceExtra('requestedChapter=' + chapterIndex, options), options);
               }
               function scrollToActiveLocator() {
                 scrollToLocator({
@@ -1129,7 +1139,7 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
                       var contentRect = content.getBoundingClientRect();
                       targetY = contentRect.top + window.scrollY + (content.scrollHeight * ratioInContent);
                     }
-                    scrollToTopWithTrace(scrollTargetTopFromY(targetY, options), 'vertical_page_content', locator, scrollTraceExtra('ratioSource=content', options));
+                    scrollToTopWithTrace(scrollTargetTopFromY(targetY, options), 'vertical_page_content', locator, scrollTraceExtra('ratioSource=content', options), options);
                     return true;
                   }
                 }
@@ -1141,7 +1151,7 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
                   ? anchorPosition / Math.max(1, anchors.length - 1)
                   : pageIndex / Math.max(1, readerPageAnchors.length - 1);
                 ratio = Math.max(0, Math.min(1, ratio));
-                scrollToTopWithTrace(Math.round(metrics.maxScroll * ratio), 'vertical_page_ratio', locator, 'ratio=' + ratio.toFixed(4));
+                scrollToTopWithTrace(Math.round(metrics.maxScroll * ratio), 'vertical_page_ratio', locator, 'ratio=' + ratio.toFixed(4), options);
                 return true;
               }
               function readerHostIsVisible(host) {

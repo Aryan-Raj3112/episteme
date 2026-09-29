@@ -8,6 +8,7 @@ package com.aryan.reader.shared.ui
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.aryan.reader.shared.CloudTtsPlaybackMonitorPolicy
 import com.aryan.reader.shared.DEFAULT_CLOUD_TTS_SPEAKER_ID
 import com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL
 import com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID
@@ -38,6 +39,7 @@ import com.aryan.reader.shared.sha256
 import com.aryan.reader.shared.ios.IosTtsAudioInterruption
 import com.aryan.reader.shared.ios.IosTtsAudioInterruptionMonitor
 import com.aryan.reader.shared.ios.IosTtsAudioSessionTeardown
+import com.aryan.reader.shared.ios.iosCloudTtsTraceLog
 import com.aryan.reader.shared.ios.iosTtsStartLog
 import kotlinx.cinterop.ObjCSignatureOverride
 import kotlinx.cinterop.addressOf
@@ -144,6 +146,11 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     private var playbackContinuation: CompletableDeferred<Boolean>? = null
     private var player: AVAudioPlayer? = null
     private var playJob: Job? = null
+    // Android parity (TtsPlaybackManager.prefetchNextChunkAudio): the chunk
+    // after the one playing is fetched while it plays, so the hand-off has
+    // audio ready instead of a network round-trip of silence.
+    private var prefetchJob: Job? = null
+    private val prefetchedAudio = mutableMapOf<Int, ByteArray>()
     // Start-session stopwatch for ReaderTtsStart diagnostics: set at start(),
     // consumed at the first player.play(), cleared at stop().
     private var ttsStartMark: TimeMark? = null
@@ -189,7 +196,12 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         if (speakerChanged || modeChanged || accessChanged) {
             // Never keep a session authenticated with an old account/token or
             // speaking with a voice that no longer matches the selected mode.
-            if (state.isPlaying || state.isLoading || state.isPaused) stop()
+            val hadActiveSession = state.isPlaying || state.isLoading || state.isPaused
+            iosCloudTtsTraceLog(
+                "cloud.configure",
+                "speakerChanged=$speakerChanged modeChanged=$modeChanged accessChanged=$accessChanged hadActiveSession=$hadActiveSession"
+            )
+            if (hadActiveSession) stop()
             closeWebSocket()
         }
         state = state.copy(
@@ -245,6 +257,11 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
             "chunks=${readable.size} startIndex=$currentChunkIndex playWhenReady=$playWhenReady " +
                 "fishRest=${useFishRest()} worker=${workerAvailable()} byok=${byokAvailable() || fishByokAvailable()}"
         )
+        iosCloudTtsTraceLog(
+            "cloud.start",
+            "session=$requestedSession chunks=${readable.size} startIndex=$currentChunkIndex " +
+                "playWhenReady=$playWhenReady continued=$continueSession backend=${cloudBackendName()}"
+        )
         state = state.copy(
             isAvailable = true,
             isPlaying = false,
@@ -270,6 +287,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         if (!hasActiveSession()) return
         wantsPlayback = false
         player?.pause()
+        iosCloudTtsTraceLog("cloud.pause", "index=$currentChunkIndex playerPresent=${player != null}")
         state = state.copy(isPlaying = false, isPaused = true, isLoading = state.isLoading)
     }
 
@@ -284,6 +302,10 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         ensureAudioSession()
         wantsPlayback = true
         player?.play()
+        iosCloudTtsTraceLog(
+            "cloud.resume",
+            "index=$currentChunkIndex playerPresent=${player != null} pos=${player?.currentTime ?: -1.0} dur=${player?.duration ?: -1.0}"
+        )
         state = state.copy(isPlaying = player != null, isPaused = player == null && !state.isLoading)
     }
 
@@ -627,10 +649,12 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
 
     private fun stop(clearError: Boolean) {
         iosTtsStartLog("cloud.stop")
+        iosCloudTtsTraceLog("cloud.stop", "sessionWas=$sessionId hadChunks=${chunks.isNotEmpty()} index=$currentChunkIndex")
         ttsStartMark = null
         sessionId += 1
         playJob?.cancel()
         playJob = null
+        cancelPrefetch()
         playbackContinuation?.cancel()
         playbackContinuation = null
         interruptionState = LocalTtsInterruptionState()
@@ -663,9 +687,18 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     }
 
     private suspend fun playChunks(requestedSession: Long) {
+        iosCloudTtsTraceLog(
+            "cloud.loopStart",
+            "session=$requestedSession chunks=${chunks.size} fromIndex=$currentChunkIndex"
+        )
         try {
             while (scope.isActive && requestedSession == sessionId) {
-                val chunk = chunks.getOrNull(currentChunkIndex) ?: break
+                val chunk = chunks.getOrNull(currentChunkIndex)
+                if (chunk == null) {
+                    iosCloudTtsTraceLog("cloud.loopBreak", "session=$requestedSession reason=missing-chunk index=$currentChunkIndex")
+                    break
+                }
+                iosCloudTtsTraceLog("cloud.loopIter", "session=$requestedSession index=$currentChunkIndex total=${chunks.size}")
                 state = state.copy(
                     isAvailable = cloudTtsModeEnabled() && (byokAvailable() || fishByokAvailable() || workerAvailable()),
                     isLoading = true,
@@ -701,14 +734,28 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
                         loadOrGenerate(chunk, requestedSession)
                     }
                 }
-                if (requestedSession != sessionId) return
-                if (audio == null || audio.size <= WAV_HEADER_SIZE) return
-                if (!playAudioAndWait(audio, requestedSession)) return
-                if (requestedSession != sessionId) return
+                if (requestedSession != sessionId) {
+                    iosCloudTtsTraceLog("cloud.loopStale", "session=$requestedSession reason=after-load")
+                    return
+                }
+                iosCloudTtsTraceLog("cloud.loaded", "session=$requestedSession index=$currentChunkIndex bytes=${audio?.size ?: -1}")
+                if (audio == null || audio.size <= WAV_HEADER_SIZE) {
+                    iosCloudTtsTraceLog("cloud.loopBreak", "session=$requestedSession reason=empty-audio index=$currentChunkIndex")
+                    return
+                }
+                val played = playAudioAndWait(audio, requestedSession)
+                iosCloudTtsTraceLog("cloud.played", "session=$requestedSession index=$currentChunkIndex ok=$played")
+                if (!played) return
+                if (requestedSession != sessionId) {
+                    iosCloudTtsTraceLog("cloud.loopStale", "session=$requestedSession reason=after-play")
+                    return
+                }
                 currentChunkIndex += 1
+                iosCloudTtsTraceLog("cloud.advanced", "session=$requestedSession nextIndex=$currentChunkIndex")
             }
             if (requestedSession == sessionId) {
                 val completed = currentChunkIndex >= chunks.size
+                iosCloudTtsTraceLog("cloud.loopEnd", "session=$requestedSession completed=$completed index=$currentChunkIndex total=${chunks.size}")
                 state = state.copy(
                     isPlaying = false,
                     isLoading = false,
@@ -724,16 +771,25 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
             }
         } catch (_: CancellationException) {
             // User stop/skip is expected and must not surface as a playback error.
+            iosCloudTtsTraceLog("cloud.loopCancelled", "session=$requestedSession")
         } catch (error: Throwable) {
+            iosCloudTtsTraceLog("cloud.loopError", "session=$requestedSession error=${error::class.simpleName}:${error.message?.take(160)}")
             if (requestedSession == sessionId) fail(error.message ?: "Cloud TTS failed")
         }
     }
 
     private suspend fun loadOrGenerate(chunk: ReaderTtsChunk, requestedSession: Long): ByteArray? {
         val file = cacheFile(chunk)
+        // Prefetched audio wins over both the disk cache and a fresh request:
+        // it was fetched while the previous chunk was still speaking.
+        prefetchedAudio.remove(chunk.index)?.let { prefetched ->
+            iosCloudTtsTraceLog("cloud.prefetchUse", "session=$requestedSession index=${chunk.index} bytes=${prefetched.size}")
+            return prefetched
+        }
         val cached = withContext(Dispatchers.Default) { readFile(file) }
         if (cached != null && cached.size > WAV_HEADER_SIZE) {
             state = state.copy(statusMessage = "Using cached audio")
+            iosCloudTtsTraceLog("cloud.cache", "session=$requestedSession hit bytes=${cached.size}")
             refreshCacheSummary()
             return cached
         }
@@ -741,8 +797,10 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         // Fish REST (Android benchmark parity): credited worker synthesis and
         // Fish BYOK direct. Gemini BYOK keeps the legacy WebSocket below.
         if (useFishRest()) {
+            iosCloudTtsTraceLog("cloud.cache", "session=$requestedSession miss backend=fish")
             return fishSynthesize(chunk, requestedSession)
         }
+        iosCloudTtsTraceLog("cloud.cache", "session=$requestedSession miss backend=gemini-ws")
         ensureConnected()
         val payload = buildJsonObject {
             put("realtimeInput", buildJsonObject { put("text", chunk.spokenText) })
@@ -786,9 +844,17 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
      * working). Throws [FishRateLimited] so the loop can wait out the window
      * and retry once; all other failures go through [fail].
      */
-    private suspend fun fishSynthesize(chunk: ReaderTtsChunk, requestedSession: Long): ByteArray? {
+    private suspend fun fishSynthesize(
+        chunk: ReaderTtsChunk,
+        requestedSession: Long,
+        reportFailures: Boolean = true,
+    ): ByteArray? {
         val file = cacheFile(chunk)
         val byok = fishByokAvailable()
+        iosCloudTtsTraceLog(
+            "cloud.fishFetch",
+            "session=$requestedSession backend=${if (byok) "byok-direct" else "worker"} textLen=${chunk.spokenText.length}"
+        )
         val url = if (byok) {
             "https://api.fish.audio/v1/tts"
         } else {
@@ -836,17 +902,24 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
                 IosReaderAiHttpClient.postBytes(url, body, headers)
             }
         } catch (error: Throwable) {
-            if (error is CancellationException) throw error
+            if (error is CancellationException) {
+                iosCloudTtsTraceLog("cloud.fishThrow", "session=$requestedSession error=${error::class.simpleName}")
+                throw error
+            }
             if (requestedSession != sessionId) throw CancellationException()
-            fail("Fish TTS request failed: ${error.message.orEmpty()}")
+            if (reportFailures) fail("Fish TTS request failed: ${error.message.orEmpty()}")
             return null
         }
         if (requestedSession != sessionId) throw CancellationException()
+        iosCloudTtsTraceLog("cloud.fishResponse", "session=$requestedSession status=${response.statusCode} bytes=${response.bodyBytes.size}")
         if (response.statusCode == 429) {
             val retry = parseSpendGuardError(response.body)?.second ?: 30
+            iosCloudTtsTraceLog("cloud.fishRateLimited", "session=$requestedSession retryAfterSeconds=$retry")
             throw FishRateLimited(retry)
         }
         if (response.statusCode == 402) {
+            iosCloudTtsTraceLog("cloud.fishPayment", "session=$requestedSession")
+            if (!reportFailures) return null
             val guard = parseSpendGuardError(response.body)
             if (guard?.first == "DAILY_SPEND_LIMIT") {
                 fail(spendGuardSentinel(guard.first, guard.second))
@@ -856,15 +929,19 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
             return null
         }
         if (response.statusCode !in 200..299 || response.bodyBytes.size < 1024) {
-            fail("Fish TTS error ${response.statusCode}")
+            iosCloudTtsTraceLog("cloud.fishBadResponse", "session=$requestedSession status=${response.statusCode} bytes=${response.bodyBytes.size}")
+            if (reportFailures) fail("Fish TTS error ${response.statusCode}")
             return null
         }
         // Worker-reported USD cost for the session-spend line (BYOK is $0
-        // here; the user's own Fish key is billed by Fish directly).
+        // here; the user's own Fish key is billed by Fish directly). Applied on
+        // the main dispatcher because prefetch synthesizes off it.
         response.headers["x-tts-cost-micros"]?.toLongOrNull()?.let { cost ->
             if (cost > 0) {
                 sessionSpendMicros += cost
-                state = state.copy(cloudSessionSpendMicros = sessionSpendMicros)
+                withContext(Dispatchers.Main.immediate) {
+                    state = state.copy(cloudSessionSpendMicros = sessionSpendMicros)
+                }
             }
         }
         withContext(Dispatchers.Default) {
@@ -877,10 +954,13 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
 
     private suspend fun playAudioAndWait(audio: ByteArray, requestedSession: Long): Boolean {
         ensureAudioSession()
+        iosCloudTtsTraceLog("cloud.playEntry", "session=$requestedSession bytes=${audio.size} wantsPlayback=$wantsPlayback")
         val completed = CompletableDeferred<Boolean>()
         playbackContinuation = completed
         val createdPlayer = AVAudioPlayer(data = audio.toNSData(), error = null)
-        if (!createdPlayer.prepareToPlay()) {
+        val prepared = createdPlayer.prepareToPlay()
+        iosCloudTtsTraceLog("cloud.playerReady", "session=$requestedSession prepared=$prepared duration=${createdPlayer.duration}")
+        if (!prepared) {
             playbackContinuation = null
             fail("Could not decode cloud audio")
             return false
@@ -898,15 +978,26 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
                 iosTtsStartLog("cloud.firstPlay", "bytes=${audio.size}", mark)
                 ttsStartMark = null
             }
-            createdPlayer.play()
+            val started = createdPlayer.play()
+            iosCloudTtsTraceLog("cloud.playerPlay", "session=$requestedSession started=$started")
+            if (started) prefetchNextChunk(requestedSession)
+        } else {
+            iosCloudTtsTraceLog("cloud.playerHeld", "session=$requestedSession reason=paused-at-start")
         }
+        val monitor = startPlaybackMonitor(createdPlayer, completed, requestedSession)
         try {
+            iosCloudTtsTraceLog("cloud.await", "session=$requestedSession")
             val success = completed.await()
+            iosCloudTtsTraceLog("cloud.awaitDone", "session=$requestedSession success=$success")
             if (!success && requestedSession == sessionId) {
                 fail("Could not play cloud audio")
             }
             return success
+        } catch (error: Throwable) {
+            iosCloudTtsTraceLog("cloud.awaitThrow", "session=$requestedSession error=${error::class.simpleName}")
+            throw error
         } finally {
+            monitor.cancel()
             if (requestedSession == sessionId) {
                 player?.stop()
                 player = null
@@ -915,16 +1006,189 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         }
     }
 
+    /**
+     * Watches the active player while [completed] is pending and completes it
+     * once the stream has actually reached its end.
+     *
+     * Android parity (`TtsPlaybackManager.trackWordByWord`): chunk transition is
+     * driven by observed playback position, not only by a completion callback —
+     * ExoPlayer's own transition callback is best-effort across format/decoder
+     * changes too. `AVAudioPlayer`'s `audioPlayerDidFinishPlaying` is
+     * occasionally not delivered for some MP3 payloads, and a lost callback left
+     * the loop suspended on `completed.await()` forever: the reader sat silent
+     * after one chunk until the user pressed skip. A position-based end check
+     * makes the same end-of-audio condition the transition trigger, so a lost
+     * delegate costs nothing.
+     *
+     * A genuine mid-stream stall (position frozen, not at the end) is *not*
+     * treated as completion — it is reported and left to the pause/resume and
+     * interruption paths, so a dropped route is not silently skipped.
+     */
+    /**
+     * Android parity (`TtsPlaybackManager.prefetchNextChunkAudio`): fetch the
+     * chunk after the one now playing so the hand-off has audio ready.
+     *
+     * Without it every transition paid a full synthesis round-trip in silence —
+     * the iOS trace showed ~5.7s of dead air between a 10s chunk ending and
+     * the next one starting, which reads as a pause after every chunk.
+     *
+     * Deliberately limited to the stateless Fish REST path (BYOK or worker):
+     * the Gemini Live WebSocket shares one connection and one turn channel
+     * across the session, so it must not be driven ahead of the chunk that is
+     * actually speaking.
+     */
+    /** Drops any in-flight or completed prefetch; a new session never reuses one. */
+    private fun cancelPrefetch() {
+        prefetchJob?.cancel()
+        prefetchJob = null
+        prefetchedAudio.clear()
+    }
+
+    private fun prefetchNextChunk(requestedSession: Long) {
+        if (!useFishRest()) return
+        val nextIndex = currentChunkIndex + 1
+        val nextChunk = chunks.getOrNull(nextIndex) ?: return
+        if (nextIndex in prefetchedAudio) return
+        prefetchJob?.cancel()
+        iosCloudTtsTraceLog("cloud.prefetchStart", "session=$requestedSession index=$nextIndex")
+        prefetchJob = scope.launch(Dispatchers.Default) {
+            val audio = try {
+                // Cache-file writes are serialized by the same generation lock
+                // the playback loop uses; a prefetch that loses the race simply
+                // finishes and its result is dropped below.
+                generationMutex.withLock {
+                    loadOrGenerateForPrefetch(nextChunk, requestedSession)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                // A failed prefetch must never surface: the chunk is fetched
+                // again on the main path when its turn comes.
+                null
+            }
+            withContext(Dispatchers.Main.immediate) {
+                if (requestedSession != sessionId) return@withContext
+                if (audio != null && audio.size > WAV_HEADER_SIZE) {
+                    prefetchedAudio[nextIndex] = audio
+                    iosCloudTtsTraceLog("cloud.prefetchReady", "index=$nextIndex bytes=${audio.size}")
+                } else {
+                    iosCloudTtsTraceLog("cloud.prefetchSkipped", "index=$nextIndex")
+                }
+            }
+        }
+    }
+
+    /**
+     * Prefetch variant of [loadOrGenerate]: never touches UI state, never
+     * reports failures to the user, and never connects the Gemini socket.
+     */
+    private suspend fun loadOrGenerateForPrefetch(
+        chunk: ReaderTtsChunk,
+        requestedSession: Long,
+    ): ByteArray? {
+        if (!useFishRest()) return null
+        val file = cacheFile(chunk)
+        val cached = withContext(Dispatchers.Default) { readFile(file) }
+        if (cached != null && cached.size > WAV_HEADER_SIZE) return cached
+        return fishSynthesize(chunk, requestedSession, reportFailures = false)
+    }
+
+    private fun startPlaybackMonitor(
+        activePlayer: AVAudioPlayer,
+        completed: CompletableDeferred<Boolean>,
+        requestedSession: Long,
+    ): Job {
+        return scope.launch(Dispatchers.Main) {
+            var lastPosition = -1.0
+            var stalledSamples = 0
+            while (isActive && !completed.isCompleted) {
+                delay(CloudTtsPlaybackMonitorPolicy.MONITOR_MILLIS)
+                if (requestedSession != sessionId) return@launch
+                val duration = activePlayer.duration
+                val position = activePlayer.currentTime
+                val playing = activePlayer.isPlaying()
+                // End detection comes first: a player that ran off the end on
+                // its own already reports isPlaying == false, so gating this on
+                // `playing` would miss exactly the case being recovered from.
+                if (CloudTtsPlaybackMonitorPolicy.hasReachedEnd(position, duration)) {
+                    if (!wantsPlayback) {
+                        // Paused inside the final moments: leave the chunk
+                        // alone rather than spending the next fetch while the
+                        // user holds playback.
+                        lastPosition = position
+                        stalledSamples = 0
+                        continue
+                    }
+                    iosCloudTtsTraceLog(
+                        "cloud.finishRecovered",
+                        "session=$requestedSession pos=$position dur=$duration playing=$playing delegateFired=false"
+                    )
+                    if (completed.isActive) completed.complete(true)
+                    return@launch
+                }
+                if (!playing || !wantsPlayback) {
+                    lastPosition = position
+                    stalledSamples = 0
+                    continue
+                }
+                stalledSamples = CloudTtsPlaybackMonitorPolicy.nextStalledSamples(
+                    previous = stalledSamples,
+                    position = position,
+                    lastPosition = lastPosition,
+                )
+                lastPosition = position
+                when (
+                    CloudTtsPlaybackMonitorPolicy.evaluate(
+                        position = position,
+                        duration = duration,
+                        playing = playing,
+                        stalledSamples = stalledSamples,
+                    )
+                ) {
+                    CloudTtsPlaybackMonitorPolicy.Action.FINISHED -> {
+                        iosCloudTtsTraceLog(
+                            "cloud.finishRecovered",
+                            "session=$requestedSession pos=$position dur=$duration delegateFired=false"
+                        )
+                        if (completed.isActive) completed.complete(true)
+                        return@launch
+                    }
+                    CloudTtsPlaybackMonitorPolicy.Action.STALLED -> {
+                        iosCloudTtsTraceLog(
+                            "cloud.stall",
+                            "session=$requestedSession pos=$position dur=$duration"
+                        )
+                    }
+                    CloudTtsPlaybackMonitorPolicy.Action.PLAYING,
+                    CloudTtsPlaybackMonitorPolicy.Action.IDLE,
+                    -> Unit
+                }
+            }
+        }
+    }
+
     private fun onAudioFinished(callbackPlayer: AVAudioPlayer, success: Boolean) {
-        if (player !== callbackPlayer) return
-        val continuation = playbackContinuation ?: return
+        val identityMatch = player === callbackPlayer
+        val continuation = playbackContinuation
+        iosCloudTtsTraceLog(
+            "cloud.delegateFinished",
+            "success=$success identityMatch=$identityMatch continuationActive=${continuation?.isActive} " +
+                "pos=${callbackPlayer.currentTime} dur=${callbackPlayer.duration}"
+        )
+        if (!identityMatch) return
+        if (continuation == null) return
         scope.launch {
             if (player !== callbackPlayer) return@launch
+            iosCloudTtsTraceLog("cloud.continuationComplete", "success=$success")
             if (continuation.isActive) continuation.complete(success)
         }
     }
 
     private fun onAudioDecodeError(callbackPlayer: AVAudioPlayer) {
+        iosCloudTtsTraceLog(
+            "cloud.delegateDecodeError",
+            "identityMatch=${player === callbackPlayer} continuationActive=${playbackContinuation?.isActive}"
+        )
         if (player !== callbackPlayer) return
         playbackContinuation?.let { continuation ->
             if (continuation.isActive) continuation.complete(false)
@@ -947,6 +1211,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         }
         val transition = interruptionState.reduce(event)
         interruptionState = transition.state
+        iosCloudTtsTraceLog("cloud.interruption", "event=${interruption::class.simpleName} action=${transition.action}")
         when (transition.action) {
             LocalTtsInterruptionAction.NONE -> Unit
             LocalTtsInterruptionAction.PAUSE -> pauseInternal()
@@ -956,9 +1221,11 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
 
     private fun restartAt(target: Int) {
         if (chunks.isEmpty()) return
+        iosCloudTtsTraceLog("cloud.restartAt", "from=$currentChunkIndex to=$target sessionWas=$sessionId")
         sessionId += 1
         playJob?.cancel()
         playJob = null
+        cancelPrefetch()
         playbackContinuation?.cancel()
         playbackContinuation = null
         player?.stop()
@@ -1108,6 +1375,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
 
     private fun fail(message: String) {
         val normalized = normalizeCloudError(message)
+        iosCloudTtsTraceLog("cloud.fail", "message=${normalized.take(160)}")
         state = state.copy(
             isPlaying = false,
             isLoading = false,
@@ -1151,6 +1419,12 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         isSignedIn && !authToken.isNullOrBlank() && !byokAvailable() && !fishByokAvailable()
 
     private fun useFishRest(): Boolean = cloudTtsModeEnabled() && (workerFishAvailable() || fishByokAvailable())
+
+    private fun cloudBackendName(): String = when {
+        fishByokAvailable() -> "fish-byok"
+        workerFishAvailable() -> "fish-worker"
+        else -> "gemini-ws"
+    }
 
     private fun cloudTtsModeEnabled(): Boolean =
         com.aryan.reader.shared.isCloudTtsModelEnabled(settings.ttsModel)

@@ -865,6 +865,7 @@ object ReaderTtsPlanner {
         }
         return sessionChunks
             .filter { it.text.isNotBlank() }
+            .mergeTinyLeadingChunk()
             .mapIndexed { index, chunk -> chunk.copy(index = index) }
     }
 
@@ -907,6 +908,7 @@ object ReaderTtsPlanner {
         }
         return sessionChunks
             .filter { it.text.isNotBlank() }
+            .mergeTinyLeadingChunk()
             .mapIndexed { index, chunk -> chunk.copy(index = index) }
     }
 

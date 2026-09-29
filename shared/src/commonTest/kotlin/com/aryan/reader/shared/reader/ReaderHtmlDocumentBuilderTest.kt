@@ -499,7 +499,7 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
-    fun `vertical document centers followed tts locator without changing active locator scroll`() {
+    fun `vertical document follows tts locator only when it is not already visible`() {
         val html = ReaderHtmlDocumentBuilder.verticalDocument(
             book = repeatedWordBook("alpha beta gamma"),
             settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL)
@@ -516,7 +516,13 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("function shouldCenterScrollTarget(options)"))
         assertTrue(html.contains("function shouldTrackScrollRestore(options)"))
         assertTrue(html.contains("return documentTop - Math.round((viewportHeight - rectHeight) / 2);"))
-        assertTrue(html.contains("if (follow && locator) scrollToLocator(locator, { align: 'center', trackRestore: false });"))
+        // Android parity (keepVisible = true): the TTS follow must not
+        // unconditionally re-center the spoken chunk, and when it does move the
+        // page it animates instead of jumping.
+        assertTrue(html.contains("function ttsLocatorNeedsFollowScroll(locator)"))
+        assertTrue(html.contains("if (ttsLocatorNeedsFollowScroll(locator))"))
+        assertTrue(html.contains("scrollToLocator(locator, { align: 'nearest', smooth: true, trackRestore: false })"))
+        assertFalse(html.contains("if (follow && locator) scrollToLocator(locator, { align: 'center', trackRestore: false });"))
         assertFalse(activeScrollCall.contains("align: 'center'"))
         assertFalse(activeScrollCall.contains("trackRestore: false"))
     }

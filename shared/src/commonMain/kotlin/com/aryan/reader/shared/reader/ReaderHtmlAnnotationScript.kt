@@ -1199,11 +1199,63 @@ internal fun readerHtmlAnnotationScript(): String = """
               window.readerSetTtsLocator = function (locator, follow) {
                 try {
                   applyTtsLocator(locator);
-                  if (follow && locator) scrollToLocator(locator, { align: 'center', trackRestore: false });
+                  if (follow && locator) {
+                    // Android parity (EpubReaderScreen TTS follow): the follow
+                    // scroll is keep-visible, not unconditional. Centering the
+                    // spoken chunk on every chunk change yanked the page
+                    // around mid-sentence, which read as a stutter; scrolling
+                    // only when the chunk has drifted out of the comfortable
+                    // band matches the native vertical follow's
+                    // `keepVisible = true`.
+                    if (ttsLocatorNeedsFollowScroll(locator)) {
+                      scrollToLocator(locator, { align: 'nearest', smooth: true, trackRestore: false });
+                    } else {
+                      readerTtsLog('locator_follow_skipped reason=already_visible');
+                    }
+                  }
                 } catch (error) {
                   readerTtsLog('locator_exception error=' + readerTtsPreview(error, 180));
                 }
               };
+              /**
+               * True when the spoken chunk is not already comfortably on screen.
+               *
+               * Bands mirror what a reader can actually read without scrolling:
+               * content must sit inside the viewport with a small margin, so a
+               * chunk that is merely a line away is left alone instead of being
+               * re-centered every chunk.
+               */
+              function ttsLocatorNeedsFollowScroll(locator) {
+                if (!isVerticalReaderDocument()) return true;
+                var chapterIndex = locator.chapterIndex;
+                if (chapterIndex === undefined || chapterIndex === null || chapterIndex === '') {
+                  chapterIndex = document.body.getAttribute('data-reader-active-chapter-index');
+                }
+                var startOffset = locatorStartOffset(locator);
+                if (startOffset === undefined || startOffset === null) startOffset = numberAttribute(document.body, 'data-reader-active-start-offset', null);
+                if (chapterIndex === undefined || chapterIndex === null || chapterIndex === '') return true;
+                var chapter = document.querySelector('[data-reader-page-index="' + selectorValue(locator.pageIndex) + '"]') || readerHostForLocator(chapterIndex, startOffset, locator.endOffset);
+                if (!chapter) return true;
+                var rect = null;
+                if (startOffset !== undefined && startOffset !== null) {
+                  var end = locator.endOffset === undefined || locator.endOffset === null ? startOffset : locator.endOffset;
+                  var range = rangeForOffsets(parseInt(chapterIndex, 10), parseInt(startOffset, 10), Number(end) > Number(startOffset) ? Number(end) : Number(startOffset) + 1, locator.cfi, true);
+                  if (range) {
+                    rect = range.getClientRects().length ? range.getClientRects()[0] : range.getBoundingClientRect();
+                    if (range.detach) range.detach();
+                  }
+                }
+                if (!rect || (rect.top === 0 && rect.bottom === 0)) {
+                  rect = chapter.getBoundingClientRect();
+                }
+                if (!rect) return true;
+                var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+                if (!viewportHeight) return true;
+                var margin = Math.max(24, Math.round(viewportHeight * readerTtsFollowViewportMarginRatio));
+                var visible = rect.top >= margin && rect.bottom <= viewportHeight - margin;
+                readerTtsLog('locator_follow_check top=' + Math.round(rect.top) + ' bottom=' + Math.round(rect.bottom) + ' viewport=' + Math.round(viewportHeight) + ' visible=' + visible);
+                return !visible;
+              }
               function refreshTtsHighlight() {
                 if (!readerTtsLocator) return;
                 applyTtsLocator(readerTtsLocator);

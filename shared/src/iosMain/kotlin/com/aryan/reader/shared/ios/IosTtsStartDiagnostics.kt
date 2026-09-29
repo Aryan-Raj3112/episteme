@@ -1,6 +1,7 @@
 package com.aryan.reader.shared.ios
 
 import com.aryan.reader.shared.currentTimestamp
+import com.aryan.reader.shared.reader.ReaderCloudTtsTraceTag
 import com.aryan.reader.shared.reader.ReaderTtsStartTag
 import platform.posix.pthread_main_np
 import kotlin.time.TimeMark
@@ -25,4 +26,27 @@ internal fun iosTtsStartLog(stage: String, detail: String = "", elapsedSince: Ti
     val message = "$stage$elapsed thread=$thread t=$nowMs$extra"
     IosDiagnosticLogStore.record(ReaderTtsStartTag, message)
     println("[$ReaderTtsStartTag] $message")
+}
+
+/**
+ * Dedicated iOS cloud-TTS playback trace under the common
+ * [ReaderCloudTtsTraceTag].
+ *
+ * Ungated on purpose: when cloud playback stalls after a chunk on device,
+ * filter the device console for the tag (or use in-app Export logs) and send
+ * the lines — no diagnostics flag needed. Every line carries the calling
+ * thread (delegate callbacks arriving off-main are suspects) and wall-clock
+ * ms (cross-engine correlation with the audio-session lines).
+ *
+ * Privacy rule: session/chunk counters, byte sizes, HTTP statuses, player
+ * positions, and booleans only. Never chunk text, audio bytes, tokens, or
+ * API keys.
+ */
+internal fun iosCloudTtsTraceLog(stage: String, detail: String = "") {
+    val thread = if (pthread_main_np() != 0) "main" else "bg"
+    val nowMs = currentTimestamp()
+    val extra = if (detail.isNotBlank()) " $detail" else ""
+    val message = "$stage thread=$thread t=$nowMs$extra"
+    IosDiagnosticLogStore.record(ReaderCloudTtsTraceTag, message)
+    println("[$ReaderCloudTtsTraceTag] $message")
 }

@@ -1037,7 +1037,22 @@ internal object IosReaderAiHttpClient {
             if (body != null) setHTTPBody(body)
         }
         return suspendCancellableCoroutine { continuation ->
+            val host = nsUrl.host.orEmpty()
+            iosCloudTtsTraceLog("http.start", "method=$method host=$host bodyBytes=${body?.length?.toInt() ?: 0}")
             val delegate = IosReaderAiHttpDelegate { result ->
+                result
+                    .onSuccess { response ->
+                        iosCloudTtsTraceLog(
+                            "http.done",
+                            "method=$method host=$host status=${response.statusCode} bytes=${response.bodyBytes.size}"
+                        )
+                    }
+                    .onFailure { error ->
+                        iosCloudTtsTraceLog(
+                            "http.done",
+                            "method=$method host=$host error=${error::class.simpleName}:${error.message?.take(120)}"
+                        )
+                    }
                 if (continuation.isActive) continuation.resumeWith(result)
             }
             val session = NSURLSession.sessionWithConfiguration(

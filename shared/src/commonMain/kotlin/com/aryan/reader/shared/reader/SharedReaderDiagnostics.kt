@@ -13,6 +13,17 @@ internal const val TxtFormatTraceTag = "TxtFormatTrace"
  */
 const val ReaderTtsStartTag = "ReaderTtsStart"
 
+/**
+ * Common tag for iOS cloud-TTS playback tracing (Fish/Gemini chunk fetch,
+ * AVAudioPlayer handoff, and finish-delegate delivery). Ungated on purpose:
+ * filter the device console / exported diagnostics for this tag and send the
+ * lines when cloud playback stalls after a chunk. Per-chunk volume is
+ * intentional here (unlike [ReaderTtsStartTag]) — the stall under
+ * investigation happens at chunk boundaries. Never carries audio bytes,
+ * chunk text, tokens, or API keys.
+ */
+const val ReaderCloudTtsTraceTag = "ReaderCloudTts"
+
 internal expect val SharedReaderDiagnosticsEnabled: Boolean
 internal expect fun isSharedReaderDiagnosticTagEnabled(tag: String): Boolean
 internal expect fun writeSharedReaderDiagnostic(tag: String, message: String)
