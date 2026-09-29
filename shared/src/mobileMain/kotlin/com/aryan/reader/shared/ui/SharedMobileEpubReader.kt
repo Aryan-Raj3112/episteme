@@ -115,6 +115,7 @@ import com.aryan.reader.shared.readerAutoScrollBoundaryAction
 import com.aryan.reader.shared.migrateLegacyIosReaderAutoScrollSpeed
 import com.aryan.reader.shared.migrateAndroidEpubFormatSettings
 import com.aryan.reader.shared.shouldFollowReaderTtsChunk
+import com.aryan.reader.shared.shouldRefreshReaderNavigationOnTtsSessionEnd
 import com.aryan.reader.shared.pageInfoBarBottomReserve
 import com.aryan.reader.shared.shouldReserveEpubPageInfoBarSpace
 import com.aryan.reader.shared.shouldShowEpubPageInfoBar
@@ -393,6 +394,8 @@ fun SharedMobileEpubReaderScreen(
     // chain effects to this book because the engines are shared across
     // books; the handled counters snapshot engine state at composition so a
     // session finishing in another book never hijacks this reader.
+    // Declared before the helpers (Kotlin locals are not hoisted).
+    val scope = rememberCoroutineScope()
     var ttsActiveChapter by remember(book.id) { mutableStateOf<Int?>(null) }
     var ttsSessionBookId by remember(book.id) { mutableStateOf<String?>(null) }
     var localTtsHandledCompletion by remember(book.id) { mutableStateOf(localTts.completionCount) }
@@ -403,8 +406,7 @@ fun SharedMobileEpubReaderScreen(
             ?: pages.firstOrNull { it.pageIndex == currentPageIndex }?.chapterIndex
             ?: pages.firstOrNull()?.chapterIndex
 
-    fun planChapterTtsChunks(chapterIndex: Int): List<ReaderTtsChunk> {
-        val epub = loadedBook ?: return emptyList()
+    fun planChapterTtsChunks(epub: SharedEpubBook, chapterIndex: Int): List<ReaderTtsChunk> {
         // Reuse the measured pages: rebuilding a session re-paginates the
         // whole book, which is the other half of the start latency.
         val session = ReaderSessionState(
@@ -415,47 +417,81 @@ fun SharedMobileEpubReaderScreen(
             .withTtsReplacements(readerTtsReplacementPreferences, book.id)
     }
 
-    fun startLocalTtsFromChapter(fromChapter: Int): Boolean {
-        val epub = loadedBook ?: return false
-        val planMark = TimeSource.Monotonic.markNow()
-        var chapter = fromChapter
-        while (chapter < epub.chapters.size) {
-            val planned = planChapterTtsChunks(chapter)
-            if (planned.isNotEmpty()) {
-                ttsActiveChapter = chapter
-                ttsSessionBookId = book.id
-                localTtsHandledCompletion = localTts.completionCount
-                cloudTts?.stop()
-                localTts.start(chunks = planned, bookTitle = epub.title, bookId = book.id)
-                println("[$ReaderTtsStartTag] ui localPlanned chapter=$chapter chunks=${planned.size} +${planMark.elapsedNow().inWholeMilliseconds}ms")
-                return true
-            }
-            chapter++
-        }
-        println("[$ReaderTtsStartTag] ui localNoChapter bookId=${book.id} fromChapter=$fromChapter")
-        return false
+    // Android parity (scope.launch planning): even a single chapter can be
+    // big enough to drop frames, so planning runs off the main thread and
+    // the engine starts back on it. A second tap while planning cancels the
+    // pending start; leaving the reader cancels via the screen scope.
+    var ttsPlanJob by remember(book.id) { mutableStateOf<Job?>(null) }
+
+    fun cancelTtsPlanning() {
+        ttsPlanJob?.cancel()
+        ttsPlanJob = null
     }
 
-    fun startCloudTtsFromChapter(fromChapter: Int, continued: Boolean): Boolean {
-        val controller = cloudTts ?: return false
-        val epub = loadedBook ?: return false
+    fun startLocalTtsFromChapter(fromChapter: Int) {
+        cancelTtsPlanning()
+        val epub = loadedBook ?: return
         val planMark = TimeSource.Monotonic.markNow()
-        var chapter = fromChapter
-        while (chapter < epub.chapters.size) {
-            val planned = planChapterTtsChunks(chapter)
-            if (planned.isNotEmpty()) {
-                ttsActiveChapter = chapter
+        ttsPlanJob = scope.launch(Dispatchers.Default) {
+            var chapter = fromChapter
+            var planned: List<ReaderTtsChunk> = emptyList()
+            while (chapter < epub.chapters.size) {
+                planned = planChapterTtsChunks(epub, chapter)
+                if (planned.isNotEmpty()) break
+                chapter++
+            }
+            if (planned.isEmpty()) {
+                withContext(Dispatchers.Main) {
+                    println("[$ReaderTtsStartTag] ui localNoChapter bookId=${book.id} fromChapter=$fromChapter")
+                    localTts.stop()
+                }
+                return@launch
+            }
+            val startedChapter = chapter
+            val startedChunks = planned
+            val startedTitle = epub.title
+            withContext(Dispatchers.Main) {
+                if (!isActive) return@withContext
+                ttsActiveChapter = startedChapter
+                ttsSessionBookId = book.id
+                localTtsHandledCompletion = localTts.completionCount
+                localTts.start(chunks = startedChunks, bookTitle = startedTitle, bookId = book.id)
+                println("[$ReaderTtsStartTag] ui localPlanned chapter=$startedChapter chunks=${startedChunks.size} +${planMark.elapsedNow().inWholeMilliseconds}ms")
+            }
+        }
+    }
+
+    fun startCloudTtsFromChapter(fromChapter: Int, continued: Boolean) {
+        val controller = cloudTts ?: return
+        val epub = loadedBook ?: return
+        cancelTtsPlanning()
+        val planMark = TimeSource.Monotonic.markNow()
+        ttsPlanJob = scope.launch(Dispatchers.Default) {
+            var chapter = fromChapter
+            var planned: List<ReaderTtsChunk> = emptyList()
+            while (chapter < epub.chapters.size) {
+                planned = planChapterTtsChunks(epub, chapter)
+                if (planned.isNotEmpty()) break
+                chapter++
+            }
+            if (planned.isEmpty()) {
+                withContext(Dispatchers.Main) {
+                    println("[$ReaderTtsStartTag] ui cloudNoChapter bookId=${book.id} fromChapter=$fromChapter")
+                }
+                return@launch
+            }
+            val startedChapter = chapter
+            val startedChunks = planned
+            val startedTitle = epub.title
+            withContext(Dispatchers.Main) {
+                if (!isActive) return@withContext
+                ttsActiveChapter = startedChapter
                 ttsSessionBookId = book.id
                 cloudTtsHandledCompletion = cloudTtsState.completionCount
-                if (!continued) localTts.stop()
-                controller.start(planned, epub.title, book.id, continueSession = continued)
-                println("[$ReaderTtsStartTag] ui cloudPlanned chapter=$chapter chunks=${planned.size} continued=$continued +${planMark.elapsedNow().inWholeMilliseconds}ms")
-                return true
+                controller.start(startedChunks, startedTitle, book.id, continueSession = continued)
+                println("[$ReaderTtsStartTag] ui cloudPlanned chapter=$startedChapter chunks=${startedChunks.size} continued=$continued +${planMark.elapsedNow().inWholeMilliseconds}ms")
             }
-            chapter++
         }
-        println("[$ReaderTtsStartTag] ui cloudNoChapter bookId=${book.id} fromChapter=$fromChapter")
-        return false
     }
 
     fun toggleCloudTts() {
@@ -464,7 +500,13 @@ fun SharedMobileEpubReaderScreen(
             cloudTtsState.isPlaying || cloudTtsState.isLoading -> controller.pause()
             cloudTtsState.isPaused -> controller.resume()
             else -> loadedBook?.let {
+                if (ttsPlanJob?.isActive == true) {
+                    println("[$ReaderTtsStartTag] ui cloudCancel bookId=${book.id}")
+                    cancelTtsPlanning()
+                    return@let
+                }
                 println("[$ReaderTtsStartTag] ui cloudToggle bookId=${book.id} page=$currentPageIndex mode=${settings.readingMode}")
+                localTts.stop()
                 currentTtsChapterIndex()?.let { chapter -> startCloudTtsFromChapter(chapter, continued = false) }
             }
         }
@@ -580,7 +622,6 @@ fun SharedMobileEpubReaderScreen(
         )
     }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
-    val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val copiedTextLabel = readerString("clip_label_copied_text", "Copied Text")
     val copiedLinkLabel = readerString("clip_label_copied_link", "Copied Link")
@@ -859,7 +900,7 @@ fun SharedMobileEpubReaderScreen(
         if (!localTts.isSessionActive || ttsSessionBookId != book.id) return@LaunchedEffect
         val next = (ttsActiveChapter ?: return@LaunchedEffect) + 1
         println("[$ReaderTtsStartTag] ui localChain bookId=${book.id} nextChapter=$next")
-        if (!startLocalTtsFromChapter(next)) localTts.stop()
+        startLocalTtsFromChapter(next)
     }
     LaunchedEffect(cloudTtsState.completionCount) {
         if (cloudTtsState.completionCount == cloudTtsHandledCompletion) return@LaunchedEffect
@@ -1265,6 +1306,22 @@ fun SharedMobileEpubReaderScreen(
         if (!shouldFollowReaderTtsChunk(detachedTtsChunkIndex, chunk.index)) return@LaunchedEffect
         detachedTtsChunkIndex = null
         navigate(chunk.toLocator(), detachFromTts = false)
+    }
+
+    // Stuck-highlight clear (vertical WebView): ending the session must push
+    // the composed readerSetTtsLocator(null) to the page, otherwise the last
+    // chunk's highlight stays painted. Native renderers clear via
+    // recomposition, so only the WebView branch issues this final request.
+    var wasLocalTtsSessionActive by remember(book.id) { mutableStateOf(false) }
+    LaunchedEffect(localTts.isSessionActive) {
+        val refreshNavigation = shouldRefreshReaderNavigationOnTtsSessionEnd(
+            sessionWasActive = wasLocalTtsSessionActive,
+            sessionIsActive = localTts.isSessionActive,
+            readingMode = settings.readingMode,
+            useNativeVerticalRenderer = useNativeVerticalRenderer,
+        )
+        wasLocalTtsSessionActive = localTts.isSessionActive
+        if (refreshNavigation) navigationRequestId++
     }
 
     fun navigateSearchResult(result: SharedMobileEpubSearchResult) {
@@ -2532,18 +2589,26 @@ fun SharedMobileEpubReaderScreen(
                         onLocalTtsToggle = {
                             when (localTts.state) {
                                 SharedMobileEpubLocalTtsState.IDLE -> loadedBook?.let {
+                                    if (ttsPlanJob?.isActive == true) {
+                                        println("[$ReaderTtsStartTag] ui localCancel bookId=${book.id}")
+                                        cancelTtsPlanning()
+                                        return@let
+                                    }
                                     println("[$ReaderTtsStartTag] ui localToggle bookId=${book.id} page=$currentPageIndex mode=${settings.readingMode}")
+                                    cloudTts?.stop()
                                     currentTtsChapterIndex()?.let { chapter -> startLocalTtsFromChapter(chapter) }
                                 }
                                 SharedMobileEpubLocalTtsState.SPEAKING -> localTts.pause()
                                 SharedMobileEpubLocalTtsState.PAUSED -> localTts.resume()
                             }
                         },
-                        onLocalTtsStop = localTts::stop,
+                        onLocalTtsStop = {
+                            cancelTtsPlanning(); localTts.stop()
+                        },
                         cloudTtsState = cloudTtsState,
                         cloudTtsAvailable = cloudTtsAvailable,
                         onCloudTtsToggle = ::toggleCloudTts,
-                        onCloudTtsStop = cloudTts?.let { controller -> { controller.stop() } } ?: {},
+                        onCloudTtsStop = cloudTts?.let { controller -> { cancelTtsPlanning(); controller.stop() } } ?: {},
                         keepScreenOn = keepScreenOn,
                         onKeepScreenOnChange = {
                             keepScreenOn = it
@@ -2617,21 +2682,15 @@ fun SharedMobileEpubReaderScreen(
                             localTtsState = localTts.state,
                             onLocalTtsToggle = {
                                 when (localTts.state) {
-                                    SharedMobileEpubLocalTtsState.IDLE -> loadedBook?.let { epub ->
+                                    SharedMobileEpubLocalTtsState.IDLE -> loadedBook?.let {
+                                        if (ttsPlanJob?.isActive == true) {
+                                            println("[$ReaderTtsStartTag] ui localCancel bookId=${book.id}")
+                                            cancelTtsPlanning()
+                                            return@let
+                                        }
+                                        println("[$ReaderTtsStartTag] ui localToggle bookId=${book.id} page=$currentPageIndex mode=${settings.readingMode}")
                                         cloudTts?.stop()
-                                        val session = ReaderEngine().createSession(
-                                            book = epub,
-                                            settings = settings,
-                                            initialPageIndex = currentPageIndex,
-                                            initialLocator = currentLocator
-                                        )
-                                        localTts.start(
-                                            chunks = ReaderTtsPlanner.chunksFromCurrentLocation(session)
-                                                .ifEmpty { ReaderTtsPlanner.chunksForCurrentChapter(session) }
-                                                .withTtsReplacements(readerTtsReplacementPreferences, book.id),
-                                            bookTitle = epub.title,
-                                            bookId = book.id,
-                                        )
+                                        currentTtsChapterIndex()?.let { chapter -> startLocalTtsFromChapter(chapter) }
                                     }
                                     SharedMobileEpubLocalTtsState.SPEAKING -> localTts.pause()
                                     SharedMobileEpubLocalTtsState.PAUSED -> localTts.resume()
@@ -2640,8 +2699,10 @@ fun SharedMobileEpubReaderScreen(
                             cloudTtsState = cloudTtsState,
                             cloudTtsAvailable = cloudTtsAvailable,
                             onCloudTtsToggle = ::toggleCloudTts,
-                            onLocalTtsStop = localTts::stop,
-                            onCloudTtsStop = cloudTts?.let { controller -> { controller.stop() } } ?: {},
+                            onLocalTtsStop = {
+                            cancelTtsPlanning(); localTts.stop()
+                        },
+                            onCloudTtsStop = cloudTts?.let { controller -> { cancelTtsPlanning(); controller.stop() } } ?: {},
                         )
                     }
                     }
