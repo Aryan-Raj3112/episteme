@@ -4,6 +4,8 @@ package com.aryan.reader.shared.ios
 
 import com.aryan.reader.shared.AiAdapter
 import com.aryan.reader.shared.AiDefinitionResult
+import com.aryan.reader.shared.AiKeySaveError
+import com.aryan.reader.shared.AiKeySaveResult
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderByokTextRequest
@@ -16,6 +18,8 @@ import com.aryan.reader.shared.mapSpendGuardStreamError
 import com.aryan.reader.shared.hasSpendableBalance
 import com.aryan.reader.shared.isFishVoiceListCacheFresh
 import com.aryan.reader.shared.maskedReaderAiKey
+import com.aryan.reader.shared.normalizeAiKeyEntry
+import com.aryan.reader.shared.normalizedAiKeyEntry
 import kotlin.time.Clock
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.alloc
@@ -158,8 +162,26 @@ internal class IosReaderAiSettingsStore(
         defaults.setObject(sanitized.ttsSpeakerId, forKey = KEY_TTS_SPEAKER)
     }
 
-    fun saveKey(provider: String, key: String) {
-        IosReaderAiKeychain.write(provider.accountName(), key.trim())
+    fun saveKey(provider: String, key: String): AiKeySaveResult {
+        when (val validated = normalizeAiKeyEntry(key)) {
+            is AiKeySaveResult.Invalid -> return validated
+            else -> Unit
+        }
+        val normalized = normalizedAiKeyEntry(key) ?: return AiKeySaveResult.Invalid(AiKeySaveError.BLANK)
+        val account = provider.accountName()
+        // Write, then read back. A write-only check passes on the partial
+        // failures that actually happen (entitlement/ACL problems), and the
+        // read-back is what makes "saved" a claim we can stand behind.
+        if (!IosReaderAiKeychain.write(account, normalized)) {
+            iosAiSettingsLog("keychain.write_failed provider=$provider")
+            return AiKeySaveResult.Failed(AiKeySaveError.KEYCHAIN_UNAVAILABLE)
+        }
+        if (IosReaderAiKeychain.read(account) != normalized) {
+            iosAiSettingsLog("keychain.verify_failed provider=$provider")
+            return AiKeySaveResult.Failed(AiKeySaveError.VERIFY_FAILED)
+        }
+        iosAiSettingsLog("keychain.write_ok provider=$provider")
+        return AiKeySaveResult.Saved
     }
 
     fun deleteKey(provider: String) {
@@ -246,6 +268,18 @@ private fun iosStoreFishVoices(cacheKey: String, voices: List<com.aryan.reader.s
 }
 
 /** Small Keychain wrapper; values never enter NSUserDefaults or cloud snapshots. */
+/**
+ * Key-persistence trace. Ungated like the other iOS TTS diagnostics: a key that
+ * silently fails to save leaves the app working but wrong, so the console (and
+ * Export logs) must show the write attempt and its outcome.
+ *
+ * Never logs the key itself — provider and outcome only.
+ */
+internal fun iosAiSettingsLog(message: String) {
+    IosDiagnosticLogStore.record("ReaderAiSettings", message)
+    println("[ReaderAiSettings] $message")
+}
+
 internal object IosReaderAiKeychain {
     const val GEMINI_ACCOUNT = "gemini"
     const val GROQ_ACCOUNT = "groq"

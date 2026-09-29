@@ -28,16 +28,34 @@ const val GEMINI_TTS_MODEL_LITE_ID = "gemini:$GEMINI_TTS_MODEL_LITE"
 const val GEMINI_TTS_MODEL_PREVIEW_ID = "gemini:$GEMINI_TTS_MODEL_PREVIEW"
 // Fish TTS via BYOK (user's Fish key, direct api.fish.audio calls, no credits).
 const val FISH_TTS_MODEL = "s2.1-pro"
+// Fish's free development tier: the same model as [FISH_TTS_MODEL] at $0 under
+// fair-use limits, with no time-to-first-audio or data-processing guarantees.
+// Selected with the `model` request header, same /v1/tts endpoint.
+const val FISH_TTS_MODEL_FREE = "s2.1-pro-free"
 const val FISH_TTS_MODEL_ID = "fish:$FISH_TTS_MODEL"
+const val FISH_TTS_MODEL_FREE_ID = "fish:$FISH_TTS_MODEL_FREE"
+
+/** Every Fish model id this app can drive. */
+val READER_FISH_TTS_MODEL_IDS = listOf(FISH_TTS_MODEL_ID, FISH_TTS_MODEL_FREE_ID)
+
+/** Every Gemini model id this app can drive for TTS (REST + legacy Live). */
+val READER_GEMINI_TTS_MODEL_IDS = listOf(
+    GEMINI_TTS_MODEL_LITE_ID,
+    GEMINI_TTS_MODEL_PREVIEW_ID,
+    GEMINI_CLOUD_TTS_MODEL_ID,
+)
 
 /**
  * Cloud TTS master switch: enabled when the stored TTS model names a cloud
- * backend (legacy Gemini Live or Fish), disabled for device speech ("").
- * Single source of truth for the reader toggle and the speech engine — they
- * must never disagree about whether cloud mode is on.
+ * backend, disabled for device speech ("").
+ *
+ * Every model the TTS picker can select counts, not just the legacy Live model
+ * and one Fish id: gating on a subset meant that picking a Gemini REST model
+ * (or the Fish free tier) silently switched cloud TTS *off* in the reader,
+ * because the engine and the reader toggle read this same function.
  */
 fun isCloudTtsModelEnabled(ttsModel: String): Boolean =
-    ttsModel == GEMINI_CLOUD_TTS_MODEL_ID || ttsModel == FISH_TTS_MODEL_ID
+    ttsModel in READER_GEMINI_TTS_MODEL_IDS || ttsModel in READER_FISH_TTS_MODEL_IDS
 const val DEFAULT_CLOUD_TTS_SPEAKER_ID = "Aoede"
 const val READER_TTS_CHUNK_MAX_LENGTH = 250
 private const val ReaderTtsStartTraceLogTag = "EpistemeDesktopTtsStartTrace"
@@ -99,7 +117,8 @@ data class ReaderAiByokSettings(
 ) {
     fun sanitized(): ReaderAiByokSettings {
         val knownTextModelIds = ReaderAiModelOptions.mapTo(mutableSetOf()) { it.id }
-        val knownTtsModelIds = ReaderTtsByokOptions.mapTo(mutableSetOf()) { it.id } + GEMINI_CLOUD_TTS_MODEL_ID
+        val knownTtsModelIds = ReaderTtsByokOptions.mapTo(mutableSetOf()) { it.id } +
+            setOf(GEMINI_CLOUD_TTS_MODEL_ID)
         return copy(
             geminiKey = geminiKey.trim(),
             groqKey = groqKey.trim(),
@@ -144,9 +163,49 @@ data class ReaderAiByokSettings(
     val isByokCloudTtsAvailable: Boolean get() = geminiKey.isNotBlank() && ttsModel == GEMINI_CLOUD_TTS_MODEL_ID
     val isGeminiRestByokTtsAvailable: Boolean get() =
         geminiKey.isNotBlank() && (ttsModel == GEMINI_TTS_MODEL_LITE_ID || ttsModel == GEMINI_TTS_MODEL_PREVIEW_ID)
-    val isFishByokTtsAvailable: Boolean get() = fishKey.isNotBlank() && ttsModel == FISH_TTS_MODEL_ID
+    val isFishByokTtsAvailable: Boolean get() = fishKey.isNotBlank() && ttsModel in READER_FISH_TTS_MODEL_IDS
     val isAnyByokTtsAvailable: Boolean get() = isByokCloudTtsAvailable || isGeminiRestByokTtsAvailable || isFishByokTtsAvailable
     val isCloudTtsAvailable: Boolean get() = serverBackedCloudTts || isAnyByokTtsAvailable
+}
+
+/**
+ * Which backend should actually synthesize a cloud-TTS chunk.
+ *
+ * Android benchmark (`TtsService.audioGenerator`, `AndroidTtsSettings`):
+ * a BYOK key always wins over spending credits, and between the two keys Fish
+ * is checked first:
+ *
+ *  1. Fish BYOK  — Fish key saved and a Fish model selected.
+ *  2. Gemini BYOK — Gemini key saved and a Gemini TTS model selected.
+ *  3. Worker     — signed in with a token, synthesis is billed to the wallet.
+ *  4. Unavailable — nothing configured; the caller must surface a real error
+ *     instead of falling back to device speech silently.
+ *
+ * Kept in commonMain so the iOS engine, the Android engine, and the settings UI
+ * all resolve the same backend for the same settings and cannot drift.
+ */
+enum class CloudTtsBackend {
+    FISH_BYOK,
+    GEMINI_BYOK,
+    WORKER,
+    UNAVAILABLE,
+}
+
+fun resolveCloudTtsBackend(
+    settings: ReaderAiByokSettings,
+    isSignedIn: Boolean = false,
+    hasAuthToken: Boolean = false,
+    hasWorkerUrl: Boolean = false,
+): CloudTtsBackend {
+    val workerAvailable = isSignedIn && hasAuthToken && hasWorkerUrl
+    val useByokFish = settings.isFishByokTtsAvailable
+    val useByokGemini = !useByokFish && (settings.isGeminiRestByokTtsAvailable || settings.isByokCloudTtsAvailable)
+    return when {
+        useByokFish -> CloudTtsBackend.FISH_BYOK
+        useByokGemini -> CloudTtsBackend.GEMINI_BYOK
+        workerAvailable -> CloudTtsBackend.WORKER
+        else -> CloudTtsBackend.UNAVAILABLE
+    }
 }
 
 /**
@@ -157,7 +216,9 @@ data class ReaderAiByokSettings(
 val ReaderTtsByokOptions = listOf(
     ReaderAiModelOption("gemini", GEMINI_TTS_MODEL_LITE),
     ReaderAiModelOption("gemini", GEMINI_TTS_MODEL_PREVIEW),
-    ReaderAiModelOption("fish", FISH_TTS_MODEL)
+    ReaderAiModelOption("fish", FISH_TTS_MODEL),
+    // Fish's free development tier: same model, no TTFA/DPA guarantees.
+    ReaderAiModelOption("fish", FISH_TTS_MODEL_FREE, label = "Fish - ${FISH_TTS_MODEL_FREE} (free tier)"),
 )
 
 val ReaderAiModelOptions = listOf(

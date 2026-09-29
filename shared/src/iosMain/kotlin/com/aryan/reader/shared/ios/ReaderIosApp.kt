@@ -6298,11 +6298,24 @@ private fun ReaderIosApp(
                             },
                             addFavoriteDescription = readerString("tts_add_favorite", "Add to favorites"),
                             removeFavoriteDescription = readerString("tts_remove_favorite", "Remove from favorites"),
+                            voicesSectionTitle = readerString("ai_settings_voices_title", "Read aloud voice"),
+                            voicesSectionDescription = readerString(
+                                "ai_settings_voices_desc",
+                                "Pick the voice used for read aloud. The model above decides which engine speaks.",
+                            ),
+                            keySavedMessage = readerString("ai_settings_key_saved", "key saved."),
+                            backendStatusSignedIn = bridge.accountState.uid != null,
+                            backendStatusHasToken = !bridge.accountState.authToken.isNullOrBlank(),
+                            backendStatusHasWorkerUrl = IOS_READER_AI_WORKER_URL.isNotBlank(),
                         ),
                         onBackClick = { utilityScreen = null },
                         onSaveKey = { provider, key ->
-                            readerAiSettingsStore.saveKey(provider, key)
-                            readerAiSettings = readerAiSettingsStore.load()
+                            // Report the real outcome: a keychain write that is
+                            // rejected used to look identical to a successful
+                            // save that then did not stick.
+                            val result = readerAiSettingsStore.saveKey(provider, key)
+                            if (result.isSaved) readerAiSettings = readerAiSettingsStore.load()
+                            result
                         },
                         onDeleteKey = { provider ->
                             readerAiSettingsStore.deleteKey(provider)

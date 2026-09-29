@@ -213,6 +213,14 @@ fun deleteAiByokKey(context: Context, provider: String) {
     saveAiByokKey(context, provider, "")
 }
 
+/**
+ * The stored key for one provider, used to verify a save actually stuck.
+ * Reading it back is the only way to distinguish a persisted key from a write
+ * that silently no-oped (encrypted prefs gone missing, restore failure, ...).
+ */
+fun loadAiByokKey(context: Context, provider: String): String =
+    loadAiByokSettings(context).apiKeyFor(provider)
+
 fun maskedAiByokKey(context: Context, provider: String): String {
     val settings = loadAiByokSettings(context)
     return maskedAiSecret(

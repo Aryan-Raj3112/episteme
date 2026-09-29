@@ -9,9 +9,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.aryan.reader.shared.CloudTtsPlaybackMonitorPolicy
+import com.aryan.reader.shared.CloudTtsBackend
 import com.aryan.reader.shared.DEFAULT_CLOUD_TTS_SPEAKER_ID
 import com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL
 import com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID
+import com.aryan.reader.shared.GEMINI_TTS_MODEL_LITE
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderCloudTtsState
 import com.aryan.reader.shared.ReaderTtsCacheChapter
@@ -24,7 +26,7 @@ import com.aryan.reader.shared.readerTtsCacheSpeakerId
 import com.aryan.reader.shared.LocalTtsInterruptionAction
 import com.aryan.reader.shared.LocalTtsInterruptionEvent
 import com.aryan.reader.shared.LocalTtsInterruptionState
-import com.aryan.reader.shared.FISH_TTS_MODEL
+import com.aryan.reader.shared.FISH_TTS_MODEL as FISH_TTS_MODEL_DEFAULT
 import com.aryan.reader.shared.FISH_TTS_MODEL_ID
 import com.aryan.reader.shared.formatMicrosUsd
 import com.aryan.reader.shared.formatSpendGuardCountdown
@@ -35,6 +37,7 @@ import com.aryan.reader.shared.spendGuardSentinel
 import com.aryan.reader.shared.ios.IOS_TTS_WORKER_URL
 import com.aryan.reader.shared.ios.IosReaderAiHttpClient
 import com.aryan.reader.shared.reduce
+import com.aryan.reader.shared.resolveCloudTtsBackend
 import com.aryan.reader.shared.sha256
 import com.aryan.reader.shared.ios.IosTtsAudioInterruption
 import com.aryan.reader.shared.ios.IosTtsAudioInterruptionMonitor
@@ -555,7 +558,9 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
             url = "https://api.fish.audio/v1/tts"
             headers = mapOf(
                 "Authorization" to "Bearer ${settings.fishKey}",
-                "model" to FISH_TTS_MODEL,
+                // The selected model drives the Fish `model` header, so the
+                // free tier is actually used when it is picked.
+                "model" to fishModelHeader(),
             )
             body = buildJsonObject {
                 put("text", previewText)
@@ -794,11 +799,15 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
             return cached
         }
         state = state.copy(statusMessage = "Preparing audio")
-        // Fish REST (Android benchmark parity): credited worker synthesis and
-        // Fish BYOK direct. Gemini BYOK keeps the legacy WebSocket below.
+        // Android benchmark priority: Fish BYOK / worker (Fish-backed) first,
+        // then Gemini REST BYOK, then the legacy Gemini Live WebSocket.
         if (useFishRest()) {
-            iosCloudTtsTraceLog("cloud.cache", "session=$requestedSession miss backend=fish")
+            iosCloudTtsTraceLog("cloud.cache", "session=$requestedSession miss backend=${cloudBackendName()}")
             return fishSynthesize(chunk, requestedSession)
+        }
+        if (useGeminiRest()) {
+            iosCloudTtsTraceLog("cloud.cache", "session=$requestedSession miss backend=gemini-byok")
+            return geminiRestSynthesize(chunk, requestedSession)
         }
         iosCloudTtsTraceLog("cloud.cache", "session=$requestedSession miss backend=gemini-ws")
         ensureConnected()
@@ -863,7 +872,9 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         val headers = if (byok) {
             mapOf(
                 "Authorization" to "Bearer ${settings.fishKey}",
-                "model" to FISH_TTS_MODEL,
+                // The selected model drives the Fish `model` header, so the
+                // free tier is actually used when it is picked.
+                "model" to fishModelHeader(),
             )
         } else {
             mapOf("Authorization" to "Bearer ${authToken.orEmpty()}")
@@ -950,6 +961,99 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         }
         refreshCacheSummary()
         return response.bodyBytes
+    }
+
+    /**
+     * Gemini proper (non-Live) TTS over REST (`:generateContent` with
+     * `responseModalities: AUDIO`), BYOK only — the user's own Gemini key, so
+     * no credits are spent. Android benchmark (`GeminiRestTtsClient`).
+     *
+     * The selected model id drives the endpoint, which is the point: the
+     * previous iOS path sent every Gemini selection through the legacy Live
+     * WebSocket and silently ignored the chosen model.
+     */
+    private suspend fun geminiRestSynthesize(chunk: ReaderTtsChunk, requestedSession: Long): ByteArray? {
+        val file = cacheFile(chunk)
+        val model = settings.ttsModel.substringAfter(':').ifBlank { GEMINI_TTS_MODEL_LITE }
+        iosCloudTtsTraceLog("cloud.geminiFetch", "session=$requestedSession model=$model textLen=${chunk.spokenText.length}")
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent" +
+            "?key=${urlEncode(settings.geminiKey)}"
+        val body = buildJsonObject {
+            put("contents", buildJsonArray {
+                add(buildJsonObject {
+                    put("parts", buildJsonArray { add(buildJsonObject { put("text", chunk.spokenText) }) })
+                })
+            })
+            put("generationConfig", buildJsonObject {
+                put("responseModalities", buildJsonArray { add(JsonPrimitive("AUDIO")) })
+                put("speechConfig", buildJsonObject {
+                    put("voiceConfig", buildJsonObject {
+                        put("prebuiltVoiceConfig", buildJsonObject { put("voiceName", settings.ttsSpeakerId) })
+                    })
+                })
+            })
+        }.toString()
+        val response = try {
+            withTimeout(CLOUD_TTS_TIMEOUT_MILLIS) {
+                IosReaderAiHttpClient.post(url, body, mapOf("x-goog-api-key" to settings.geminiKey))
+            }
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            if (requestedSession != sessionId) throw CancellationException()
+            fail("Gemini TTS request failed: ${error.message.orEmpty()}")
+            return null
+        }
+        if (requestedSession != sessionId) throw CancellationException()
+        iosCloudTtsTraceLog("cloud.geminiResponse", "session=$requestedSession status=${response.statusCode}")
+        if (response.statusCode == 400 || response.statusCode == 404) {
+            // Almost always a bad key or a model the key cannot use. Say so
+            // instead of the generic HTTP code the Fish path reports.
+            val detail = response.body.take(200)
+            fail("Gemini TTS rejected the request (${response.statusCode}). Check your Gemini key and model. $detail")
+            return null
+        }
+        if (response.statusCode == 429) {
+            val retry = parseSpendGuardError(response.body)?.second ?: 30
+            iosCloudTtsTraceLog("cloud.geminiRateLimited", "session=$requestedSession retryAfterSeconds=$retry")
+            throw FishRateLimited(retry)
+        }
+        if (response.statusCode !in 200..299) {
+            fail("Gemini TTS error ${response.statusCode}")
+            return null
+        }
+        val pcm = extractGeminiAudioPayload(response.body)
+        if (pcm == null || pcm.isEmpty()) {
+            fail("Gemini TTS returned no audio")
+            return null
+        }
+        val wav = buildWav(pcm)
+        withContext(Dispatchers.Default) {
+            writeFileAtomically(file, wav)
+            pruneCacheIfNeeded()
+        }
+        refreshCacheSummary()
+        return wav
+    }
+
+    /**
+     * Pulls the first base64 inline audio payload out of a `:generateContent`
+     * response. Returns raw 16-bit mono PCM (Gemini's documented TTS layout),
+     * which [buildWav] wraps in a header.
+     */
+    private fun extractGeminiAudioPayload(body: String): ByteArray? {
+        val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return null
+        val candidates = root["candidates"]?.jsonArray.orEmpty()
+        for (candidate in candidates) {
+            val parts = candidate.jsonObject["content"]?.jsonObject?.get("parts")?.jsonArray.orEmpty()
+            for (part in parts) {
+                val inline = part.jsonObject["inlineData"]?.jsonObject ?: part.jsonObject["inline_data"]?.jsonObject
+                val encoded = inline?.get("data")?.jsonPrimitive?.contentOrNull.orEmpty()
+                if (encoded.isNotBlank()) {
+                    return runCatching { Base64.Default.decode(encoded) }.getOrNull()
+                }
+            }
+        }
+        return null
     }
 
     private suspend fun playAudioAndWait(audio: ByteArray, requestedSession: Long): Boolean {
@@ -1045,7 +1149,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     }
 
     private fun prefetchNextChunk(requestedSession: Long) {
-        if (!useFishRest()) return
+        if (!useStatelessRestBackend()) return
         val nextIndex = currentChunkIndex + 1
         val nextChunk = chunks.getOrNull(nextIndex) ?: return
         if (nextIndex in prefetchedAudio) return
@@ -1080,18 +1184,30 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
 
     /**
      * Prefetch variant of [loadOrGenerate]: never touches UI state, never
-     * reports failures to the user, and never connects the Gemini socket.
+     * reports failures to the user, and never drives the shared Gemini Live
+     * socket.
      */
     private suspend fun loadOrGenerateForPrefetch(
         chunk: ReaderTtsChunk,
         requestedSession: Long,
     ): ByteArray? {
-        if (!useFishRest()) return null
+        if (!useStatelessRestBackend()) return null
         val file = cacheFile(chunk)
         val cached = withContext(Dispatchers.Default) { readFile(file) }
         if (cached != null && cached.size > WAV_HEADER_SIZE) return cached
-        return fishSynthesize(chunk, requestedSession, reportFailures = false)
+        return if (useFishRest()) {
+            fishSynthesize(chunk, requestedSession, reportFailures = false)
+        } else {
+            geminiRestSynthesize(chunk, requestedSession)
+        }
     }
+
+    /**
+     * Stateless per-request backends only. The Gemini Live WebSocket shares one
+     * connection and turn channel across the session, so it must never be
+     * driven ahead of the chunk that is actually speaking.
+     */
+    private fun useStatelessRestBackend(): Boolean = useFishRest() || useGeminiRest()
 
     private fun startPlaybackMonitor(
         activePlayer: AVAudioPlayer,
@@ -1395,21 +1511,46 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         // start — Gemini Live BYOK, Gemini REST BYOK, Fish BYOK, or the
         // credited worker. The old legacy-only check blocked Fish/REST users.
         if (!cloudTtsModeEnabled()) return "Choose Cloud TTS in AI settings first."
-        if (!byokAvailable() && !fishByokAvailable() && !workerAvailable()) {
-            if (isSignedIn && authToken.isNullOrBlank()) return "Sign in again to use cloud TTS."
-            return if (!isSignedIn) "Sign in to use cloud TTS, or configure a Gemini key."
-            else "Cloud TTS is not configured."
+        val backend = resolveBackend()
+        if (backend == CloudTtsBackend.UNAVAILABLE) {
+            // Name the actual reason: this gate used to report the same generic
+            // message for "no key" and "key saved for a different provider",
+            // which is what made a silently misconfigured setup undebuggable.
+            return when {
+                settings.hasAnyAiKey ->
+                    "Cloud TTS is not configured. Save a ${backendProviderLabel()} key, or sign in to use the wallet."
+                isSignedIn && authToken.isNullOrBlank() -> "Sign in again to use cloud TTS."
+                !isSignedIn -> "Sign in to use cloud TTS, or configure a ${backendProviderLabel()} key."
+                else -> "Cloud TTS is not configured."
+            }
         }
         // Android benchmark parity: no Pro free pass — everyone spends the
         // wallet (migrated) or legacy credits. The worker enforces the same.
-        if (!byokAvailable() && !fishByokAvailable() && !hasSpendableBalance(credits, walletMicros)) {
+        if (backend == CloudTtsBackend.WORKER && !hasSpendableBalance(credits, walletMicros)) {
             return if (walletMigrated) "Cloud TTS needs balance. Top up your wallet to continue."
             else "Cloud TTS needs credits."
         }
         return null
     }
 
-    private fun byokAvailable(): Boolean = settings.geminiKey.isNotBlank() && settings.ttsModel == GEMINI_CLOUD_TTS_MODEL_ID
+    private fun backendProviderLabel(): String = when (settings.ttsProvider) {
+        "fish" -> "Fish Audio"
+        "gemini" -> "Gemini"
+        else -> "provider"
+    }
+
+    /**
+     * Android benchmark priority (`TtsService.audioGenerator`): a saved BYOK key
+     * always wins over spending credits, and Fish is checked before Gemini.
+     */
+    private fun resolveBackend(): CloudTtsBackend = resolveCloudTtsBackend(
+        settings = settings,
+        isSignedIn = isSignedIn,
+        hasAuthToken = !authToken.isNullOrBlank(),
+        hasWorkerUrl = workerUrl.isNotBlank(),
+    )
+
+    private fun byokAvailable(): Boolean = settings.isByokCloudTtsAvailable
 
     private fun fishByokAvailable(): Boolean = settings.isFishByokTtsAvailable
 
@@ -1418,13 +1559,23 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     private fun workerFishAvailable(): Boolean =
         isSignedIn && !authToken.isNullOrBlank() && !byokAvailable() && !fishByokAvailable()
 
-    private fun useFishRest(): Boolean = cloudTtsModeEnabled() && (workerFishAvailable() || fishByokAvailable())
+    /** Fish REST covers Fish BYOK and the credited worker (both are Fish-backed). */
+    private fun useFishRest(): Boolean = cloudTtsModeEnabled() &&
+        (resolveBackend() == CloudTtsBackend.FISH_BYOK || resolveBackend() == CloudTtsBackend.WORKER)
 
-    private fun cloudBackendName(): String = when {
-        fishByokAvailable() -> "fish-byok"
-        workerFishAvailable() -> "fish-worker"
-        else -> "gemini-ws"
+    /** Gemini REST BYOK: the user's own key against :generateContent (no credits). */
+    private fun useGeminiRest(): Boolean = cloudTtsModeEnabled() && resolveBackend() == CloudTtsBackend.GEMINI_BYOK
+
+    private fun cloudBackendName(): String = when (resolveBackend()) {
+        CloudTtsBackend.FISH_BYOK -> "fish-byok"
+        CloudTtsBackend.GEMINI_BYOK -> "gemini-byok"
+        CloudTtsBackend.WORKER -> "fish-worker"
+        CloudTtsBackend.UNAVAILABLE -> "none"
     }
+
+    /** Fish `model` request header for the selected TTS model (free tier aware). */
+    private fun fishModelHeader(): String =
+        settings.ttsModel.substringAfter(':', "").ifBlank { FISH_TTS_MODEL_DEFAULT }
 
     private fun cloudTtsModeEnabled(): Boolean =
         com.aryan.reader.shared.isCloudTtsModelEnabled(settings.ttsModel)

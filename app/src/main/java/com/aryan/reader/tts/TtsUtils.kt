@@ -50,6 +50,9 @@ const val fishWorkerTtsSamplePath = "/v2/tts/sample"
 const val fishWorkerVoicesPath = "/v2/voices"
 const val fishDirectTtsUrl = "https://api.fish.audio/v1/tts"
 const val FISH_BYOK_MODEL_HEADER = "s2.1-pro"
+/** Maps a stored TTS model id to the Fish `model` request header. */
+fun fishModelHeaderForTtsModel(ttsModel: String): String =
+    ttsModel.substringAfter(':', FISH_BYOK_MODEL_HEADER).ifBlank { FISH_BYOK_MODEL_HEADER }
 const val FISH_CLOUD_AUDIO_EXTENSION = "mp3"
 
 const val TTS_CHUNK_MAX_LENGTH = 250

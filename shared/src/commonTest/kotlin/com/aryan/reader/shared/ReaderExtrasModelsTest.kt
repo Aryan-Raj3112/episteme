@@ -1021,11 +1021,97 @@ class ReaderExtrasModelsTest {
     }
 
     @Test
-    fun `cloud tts model switch covers gemini and fish`() {
+    fun `cloud tts model switch covers every selectable tts model`() {
         assertTrue(isCloudTtsModelEnabled(GEMINI_CLOUD_TTS_MODEL_ID))
         assertTrue(isCloudTtsModelEnabled(FISH_TTS_MODEL_ID))
         assertFalse(isCloudTtsModelEnabled(""))
         assertFalse(isCloudTtsModelEnabled("gemini:unknown-model"))
+        // Regression: these selectable models used to read as "cloud off",
+        // which silently disabled read-aloud in the reader.
+        assertTrue(isCloudTtsModelEnabled(GEMINI_TTS_MODEL_LITE_ID))
+        assertTrue(isCloudTtsModelEnabled(GEMINI_TTS_MODEL_PREVIEW_ID))
+        assertTrue(isCloudTtsModelEnabled(FISH_TTS_MODEL_FREE_ID))
+    }
+
+    @Test
+    fun `fish free tier is selectable and drives byok like the paid model`() {
+        val settings = ReaderAiByokSettings(fishKey = "key", ttsModel = FISH_TTS_MODEL_FREE_ID)
+        assertTrue(settings.isFishByokTtsAvailable)
+        assertTrue(settings.isAnyByokTtsAvailable)
+        assertEquals("fish", settings.ttsProvider)
+        assertEquals(
+            FISH_TTS_MODEL_FREE_ID,
+            ReaderAiByokSettings(ttsModel = FISH_TTS_MODEL_FREE_ID).sanitized().ttsModel
+        )
+        assertTrue(ReaderTtsByokOptions.map { it.id }.contains(FISH_TTS_MODEL_FREE_ID))
+    }
+
+    @Test
+    fun `backend resolution prefers a byok key over spending credits`() {
+        val worker = mapOf(true to true, false to false)
+        for (signedIn in worker.keys) for (token in worker.keys) {
+            val available = signedIn && token
+            val signedInArg = signedIn
+            val tokenArg = token
+            // Fish key wins over a Gemini key and over the worker.
+            assertEquals(
+                CloudTtsBackend.FISH_BYOK,
+                resolveCloudTtsBackend(
+                    settings = ReaderAiByokSettings(fishKey = "f", geminiKey = "g", ttsModel = FISH_TTS_MODEL_ID),
+                    isSignedIn = signedInArg,
+                    hasAuthToken = tokenArg,
+                    hasWorkerUrl = true,
+                ),
+            )
+            // Gemini key next.
+            assertEquals(
+                CloudTtsBackend.GEMINI_BYOK,
+                resolveCloudTtsBackend(
+                    settings = ReaderAiByokSettings(geminiKey = "g", ttsModel = GEMINI_TTS_MODEL_LITE_ID),
+                    isSignedIn = signedInArg,
+                    hasAuthToken = tokenArg,
+                    hasWorkerUrl = true,
+                ),
+            )
+            // No keys: the wallet-backed worker, and nothing without auth.
+            assertEquals(
+                if (available) CloudTtsBackend.WORKER else CloudTtsBackend.UNAVAILABLE,
+                resolveCloudTtsBackend(
+                    settings = ReaderAiByokSettings(ttsModel = FISH_TTS_MODEL_ID),
+                    isSignedIn = signedInArg,
+                    hasAuthToken = tokenArg,
+                    hasWorkerUrl = true,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `legacy live gemini model still resolves as a byok backend`() {
+        assertEquals(
+            CloudTtsBackend.GEMINI_BYOK,
+            resolveCloudTtsBackend(
+                settings = ReaderAiByokSettings(geminiKey = "g", ttsModel = GEMINI_CLOUD_TTS_MODEL_ID),
+                isSignedIn = false,
+                hasAuthToken = false,
+                hasWorkerUrl = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a model with no matching key is not treated as byok`() {
+        // Fish model selected but only a Gemini key saved: Android falls
+        // through to the worker, it does not synthesize with the wrong key.
+        assertEquals(
+            CloudTtsBackend.UNAVAILABLE,
+            resolveCloudTtsBackend(
+                settings = ReaderAiByokSettings(geminiKey = "g", ttsModel = FISH_TTS_MODEL_ID),
+                isSignedIn = false,
+                hasAuthToken = false,
+                hasWorkerUrl = false,
+            ),
+        )
     }
 
     @Test

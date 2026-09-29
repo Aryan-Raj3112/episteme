@@ -112,8 +112,23 @@ fun AiSettingsScreen(onBackClick: () -> Unit) {
         ),
         onBackClick = onBackClick,
         onSaveKey = { provider, key ->
-            saveAiByokKey(context, provider, key)
-            refresh()
+            // Report the outcome so a failed persist is visible in the banner
+            // instead of looking like a successful save.
+            val normalized = com.aryan.reader.shared.normalizedAiKeyEntry(key)
+            when (val validated = com.aryan.reader.shared.normalizeAiKeyEntry(key)) {
+                is com.aryan.reader.shared.AiKeySaveResult.Invalid -> validated
+                else -> {
+                    saveAiByokKey(context, provider, normalized.orEmpty())
+                    refresh()
+                    if (loadAiByokKey(context, provider) == normalized) {
+                        com.aryan.reader.shared.AiKeySaveResult.Saved
+                    } else {
+                        com.aryan.reader.shared.AiKeySaveResult.Failed(
+                            com.aryan.reader.shared.AiKeySaveError.VERIFY_FAILED,
+                        )
+                    }
+                }
+            }
         },
         onDeleteKey = { provider ->
             deleteAiByokKey(context, provider)
@@ -130,7 +145,13 @@ fun AiSettingsScreen(onBackClick: () -> Unit) {
         },
         ttsModelOptions = geminiTtsOptions + aiByokTtsModelFallback.filter { fallback ->
             geminiTtsOptions.none { it.id == fallback.id }
-        } + com.aryan.reader.shared.ReaderAiModelOption("fish", FISH_TTS_MODEL),
+        } + com.aryan.reader.shared.ReaderAiModelOption("fish", FISH_TTS_MODEL)
+            // Fish's free development tier: same model, no TTFA/DPA guarantees.
+            + com.aryan.reader.shared.ReaderAiModelOption(
+                "fish",
+                com.aryan.reader.shared.FISH_TTS_MODEL_FREE,
+                label = "Fish - ${com.aryan.reader.shared.FISH_TTS_MODEL_FREE} (free tier)",
+            ),
         fishVoices = fishVoices,
         fishVoicesLoading = fishVoicesLoading,
         favoriteFishVoiceIds = favoriteFishVoices,
