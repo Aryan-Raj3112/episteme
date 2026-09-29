@@ -56,6 +56,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -158,6 +160,9 @@ internal class IosBookTtsListeningController {
     )
 
     private var generation = 0L
+    // Start-session stopwatch for ReaderTtsStart diagnostics: set at start(),
+    // consumed at the first delegate audio callback, cleared at stop().
+    private var ttsStartMark: TimeMark? = null
     private var activeUtterance: AVSpeechUtterance? = null
     private var currentBookId: String? = null
     private var currentBookTitle = ""
@@ -208,6 +213,8 @@ internal class IosBookTtsListeningController {
         replacements: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
     ) {
         val bookId = book.id
+        ttsStartMark = TimeSource.Monotonic.markNow()
+        iosTtsStartLog("listen.start", "bookId=$bookId policy=$policy chapterIndex=$chapterIndex")
         iosTtsListenLog(
             "start() bookId=$bookId name=${book.displayName} type=${book.type} policy=$policy " +
                 "chapterIndex=$chapterIndex path=${book.path ?: "<null>"} pathExists=" +
@@ -314,6 +321,7 @@ internal class IosBookTtsListeningController {
 
     fun stop() {
         interruptionState = LocalTtsInterruptionState()
+        ttsStartMark = null
         iosTtsListenLog("stop() bookId=$currentBookId chunk=$currentChunkIndex")
         sleepTimerJob?.cancel()
         sleepTimerJob = null
@@ -509,6 +517,9 @@ internal class IosBookTtsListeningController {
             pitchMultiplier = state.pitch
         }
         activeUtterance = utterance
+        ttsStartMark?.let { mark ->
+            iosTtsStartLog("listen.speak", "chunk=$chunkIndex chars=${utteranceText.length}", mark)
+        }
         synthesizer.speakUtterance(utterance)
     }
 
@@ -527,6 +538,10 @@ internal class IosBookTtsListeningController {
     private fun utteranceStarted(utterance: AVSpeechUtterance) {
         iosTtsListenLog("delegate didStart chunk=$currentChunkIndex active=${isActive(utterance)}")
         if (!isActive(utterance)) return
+        ttsStartMark?.let { mark ->
+            iosTtsStartLog("listen.firstAudio", "chunk=$currentChunkIndex", mark)
+            ttsStartMark = null
+        }
         val chunkIndex = currentChunkIndex
         state = state.copy(
             chunkIndex = chunkIndex,

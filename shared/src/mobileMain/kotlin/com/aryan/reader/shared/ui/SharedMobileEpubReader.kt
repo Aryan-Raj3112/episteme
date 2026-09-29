@@ -83,6 +83,7 @@ import com.aryan.reader.shared.SharedSummaryCache
 import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.ReaderTtsPlanner
+import com.aryan.reader.shared.reader.ReaderTtsStartTag
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderLifecycleAction
 import com.aryan.reader.shared.ReaderAutoScrollProfile
@@ -122,6 +123,9 @@ import com.aryan.reader.shared.withReaderFormatFrom
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderJumpHistory
+import com.aryan.reader.shared.reader.PaginatedReaderState
+import com.aryan.reader.shared.reader.ReaderSessionState
+import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.captureReaderJumpHistoryOrigin
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import com.aryan.reader.shared.reader.ReaderPage
@@ -153,6 +157,7 @@ import com.aryan.reader.shared.reader.readerTocActiveIndex
 import com.aryan.reader.shared.reader.pullToTurnEnabled
 import com.aryan.reader.shared.reader.seamlessChapterTransitionEnabled
 import kotlin.math.abs
+import kotlin.time.TimeSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -381,16 +386,76 @@ fun SharedMobileEpubReaderScreen(
     }
     val activeCloudTtsChunk = cloudTtsState.progress.currentChunk
 
-    fun planReaderTtsChunks(epub: com.aryan.reader.shared.reader.SharedEpubBook): List<ReaderTtsChunk> {
-        val session = ReaderEngine().createSession(
-            book = epub,
-            settings = settings,
-            initialPageIndex = currentPageIndex,
-            initialLocator = currentLocator,
+    // Android parity (chapter chaining): read-aloud plans one chapter at a
+    // time. Planning the rest of the book on the main thread froze the UI
+    // for ~23s on long books (ReaderTtsStart logs). [ttsActiveChapter] is
+    // the chapter the current session is speaking; [ttsSessionBookId] pins
+    // chain effects to this book because the engines are shared across
+    // books; the handled counters snapshot engine state at composition so a
+    // session finishing in another book never hijacks this reader.
+    var ttsActiveChapter by remember(book.id) { mutableStateOf<Int?>(null) }
+    var ttsSessionBookId by remember(book.id) { mutableStateOf<String?>(null) }
+    var localTtsHandledCompletion by remember(book.id) { mutableStateOf(localTts.completionCount) }
+    var cloudTtsHandledCompletion by remember(book.id) { mutableStateOf(cloudTtsState.completionCount) }
+
+    fun currentTtsChapterIndex(): Int? =
+        currentLocator?.chapterIndex
+            ?: pages.firstOrNull { it.pageIndex == currentPageIndex }?.chapterIndex
+            ?: pages.firstOrNull()?.chapterIndex
+
+    fun planChapterTtsChunks(chapterIndex: Int): List<ReaderTtsChunk> {
+        val epub = loadedBook ?: return emptyList()
+        // Reuse the measured pages: rebuilding a session re-paginates the
+        // whole book, which is the other half of the start latency.
+        val session = ReaderSessionState(
+            reader = PaginatedReaderState(book = epub, pages = pages, currentPageIndex = currentPageIndex),
+            navigationLocator = currentLocator,
         )
-        return ReaderTtsPlanner.chunksFromCurrentLocation(session)
-            .ifEmpty { ReaderTtsPlanner.chunksForCurrentChapter(session) }
+        return ReaderTtsPlanner.chunksForChapterFromLocation(session, chapterIndex)
             .withTtsReplacements(readerTtsReplacementPreferences, book.id)
+    }
+
+    fun startLocalTtsFromChapter(fromChapter: Int): Boolean {
+        val epub = loadedBook ?: return false
+        val planMark = TimeSource.Monotonic.markNow()
+        var chapter = fromChapter
+        while (chapter < epub.chapters.size) {
+            val planned = planChapterTtsChunks(chapter)
+            if (planned.isNotEmpty()) {
+                ttsActiveChapter = chapter
+                ttsSessionBookId = book.id
+                localTtsHandledCompletion = localTts.completionCount
+                cloudTts?.stop()
+                localTts.start(chunks = planned, bookTitle = epub.title, bookId = book.id)
+                println("[$ReaderTtsStartTag] ui localPlanned chapter=$chapter chunks=${planned.size} +${planMark.elapsedNow().inWholeMilliseconds}ms")
+                return true
+            }
+            chapter++
+        }
+        println("[$ReaderTtsStartTag] ui localNoChapter bookId=${book.id} fromChapter=$fromChapter")
+        return false
+    }
+
+    fun startCloudTtsFromChapter(fromChapter: Int, continued: Boolean): Boolean {
+        val controller = cloudTts ?: return false
+        val epub = loadedBook ?: return false
+        val planMark = TimeSource.Monotonic.markNow()
+        var chapter = fromChapter
+        while (chapter < epub.chapters.size) {
+            val planned = planChapterTtsChunks(chapter)
+            if (planned.isNotEmpty()) {
+                ttsActiveChapter = chapter
+                ttsSessionBookId = book.id
+                cloudTtsHandledCompletion = cloudTtsState.completionCount
+                if (!continued) localTts.stop()
+                controller.start(planned, epub.title, book.id, continueSession = continued)
+                println("[$ReaderTtsStartTag] ui cloudPlanned chapter=$chapter chunks=${planned.size} continued=$continued +${planMark.elapsedNow().inWholeMilliseconds}ms")
+                return true
+            }
+            chapter++
+        }
+        println("[$ReaderTtsStartTag] ui cloudNoChapter bookId=${book.id} fromChapter=$fromChapter")
+        return false
     }
 
     fun toggleCloudTts() {
@@ -398,10 +463,9 @@ fun SharedMobileEpubReaderScreen(
         when {
             cloudTtsState.isPlaying || cloudTtsState.isLoading -> controller.pause()
             cloudTtsState.isPaused -> controller.resume()
-            else -> loadedBook?.let { epub ->
-                localTts.stop()
-                val planned = planReaderTtsChunks(epub)
-                controller.start(planned, epub.title, book.id)
+            else -> loadedBook?.let {
+                println("[$ReaderTtsStartTag] ui cloudToggle bookId=${book.id} page=$currentPageIndex mode=${settings.readingMode}")
+                currentTtsChapterIndex()?.let { chapter -> startCloudTtsFromChapter(chapter, continued = false) }
             }
         }
     }
@@ -784,6 +848,26 @@ fun SharedMobileEpubReaderScreen(
     }
     LaunchedEffect(localTts.isSessionActive) {
         if (!localTts.isSessionActive) detachedTtsChunkIndex = null
+    }
+    // Android parity (chapter chaining): a chapter finishing naturally
+    // starts the next non-empty chapter in a continued session; the last
+    // chapter ends the session. The book pin keeps a session finishing in
+    // another book from hijacking this reader (engines are app-shared).
+    LaunchedEffect(localTts.completionCount) {
+        if (localTts.completionCount == localTtsHandledCompletion) return@LaunchedEffect
+        localTtsHandledCompletion = localTts.completionCount
+        if (!localTts.isSessionActive || ttsSessionBookId != book.id) return@LaunchedEffect
+        val next = (ttsActiveChapter ?: return@LaunchedEffect) + 1
+        println("[$ReaderTtsStartTag] ui localChain bookId=${book.id} nextChapter=$next")
+        if (!startLocalTtsFromChapter(next)) localTts.stop()
+    }
+    LaunchedEffect(cloudTtsState.completionCount) {
+        if (cloudTtsState.completionCount == cloudTtsHandledCompletion) return@LaunchedEffect
+        cloudTtsHandledCompletion = cloudTtsState.completionCount
+        if (ttsSessionBookId != book.id || cloudTts == null) return@LaunchedEffect
+        val next = (ttsActiveChapter ?: return@LaunchedEffect) + 1
+        println("[$ReaderTtsStartTag] ui cloudChain bookId=${book.id} nextChapter=$next")
+        startCloudTtsFromChapter(next, continued = true)
     }
     LaunchedEffect(localTts.isSessionActive, cloudTtsState.isPlaying, cloudTtsState.isLoading) {
         // Android parity (EpubReaderScreen.startTts): starting TTS turns
@@ -2447,21 +2531,9 @@ fun SharedMobileEpubReaderScreen(
                         localTtsState = localTts.state,
                         onLocalTtsToggle = {
                             when (localTts.state) {
-                                SharedMobileEpubLocalTtsState.IDLE -> loadedBook?.let { epub ->
-                                    cloudTts?.stop()
-                                    val session = ReaderEngine().createSession(
-                                        book = epub,
-                                        settings = settings,
-                                        initialPageIndex = currentPageIndex,
-                                        initialLocator = currentLocator
-                                    )
-                                    localTts.start(
-                                        chunks = ReaderTtsPlanner.chunksFromCurrentLocation(session)
-                                            .ifEmpty { ReaderTtsPlanner.chunksForCurrentChapter(session) }
-                                            .withTtsReplacements(readerTtsReplacementPreferences, book.id),
-                                        bookTitle = epub.title,
-                                        bookId = book.id,
-                                    )
+                                SharedMobileEpubLocalTtsState.IDLE -> loadedBook?.let {
+                                    println("[$ReaderTtsStartTag] ui localToggle bookId=${book.id} page=$currentPageIndex mode=${settings.readingMode}")
+                                    currentTtsChapterIndex()?.let { chapter -> startLocalTtsFromChapter(chapter) }
                                 }
                                 SharedMobileEpubLocalTtsState.SPEAKING -> localTts.pause()
                                 SharedMobileEpubLocalTtsState.PAUSED -> localTts.resume()
@@ -2574,13 +2646,26 @@ fun SharedMobileEpubReaderScreen(
                     }
                     }
                 }
+                // Shared with the TTS overlay above: home-indicator inset the
+                // bottom chrome (and the cards floating over it) must clear.
+                val epubEffectiveBottomInset = if (!navigationUiHidden) {
+                    WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
+                } else {
+                    0.dp
+                }
                 // Android parity (EpubReaderScreen TTS overlay): session AND chrome
-                // gate, slide+fade with the shared 200ms spec, animated offset
-                // and alignment instead of snapping.
-                val epubTtsBottomOffset by animateDpAsState(
-                    targetValue = if (showChrome) (-52).dp else (-12).dp,
+                // gate, slide+fade with the shared 200ms spec, and bottom
+                // padding above the toolbar (inset + 45dp bar + 16dp gap) so
+                // the card never overlaps the bottom bar. The old fixed
+                // -52dp offset ignored the home-indicator inset.
+                val epubTtsBottomPadding by animateDpAsState(
+                    targetValue = if (showChrome) {
+                        epubEffectiveBottomInset + SharedReaderEpubBottomBarHeight + 16.dp
+                    } else {
+                        32.dp
+                    },
                     animationSpec = tween(motionPolicy.durationMillis(200)),
-                    label = "EpubTtsBottomOffset"
+                    label = "EpubTtsBottomPadding"
                 )
                 val epubTtsAlignBias by animateFloatAsState(
                     targetValue = readerTtsOverlayAlignmentBias(ttsOverlaySize),
@@ -2607,7 +2692,7 @@ fun SharedMobileEpubReaderScreen(
                         },
                         modifier = Modifier
                             .padding(horizontal = 12.dp)
-                            .offset(y = epubTtsBottomOffset)
+                            .padding(bottom = epubTtsBottomPadding)
                     )
                 }
                 AnimatedVisibility(
@@ -2633,17 +2718,12 @@ fun SharedMobileEpubReaderScreen(
                             },
                             modifier = Modifier
                                 .padding(horizontal = 12.dp)
-                                .offset(y = epubTtsBottomOffset),
+                                .padding(bottom = epubTtsBottomPadding),
                             credits = aiCredits,
                             walletMicros = walletMicros,
                             walletMigrated = walletMigrated,
                         )
                     }
-                }
-                val epubEffectiveBottomInset = if (!navigationUiHidden) {
-                    WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
-                } else {
-                    0.dp
                 }
                 // Android parity (EpubReaderScreen autoScrollPadding /
                 // autoScrollAlignmentBias): the overlay clears the bottom

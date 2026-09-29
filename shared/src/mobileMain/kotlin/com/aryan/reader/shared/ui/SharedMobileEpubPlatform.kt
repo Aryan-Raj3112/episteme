@@ -301,6 +301,11 @@ interface SharedMobileEpubCloudTts {
         bookId: String? = null,
         startChunkIndex: Int = 0,
         playWhenReady: Boolean = true,
+        // Android benchmark (chapter chaining): continuing into the next
+        // chapter keeps the USD session spend (and retries budget is left to
+        // the fresh-session default). Defaulted so existing call sites keep
+        // compiling; readers pass true when chaining.
+        continueSession: Boolean = false,
     )
 
     fun pause()

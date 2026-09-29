@@ -37,6 +37,7 @@ import com.aryan.reader.shared.ios.IosEpubResourceStore
 import com.aryan.reader.shared.ios.IosTtsAudioInterruption
 import com.aryan.reader.shared.ios.IosTtsAudioInterruptionMonitor
 import com.aryan.reader.shared.ios.IosTtsAudioSessionTeardown
+import com.aryan.reader.shared.ios.iosTtsStartLog
 import com.aryan.reader.shared.opds.SharedOpdsStreamRequest
 import com.aryan.reader.shared.reader.SharedEpubResourceScheme
 import com.aryan.reader.shared.reader.parseSharedEpubResourceUrl
@@ -55,6 +56,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.TimeSource
+import kotlin.time.TimeMark
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
@@ -557,6 +559,9 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     private var wantsPlayback = true
     private var audioSessionActive = false
     private var audioSessionGeneration = 0
+    // Start-session stopwatch for ReaderTtsStart diagnostics: set at start(),
+    // consumed at the first delegate audio callback, cleared at stop().
+    private var ttsStartMark: TimeMark? = null
     private var interruptionState = LocalTtsInterruptionState()
     private val interruptionMonitor = IosTtsAudioInterruptionMonitor(::handleAudioInterruption)
 
@@ -572,6 +577,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     }
 
     override fun prepare() {
+        iosTtsStartLog("local.prepare")
         if (!audioSessionActive) {
             configureAudioSession(active = true)
             audioSessionActive = true
@@ -587,7 +593,16 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         playWhenReady: Boolean
     ) {
         val readableChunks = chunks.filter { it.spokenText.isNotBlank() }
-        if (readableChunks.isEmpty()) return
+        if (readableChunks.isEmpty()) {
+            iosTtsStartLog("local.start empty", "chunks=${chunks.size}")
+            return
+        }
+        ttsStartMark = TimeSource.Monotonic.markNow()
+        iosTtsStartLog(
+            "local.start",
+            "chunks=${readableChunks.size} startIndex=$startChunkIndex playWhenReady=$playWhenReady " +
+                "voice=${selectedVoiceIdentifier ?: "<system>"} rate=$speechRate pitch=$speechPitch"
+        )
         errorMessage = null
         invalidateActiveUtterance()
         synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
@@ -606,6 +621,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     }
 
     private fun pauseInternal() {
+        iosTtsStartLog("local.pause", "chunkIndex=$currentChunkIndex")
         wantsPlayback = false
         synthesizer.pauseSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         if (activeUtterance != null) state = SharedMobileEpubLocalTtsState.PAUSED
@@ -613,6 +629,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     }
 
     override fun resume() {
+        iosTtsStartLog("local.resume", "chunkIndex=$currentChunkIndex")
         interruptionState = LocalTtsInterruptionState()
         wantsPlayback = true
         synthesizer.continueSpeaking()
@@ -671,6 +688,8 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     }
 
     override fun stop() {
+        iosTtsStartLog("local.stop")
+        ttsStartMark = null
         interruptionState = LocalTtsInterruptionState()
         sessionId += 1
         errorMessage = null
@@ -701,6 +720,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         }
         val transition = interruptionState.reduce(event)
         interruptionState = transition.state
+        iosTtsStartLog("local.interruption", "event=$event action=${transition.action}")
         when (transition.action) {
             LocalTtsInterruptionAction.NONE -> Unit
             LocalTtsInterruptionAction.PAUSE -> pauseInternal()
@@ -763,6 +783,9 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
                 ?.let { voice = it }
         }
         activeUtterance = utterance
+        ttsStartMark?.let { mark ->
+            iosTtsStartLog("local.speak", "chunkIndex=$currentChunkIndex chars=${chunk.spokenText.length}", mark)
+        }
         synthesizer.speakUtterance(utterance)
     }
 
@@ -788,6 +811,10 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
 
     private fun utteranceStarted(utterance: AVSpeechUtterance) {
         if (!isActive(utterance)) return
+        ttsStartMark?.let { mark ->
+            iosTtsStartLog("local.firstAudio", "chunkIndex=$currentChunkIndex", mark)
+            ttsStartMark = null
+        }
         if (wantsPlayback) {
             state = SharedMobileEpubLocalTtsState.SPEAKING
         } else {
@@ -805,12 +832,14 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
 
     private fun utterancePaused(utterance: AVSpeechUtterance) {
         if (!isActive(utterance)) return
+        iosTtsStartLog("local.delegatePaused", "chunkIndex=$currentChunkIndex")
         state = SharedMobileEpubLocalTtsState.PAUSED
         updateNowPlaying()
     }
 
     private fun utteranceContinued(utterance: AVSpeechUtterance) {
         if (!isActive(utterance)) return
+        iosTtsStartLog("local.delegateContinued", "chunkIndex=$currentChunkIndex")
         state = SharedMobileEpubLocalTtsState.SPEAKING
         updateNowPlaying()
     }
@@ -827,6 +856,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
 
     private fun utteranceCancelled(utterance: AVSpeechUtterance) {
         if (!isActive(utterance)) return
+        iosTtsStartLog("local.delegateCancelled", "chunkIndex=$currentChunkIndex wantsPlayback=$wantsPlayback chunks=${chunks.size}")
         activeUtterance = null
         if (wantsPlayback && chunks.isNotEmpty()) {
             errorMessage = "Text-to-speech was interrupted."

@@ -5444,6 +5444,15 @@ private fun ReaderIosApp(
                 )
             }
             activeReaderBook?.let { book ->
+                // Touch-deadness correlation (auto-open after app restart vs
+                // manual open): launchedWith is the book the app restored at
+                // launch (null = no restore). Filter device logs for
+                // ReaderIosSession alongside ReaderTtsStart.
+                LaunchedEffect(book.id) {
+                    val message = "epub opened id=${book.id} launchedWith=${initialReaderBook?.id}"
+                    IosDiagnosticLogStore.record("ReaderIosSession", message)
+                    println("[ReaderIosSession] $message")
+                }
                 when (book.type) {
                     FileType.PDF -> {
                         if (pdfSplitWorkspace.isOpen) {

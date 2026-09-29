@@ -5,6 +5,14 @@ internal const val SharedReaderDiagnosticsTagsProperty = "episteme.desktop.diagn
 internal const val SharedEpubCutoffDiagnosticsTag = "EpistemeEpubCutoff"
 internal const val TxtFormatTraceTag = "TxtFormatTrace"
 
+/**
+ * Common tag for TTS-start diagnostics (device, cloud, Listen). Unfiltered:
+ * filter the device console for this tag and send the lines when TTS start
+ * is slow or frozen. Keep volume to session milestones (start, session
+ * activation, first speak, first audio) — never per-chunk spam.
+ */
+const val ReaderTtsStartTag = "ReaderTtsStart"
+
 internal expect val SharedReaderDiagnosticsEnabled: Boolean
 internal expect fun isSharedReaderDiagnosticTagEnabled(tag: String): Boolean
 internal expect fun writeSharedReaderDiagnostic(tag: String, message: String)

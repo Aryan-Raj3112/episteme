@@ -38,6 +38,7 @@ import com.aryan.reader.shared.sha256
 import com.aryan.reader.shared.ios.IosTtsAudioInterruption
 import com.aryan.reader.shared.ios.IosTtsAudioInterruptionMonitor
 import com.aryan.reader.shared.ios.IosTtsAudioSessionTeardown
+import com.aryan.reader.shared.ios.iosTtsStartLog
 import kotlinx.cinterop.ObjCSignatureOverride
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
@@ -57,6 +58,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -141,6 +144,9 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     private var playbackContinuation: CompletableDeferred<Boolean>? = null
     private var player: AVAudioPlayer? = null
     private var playJob: Job? = null
+    // Start-session stopwatch for ReaderTtsStart diagnostics: set at start(),
+    // consumed at the first player.play(), cleared at stop().
+    private var ttsStartMark: TimeMark? = null
     private var websocketSession: NSURLSession? = null
     private var websocket: NSURLSessionWebSocketTask? = null
     private var setupReady = CompletableDeferred<Boolean>().apply { complete(false) }
@@ -200,11 +206,16 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         bookId: String?,
         startChunkIndex: Int,
         playWhenReady: Boolean,
+        continueSession: Boolean,
     ) {
         val readable = chunks.filter { it.spokenText.isNotBlank() }
-        if (readable.isEmpty()) return
+        if (readable.isEmpty()) {
+            iosTtsStartLog("cloud.start empty", "chunks=${chunks.size}")
+            return
+        }
         val gateError = startGateError()
         if (gateError != null) {
+            iosTtsStartLog("cloud.start gated", "error=$gateError")
             state = state.copy(
                 isAvailable = cloudTtsModeEnabled() && (byokAvailable() || fishByokAvailable() || workerAvailable()),
                 isPlaying = false,
@@ -221,10 +232,19 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         this.currentChunkIndex = startChunkIndex.coerceIn(0, readable.lastIndex)
         this.sessionId += 1
         this.wantsPlayback = playWhenReady
-        // Fresh listen keeps its own spend line (Android benchmark parity).
-        this.sessionSpendMicros = 0L
+        // Fresh listen keeps its own spend line (Android benchmark parity);
+        // chained chapters keep accruing into the same session spend.
+        if (!continueSession) {
+            this.sessionSpendMicros = 0L
+        }
         this.rateLimitRetriesLeft = 1
         val requestedSession = sessionId
+        ttsStartMark = TimeSource.Monotonic.markNow()
+        iosTtsStartLog(
+            "cloud.start",
+            "chunks=${readable.size} startIndex=$currentChunkIndex playWhenReady=$playWhenReady " +
+                "fishRest=${useFishRest()} worker=${workerAvailable()} byok=${byokAvailable() || fishByokAvailable()}"
+        )
         state = state.copy(
             isAvailable = true,
             isPlaying = false,
@@ -593,6 +613,8 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     }
 
     private fun stop(clearError: Boolean) {
+        iosTtsStartLog("cloud.stop")
+        ttsStartMark = null
         sessionId += 1
         playJob?.cancel()
         playJob = null
@@ -643,6 +665,9 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
                     ),
                 )
                 val audio = try {
+                    ttsStartMark?.let { mark ->
+                        iosTtsStartLog("cloud.firstFetch", "chunkIndex=$currentChunkIndex", mark)
+                    }
                     generationMutex.withLock {
                         loadOrGenerate(chunk, requestedSession)
                     }
@@ -676,6 +701,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
                     isLoading = false,
                     isPaused = false,
                     progress = if (completed) ReaderTtsProgress() else state.progress,
+                    completionCount = if (completed) state.completionCount + 1 else state.completionCount,
                 )
                 if (completed) {
                     chunks = emptyList()
@@ -854,7 +880,13 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
             isPaused = !wantsPlayback,
             statusMessage = null,
         )
-        if (wantsPlayback) createdPlayer.play()
+        if (wantsPlayback) {
+            ttsStartMark?.let { mark ->
+                iosTtsStartLog("cloud.firstPlay", "bytes=${audio.size}", mark)
+                ttsStartMark = null
+            }
+            createdPlayer.play()
+        }
         try {
             val success = completed.await()
             if (!success && requestedSession == sessionId) {

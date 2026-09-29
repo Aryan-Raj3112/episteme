@@ -833,6 +833,41 @@ object ReaderTtsPlanner {
         )
     }
 
+    /**
+     * Android benchmark (chapter chaining): read-aloud plans one chapter at
+     * a time instead of the rest of the book, so starting TTS stays fast on
+     * long books and the engine chains chapters on natural completion. When
+     * the session anchor sits inside [chapterIndex] the head is sliced at
+     * the anchor exactly like [chunksFromCurrentLocation]; otherwise the
+     * whole chapter is returned. Empty when the chapter has no pages or no
+     * speakable text (callers skip to the next chapter).
+     */
+    fun chunksForChapterFromLocation(session: ReaderSessionState, chapterIndex: Int): List<ReaderTtsChunk> {
+        val pages = session.reader.pages.filter { it.chapterIndex == chapterIndex }
+        if (pages.isEmpty()) return emptyList()
+        val chunks = chunksForPages(session.reader.book, pages)
+        if (chunks.isEmpty()) return emptyList()
+        val anchor = session.navigationLocator
+        if (anchor?.chapterIndex != chapterIndex) {
+            return chunks
+                .filter { it.text.isNotBlank() }
+                .mapIndexed { index, chunk -> chunk.copy(index = index) }
+        }
+        val target = anchor.toTtsChunkTarget()
+        val startChunkIndex = findReaderTtsChunkStartIndex(chunks, target)
+            ?: chunks.indexOfFirst { it.isOnOrAfterLocator(chapterIndex, anchor.startOffset) }.takeIf { it >= 0 }
+            ?: return emptyList()
+        val initialChunk = chunks[startChunkIndex].sliceFromLocator(anchor)
+        val sessionChunks = if (initialChunk == null) {
+            chunks.drop(startChunkIndex + 1)
+        } else {
+            chunks.withInitialChunkOverride(startChunkIndex, initialChunk).drop(startChunkIndex)
+        }
+        return sessionChunks
+            .filter { it.text.isNotBlank() }
+            .mapIndexed { index, chunk -> chunk.copy(index = index) }
+    }
+
     fun chunksFromCurrentLocation(session: ReaderSessionState): List<ReaderTtsChunk> {
         val anchor = session.navigationLocator
         val pageIndex = anchor?.pageIndex ?: session.reader.currentPageIndex
@@ -1349,7 +1384,11 @@ data class ReaderCloudTtsState(
     val cacheSummary: ReaderTtsCacheSummary = ReaderTtsCacheSummary(),
     // USD session spend in micro-dollars (credited Fish path only; the worker
     // reports it per chunk via X-Tts-Cost-Micros). Android benchmark parity.
-    val cloudSessionSpendMicros: Long = 0L
+    val cloudSessionSpendMicros: Long = 0L,
+    // Increments only when every chunk finishes naturally (chapter chaining);
+    // explicit stop does not increment it. Lets readers chain the next
+    // chapter like the local completionCount.
+    val completionCount: Long = 0L
 )
 
 data class ReaderCloudTtsControlsModel(

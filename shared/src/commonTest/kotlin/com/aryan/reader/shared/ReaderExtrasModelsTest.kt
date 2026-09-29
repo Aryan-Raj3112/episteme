@@ -505,6 +505,56 @@ class ReaderExtrasModelsTest {
     }
 
     @Test
+    fun `tts planner reads one chapter at a time for chaining`() {
+        val book = SharedEpubBook(
+            id = "tts-chained",
+            fileName = "tts-chained.epub",
+            title = "TTS chained",
+            chapters = listOf(
+                SharedEpubChapter("one", "One", "First chapter text."),
+                SharedEpubChapter("two", "Two", "Second chapter text.")
+            )
+        )
+        val session = ReaderEngine().createSession(book)
+
+        assertEquals(listOf(0), ReaderTtsPlanner.chunksForChapterFromLocation(session, 0).map { it.chapterIndex }.distinct())
+        assertEquals(listOf(1), ReaderTtsPlanner.chunksForChapterFromLocation(session, 1).map { it.chapterIndex }.distinct())
+        assertTrue(ReaderTtsPlanner.chunksForChapterFromLocation(session, 2).isEmpty())
+        assertTrue(ReaderTtsPlanner.chunksForChapterFromLocation(session, -1).isEmpty())
+    }
+
+    @Test
+    fun `tts planner slices chapter head at visible locator offset`() {
+        val source = "First hidden sentence. Second visible sentence. Third visible sentence."
+        val visibleOffset = source.indexOf("Second")
+        val book = SharedEpubBook(
+            id = "tts-chain-visible",
+            fileName = "tts-chain-visible.epub",
+            title = "TTS chain visible",
+            chapters = listOf(
+                SharedEpubChapter("zero", "Zero", "Earlier chapter text."),
+                SharedEpubChapter("one", "One", source)
+            )
+        )
+        val session = ReaderEngine().createSession(book).copy(
+            navigationLocator = ReaderLocator(
+                chapterIndex = 1,
+                pageIndex = 1,
+                startOffset = visibleOffset,
+                endOffset = visibleOffset,
+                textQuote = "Second visible sentence."
+            )
+        )
+
+        val chunks = ReaderTtsPlanner.chunksForChapterFromLocation(session, 1)
+
+        assertEquals(listOf(1), chunks.map { it.chapterIndex }.distinct())
+        assertTrue(chunks.first().text.startsWith("Second visible sentence."))
+        assertFalse(chunks.any { it.text.startsWith("First hidden") })
+        assertFalse(chunks.any { it.text.startsWith("Earlier chapter") })
+    }
+
+    @Test
     fun `tts planner starts onward reading at visible locator offset`() {
         val source = "First hidden sentence. Second visible sentence. Third visible sentence."
         val visibleOffset = source.indexOf("Second")
