@@ -165,6 +165,9 @@ import com.aryan.reader.ReaderThemePanel
 import com.aryan.reader.RenderMode
 import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.shared.SummarizationResult
+import com.aryan.reader.shared.AnnotationExportFormat
+import com.aryan.reader.shared.AnnotationExportFormatter
+import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.hasSpendableBalance
 import com.aryan.reader.shared.spendableDisplayText
 import com.aryan.reader.shared.parseSpendGuardSentinel
@@ -177,6 +180,8 @@ import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.isByokModelReady
 import com.aryan.reader.isByokTtsReady
 import com.aryan.reader.shared.ReaderAiFeature as AiFeature
+import com.aryan.reader.shared.ui.SharedAnnotationExportFormatDialog
+import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.hasReadableExtractedContent
@@ -1588,6 +1593,66 @@ fun EpubReaderHost(
             }
         }
     )
+
+    var showAnnotationExportDialog by remember { mutableStateOf(false) }
+    var pendingAnnotationExportText by remember { mutableStateOf<String?>(null) }
+    val saveMarkdownAnnotationsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.MARKDOWN.mimeType)
+    ) { uri ->
+        val exportText = pendingAnnotationExportText
+        pendingAnnotationExportText = null
+        if (uri != null && exportText != null) viewModel.saveAnnotationExport(exportText, uri)
+    }
+    val saveTextAnnotationsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.TEXT.mimeType)
+    ) { uri ->
+        val exportText = pendingAnnotationExportText
+        pendingAnnotationExportText = null
+        if (uri != null && exportText != null) viewModel.saveAnnotationExport(exportText, uri)
+    }
+    val saveJsonAnnotationsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.JSON.mimeType)
+    ) { uri ->
+        val exportText = pendingAnnotationExportText
+        pendingAnnotationExportText = null
+        if (uri != null && exportText != null) viewModel.saveAnnotationExport(exportText, uri)
+    }
+    val saveCsvAnnotationsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.CSV.mimeType)
+    ) { uri ->
+        val exportText = pendingAnnotationExportText
+        pendingAnnotationExportText = null
+        if (uri != null && exportText != null) viewModel.saveAnnotationExport(exportText, uri)
+    }
+
+    fun exportReaderAnnotations(format: AnnotationExportFormat) {
+        val currentHighlights = userHighlights.toList()
+        val sourceType = uiState.recentFiles.firstOrNull { it.bookId == (uiState.selectedBookId ?: stableBookId) }?.type
+            ?: FileType.EPUB
+        val document = AnnotationExportFormatter.fromEpubHighlights(
+            bookTitle = epubBook.title,
+            sourceType = sourceType,
+            highlights = currentHighlights
+        )
+        val exportText = AnnotationExportFormatter.render(document, format)
+        if (exportText.isBlank()) {
+            viewModel.showBanner(context.getString(R.string.banner_no_annotations_to_export), isError = true)
+            return
+        }
+        pendingAnnotationExportText = exportText
+        val fileName = AnnotationExportFormatter.suggestedFileName(document.bookTitle, format)
+        try {
+            when (format) {
+                AnnotationExportFormat.MARKDOWN -> saveMarkdownAnnotationsLauncher.launch(fileName)
+                AnnotationExportFormat.TEXT -> saveTextAnnotationsLauncher.launch(fileName)
+                AnnotationExportFormat.JSON -> saveJsonAnnotationsLauncher.launch(fileName)
+                AnnotationExportFormat.CSV -> saveCsvAnnotationsLauncher.launch(fileName)
+            }
+        } catch (_: android.content.ActivityNotFoundException) {
+            pendingAnnotationExportText = null
+            viewModel.showBanner(context.getString(R.string.document_picker_unavailable), isError = true)
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -3341,6 +3406,7 @@ fun EpubReaderHost(
                 activeHighlightPalette = currentHighlightPalette,
                 onOpenPaletteManager = { showPaletteManager = true },
                 onHighlightColorChange = onHighlightColorChange,
+                onExportAnnotations = { showAnnotationExportDialog = true },
                 onNavigateToImage = { image ->
                     scope.launch {
                         drawerState.close()
@@ -5382,6 +5448,7 @@ fun EpubReaderHost(
                         }
                     } else null,
                     onDeleteReflow = onDeleteReflow,
+                    onExportAnnotations = { showAnnotationExportDialog = true },
                     readerMotionPolicy = motionPolicy,
                 )
 
@@ -5943,6 +6010,28 @@ fun EpubReaderHost(
             uriString = uiState.selectedEpubUri?.toString(),
             viewModel = viewModel
         )
+
+        if (showAnnotationExportDialog) {
+            SharedAnnotationExportFormatDialog(
+                title = stringResource(R.string.dialog_export_annotations_title),
+                cancelLabel = stringResource(R.string.action_cancel),
+                options = sharedAnnotationExportFormatOptions(
+                    markdownLabel = stringResource(R.string.export_annotations_markdown),
+                    markdownDescription = stringResource(R.string.export_annotations_markdown_description),
+                    textLabel = stringResource(R.string.export_annotations_text),
+                    textDescription = stringResource(R.string.export_annotations_text_description),
+                    jsonLabel = stringResource(R.string.export_annotations_json),
+                    jsonDescription = stringResource(R.string.export_annotations_json_description),
+                    csvLabel = stringResource(R.string.export_annotations_csv),
+                    csvDescription = stringResource(R.string.export_annotations_csv_description)
+                ),
+                onDismiss = { showAnnotationExportDialog = false },
+                onExport = { format ->
+                    showAnnotationExportDialog = false
+                    exportReaderAnnotations(format)
+                }
+            )
+        }
 
         if (dictTools.showCustomizeToolsSheet) {
             CustomizeToolsSheet(

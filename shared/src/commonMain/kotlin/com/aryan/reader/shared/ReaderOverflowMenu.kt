@@ -15,6 +15,7 @@ enum class EpubOverflowMenuSection {
     AUTO_SCROLL,
     BOOK_REPLACEMENTS,
     TTS_SETTINGS,
+    EXPORT_ANNOTATIONS,
     FILE_INFO
 }
 
@@ -24,6 +25,7 @@ fun epubOverflowMenuSections(
     hasToggleReflow: Boolean,
     hasDeleteReflow: Boolean,
     hasFileInfo: Boolean = true,
+    hasExportAnnotations: Boolean = false,
 ): List<EpubOverflowMenuSection> = buildList {
     add(EpubOverflowMenuSection.CUSTOMIZE_TOOLBAR)
     if (hasHiddenToolbarTools) add(EpubOverflowMenuSection.HIDDEN_TOOLS)
@@ -41,6 +43,7 @@ fun epubOverflowMenuSections(
     if (ReaderTool.TTS_SETTINGS.name !in hiddenTools || ReaderTool.TTS_REPLACEMENTS.name !in hiddenTools) {
         add(EpubOverflowMenuSection.TTS_SETTINGS)
     }
+    if (hasExportAnnotations) add(EpubOverflowMenuSection.EXPORT_ANNOTATIONS)
     if (hasFileInfo && ReaderTool.FILE_INFO.name !in hiddenTools) add(EpubOverflowMenuSection.FILE_INFO)
 }
 

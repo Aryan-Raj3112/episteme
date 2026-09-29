@@ -248,6 +248,7 @@ fun EpubReaderDrawerSheet(
     activeHighlightPalette: List<Int>,
     onOpenPaletteManager: () -> Unit,
     onHighlightColorChange: (UserHighlight, Int) -> Unit,
+    onExportAnnotations: (() -> Unit)? = null,
     readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
     ModalDrawerSheet(
@@ -336,7 +337,8 @@ fun EpubReaderDrawerSheet(
                         onEditNote = onEditNote,
                         activeHighlightPalette = activeHighlightPalette,
                         onOpenPaletteManager = onOpenPaletteManager,
-                        onHighlightColorChange = onHighlightColorChange
+                        onHighlightColorChange = onHighlightColorChange,
+                        onExportAnnotations = onExportAnnotations
                     )
                     3 -> ImagesList(
                         readerImages = readerImages,
@@ -816,7 +818,8 @@ private fun HighlightsList(
     onEditNote: (UserHighlight) -> Unit,
     activeHighlightPalette: List<Int>,
     onOpenPaletteManager: () -> Unit,
-    onHighlightColorChange: (UserHighlight, Int) -> Unit
+    onHighlightColorChange: (UserHighlight, Int) -> Unit,
+    onExportAnnotations: (() -> Unit)? = null
 ) {
     if (userHighlights.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
@@ -832,7 +835,8 @@ private fun HighlightsList(
         Column(modifier = Modifier.fillMaxSize()) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 androidx.compose.material3.FilterChip(
                     selected = !filterWithNotesOnly,
@@ -844,6 +848,12 @@ private fun HighlightsList(
                     onClick = { filterWithNotesOnly = true },
                     label = { Text(stringResource(R.string.filter_with_notes)) }
                 )
+                if (onExportAnnotations != null) {
+                    Spacer(modifier = Modifier.weight(1f))
+                    TextButton(onClick = onExportAnnotations) {
+                        Text(stringResource(R.string.action_export_annotations))
+                    }
+                }
             }
 
             val filteredHighlights = if (filterWithNotesOnly) {

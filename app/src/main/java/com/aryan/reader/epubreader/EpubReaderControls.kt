@@ -72,6 +72,7 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -189,13 +190,15 @@ internal fun epubOverflowMenuSections(
     hasHiddenToolbarTools: Boolean,
     hasToggleReflow: Boolean,
     hasDeleteReflow: Boolean,
-    hasFileInfo: Boolean = true
+    hasFileInfo: Boolean = true,
+    hasExportAnnotations: Boolean = false,
 ): List<EpubOverflowMenuSection> = com.aryan.reader.shared.epubOverflowMenuSections(
     hiddenTools = hiddenTools,
     hasHiddenToolbarTools = hasHiddenToolbarTools,
     hasToggleReflow = hasToggleReflow,
     hasDeleteReflow = hasDeleteReflow,
     hasFileInfo = hasFileInfo,
+    hasExportAnnotations = hasExportAnnotations,
 )
 
 internal fun defaultReaderHiddenTools(): Set<String> = setOf(
@@ -258,6 +261,7 @@ fun EpubReaderTopBar(
     modifier: Modifier = Modifier,
     onToggleReflow: (() -> Unit)? = null,
     onDeleteReflow: (() -> Unit)? = null,
+    onExportAnnotations: (() -> Unit)? = null,
     readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
     com.aryan.reader.shared.ui.SharedReaderBarVisibility(
@@ -415,6 +419,7 @@ fun EpubReaderTopBar(
                                     hasHiddenToolbarTools = hiddenToolbarTools.isNotEmpty(),
                                     hasToggleReflow = onToggleReflow != null,
                                     hasDeleteReflow = onDeleteReflow != null,
+                                    hasExportAnnotations = onExportAnnotations != null,
                                 ),
                             ) { section ->
                                 when (section) {
@@ -763,6 +768,22 @@ fun EpubReaderTopBar(
                                                 )
                                             }
                                         }
+                                    }
+                                    EpubOverflowMenuSection.EXPORT_ANNOTATIONS -> {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.action_export_annotations)) },
+                                            onClick = {
+                                                showMoreMenu = false
+                                                onExportAnnotations?.invoke()
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    Icons.Default.Share,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        )
                                     }
                                 }
                             }

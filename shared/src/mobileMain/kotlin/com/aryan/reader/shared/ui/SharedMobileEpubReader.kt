@@ -274,6 +274,7 @@ fun SharedMobileEpubReaderScreen(
     onReaderScreenOrientationModeChange: (ReaderScreenOrientationMode) -> Unit = {},
     onApplyReaderScreenOrientation: (ReaderScreenOrientationMode) -> Unit = {},
     streamPageLoader: SharedMobileEpubStreamPageLoader? = null,
+    onExportAnnotations: ((BookItem) -> Unit)? = null,
     modifier: Modifier = Modifier,
     /**
      * App-level read-aloud engine. When provided (iOS host), the screen drives
@@ -1586,6 +1587,9 @@ fun SharedMobileEpubReaderScreen(
                                 if (editingHighlight?.id == highlight.id) editingHighlight = null
                             },
                             onOpenPaletteManager = { showHighlightPaletteManager = true },
+                            onExportAnnotations = onExportAnnotations?.let { export ->
+                                { export(book.copy(readerHighlights = highlights)) }
+                            },
                             modifier = Modifier.fillMaxSize()
                         )
                         else -> SharedMobileEpubImages(
@@ -2598,6 +2602,9 @@ fun SharedMobileEpubReaderScreen(
                         onOpenDictionarySettings = onOpenDictionarySettings,
                         onOpenAiHub = { showAiHub = true; onOpenAiHub() },
                         aiAvailable = readerAiAvailable,
+                        onExportAnnotations = onExportAnnotations?.let { export ->
+                            { export(book.copy(readerHighlights = highlights)) }
+                        },
                         readingMode = settings.readingMode,
                         rightToLeftPagination = settings.rightToLeftPagination,
                         useNativeVerticalRenderer = useNativeVerticalRenderer,

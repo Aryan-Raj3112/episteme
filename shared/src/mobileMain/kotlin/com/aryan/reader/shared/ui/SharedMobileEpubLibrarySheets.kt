@@ -504,6 +504,7 @@ internal fun SharedMobileEpubHighlights(
     onHighlightColorChange: (UserHighlight, HighlightColor) -> Unit,
     onDeleteHighlight: (UserHighlight) -> Unit,
     onOpenPaletteManager: (() -> Unit)? = null,
+    onExportAnnotations: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var notesOnly by remember { mutableStateOf(false) }
@@ -519,7 +520,8 @@ internal fun SharedMobileEpubHighlights(
     Column(modifier) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             FilterChip(
                 selected = !notesOnly,
@@ -531,6 +533,12 @@ internal fun SharedMobileEpubHighlights(
                 onClick = { notesOnly = true },
                 label = { Text(readerString("filter_with_notes", "With Notes")) },
             )
+            if (onExportAnnotations != null) {
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onExportAnnotations) {
+                    Text(readerString("action_export_annotations", "Export annotations"))
+                }
+            }
         }
         if (filteredHighlights.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

@@ -214,6 +214,7 @@ internal fun SharedMobileEpubTopBar(
     onOpenDictionarySettings: () -> Unit,
     onOpenAiHub: () -> Unit = {},
     aiAvailable: Boolean = false,
+    onExportAnnotations: (() -> Unit)? = null,
     readingMode: ReaderReadingMode,
     rightToLeftPagination: Boolean,
     useNativeVerticalRenderer: Boolean,
@@ -607,6 +608,13 @@ internal fun SharedMobileEpubTopBar(
                             ReaderTool.THEME -> Unit
                             else -> Unit
                         }
+                    }
+                    if (onExportAnnotations != null) {
+                        DropdownMenuItem(
+                            text = { Text(readerString("action_export_annotations", "Export annotations")) },
+                            onClick = { onExportAnnotations(); onShowMoreChange(false) },
+                            leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) }
+                        )
                     }
                     if (ReaderTool.TTS_CONTROLS in overflowTools && ttsBusy) {
                         DropdownMenuItem(

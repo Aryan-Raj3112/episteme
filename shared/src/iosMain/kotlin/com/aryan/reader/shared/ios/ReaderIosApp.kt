@@ -5733,6 +5733,9 @@ private fun ReaderIosApp(
                                 persistIosReaderOrientation(mode)
                             },
                             onApplyReaderScreenOrientation = bridge::applyReaderOrientation,
+                            onExportAnnotations = { exportBook ->
+                                annotationExportBook = exportBook
+                            },
                             modifier = Modifier.fillMaxSize()
                         )
                     }
@@ -6425,11 +6428,8 @@ private fun ReaderIosApp(
                 return@Surface
             }
 
-            // Intentional temporary iOS scope: AI keys and models stay hidden
-            // for now (logic kept for later). Android remains the benchmark.
-            val appDrawerCapabilities = MobileAppDrawerCapabilities.GLOBAL.copy(
-                showAiSettings = false,
-            )
+            // Android benchmark parity: Home drawer exposes AI keys and models.
+            val appDrawerCapabilities = MobileAppDrawerCapabilities.GLOBAL
 
             @Composable
             fun MainScaffoldContent() {
@@ -7048,6 +7048,7 @@ private fun ReaderIosApp(
                                 onOpenSettings = { utilityScreen = IosUtilityScreen.SETTINGS },
                                 onOpenAppTheme = { showAppThemePanel = true },
                                 onOpenFonts = { utilityScreen = IosUtilityScreen.FONTS },
+                                onOpenAiSettings = { utilityScreen = IosUtilityScreen.AI_SETTINGS },
                                 onOpenAccountDrawer = { scope.launch { accountDrawerState.open() } },
                                 accountAvatar = {
                                     IosAccountAvatar(state.currentUser, Modifier.size(32.dp))
@@ -7060,7 +7061,7 @@ private fun ReaderIosApp(
                                 },
                                 drawerCapabilities = MobileUnifiedLibraryDrawerCapabilities(
                                     catalogsAvailable = true,
-                                    aiSettingsAvailable = false,
+                                    aiSettingsAvailable = true,
                                 ),
                                 catalogContent = { catalogModifier ->
                                     SharedOpdsScreen(
