@@ -3,6 +3,7 @@ package com.aryan.reader.shared
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SharedMobileLibraryPersistenceTest {
@@ -252,6 +253,88 @@ class SharedMobileLibraryPersistenceTest {
         val state = SharedReaderScreenState(audiobooks = listOf(a, b))
 
         assertEquals(listOf(b), state.withAudiobookRemoved("ab-1").audiobooks)
+    }
+
+    @Test
+    fun snapshotRebuildKeepsTheSignedInSession() {
+        // Regression: a completed sync rebuilt the whole state from the cloud
+        // snapshot, which does not carry the account, so currentUser came back
+        // null and the app rendered as signed out while Firebase was still
+        // authenticated. Pro, wallet, and the sync toggle were reset too.
+        val user = UserData(
+            uid = "uid-1",
+            displayName = "Aryan",
+            photoUrl = null,
+            email = null,
+        )
+        val signedIn = SharedReaderScreenState(
+            currentUser = user,
+            isProUser = true,
+            credits = 42,
+            walletMicros = 7_000L,
+            walletMigrated = true,
+            isSyncEnabled = true,
+            audiobooks = listOf(
+                SharedAudiobook(bookId = "ab-1", filePath = "/a.m4b", format = "m4b", title = "A", addedAt = 1L)
+            ),
+        )
+
+        // What a snapshot merge produces: a fresh projection, which defaults
+        // every account field.
+        val projected = SharedLibrarySnapshot().toSharedMobileReaderState()
+        assertNull(projected.currentUser)
+        assertFalse(projected.isProUser)
+        assertFalse(projected.isSyncEnabled)
+
+        val merged = projected.preservingSessionFrom(signedIn)
+        assertEquals(user, merged.currentUser)
+        assertTrue(merged.isProUser)
+        assertEquals(42, merged.credits)
+        assertEquals(7_000L, merged.walletMicros)
+        assertTrue(merged.walletMigrated)
+        assertTrue(merged.isSyncEnabled)
+    }
+
+    @Test
+    fun snapshotRebuildKeepsTheOpenBookSoSyncDoesNotEjectTheReader() {
+        val reading = SharedReaderScreenState(
+            selectedBookId = "b7",
+            selectedUriString = "/b7.epub",
+            selectedFileType = FileType.EPUB,
+            renderMode = RenderMode.PAGINATED,
+            viewingShelfId = "shelf-1",
+        )
+
+        val merged = SharedLibrarySnapshot().toSharedMobileReaderState().preservingSessionFrom(reading)
+
+        assertEquals("b7", merged.selectedBookId)
+        assertEquals("/b7.epub", merged.selectedUriString)
+        assertEquals(FileType.EPUB, merged.selectedFileType)
+        assertEquals(RenderMode.PAGINATED, merged.renderMode)
+        assertEquals("shelf-1", merged.viewingShelfId)
+    }
+
+    @Test
+    fun snapshotRebuildStillAppliesLibraryContent() {
+        // The fix must not stop the snapshot from doing its actual job.
+        val snapshot = SharedLibrarySnapshot(
+            books = listOf(book("remote", 5L)),
+            sortOrder = SortOrder.TITLE_ASC,
+            hideReaderAi = true,
+        )
+        val previous = SharedReaderScreenState(
+            currentUser = UserData(uid = "uid-1", displayName = "Aryan", photoUrl = null, email = null),
+            isSyncEnabled = true,
+        )
+
+        val merged = snapshot.toSharedMobileReaderState().preservingSessionFrom(previous)
+
+        assertEquals("remote", merged.libraryBooks.single().id)
+        assertEquals(SortOrder.TITLE_ASC, merged.sortOrder)
+        assertTrue(merged.hideReaderAi)
+        // and the session still survives
+        assertEquals("uid-1", merged.currentUser?.uid)
+        assertTrue(merged.isSyncEnabled)
     }
 
     private fun book(id: String, timestamp: Long): BookItem {

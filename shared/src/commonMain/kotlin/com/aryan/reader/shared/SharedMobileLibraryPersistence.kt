@@ -56,6 +56,43 @@ fun SharedLibrarySnapshot.toSharedMobileReaderState(): SharedReaderScreenState {
 }
 
 /**
+ * Carries forward the state a library snapshot does not own.
+ *
+ * [toSharedMobileReaderState] builds a brand new [SharedReaderScreenState]
+ * from the snapshot's own fields, so every field it does not set falls back to
+ * its constructor default. The account/entitlement layer owns the fields below
+ * and is completely independent of the library snapshot, so a snapshot rebuild
+ * silently discarded them. That is why a completed sync logged the user out:
+ * `currentUser` reverted to `null`, which the account screen renders as
+ * signed out, alongside Pro going false, the wallet resetting to zero, and the
+ * sync toggle flipping back off. The native auth layer was never involved —
+ * the Firebase session stayed valid the whole time.
+ *
+ * The reader-selection fields are preserved for the same reason: a background
+ * sync completing mid-read would otherwise drop the reader back to the library.
+ */
+fun SharedReaderScreenState.preservingSessionFrom(
+    previous: SharedReaderScreenState,
+): SharedReaderScreenState = copy(
+    currentUser = previous.currentUser,
+    isProUser = previous.isProUser,
+    credits = previous.credits,
+    walletMicros = previous.walletMicros,
+    walletMigrated = previous.walletMigrated,
+    isSyncEnabled = previous.isSyncEnabled,
+    deviceLimitState = previous.deviceLimitState,
+    isReplacingDevice = previous.isReplacingDevice,
+    isRequestingDrivePermission = previous.isRequestingDrivePermission,
+    isAuthMenuExpanded = previous.isAuthMenuExpanded,
+    bannerMessage = previous.bannerMessage,
+    selectedBookId = previous.selectedBookId,
+    selectedUriString = previous.selectedUriString,
+    selectedFileType = previous.selectedFileType,
+    renderMode = previous.renderMode,
+    viewingShelfId = previous.viewingShelfId,
+)
+
+/**
  * Extracts the library-only slice consumed by [SharedLibraryStateProjector]
  * from the full reader screen state. Shared by every platform shell.
  */

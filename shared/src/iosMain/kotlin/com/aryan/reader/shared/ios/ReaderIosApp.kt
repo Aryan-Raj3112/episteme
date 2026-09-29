@@ -231,6 +231,7 @@ import com.aryan.reader.shared.withNewerReaderSession
 import com.aryan.reader.shared.withPdfReadingProgress
 import com.aryan.reader.shared.withReaderSessionState
 import com.aryan.reader.shared.toSharedMobileLibrarySnapshot
+import com.aryan.reader.shared.preservingSessionFrom
 import com.aryan.reader.shared.toSharedMobileReaderState
 import com.aryan.reader.shared.sharedSettingsHubModel
 import com.aryan.reader.shared.sharedLegalLinksForProfile
@@ -4655,10 +4656,16 @@ private fun ReaderIosApp(
                 }
             }
         }
+        // The snapshot owns the library and preferences, not the account
+        // session. Rebuilding state from it used to reset currentUser to null
+        // and Pro/wallet/sync-toggle to their defaults, so every completed sync
+        // looked like a sign-out even though Firebase was still authenticated.
+        val previousState = state
         state = mergedSnapshot
             .withResolvedIosBookPaths()
             .withResolvedIosAudiobookPaths()
             .toSharedMobileReaderState()
+            .preservingSessionFrom(previousState)
         pendingUnavailableBookId?.let { bookId ->
             val downloaded = state.rawLibraryBooks.firstOrNull { it.id == bookId && it.isAvailable }
             pendingUnavailableBookId = null
