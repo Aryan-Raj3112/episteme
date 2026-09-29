@@ -2231,16 +2231,20 @@ final class LocalAccountController: NSObject, ObservableObject {
         var driveFileName: String? {
             guard sourceFolder == nil, path?.hasPrefix("opds-pse://") != true else { return nil }
             guard !Self.isManualOnly(displayName) else { return nil }
-            guard let ext = Self.primaryExtension[type] else { return nil }
+            guard let ext = Self.primaryExtension(forType: type) else { return nil }
             return "\(id).\(ext)"
         }
 
-        fileprivate static let primaryExtension: [String: String] = [
-            "PDF": "pdf", "EPUB": "epub", "MOBI": "mobi", "TXT": "txt",
-            "MD": "md", "HTML": "html", "FB2": "fb2", "FODT": "fodt",
-            "CBZ": "cbz", "CBR": "cbr", "CB7": "cb7", "CBT": "cbt",
-            "DOCX": "docx", "ODT": "odt", "PPTX": "pptx",
-        ]
+        /// Cloud file extension for a book, from the shared capability table
+        /// (`SharedFileCapabilities.primaryExtensionFor`) so the remote name
+        /// cannot drift from Android's. The previous hardcoded Swift table was
+        /// both a duplicate and incomplete: an unknown type fell through to a
+        /// `.bin` upload on iOS while Android refuses to upload it at all, so
+        /// the two platforms could disagree on a book's cloud filename.
+        fileprivate static func primaryExtension(forType type: String) -> String? {
+            guard let fileType = FileType.entries.first(where: { $0.name == type }) else { return nil }
+            return SharedFileCapabilities.shared.primaryExtensionFor(type: fileType)
+        }
 
         fileprivate static let manualOnlyExtensions: Set<String> = [
             "json", "xml", "yaml", "yml", "toml", "csv", "tsv", "js", "ts",
@@ -2775,7 +2779,7 @@ final class LocalAccountController: NSObject, ObservableObject {
             guard
                 let bookID = tombstone["bookId"] as? String,
                 let type = tombstone["type"] as? String,
-                let fileExtension = CloudBook.primaryExtension[type],
+                let fileExtension = CloudBook.primaryExtension(forType: type),
                 let driveFile = filesByName["\(bookID).\(fileExtension)"]
             else {
                 continue
@@ -3038,8 +3042,11 @@ final class LocalAccountController: NSObject, ObservableObject {
     /// missing payloads, hand merged snapshot to shared UI. Drive/Firestore
     /// path below is untouched and dormant.
     private func syncCloudKitSnapshot(localJSON: String) async {
+        // Short label so this pass's lines can be told apart when a push runs
+        // concurrently: both passes log to the same subsystem/category.
+        let passId = nextCloudKitPassId()
         guard !cloudDataClearInFlight else {
-            cloudKitLog("pull_skip reason=clearing")
+            cloudKitLog("pull_skip pass=\(passId) reason=clearing")
             bridge?.completeCloudSync(
                 remoteSnapshotJson: nil,
                 downloadedBookIds: [],
@@ -3049,7 +3056,7 @@ final class LocalAccountController: NSObject, ObservableObject {
             return
         }
         if cloudKitPullInFlight {
-            cloudKitLog("pull_coalesce reason=in_flight")
+            cloudKitLog("pull_coalesce pass=\(passId) reason=in_flight")
             let previousAttempt = loadCloudSyncOutbox(.pull)?.attempt ?? 0
             saveCloudSyncOutbox(snapshotJSON: localJSON, operation: .pull, previousAttempt: previousAttempt)
             return
@@ -3057,7 +3064,7 @@ final class LocalAccountController: NSObject, ObservableObject {
         do {
             try requireCloudKitPro()
         } catch {
-            cloudKitLog("pull_skip reason=pro_required")
+            cloudKitLog("pull_skip pass=\(passId) reason=pro_required")
             completeCloudKitGateFailure(error)
             return
         }
@@ -3069,7 +3076,7 @@ final class LocalAccountController: NSObject, ObservableObject {
             if loadCloudSyncOutbox(.pull) != nil { scheduleCloudSyncRetryIfNeeded() }
         }
         let startedAt = Date()
-        cloudKitLog("pull_start bytes=\(preparedLocalJSON.utf8.count) attempt=\(loadCloudSyncOutbox(.pull)?.attempt ?? 0)")
+        cloudKitLog("pull_start pass=\(passId) bytes=\(preparedLocalJSON.utf8.count) attempt=\(loadCloudSyncOutbox(.pull)?.attempt ?? 0)")
         do {
             try await cloudKitEnsureSession()
             // Reads are incremental: the first fetch folds the delta since the
@@ -3079,15 +3086,15 @@ final class LocalAccountController: NSObject, ObservableObject {
             // had to be careful not to consume a transient token twice, which
             // is what once made a fresh device report 18 records fetched then
             // `remoteBooks=0 downloadedBooks=0`.
-            var maps = try await cloudKitFetchMaps()
-            let uploaded = try await cloudKitUploadDirty(preparedLocalJSON: preparedLocalJSON, remoteMaps: maps)
+            var maps = try await cloudKitFetchMaps(passId: passId)
+            let uploaded = try await cloudKitUploadDirty(passId: passId, preparedLocalJSON: preparedLocalJSON, remoteMaps: maps)
             guard generation == cloudSyncGeneration else { return }
             // Re-read only if our own pass actually wrote anything. This now
             // costs a delta sized to what we just wrote instead of a full
             // enumeration, and it also picks up anything a concurrent device
             // committed in the meantime.
             if uploaded > 0 {
-                maps = try await cloudKitFetchMaps()
+                maps = try await cloudKitFetchMaps(passId: passId)
             }
             let remoteJSON = try cloudKitBuildRemoteJSON(preparedLocalJSON: preparedLocalJSON, maps: maps)
             let downloaded = try await cloudKitDownloadMissingBooks(localJSON: preparedLocalJSON, maps: maps)
@@ -3106,7 +3113,7 @@ final class LocalAccountController: NSObject, ObservableObject {
                 "cloud_sync.pull_success backend=cloudkit bytes=\(preparedLocalJSON.utf8.count) remoteBytes=\(hydrated.utf8.count) books=\(downloaded.count) fonts=\(downloadedFonts.count) pdfSidecars=\(downloadedSidecars.count) elapsedMs=\(elapsedMs)"
             )
             cloudKitLog(
-                "pull_success remoteBooks=\(maps.states.count) tombstones=\(maps.tombstones.count) shelves=\(maps.shelves.count) fonts=\(maps.fonts.count) downloadedBooks=\(downloaded.count) downloadedFonts=\(downloadedFonts.count) sidecars=\(downloadedSidecars.count) uploaded=\(uploaded) elapsedMs=\(elapsedMs)"
+                "pull_success pass=\(passId) remoteBooks=\(maps.states.count) tombstones=\(maps.tombstones.count) shelves=\(maps.shelves.count) fonts=\(maps.fonts.count) downloadedBooks=\(downloaded.count) downloadedFonts=\(downloadedFonts.count) sidecars=\(downloadedSidecars.count) uploaded=\(uploaded) elapsedMs=\(elapsedMs)"
             )
             bridge?.completeCloudSync(
                 remoteSnapshotJson: hydrated,
@@ -3119,12 +3126,12 @@ final class LocalAccountController: NSObject, ObservableObject {
         } catch {
             guard generation == cloudSyncGeneration else { return }
             if isCloudKitGateError(error) {
-                cloudKitLog("pull_gate_failure error=\(safeCloudKitError(error))")
+                cloudKitLog("pull_gate_failure pass=\(passId) error=\(safeCloudKitError(error))")
                 completeCloudKitGateFailure(error)
                 return
             }
             let previousAttempt = loadCloudSyncOutbox(.pull)?.attempt ?? 0
-            cloudKitLog("pull_retry_queued attempt=\(previousAttempt + 1) error=\(safeCloudKitError(error))")
+            cloudKitLog("pull_retry_queued pass=\(passId) attempt=\(previousAttempt + 1) error=\(safeCloudKitError(error))")
             saveCloudSyncOutbox(snapshotJSON: preparedLocalJSON, operation: .pull, previousAttempt: previousAttempt)
             bridge?.completeCloudSync(
                 remoteSnapshotJson: nil,
@@ -3144,8 +3151,9 @@ final class LocalAccountController: NSObject, ObservableObject {
     /// Push: upload-only fast path (no downloads). Metadata-only passes never
     /// stage assets; content passes stage only winning book/font files.
     private func uploadMergedCloudKitSnapshot(_ snapshotJSON: String) async {
+        let passId = nextCloudKitPassId()
         guard !cloudDataClearInFlight else {
-            cloudKitLog("push_skip reason=clearing")
+            cloudKitLog("push_skip pass=\(passId) reason=clearing")
             bridge?.completeCloudSync(
                 remoteSnapshotJson: nil,
                 downloadedBookIds: [],
@@ -3155,7 +3163,7 @@ final class LocalAccountController: NSObject, ObservableObject {
             return
         }
         if cloudKitPushInFlight {
-            cloudKitLog("push_coalesce reason=in_flight")
+            cloudKitLog("push_coalesce pass=\(passId) reason=in_flight")
             let previousAttempt = loadCloudSyncOutbox(.push)?.attempt ?? 0
             saveCloudSyncOutbox(snapshotJSON: snapshotJSON, operation: .push, previousAttempt: previousAttempt)
             return
@@ -3163,7 +3171,7 @@ final class LocalAccountController: NSObject, ObservableObject {
         do {
             try requireCloudKitPro()
         } catch {
-            cloudKitLog("push_skip reason=pro_required")
+            cloudKitLog("push_skip pass=\(passId) reason=pro_required")
             completeCloudKitGateFailure(error)
             return
         }
@@ -3175,18 +3183,18 @@ final class LocalAccountController: NSObject, ObservableObject {
             if loadCloudSyncOutbox(.push) != nil { scheduleCloudSyncRetryIfNeeded() }
         }
         let startedAt = Date()
-        cloudKitLog("push_start bytes=\(preparedSnapshotJSON.utf8.count)")
+        cloudKitLog("push_start pass=\(passId) bytes=\(preparedSnapshotJSON.utf8.count)")
         do {
             try await cloudKitEnsureSession()
-            let maps = try await cloudKitFetchMaps()
-            let wrote = try await cloudKitUploadDirty(preparedLocalJSON: preparedSnapshotJSON, remoteMaps: maps)
+            let maps = try await cloudKitFetchMaps(passId: passId)
+            let wrote = try await cloudKitUploadDirty(passId: passId, preparedLocalJSON: preparedSnapshotJSON, remoteMaps: maps)
             guard generation == cloudSyncGeneration else { return }
             clearCloudSyncOutbox(.push)
             let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
             syncLogger.info(
                 "cloud_sync.push_success backend=cloudkit bytes=\(preparedSnapshotJSON.utf8.count) wrote=\(wrote) elapsedMs=\(elapsedMs)"
             )
-            cloudKitLog("push_success wrote=\(wrote) elapsedMs=\(elapsedMs)")
+            cloudKitLog("push_success pass=\(passId) wrote=\(wrote) elapsedMs=\(elapsedMs)")
             bridge?.completeCloudSync(
                 remoteSnapshotJson: nil,
                 downloadedBookIds: [],
@@ -3196,12 +3204,12 @@ final class LocalAccountController: NSObject, ObservableObject {
         } catch {
             guard generation == cloudSyncGeneration else { return }
             if isCloudKitGateError(error) {
-                cloudKitLog("push_gate_failure error=\(safeCloudKitError(error))")
+                cloudKitLog("push_gate_failure pass=\(passId) error=\(safeCloudKitError(error))")
                 completeCloudKitGateFailure(error)
                 return
             }
             let previousAttempt = loadCloudSyncOutbox(.push)?.attempt ?? 0
-            cloudKitLog("push_retry_queued attempt=\(previousAttempt + 1) error=\(safeCloudKitError(error))")
+            cloudKitLog("push_retry_queued pass=\(passId) attempt=\(previousAttempt + 1) error=\(safeCloudKitError(error))")
             saveCloudSyncOutbox(snapshotJSON: preparedSnapshotJSON, operation: .push, previousAttempt: previousAttempt)
             bridge?.completeCloudSync(
                 remoteSnapshotJson: nil,
@@ -3362,37 +3370,64 @@ final class LocalAccountController: NSObject, ObservableObject {
         return maps
     }
 
+    /// Serializes every zone read that mutates the on-disk shadow.
+    ///
+    /// Pull and push are allowed to run concurrently (Android runs them as
+    /// separate WorkManager jobs), but they share one shadow file and one zone
+    /// change token. Two overlapping refreshes could each load the shadow, apply
+    /// their own delta, and save; if the pass holding the *older* shadow wrote
+    /// last, its token would mark records as seen that its shadow never
+    /// absorbed, and those records would be skipped forever. Serializing here
+    /// means the second caller re-reads the shadow the first one wrote instead
+    /// of starting from a stale load.
+    private let cloudKitBaselineLock = AsyncMutex()
+
+    /// Monotonic pass label (`p1`, `p2`, …) for log correlation. Pull and push
+    /// can overlap and they share one OSLog category, so without this an
+    /// interleaved read of a sync window cannot be attributed to a pass.
+    private var cloudKitPassCounter = 0
+
+    private func nextCloudKitPassId() -> String {
+        cloudKitPassCounter += 1
+        return "p\(cloudKitPassCounter)"
+    }
+
     /// Remote state for the whole zone, refreshed from a delta read.
     ///
     /// On a cold start (no shadow, or an unusable token) this is a full
     /// enumeration and the shadow is rebuilt. Steady state is one empty round
     /// trip, and the cost is proportional to what actually changed.
-    private func cloudKitFetchMaps() async throws -> CloudKitRemoteMaps {
-        let baseline = loadCloudKitBaseline()
-        let storedToken = cloudKitTransport.unarchiveChangeToken(baseline?.token)
-        // A token and a shadow are only valid together; a half-written pair is
-        // indistinguishable from neither, and both mean "re-read the zone".
-        let canResume = storedToken != nil
-        let delta = try await cloudKitTransport.fetchZoneChanges(since: canResume ? storedToken : nil)
+    ///
+    /// `passId` is a short label for the calling pass so its log lines can be
+    /// told apart when pull and push interleave.
+    private func cloudKitFetchMaps(passId: String) async throws -> CloudKitRemoteMaps {
+        try await cloudKitBaselineLock.withLock {
+            let baseline = loadCloudKitBaseline()
+            let storedToken = cloudKitTransport.unarchiveChangeToken(baseline?.token)
+            // A token and a shadow are only valid together; a half-written pair
+            // is indistinguishable from neither, and both mean "re-read the zone".
+            let canResume = storedToken != nil
+            let delta = try await cloudKitTransport.fetchZoneChanges(since: canResume ? storedToken : nil)
 
-        var maps = delta.isFullSnapshot ? CloudKitRemoteMaps() : (baseline?.maps ?? CloudKitRemoteMaps())
-        for record in delta.records {
-            cloudKitAccumulate(record: record, maps: &maps)
+            var maps = delta.isFullSnapshot ? CloudKitRemoteMaps() : (baseline?.maps ?? CloudKitRemoteMaps())
+            for record in delta.records {
+                cloudKitAccumulate(record: record, maps: &maps)
+            }
+            for id in delta.deletedRecordIDs {
+                cloudKitForgetDeleted(id, maps: &maps)
+            }
+            let nextBaseline = CloudKitBaseline(
+                token: cloudKitTransport.archiveChangeToken(delta.token),
+                maps: maps
+            )
+            saveCloudKitBaseline(nextBaseline)
+            cloudKitLog(
+                "baseline_refreshed pass=\(passId) records=\(delta.records.count) deleted=\(delta.deletedRecordIDs.count) "
+                    + "full=\(delta.isFullSnapshot) resumed=\(canResume) "
+                    + "states=\(maps.states.count) tombstones=\(maps.tombstones.count) shelves=\(maps.shelves.count) fonts=\(maps.fonts.count)"
+            )
+            return maps
         }
-        for id in delta.deletedRecordIDs {
-            cloudKitForgetDeleted(id, maps: &maps)
-        }
-        let nextBaseline = CloudKitBaseline(
-            token: cloudKitTransport.archiveChangeToken(delta.token),
-            maps: maps
-        )
-        saveCloudKitBaseline(nextBaseline)
-        cloudKitLog(
-            "baseline_refreshed records=\(delta.records.count) deleted=\(delta.deletedRecordIDs.count) "
-                + "full=\(delta.isFullSnapshot) resumed=\(canResume) "
-                + "states=\(maps.states.count) tombstones=\(maps.tombstones.count) shelves=\(maps.shelves.count) fonts=\(maps.fonts.count)"
-        )
-        return maps
     }
 
     /// Drop a deleted record from the shadow. Record names are
@@ -3492,6 +3527,7 @@ final class LocalAccountController: NSObject, ObservableObject {
     /// can decide whether a re-fetch is needed.
     @discardableResult
     private func cloudKitUploadDirty(
+        passId: String,
         preparedLocalJSON: String,
         remoteMaps: CloudKitRemoteMaps
     ) async throws -> Int {
@@ -3528,7 +3564,7 @@ final class LocalAccountController: NSObject, ObservableObject {
             localContentTimestampById: localFileMtimeById
         )
         cloudKitLog(
-            "dirty_sets metadata=\(dirty.metadataBookIds.count) sidecars=\(dirty.sidecarBookIds.count) content=\(dirty.contentBookIds.count) localBooks=\(syncable.count) localFilesAvailable=\(availability.values.filter { $0 }.count)"
+            "dirty_sets pass=\(passId) metadata=\(dirty.metadataBookIds.count) sidecars=\(dirty.sidecarBookIds.count) content=\(dirty.contentBookIds.count) localBooks=\(syncable.count) localFilesAvailable=\(availability.values.filter { $0 }.count)"
         )
         let deviceId = cloudSyncDeviceID()
         var records: [CKRecord] = []
@@ -3939,7 +3975,7 @@ final class LocalAccountController: NSObject, ObservableObject {
         for entry in pending {
             guard let assetURL = assets[entry.bookId] else { continue }
             let type = (entry.fields["type"] as? String) ?? ""
-            let ext = CloudBook.primaryExtension[type] ?? "bin"
+            let ext = CloudBook.primaryExtension(forType: type) ?? "bin"
             let destination = imports.appendingPathComponent("\(entry.bookId).\(ext)")
             let temporary = imports.appendingPathComponent(".\(entry.bookId).\(UUID().uuidString).download")
             try? FileManager.default.removeItem(at: temporary)

@@ -2085,7 +2085,7 @@ internal fun SharedLibrarySnapshot.withResolvedIosBookPaths(): SharedLibrarySnap
             val resolvedPath = book.path?.resolvedIosImportedFilePath()
             book.copy(
                 path = resolvedPath,
-                coverImagePath = book.coverImagePath?.resolvedIosCoverPath(),
+                coverImagePath = book.coverImagePath?.resolvedIosCoverPathOrNull(),
                 isAvailable = resolvedPath?.startsWith("opds-pse://") == true ||
                     (!resolvedPath.isNullOrBlank() &&
                         NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)),
@@ -2467,8 +2467,23 @@ private fun String.resolvedIosCoverPath(): String {
         ?: this
 }
 
-private fun String.stableIosCoverPath(): String {
-    val canonicalPath = canonicalIosFilePath()
+/**
+ * The cover path only if it actually points at a file on this device.
+ *
+ * Covers sync as a portable path *reference*, not as bytes, so a device that
+ * receives a book has a cover path naming a file it does not have. Returning
+ * that unusable reference made the cover look present: the extraction queue
+ * gates on `coverImagePath.isNullOrBlank()`, so a non-blank-but-dead path
+ * permanently skipped cover generation and the grid stayed empty until the book
+ * was re-imported. Reporting "no cover" instead lets extraction run and
+ * generate a local one.
+ */
+private fun String.resolvedIosCoverPathOrNull(): String? {
+    val resolved = resolvedIosCoverPath()
+    return resolved.takeIf { NSFileManager.defaultManager.fileExistsAtPath(it) }
+}
+
+private fun String.stableIosCoverPath(): String {    val canonicalPath = canonicalIosFilePath()
     val coversPath = iosCoversDirectoryPath()?.canonicalIosFilePath() ?: return canonicalPath
     return if (canonicalPath.startsWith("$coversPath/")) {
         IosCoversRelativePrefix + canonicalPath.removePrefix("$coversPath/")
