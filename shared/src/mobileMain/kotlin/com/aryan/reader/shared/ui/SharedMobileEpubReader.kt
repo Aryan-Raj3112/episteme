@@ -1308,6 +1308,22 @@ fun SharedMobileEpubReaderScreen(
         navigate(chunk.toLocator(), detachFromTts = false)
     }
 
+    // Stuck-highlight clear (vertical WebView) for the cloud engine too:
+    // ending a cloud session must push readerSetTtsLocator(null) to the page,
+    // otherwise the last spoken chunk stays painted (local-TTS parity).
+    var wasCloudTtsSessionActive by remember(book.id) { mutableStateOf(false) }
+    LaunchedEffect(cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused) {
+        val cloudSessionActive = cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
+        val refreshNavigation = shouldRefreshReaderNavigationOnTtsSessionEnd(
+            sessionWasActive = wasCloudTtsSessionActive,
+            sessionIsActive = cloudSessionActive,
+            readingMode = settings.readingMode,
+            useNativeVerticalRenderer = useNativeVerticalRenderer,
+        )
+        wasCloudTtsSessionActive = cloudSessionActive
+        if (refreshNavigation) navigationRequestId++
+    }
+
     // Stuck-highlight clear (vertical WebView): ending the session must push
     // the composed readerSetTtsLocator(null) to the page, otherwise the last
     // chunk's highlight stays painted. Native renderers clear via
@@ -1638,7 +1654,13 @@ fun SharedMobileEpubReaderScreen(
                                 ),
                                 highlights = activeTtsChunk?.let { chunk ->
                                     highlights + chunk.toHighlight(localTts.progress.sessionId)
-                                } ?: highlights
+                                }
+                                    // Cloud read-aloud paints the same yellow chunk
+                                    // highlight as the local engine (Android parity).
+                                    ?: activeCloudTtsChunk?.let { chunk ->
+                                        highlights + chunk.toHighlight(cloudTtsState.progress.sessionId)
+                                    }
+                                    ?: highlights
                             )
                             // Android-benchmark page turn: single visible-step turns play the realistic
                             // page curl with the same tween(700) the Android pager snap uses; multi-page
@@ -2143,7 +2165,13 @@ fun SharedMobileEpubReaderScreen(
                                 ),
                                 highlights = activeTtsChunk?.let { chunk ->
                                     highlights + chunk.toHighlight(localTts.progress.sessionId)
-                                } ?: highlights
+                                }
+                                    // Cloud read-aloud paints the same yellow chunk
+                                    // highlight as the local engine (Android parity).
+                                    ?: activeCloudTtsChunk?.let { chunk ->
+                                        highlights + chunk.toHighlight(cloudTtsState.progress.sessionId)
+                                    }
+                                    ?: highlights
                             ),
                             readerFontFamily = readerFontFamily,
                             searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
@@ -2289,7 +2317,15 @@ fun SharedMobileEpubReaderScreen(
                                     )
                                 )
                             }
-                            add(sharedMobileEpubTtsNavigationScript(activeTtsChunk?.toLocator()))
+                            // Cloud read-aloud highlights through the same
+                            // readerSetTtsLocator bridge as the local engine
+                            // (Android parity), so the WebView branch paints the
+                            // spoken cloud chunk too.
+                            add(
+                                sharedMobileEpubTtsNavigationScript(
+                                    (activeTtsChunk ?: activeCloudTtsChunk)?.toLocator()
+                                )
+                            )
                         }.joinToString(separator = "\n")
                         // Android parity (EpubReaderRenderSurfaces): shrink the WebView
                         // by the full PageInfo bar height instead of overlaying it, so the

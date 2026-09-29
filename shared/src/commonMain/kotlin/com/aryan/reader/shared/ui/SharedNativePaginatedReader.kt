@@ -75,7 +75,6 @@ import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 internal enum class SharedPaginatedTapAction {
@@ -891,11 +890,20 @@ fun SharedNativeVerticalReader(
     val listState = rememberLazyListState()
     DisposableEffect(verticalScrollController, listState, flowItems) {
         verticalScrollController?.attach(listState) {
+            // Android parity (EpubReaderScreen.currentNativeVerticalLocator →
+            // locatorForPersistence): the anchor is the FIRST visible text
+            // item — the line at the top of the viewport — never the item at
+            // viewport center. Chapter gaps are skipped so a boundary scroll
+            // anchors to the upcoming chapter's first block instead of the
+            // previous chapter's tail.
             val info = listState.layoutInfo
-            val center = (info.viewportStartOffset + info.viewportEndOffset) / 2
-            val itemIndex = info.visibleItemsInfo.minByOrNull { visible ->
-                abs((visible.offset + visible.size / 2) - center)
-            }?.index ?: listState.firstVisibleItemIndex
+            val itemIndex = info.visibleItemsInfo
+                .sortedBy { it.offset }
+                .firstOrNull { visible ->
+                    flowItems.getOrNull(visible.index)?.kind != SharedNativeVerticalFlowItemKind.CHAPTER_GAP
+                }
+                ?.index
+                ?: listState.firstVisibleItemIndex
             flowItems.getOrNull(itemIndex)?.toNativeVerticalLocator()
         }
         onDispose { verticalScrollController?.detach() }

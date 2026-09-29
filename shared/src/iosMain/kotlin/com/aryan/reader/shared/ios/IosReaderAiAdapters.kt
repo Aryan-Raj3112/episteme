@@ -1012,6 +1012,10 @@ internal object IosReaderAiHttpClient {
         return request(url = url, method = "POST", body = body.toNSData(), headers = headers)
     }
 
+    suspend fun getBytes(url: String, headers: Map<String, String> = emptyMap()): IosReaderAiHttpResponse {
+        return request(url = url, method = "GET", body = null, headers = headers)
+    }
+
     private suspend fun request(
         url: String,
         method: String,

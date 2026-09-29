@@ -300,7 +300,6 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     override fun setVoice(identifier: String) {
         if (identifier.isBlank()) return
         settings = settings.copy(ttsSpeakerId = identifier).sanitized()
-        if (hasActiveSession()) stop()
         refreshCacheSummary()
     }
 
@@ -444,10 +443,18 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         samplePlayer = null
         voiceSampleState = voiceSampleState.copy(loadingVoiceId = voiceId, playingVoiceId = null)
         sampleJob = scope.launch(Dispatchers.Default) {
-            val file = if (!fishReferenceId.isNullOrBlank()) {
-                resolveFishSampleFile(voiceId, fishReferenceId, sampleAudioUrl, sampleText)
-            } else {
-                resolveGeminiSampleFile(voiceId)
+            val file = try {
+                if (!fishReferenceId.isNullOrBlank()) {
+                    resolveFishSampleFile(voiceId, fishReferenceId, sampleAudioUrl, sampleText)
+                } else {
+                    resolveGeminiSampleFile(voiceId)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                // A failed preview must never wedge the loading spinner or the
+                // sheet; Android's SpeakerSamplePlayer clears loading on error.
+                null
             }
             if (file == null) {
                 withContext(Dispatchers.Main.immediate) {
@@ -465,12 +472,12 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
                     }
                     return@withContext
                 }
-                ensureAudioSession()
                 val created = AVAudioPlayer(data = audio.toNSData(), error = null)
                 if (!created.prepareToPlay()) {
                     voiceSampleState = voiceSampleState.copy(loadingVoiceId = null)
                     return@withContext
                 }
+                ensureAudioSession()
                 samplePlayer = created
                 created.delegate = sampleDelegate
                 created.play()
@@ -584,10 +591,16 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
 
     private suspend fun downloadUrlToFile(url: NSURL, destination: String): Boolean {
         return try {
-            // Blocking fetch on the caller's Default dispatcher, matching
-            // IosGoogleFonts/IosAccountAvatar practice.
-            val data = NSData.dataWithContentsOfURL(url) ?: return false
-            data.writeToFile(destination, atomically = true)
+            // Bounded NSURLSession GET (Android OkHttp parity). The previous
+            // NSData.dataWithContentsOfURL call had no timeout and no
+            // cancellation, so an unreachable sample URL left the row spinner
+            // spinning forever.
+            val response = withTimeout(CLOUD_TTS_TIMEOUT_MILLIS) {
+                IosReaderAiHttpClient.getBytes(url.absoluteString ?: return@withTimeout null)
+            } ?: return false
+            if (response.statusCode !in 200..299 || response.bodyBytes.isEmpty()) return false
+            writeFileAtomically(destination, response.bodyBytes)
+            true
         } catch (_: Exception) {
             false
         }
@@ -1110,6 +1123,9 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     private class FishRateLimited(val retryAfterSeconds: Int) : IllegalStateException("RATE_LIMITED:$retryAfterSeconds")
 
     private fun startGateError(): String? {
+        // Android TtsPlaybackManager gate parity: any cloud backend enables
+        // start — Gemini Live BYOK, Gemini REST BYOK, Fish BYOK, or the
+        // credited worker. The old legacy-only check blocked Fish/REST users.
         if (!cloudTtsModeEnabled()) return "Choose Cloud TTS in AI settings first."
         if (!byokAvailable() && !fishByokAvailable() && !workerAvailable()) {
             if (isSignedIn && authToken.isNullOrBlank()) return "Sign in again to use cloud TTS."

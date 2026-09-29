@@ -952,7 +952,9 @@ internal fun ReaderCloudTtsState.menuLabel(): String = when {
 internal fun ReaderCloudTtsState.icon() = when {
     isPlaying -> Icons.Default.Pause
     isPaused -> Icons.Default.PlayArrow
-    else -> Icons.Default.GraphicEq
+    // Android benchmark (EpubReaderControls): the idle chrome TTS entry uses
+    // the same text-to-speech glyph for both engines; only play/pause swap.
+    else -> SharedReaderIcons.TextToSpeech
 }
 
 @Composable
@@ -1172,7 +1174,7 @@ internal fun SharedMobileEpubTtsControls(
                             )
                         }
                     }
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(6.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -1232,7 +1234,7 @@ internal fun SharedMobileEpubTtsControls(
                             }
                         }
                     }
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(6.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -1533,7 +1535,6 @@ internal fun SharedMobileEpubCloudTtsControls(
                         }
                     }
                     if (guardNotice != null && isCloudSpendable) {
-                        Spacer(Modifier.height(8.dp))
                         Surface(
                             color = MaterialTheme.colorScheme.errorContainer,
                             shape = RoundedCornerShape(8.dp),
@@ -1558,9 +1559,7 @@ internal fun SharedMobileEpubCloudTtsControls(
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                             )
                         }
-                        Spacer(Modifier.height(8.dp))
                     } else if (isCloudSpendable && walletMigrated && cloudState.cloudSessionSpendMicros > 0) {
-                        Spacer(Modifier.height(8.dp))
                         Text(
                             text = readerString(
                                 "tts_session_spend",
@@ -1572,10 +1571,11 @@ internal fun SharedMobileEpubCloudTtsControls(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        Spacer(Modifier.height(8.dp))
-                    } else {
-                        Spacer(Modifier.height(8.dp))
                     }
+                    // Android parity: a single 6dp rhythm between the header,
+                    // notice/spend line, chapter row, and controls — the old
+                    // 8dp spacers on every branch wasted vertical space.
+                    Spacer(Modifier.height(6.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -1635,7 +1635,7 @@ internal fun SharedMobileEpubCloudTtsControls(
                             }
                         }
                     }
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(6.dp))
                     // No speed/pitch sliders: the cloud engine (AVAudioPlayer
                     // chunk playback) exposes no rate API, unlike the local
                     // AVSpeech engine. Android's shared overlay shows them
@@ -1894,15 +1894,16 @@ internal fun SharedMobileReaderTtsSettingsSheet(
         cloudTts?.state?.isLoading == true ||
         cloudTts?.state?.isPlaying == true
     ModalBottomSheet(onDismissRequest = onDismiss) {
+        // Android benchmark (TtsSettingsSheet): 8dp section rhythm — the old
+        // 16dp spacing pushed the voice list down and shrank it on phones.
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
                 readerString("tts_settings", "Text-to-Speech Settings"),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 16.dp),
             )
             // Android benchmark: red banner while anything is playing.
             if (ttsVoiceLocked) {
@@ -1946,7 +1947,6 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                 )
-                Spacer(Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth().height(48.dp)
                         .background(
@@ -2000,7 +2000,7 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                         )
                     }
                 }
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(8.dp))
                 SharedTtsTabStrip(
                     selectedIndex = selectedTtsTab,
                     labels = listOf(
@@ -2010,7 +2010,7 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                     ),
                     onSelect = { selectedTtsTab = it },
                 )
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(8.dp))
                 when (selectedTtsTab) {
                     0 -> SharedTtsCloudVoicesPanel(
                         cloud = cloud,
