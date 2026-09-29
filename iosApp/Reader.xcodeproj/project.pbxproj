@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		92166C5A306AA0CA00A2A559 /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE10C2FFE500000000001 /* FirebaseAppCheck */; };
+		92E8A9AF306C3E4F0001FE67 /* CloudKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 92E8A9AE306C3E4F0001FE67 /* CloudKit.framework */; };
 		A11CE0062FFE500000000006 /* ../third_party/pdfium/ios/PDFium.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A11CE1102FFE500000000001 /* ../third_party/pdfium/ios/PDFium.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A11CE1012FFE500000000001 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE1052FFE500000000001 /* FirebaseAuth */; };
 		A11CE1022FFE500000000001 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE1062FFE500000000001 /* GoogleSignIn */; };
@@ -32,6 +33,7 @@
 
 /* Begin PBXFileReference section */
 		9284F59D2FFE342F0088D5CA /* Reader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Reader.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		92E8A9AE306C3E4F0001FE67 /* CloudKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CloudKit.framework; path = System/Library/Frameworks/CloudKit.framework; sourceTree = SDKROOT; };
 		A11CE1102FFE500000000001 /* ../third_party/pdfium/ios/PDFium.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = ../third_party/pdfium/ios/PDFium.xcframework; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
@@ -48,6 +50,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				92E8A9AF306C3E4F0001FE67 /* CloudKit.framework in Frameworks */,
 				92166C5A306AA0CA00A2A559 /* FirebaseAppCheck in Frameworks */,
 				A11CE1012FFE500000000001 /* FirebaseAuth in Frameworks */,
 				A11CE1022FFE500000000001 /* GoogleSignIn in Frameworks */,
@@ -66,6 +69,7 @@
 				9284F59F2FFE342F0088D5CA /* Reader */,
 				9284F59E2FFE342F0088D5CA /* Products */,
 				A11CE1102FFE500000000001 /* ../third_party/pdfium/ios/PDFium.xcframework */,
+				92E8A9AD306C3E4F0001FE67 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -75,6 +79,14 @@
 				9284F59D2FFE342F0088D5CA /* Reader.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		92E8A9AD306C3E4F0001FE67 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				92E8A9AE306C3E4F0001FE67 /* CloudKit.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */

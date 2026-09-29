@@ -28,6 +28,26 @@ const val CLOUDKIT_RECORD_BOOK_TOMBSTONE = "BookTombstone"
 fun cloudKitLibraryRecordName(recordType: String, id: String): String =
     "$recordType:${id.trim()}"
 
+/**
+ * Inverse of [cloudKitLibraryRecordName], used to route a delta back to the
+ * entity it describes.
+ *
+ * Splits on the *first* colon: record-type names never contain one, while
+ * entity ids may, so `BookState:isbn:1234` must keep `isbn:1234` intact. The id
+ * is returned untrimmed because [cloudKitLibraryRecordName] trims on the way
+ * out, so a stored name has already been normalized.
+ */
+data class CloudKitLibraryRecordRef(val recordType: String, val id: String)
+
+fun cloudKitSplitLibraryRecordName(recordName: String): CloudKitLibraryRecordRef? {
+    val separator = recordName.indexOf(':')
+    if (separator <= 0 || separator == recordName.lastIndex) return null
+    return CloudKitLibraryRecordRef(
+        recordType = recordName.substring(0, separator),
+        id = recordName.substring(separator + 1),
+    )
+}
+
 fun cloudKitBookStateRecordName(bookId: String): String =
     cloudKitLibraryRecordName(CLOUDKIT_RECORD_BOOK_STATE, bookId)
 

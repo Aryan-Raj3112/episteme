@@ -57,7 +57,8 @@ final class LocalAccountController: NSObject, ObservableObject {
     /// with nil identity. Firebase values always win when present.
     private static let appleDisplayNameKey = "reader.ios.appleDisplayName.v1"
     private static let appleEmailKey = "reader.ios.appleEmail.v1"
-    private static let cloudSyncOutboxKey = "reader.ios.cloudSyncOutbox.v1"
+    private static let cloudSyncOutboxPullKey = "reader.ios.cloudSyncOutbox.v2.pull"
+    private static let cloudSyncOutboxPushKey = "reader.ios.cloudSyncOutbox.v2.push"
     private static let cloudShelfObservationsKey = "reader.ios.cloudShelfObservations.v1"
     private static let cloudFontObservationsKey = "reader.ios.cloudFontObservations.v1"
     private static let cloudSyncRetryBaseDelay: TimeInterval = 5
@@ -95,7 +96,21 @@ final class LocalAccountController: NSObject, ObservableObject {
     /// `users/{uid}`), sync data plane itself needs no login.
     private var isProForCloudKitSync = false
     private var cloudSyncRetryTask: Task<Void, Never>?
+    /// In-flight guard for the Drive/Firestore data plane. The CloudKit plane
+    /// tracks pull and push separately (see below).
     private var cloudSyncInFlight = false
+    /// Pull and push are tracked apart so a reader-close push is not bounced
+    /// into the outbox and made to wait out a retry backoff just because a
+    /// pull happened to be running. Android runs these as separate
+    /// WorkManager jobs, so this is parity, not an optimization.
+    private var cloudKitPullInFlight = false
+    private var cloudKitPushInFlight = false
+    /// Any pass in flight on either data plane. Sign-out, clear-all, and
+    /// account deletion must still wait for all of them, so the destructive
+    /// paths use this rather than any single flag.
+    private var anyCloudSyncInFlight: Bool {
+        cloudSyncInFlight || cloudKitPullInFlight || cloudKitPushInFlight
+    }
     private var cloudSyncGeneration = 0
     private var cloudDataClearInFlight = false
     private var accountDeletionInFlight = false
@@ -123,7 +138,7 @@ final class LocalAccountController: NSObject, ObservableObject {
     private var deviceStatusListener: ListenerRegistration?
 #endif
 
-    private enum CloudSyncOperation: String, Codable {
+    private enum CloudSyncOperation: String, Codable, CaseIterable {
         case pull
         case push
     }
@@ -338,7 +353,7 @@ final class LocalAccountController: NSObject, ObservableObject {
             }
         }
         observeAccount()
-        if !cloudSyncInFlight {
+        if !anyCloudSyncInFlight {
             scheduleCloudSyncRetryIfNeeded()
         }
     }
@@ -366,7 +381,7 @@ final class LocalAccountController: NSObject, ObservableObject {
     /// failure never silently destroys the only local copy.
     func clearCloudAndLocalData(confirmedByUser: Bool) async -> LocalCloudDataClearResult {
         guard confirmedByUser else { return .confirmationRequired }
-        guard !cloudDataClearInFlight, !cloudSyncInFlight else { return .inProgress }
+        guard !cloudDataClearInFlight, !anyCloudSyncInFlight else { return .inProgress }
 #if canImport(FirebaseAuth) && canImport(FirebaseCore) && canImport(FirebaseFirestore) && canImport(GoogleSignIn)
         guard
             FirebaseApp.app() != nil,
@@ -537,6 +552,12 @@ final class LocalAccountController: NSObject, ObservableObject {
                 guard let self else { return }
                 let nextUid = user?.uid
                 let previous = self.lastObservedUid
+                // Unconditional, not only on change: the failure this exists to
+                // catch is a publish that pushes uid:nil while Firebase still
+                // holds a session, which produces no transition at all.
+                self.logAccount(
+                    "auth_event previous=\(Self.uidToken(previous)) next=\(Self.uidToken(nextUid)) changed=\(previous != nextUid)"
+                )
                 if previous != nextUid {
                     if previous != nil && nextUid == nil {
                         self.logAccount("session_dropped reason=auth_state_change had=\(Self.uidToken(previous)) -> none")
@@ -599,12 +620,24 @@ final class LocalAccountController: NSObject, ObservableObject {
     private func restoreGoogleDriveAuthorization() {
 #if canImport(GoogleSignIn)
         Task {
+            // This publishes unconditionally, including on the `catch` branch
+            // where no Google session exists. Because it can resolve before
+            // Firebase has restored its own session, it can publish uid:nil and
+            // bounce the UI to signed-out; log both outcomes with the Firebase
+            // view at that instant so the ordering is provable.
+            let firebaseUid = Auth.auth().currentUser?.uid
             do {
                 let user = try await GIDSignIn.sharedInstance.restorePreviousSignIn()
                 googleDriveAuthorized = user.grantedScopes?.contains(Self.googleDriveScope) == true
+                logAccount(
+                    "drive_restore ok granted=\(googleDriveAuthorized) firebaseUid=\(Self.uidToken(firebaseUid))"
+                )
                 publish(status: nil)
             } catch {
                 googleDriveAuthorized = false
+                logAccount(
+                    "drive_restore failed error=\(error.localizedDescription) firebaseUid=\(Self.uidToken(firebaseUid))"
+                )
                 publish(status: nil)
             }
         }
@@ -806,12 +839,12 @@ final class LocalAccountController: NSObject, ObservableObject {
     }
 #endif
 
-    /// Foreground + BGTask entry point. Re-arms the durable outbox retry when
-    /// the app returns from background (Android: WorkManager re-gates on
-    /// foreground via head listener + auth collectors). No logic change: just
-    /// re-invokes the existing retry scheduler when no sync is in flight.
+    /// Re-arms the pending outbox slots when the app returns from background
+    /// (Android: WorkManager re-gates on foreground via head listener + auth
+    /// collectors). No logic change: just re-invokes the existing retry
+    /// scheduler when no sync is in flight.
     func handleForegroundResume() {
-        if !cloudSyncInFlight {
+        if !anyCloudSyncInFlight {
             scheduleCloudSyncRetryIfNeeded()
         }
 #if canImport(FirebaseAuth) && canImport(FirebaseCore)
@@ -833,16 +866,21 @@ final class LocalAccountController: NSObject, ObservableObject {
         handleForegroundResume()
     }
 
+    /// Drives whichever outbox slot is due soonest. Slots are independent
+    /// because pull and push may now run concurrently; a single slot would let
+    /// one operation's snapshot overwrite the other's.
     private func scheduleCloudSyncRetryIfNeeded() {
         cloudSyncRetryTask?.cancel()
-        guard loadCloudSyncOutbox() != nil else { return }
+        let pending = pendingCloudSyncOutboxItems()
+        guard !pending.isEmpty else { return }
         cloudSyncRetryTask = Task { @MainActor [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
-                // The outbox can be replaced while this task is asleep (for example, a
-                // newer local edit arriving during an in-flight sync). Always reload it
+                // Slots can be replaced while this task is asleep (for example, a
+                // newer local edit arriving during an in-flight sync). Always reload
                 // before dispatching so a stale snapshot is never replayed.
-                guard let item = self.loadCloudSyncOutbox() else { return }
+                let pending = self.pendingCloudSyncOutboxItems()
+                guard let item = pending.min(by: { $0.nextAttemptAt < $1.nextAttemptAt }) else { return }
                 let delay = max(0, item.nextAttemptAt.timeIntervalSinceNow)
                 if delay > 0 {
                     try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
@@ -860,8 +898,19 @@ final class LocalAccountController: NSObject, ObservableObject {
         }
     }
 
-    private func loadCloudSyncOutbox() -> CloudSyncOutboxItem? {
-        guard let data = UserDefaults.standard.data(forKey: Self.cloudSyncOutboxKey) else {
+    private func pendingCloudSyncOutboxItems() -> [CloudSyncOutboxItem] {
+        CloudSyncOperation.allCases.compactMap { loadCloudSyncOutbox($0) }
+    }
+
+    private static func cloudSyncOutboxKey(_ operation: CloudSyncOperation) -> String {
+        switch operation {
+        case .pull: return cloudSyncOutboxPullKey
+        case .push: return cloudSyncOutboxPushKey
+        }
+    }
+
+    private func loadCloudSyncOutbox(_ operation: CloudSyncOperation) -> CloudSyncOutboxItem? {
+        guard let data = UserDefaults.standard.data(forKey: Self.cloudSyncOutboxKey(operation)) else {
             return nil
         }
         return try? JSONDecoder().decode(CloudSyncOutboxItem.self, from: data)
@@ -884,18 +933,30 @@ final class LocalAccountController: NSObject, ObservableObject {
             nextAttemptAt: Date().addingTimeInterval(delay)
         )
         if let data = try? JSONEncoder().encode(item) {
-            UserDefaults.standard.set(data, forKey: Self.cloudSyncOutboxKey)
+            UserDefaults.standard.set(data, forKey: Self.cloudSyncOutboxKey(operation))
         }
         syncLogger.error(
             "cloud_sync.outbox_saved operation=\(operation.rawValue, privacy: .public) attempt=\(attempt) bytes=\(snapshotJSON.utf8.count) retrySeconds=\(Int(delay))"
         )
-        if !cloudSyncInFlight {
+        if !anyCloudSyncInFlight {
             scheduleCloudSyncRetryIfNeeded()
         }
     }
 
+    private func clearCloudSyncOutbox(_ operation: CloudSyncOperation) {
+        UserDefaults.standard.removeObject(forKey: Self.cloudSyncOutboxKey(operation))
+    }
+
+    /// Clears every slot and stops the dispatcher. Used by the destructive
+    /// paths (sign-out, clear-all, account deletion) where no queued intent may
+    /// survive.
     private func clearCloudSyncOutbox() {
-        UserDefaults.standard.removeObject(forKey: Self.cloudSyncOutboxKey)
+        for operation in CloudSyncOperation.allCases {
+            clearCloudSyncOutbox(operation)
+        }
+        // v1 was a single shared slot; nothing should remain, but a stale entry
+        // from an older build would otherwise be re-read by older code paths.
+        UserDefaults.standard.removeObject(forKey: "reader.ios.cloudSyncOutbox.v1")
         cloudSyncRetryTask?.cancel()
         cloudSyncRetryTask = nil
     }
@@ -1261,7 +1322,7 @@ final class LocalAccountController: NSObject, ObservableObject {
             return
         }
         if cloudSyncInFlight {
-            let previousAttempt = loadCloudSyncOutbox()?.attempt ?? 0
+            let previousAttempt = loadCloudSyncOutbox(.pull)?.attempt ?? 0
             saveCloudSyncOutbox(
                 snapshotJSON: localJSON,
                 operation: .pull,
@@ -1274,7 +1335,7 @@ final class LocalAccountController: NSObject, ObservableObject {
         cloudSyncInFlight = true
         defer {
             cloudSyncInFlight = false
-            if loadCloudSyncOutbox() != nil {
+            if loadCloudSyncOutbox(.push) != nil {
                 scheduleCloudSyncRetryIfNeeded()
             }
         }
@@ -1332,7 +1393,7 @@ final class LocalAccountController: NSObject, ObservableObject {
                     CloudPdfSidecar(bookId: $0.bookId, timestamp: $0.timestamp, data: $0.data)
                 }
             )
-            clearCloudSyncOutbox()
+            clearCloudSyncOutbox(.pull)
             syncLogger.info(
                 "cloud_sync.pull_success bytes=\(preparedLocalJSON.utf8.count) remoteBytes=\(hydratedRemoteJSON.utf8.count) books=\(downloaded.count) fonts=\(downloadedFonts.count) pdfSidecars=\(downloadedSidecars.count) elapsedMs=\(Int(Date().timeIntervalSince(startedAt) * 1000))"
             )
@@ -1346,7 +1407,7 @@ final class LocalAccountController: NSObject, ObservableObject {
             )
         } catch {
             guard generation == cloudSyncGeneration else { return }
-            let previousAttempt = loadCloudSyncOutbox()?.attempt ?? 0
+            let previousAttempt = loadCloudSyncOutbox(.pull)?.attempt ?? 0
             saveCloudSyncOutbox(
                 snapshotJSON: preparedLocalJSON,
                 operation: .pull,
@@ -1385,7 +1446,7 @@ final class LocalAccountController: NSObject, ObservableObject {
             return
         }
         if cloudSyncInFlight {
-            let previousAttempt = loadCloudSyncOutbox()?.attempt ?? 0
+            let previousAttempt = loadCloudSyncOutbox(.push)?.attempt ?? 0
             saveCloudSyncOutbox(
                 snapshotJSON: snapshotJSON,
                 operation: .push,
@@ -1398,7 +1459,7 @@ final class LocalAccountController: NSObject, ObservableObject {
         cloudSyncInFlight = true
         defer {
             cloudSyncInFlight = false
-            if loadCloudSyncOutbox() != nil {
+            if loadCloudSyncOutbox(.push) != nil {
                 scheduleCloudSyncRetryIfNeeded()
             }
         }
@@ -1428,7 +1489,7 @@ final class LocalAccountController: NSObject, ObservableObject {
                 accessToken: accessToken
             )
             guard generation == cloudSyncGeneration else { return }
-            clearCloudSyncOutbox()
+            clearCloudSyncOutbox(.push)
             syncLogger.info(
                 "cloud_sync.push_success bytes=\(preparedSnapshotJSON.utf8.count) pdfSidecars=\(uploadedSidecars.count) elapsedMs=\(Int(Date().timeIntervalSince(startedAt) * 1000))"
             )
@@ -1440,7 +1501,7 @@ final class LocalAccountController: NSObject, ObservableObject {
             )
         } catch {
             guard generation == cloudSyncGeneration else { return }
-            let previousAttempt = loadCloudSyncOutbox()?.attempt ?? 0
+            let previousAttempt = loadCloudSyncOutbox(.push)?.attempt ?? 0
             saveCloudSyncOutbox(
                 snapshotJSON: preparedSnapshotJSON,
                 operation: .push,
@@ -2987,9 +3048,9 @@ final class LocalAccountController: NSObject, ObservableObject {
             )
             return
         }
-        if cloudSyncInFlight {
+        if cloudKitPullInFlight {
             cloudKitLog("pull_coalesce reason=in_flight")
-            let previousAttempt = loadCloudSyncOutbox()?.attempt ?? 0
+            let previousAttempt = loadCloudSyncOutbox(.pull)?.attempt ?? 0
             saveCloudSyncOutbox(snapshotJSON: localJSON, operation: .pull, previousAttempt: previousAttempt)
             return
         }
@@ -3002,26 +3063,29 @@ final class LocalAccountController: NSObject, ObservableObject {
         }
         let preparedLocalJSON = preparedCloudSnapshot(localJSON)
         let generation = cloudSyncGeneration
-        cloudSyncInFlight = true
+        cloudKitPullInFlight = true
         defer {
-            cloudSyncInFlight = false
-            if loadCloudSyncOutbox() != nil { scheduleCloudSyncRetryIfNeeded() }
+            cloudKitPullInFlight = false
+            if loadCloudSyncOutbox(.pull) != nil { scheduleCloudSyncRetryIfNeeded() }
         }
         let startedAt = Date()
-        cloudKitLog("pull_start bytes=\(preparedLocalJSON.utf8.count) attempt=\(loadCloudSyncOutbox()?.attempt ?? 0)")
+        cloudKitLog("pull_start bytes=\(preparedLocalJSON.utf8.count) attempt=\(loadCloudSyncOutbox(.pull)?.attempt ?? 0)")
         do {
             try await cloudKitEnsureSession()
-            // One authoritative read per pass. The previous code fetched twice
-            // (once inside upload, once in the pull), and the second fetch saw
-            // zero records because the delta token was already consumed; that
-            // is why a fresh device reported 18 records fetched then
+            // Reads are incremental: the first fetch folds the delta since the
+            // persisted token into the on-disk remote shadow, and the shadow is
+            // written atomically with the new token so the two can never be
+            // torn. The original code re-enumerated the whole zone per pass and
+            // had to be careful not to consume a transient token twice, which
+            // is what once made a fresh device report 18 records fetched then
             // `remoteBooks=0 downloadedBooks=0`.
             var maps = try await cloudKitFetchMaps()
             let uploaded = try await cloudKitUploadDirty(preparedLocalJSON: preparedLocalJSON, remoteMaps: maps)
             guard generation == cloudSyncGeneration else { return }
-            // Re-read only if our own pass actually wrote anything: otherwise
-            // the first snapshot is already authoritative and a concurrent
-            // device's writes will surface on the next pass / push.
+            // Re-read only if our own pass actually wrote anything. This now
+            // costs a delta sized to what we just wrote instead of a full
+            // enumeration, and it also picks up anything a concurrent device
+            // committed in the meantime.
             if uploaded > 0 {
                 maps = try await cloudKitFetchMaps()
             }
@@ -3036,7 +3100,7 @@ final class LocalAccountController: NSObject, ObservableObject {
                     CloudPdfSidecar(bookId: $0.bookId, timestamp: $0.timestamp, data: $0.data)
                 }
             )
-            clearCloudSyncOutbox()
+            clearCloudSyncOutbox(.pull)
             let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
             syncLogger.info(
                 "cloud_sync.pull_success backend=cloudkit bytes=\(preparedLocalJSON.utf8.count) remoteBytes=\(hydrated.utf8.count) books=\(downloaded.count) fonts=\(downloadedFonts.count) pdfSidecars=\(downloadedSidecars.count) elapsedMs=\(elapsedMs)"
@@ -3059,7 +3123,7 @@ final class LocalAccountController: NSObject, ObservableObject {
                 completeCloudKitGateFailure(error)
                 return
             }
-            let previousAttempt = loadCloudSyncOutbox()?.attempt ?? 0
+            let previousAttempt = loadCloudSyncOutbox(.pull)?.attempt ?? 0
             cloudKitLog("pull_retry_queued attempt=\(previousAttempt + 1) error=\(safeCloudKitError(error))")
             saveCloudSyncOutbox(snapshotJSON: preparedLocalJSON, operation: .pull, previousAttempt: previousAttempt)
             bridge?.completeCloudSync(
@@ -3090,9 +3154,9 @@ final class LocalAccountController: NSObject, ObservableObject {
             )
             return
         }
-        if cloudSyncInFlight {
+        if cloudKitPushInFlight {
             cloudKitLog("push_coalesce reason=in_flight")
-            let previousAttempt = loadCloudSyncOutbox()?.attempt ?? 0
+            let previousAttempt = loadCloudSyncOutbox(.push)?.attempt ?? 0
             saveCloudSyncOutbox(snapshotJSON: snapshotJSON, operation: .push, previousAttempt: previousAttempt)
             return
         }
@@ -3105,10 +3169,10 @@ final class LocalAccountController: NSObject, ObservableObject {
         }
         let preparedSnapshotJSON = preparedCloudSnapshot(snapshotJSON)
         let generation = cloudSyncGeneration
-        cloudSyncInFlight = true
+        cloudKitPushInFlight = true
         defer {
-            cloudSyncInFlight = false
-            if loadCloudSyncOutbox() != nil { scheduleCloudSyncRetryIfNeeded() }
+            cloudKitPushInFlight = false
+            if loadCloudSyncOutbox(.push) != nil { scheduleCloudSyncRetryIfNeeded() }
         }
         let startedAt = Date()
         cloudKitLog("push_start bytes=\(preparedSnapshotJSON.utf8.count)")
@@ -3117,7 +3181,7 @@ final class LocalAccountController: NSObject, ObservableObject {
             let maps = try await cloudKitFetchMaps()
             let wrote = try await cloudKitUploadDirty(preparedLocalJSON: preparedSnapshotJSON, remoteMaps: maps)
             guard generation == cloudSyncGeneration else { return }
-            clearCloudSyncOutbox()
+            clearCloudSyncOutbox(.push)
             let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
             syncLogger.info(
                 "cloud_sync.push_success backend=cloudkit bytes=\(preparedSnapshotJSON.utf8.count) wrote=\(wrote) elapsedMs=\(elapsedMs)"
@@ -3136,7 +3200,7 @@ final class LocalAccountController: NSObject, ObservableObject {
                 completeCloudKitGateFailure(error)
                 return
             }
-            let previousAttempt = loadCloudSyncOutbox()?.attempt ?? 0
+            let previousAttempt = loadCloudSyncOutbox(.push)?.attempt ?? 0
             cloudKitLog("push_retry_queued attempt=\(previousAttempt + 1) error=\(safeCloudKitError(error))")
             saveCloudSyncOutbox(snapshotJSON: preparedSnapshotJSON, operation: .push, previousAttempt: previousAttempt)
             bridge?.completeCloudSync(
@@ -3191,6 +3255,11 @@ final class LocalAccountController: NSObject, ObservableObject {
         if try await cloudKitTransport.checkUserRotation() {
             cloudKitLog("account_rotation_detected action=reset_outbox")
             clearCloudSyncOutbox()
+            // A zone change token is only meaningful to the private database
+            // that issued it. After an Apple-ID switch the new account has a
+            // different zone, so reusing the old token would either fail or
+            // (worse) silently resolve against the wrong silo.
+            clearCloudKitBaseline()
             cloudKitSubscriptionEnsured = false
         }
         try await cloudKitTransport.ensureZone()
@@ -3206,12 +3275,158 @@ final class LocalAccountController: NSObject, ObservableObject {
     /// token consumed by an earlier fetch in the same pass was the reason a
     /// fresh device observed zero remote records). `CKAsset.fileURL` is nil on
     /// query results, so content/fonts download lazily via the transport.
-    private func cloudKitFetchMaps() async throws -> CloudKitRemoteMaps {
+    /// The remote shadow: last-known CloudKit state for the whole zone, kept on
+    /// disk so LWW can compare local against *remote* without re-reading the
+    /// zone from the network on every pass. The zone server change token is
+    /// stored in the same file, because the two are only valid together.
+    private static let cloudKitBaselineFileName = "reader.ios.cloudkit.remoteBaseline.v1.json"
+    private static let cloudKitBaselineVersion = 1
+
+    private struct CloudKitBaseline {
+        var token: String?
+        var maps: CloudKitRemoteMaps
+    }
+
+    private var cloudKitBaselineURL: URL? {
+        guard let directory = try? FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        ) else { return nil }
+        return directory.appendingPathComponent(Self.cloudKitBaselineFileName)
+    }
+
+    private func loadCloudKitBaseline() -> CloudKitBaseline? {
+        guard let url = cloudKitBaselineURL,
+              let data = try? Data(contentsOf: url),
+              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              (root["version"] as? Int) == Self.cloudKitBaselineVersion else { return nil }
+        return CloudKitBaseline(
+            token: root["token"] as? String,
+            maps: Self.decodeCloudKitMaps(root)
+        )
+    }
+
+    private func saveCloudKitBaseline(_ baseline: CloudKitBaseline) {
+        guard let url = cloudKitBaselineURL else { return }
+        var root: [String: Any] = ["version": Self.cloudKitBaselineVersion]
+        root["token"] = baseline.token ?? NSNull()
+        Self.encodeCloudKitMaps(baseline.maps, into: &root)
+        do {
+            let data = try JSONSerialization.data(withJSONObject: root)
+            // Atomic: a torn write here would advance the token without the
+            // matching shadow and silently skip a delta.
+            try data.write(to: url, options: .atomic)
+        } catch {
+            // Losing the shadow only costs one full re-read next pass, so this
+            // must not fail the pass.
+            cloudKitLog("baseline_save_failed error=\(safeCloudKitError(error))")
+        }
+    }
+
+    private func clearCloudKitBaseline() {
+        guard let url = cloudKitBaselineURL else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    private static func encodeCloudKitMaps(_ maps: CloudKitRemoteMaps, into root: inout [String: Any]) {
+        root["states"] = maps.states
+        root["shelves"] = maps.shelves
+        root["fonts"] = maps.fonts
+        root["contentModified"] = maps.contentModified.mapValues { NSNumber(value: $0) }
+        root["tombstones"] = maps.tombstones.mapValues { NSNumber(value: $0) }
+        root["sidecars"] = maps.sidecars.mapValues {
+            ["timestamp": NSNumber(value: $0.timestamp), "data": $0.data]
+        }
+        root["fontContentIds"] = Array(maps.fontContentIds)
+    }
+
+    private static func decodeCloudKitMaps(_ root: [String: Any]) -> CloudKitRemoteMaps {
         var maps = CloudKitRemoteMaps()
-        for record in try await cloudKitTransport.fetchAllRecords() {
+        maps.states = (root["states"] as? [String: [String: Any]]) ?? [:]
+        maps.shelves = (root["shelves"] as? [String: [String: Any]]) ?? [:]
+        maps.fonts = (root["fonts"] as? [String: [String: Any]]) ?? [:]
+        maps.contentModified = (root["contentModified"] as? [String: NSNumber])?
+            .mapValues(\.int64Value) ?? [:]
+        maps.tombstones = (root["tombstones"] as? [String: NSNumber])?
+            .mapValues(\.int64Value) ?? [:]
+        maps.sidecars = (root["sidecars"] as? [String: [String: Any]])?.reduce(into: [:]) { result, entry in
+            guard let data = entry.value["data"] as? String else { return }
+            result[entry.key] = (
+                timestamp: (entry.value["timestamp"] as? NSNumber)?.int64Value ?? 0,
+                data: data
+            )
+        } ?? [:]
+        maps.fontContentIds = Set((root["fontContentIds"] as? [String]) ?? [])
+        return maps
+    }
+
+    /// Remote state for the whole zone, refreshed from a delta read.
+    ///
+    /// On a cold start (no shadow, or an unusable token) this is a full
+    /// enumeration and the shadow is rebuilt. Steady state is one empty round
+    /// trip, and the cost is proportional to what actually changed.
+    private func cloudKitFetchMaps() async throws -> CloudKitRemoteMaps {
+        let baseline = loadCloudKitBaseline()
+        let storedToken = cloudKitTransport.unarchiveChangeToken(baseline?.token)
+        // A token and a shadow are only valid together; a half-written pair is
+        // indistinguishable from neither, and both mean "re-read the zone".
+        let canResume = storedToken != nil
+        let delta = try await cloudKitTransport.fetchZoneChanges(since: canResume ? storedToken : nil)
+
+        var maps = delta.isFullSnapshot ? CloudKitRemoteMaps() : (baseline?.maps ?? CloudKitRemoteMaps())
+        for record in delta.records {
             cloudKitAccumulate(record: record, maps: &maps)
         }
+        for id in delta.deletedRecordIDs {
+            cloudKitForgetDeleted(id, maps: &maps)
+        }
+        let nextBaseline = CloudKitBaseline(
+            token: cloudKitTransport.archiveChangeToken(delta.token),
+            maps: maps
+        )
+        saveCloudKitBaseline(nextBaseline)
+        cloudKitLog(
+            "baseline_refreshed records=\(delta.records.count) deleted=\(delta.deletedRecordIDs.count) "
+                + "full=\(delta.isFullSnapshot) resumed=\(canResume) "
+                + "states=\(maps.states.count) tombstones=\(maps.tombstones.count) shelves=\(maps.shelves.count) fonts=\(maps.fonts.count)"
+        )
         return maps
+    }
+
+    /// Drop a deleted record from the shadow. Record names are
+    /// `"<Type>:<id>"` (shared `cloudKitLibraryRecordName`) and type names never
+    /// contain a colon, so the split is delegated to shared
+    /// `cloudKitSplitLibraryRecordName` rather than reimplemented here — entity
+    /// ids may contain colons (isbn-style ids) and only shared knows the format
+    /// is defined that way.
+    private func cloudKitForgetDeleted(_ id: CKRecord.ID, maps: inout CloudKitRemoteMaps) {
+        guard let parts = CloudKitLibrarySyncKt.cloudKitSplitLibraryRecordName(
+            recordName: id.recordName
+        ) else { return }
+        let type = parts.recordType as String
+        let entityId = parts.id as String
+        switch type {
+        case CloudKitLibrarySyncKt.CLOUDKIT_RECORD_BOOK_STATE,
+             CloudKitLibrarySyncKt.CLOUDKIT_RECORD_BOOK_TOMBSTONE:
+            // A tombstone is a BookState-shaped record, so deleting either can
+            // invalidate both entries for the same book.
+            maps.states.removeValue(forKey: entityId)
+            maps.tombstones.removeValue(forKey: entityId)
+        case CloudKitLibrarySyncKt.CLOUDKIT_RECORD_BOOK_CONTENT:
+            maps.contentModified.removeValue(forKey: entityId)
+        case CloudKitLibrarySyncKt.CLOUDKIT_RECORD_PDF_SIDECAR:
+            maps.sidecars.removeValue(forKey: entityId)
+        case CloudKitLibrarySyncKt.CLOUDKIT_RECORD_SHELF:
+            maps.shelves.removeValue(forKey: entityId)
+        case CloudKitLibrarySyncKt.CLOUDKIT_RECORD_FONT_META:
+            maps.fonts.removeValue(forKey: entityId)
+        case CloudKitLibrarySyncKt.CLOUDKIT_RECORD_FONT_CONTENT:
+            maps.fontContentIds.remove(entityId)
+        default:
+            break
+        }
     }
 
     private func cloudKitAccumulate(record: CKRecord, maps: inout CloudKitRemoteMaps) {
@@ -3830,10 +4045,18 @@ final class LocalAccountController: NSObject, ObservableObject {
     private func publish(status: String?) {
 #if canImport(FirebaseAuth) && canImport(FirebaseCore)
         guard FirebaseApp.app() != nil else {
+            logAccount("publish firebase=absent status=\(status ?? "nil")")
             publishSignedOut(status: status)
             return
         }
         let user = Auth.auth().currentUser
+        // Every publish is logged, including the anonymous ones. A publish that
+        // ships uid:nil to the UI is the only way the app can appear signed out
+        // without `signout_requested` or `session_dropped` ever being logged,
+        // and that was exactly the shape of the symptom being chased.
+        logAccount(
+            "publish uid=\(Self.uidToken(user?.uid)) status=\(status ?? "nil") hasCurrentUser=\(user != nil)"
+        )
         let providerIDs = Set(user?.providerData.map(\.providerID) ?? [])
         let displayName = Self.nonBlank(user?.displayName)
             ?? Self.cachedAppleIdentity(uid: user?.uid, baseKey: Self.appleDisplayNameKey)

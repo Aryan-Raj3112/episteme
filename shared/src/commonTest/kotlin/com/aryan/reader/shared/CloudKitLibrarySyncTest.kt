@@ -3,6 +3,7 @@ package com.aryan.reader.shared
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class CloudKitLibrarySyncTest {
@@ -92,6 +93,41 @@ class CloudKitLibrarySyncTest {
     fun `record names are stable and namespaced`() {
         assertEquals("BookState:b1", cloudKitBookStateRecordName("b1"))
         assertEquals("BookContent:b1", cloudKitBookContentRecordName("b1"))
+    }
+
+    @Test
+    fun `record name split is the inverse of the namespaced form`() {
+        for (type in listOf(
+            CLOUDKIT_RECORD_BOOK_STATE,
+            CLOUDKIT_RECORD_BOOK_CONTENT,
+            CLOUDKIT_RECORD_PDF_SIDECAR,
+            CLOUDKIT_RECORD_SHELF,
+            CLOUDKIT_RECORD_FONT_META,
+            CLOUDKIT_RECORD_FONT_CONTENT,
+            CLOUDKIT_RECORD_BOOK_TOMBSTONE,
+        )) {
+            val ref = cloudKitSplitLibraryRecordName(
+                cloudKitLibraryRecordName(type, "entity-1")
+            )!!
+            assertEquals(type, ref.recordType)
+            assertEquals("entity-1", ref.id)
+        }
+    }
+
+    @Test
+    fun `record name split keeps colons inside the entity id`() {
+        // isbn-style ids are common; splitting on the last colon would route
+        // the deletion to the wrong entity id.
+        val ref = cloudKitSplitLibraryRecordName("BookState:urn:isbn:9780134685991")!!
+        assertEquals(CLOUDKIT_RECORD_BOOK_STATE, ref.recordType)
+        assertEquals("urn:isbn:9780134685991", ref.id)
+    }
+
+    @Test
+    fun `record name split rejects malformed names`() {
+        assertNull(cloudKitSplitLibraryRecordName("BookState"))
+        assertNull(cloudKitSplitLibraryRecordName("BookState:"))
+        assertNull(cloudKitSplitLibraryRecordName(":b1"))
     }
 
     @Test

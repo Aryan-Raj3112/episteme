@@ -15,10 +15,17 @@ import CloudKit
 ///   written only when `fileContentModifiedTimestamp` wins (shared
 ///   `CloudSyncDecisions`), so unchanged bytes never pay asset cost.
 /// - PDF sidecars are inline record fields (small JSON), not assets.
-/// - Reads are a full authoritative snapshot per pass with no queryable-index
-///   requirement (mirrors the Firestore benchmark's `getDocuments()`);
-///   `CKAsset` bytes download lazily only for books/fonts actually stale.
-/// - Push uses `CKDatabaseSubscription`; no FCM, no polling loop.
+/// - Reads are incremental `CKFetchRecordZoneChangesOperation` deltas against a
+///   persisted server change token, folded into a persisted remote shadow; a
+///   pass that finds no changes costs one empty round trip, not a full-library
+///   enumeration. `CKAsset` bytes download lazily only for books/fonts actually
+///   stale.
+/// - Push wakeups: a `CKRecordZoneSubscription` is created, but as of this
+///   commit no app delegate consumes the resulting silent push (the
+///   `com.apple.Push` capability is not enabled), so the subscription is
+///   currently inert. Change detection is user-initiated + `BGTaskScheduler`.
+///   No FCM: CloudKit's own subscription is the push channel; FCM would only
+///   matter for waking Android, which is on Drive/Firestore, not iCloud.
 ///
 /// Android is the benchmark and is NOT changed. Drive/Firestore stays dormant.
 #if canImport(CloudKit)
@@ -73,9 +80,11 @@ final class CloudKitLibraryTransport {
         logger.info("cloudkit_sync.account_ok")
     }
 
-    /// Detect Apple-ID rotation: a new silo must wipe the outbox, mirroring the
-    /// Firebase uid-switch behavior. Reads are now full-zone queries (no
-    /// persisted change token), so only the outbox gate remains.
+    /// Detect Apple-ID rotation: a new silo must wipe the outbox and the remote
+    /// shadow, mirroring the Firebase uid-switch behavior. The shadow matters
+    /// most now that reads are incremental — its zone change token belongs to
+    /// the previous account's private database and is meaningless in the new
+    /// one.
     @MainActor
     func checkUserRotation() async throws -> Bool {
         let recordID = try await container.userRecordID()
@@ -173,23 +182,45 @@ final class CloudKitLibraryTransport {
         }
     }
 
-    // MARK: - reads (full authoritative snapshot, assets fetched lazily)
+    // MARK: - reads (incremental zone deltas, assets fetched lazily)
 
-    /// All live records in the library zone. Implemented as a
-    /// `recordZoneChanges(since: nil)` full fetch: unlike `CKQuery` it needs
-    /// no queryable field indexes (an auto-generated dev schema has none, and
-    /// `CKQuery` fails there with code 12 "Field 'recordName' is not marked
-    /// queryable"), and the transient page token is never persisted, so a
-    /// second fetch in the same pass can never see an emptied delta. CloudKit
-    /// query results never carry asset bytes anyway, so `CKAsset.fileURL` is
-    /// nil on these records; content/fonts download lazily via
-    /// `fetchContentAsset`/`fetchFontAsset` only when a book/font is actually
-    /// missing or stale. `deletions` are ignored: a full fetch enumerates the
-    /// live state, and deletes are tombstone records (or vanish from
-    /// enumeration) rather than history deltas.
-    func fetchAllRecords() async throws -> [CKRecord] {
-        var all: [CKRecord] = []
+    /// One fetch against the library zone.
+    struct ZoneDelta {
+        /// Records created or updated since the supplied token.
+        var records: [CKRecord] = []
+        /// Records removed since the supplied token.
+        var deletedRecordIDs: [CKRecord.ID] = []
+        /// Token the caller persists *after* the pass commits, so a pass that
+        /// fails or is superseded replays the same window instead of skipping it.
         var token: CKServerChangeToken?
+        /// True when no usable token was supplied, so `records` is the complete
+        /// live zone rather than a delta. The caller must then discard any
+        /// shadow it had persisted: the records enumerate live state but the
+        /// deletions belong to all of history, and folding them into an older
+        /// shadow would drop state the shadow still believes exists.
+        var isFullSnapshot: Bool = false
+    }
+
+    /// Records changed since `token`, or the whole live zone when `token` is
+    /// nil.
+    ///
+    /// Delta reads are the reason this is not a full enumeration every pass:
+    /// the previous implementation always passed `since: nil` and paged the
+    /// entire zone (up to 400 pages) on *both* pull and push, so a reader-close
+    /// push cost a full-library network round trip. CKSyncEngine would fix this
+    /// too, but it is a much larger migration and the change token alone gets
+    /// steady-state passes down to "only what actually changed".
+    ///
+    /// Unlike a `CKQuery` this needs no queryable field indexes (an
+    /// auto-generated dev schema has none, and `CKQuery` fails there with code
+    /// 12 "Field 'recordName' is not marked queryable"). CloudKit query results
+    /// never carry asset bytes anyway, so `CKAsset.fileURL` is nil on these
+    /// records; content/fonts download lazily via `fetchContentAsset`/
+    /// `fetchFontAsset` only when a book/font is actually missing or stale.
+    func fetchZoneChanges(since token: CKServerChangeToken?) async throws -> ZoneDelta {
+        var delta = ZoneDelta()
+        delta.isFullSnapshot = token == nil
+        var cursor = token
         var page = 0
         var moreComing = true
         while moreComing && page < Self.maxSnapshotPages {
@@ -197,24 +228,66 @@ final class CloudKitLibraryTransport {
             do {
                 let (modifications, deletions, nextPageToken, zoneMoreComing) = try await database.recordZoneChanges(
                     inZoneWith: zoneID,
-                    since: token,
+                    since: cursor,
                     desiredKeys: nil,
                     resultsLimit: Self.snapshotPageSize
                 )
-                _ = deletions
                 for (_, result) in modifications {
                     if case .success(let modification) = result {
-                        all.append(modification.record)
+                        delta.records.append(modification.record)
                     }
                 }
-                token = nextPageToken
+                delta.deletedRecordIDs.append(contentsOf: deletions.map(\.recordID))
+                cursor = nextPageToken
                 moreComing = zoneMoreComing
             } catch {
                 throw mapCKError(error)
             }
         }
-        logger.info("cloudkit_sync.fetch_all total=\(all.count) pages=\(page)")
-        return all
+        if moreComing {
+            // Hit the page cap with work still pending. Returning the partial
+            // cursor would make the next pass believe it had caught up, so drop
+            // the token and let the next call redo the zone from scratch.
+            logger.error("cloudkit_sync.fetch_all page_cap_hit pages=\(page)")
+            delta.token = nil
+            delta.isFullSnapshot = true
+        } else {
+            delta.token = cursor
+        }
+        logger.info("cloudkit_sync.fetch_zone_changes records=\(delta.records.count, privacy: .public) deleted=\(delta.deletedRecordIDs.count, privacy: .public) pages=\(page, privacy: .public) full=\(delta.isFullSnapshot, privacy: .public)")
+        return delta
+    }
+
+    // MARK: - server change token serialization
+
+    /// `CKServerChangeToken` conforms to `NSSecureCoding` and CloudKit documents
+    /// it as safe to cache on disk, so it is archived to base64 and carried
+    /// inside the caller's baseline file. Keeping it in the *same* file as the
+    /// remote shadow is deliberate: the token and the shadow are only valid
+    /// together, and two separate writes could be torn by a crash between them
+    /// (token advanced, shadow not yet written) and silently skip a delta.
+    /// A single atomic file write cannot be torn.
+    func archiveChangeToken(_ token: CKServerChangeToken?) -> String? {
+        guard let token else { return nil }
+        do {
+            let data = try NSKeyedArchiver.archivedData(withRootObject: token, requiringSecureCoding: true)
+            return data.base64EncodedString()
+        } catch {
+            logger.error("cloudkit_sync.change_token_archive_failed error=\(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+
+    func unarchiveChangeToken(_ raw: String?) -> CKServerChangeToken? {
+        guard let raw, let data = Data(base64Encoded: raw) else { return nil }
+        do {
+            return try NSKeyedUnarchiver.unarchivedObject(ofClass: CKServerChangeToken.self, from: data)
+        } catch {
+            // A token that no longer decodes (app update, schema change) is
+            // indistinguishable from no token: both mean "re-read the zone".
+            logger.error("cloudkit_sync.change_token_decode_failed error=\(error.localizedDescription, privacy: .public)")
+            return nil
+        }
     }
 
     /// Download one `BookContent` asset (book bytes). Returns the temp file
