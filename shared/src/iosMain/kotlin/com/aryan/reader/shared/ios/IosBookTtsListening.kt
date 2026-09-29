@@ -69,13 +69,10 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.serializer
-import platform.AVFAudio.AVAudioSession
-import platform.AVFAudio.AVAudioSessionCategoryPlayback
 import platform.AVFAudio.AVSpeechBoundary
 import platform.AVFAudio.AVSpeechSynthesizer
 import platform.AVFAudio.AVSpeechSynthesizerDelegateProtocol
 import platform.AVFAudio.AVSpeechUtterance
-import platform.AVFAudio.setActive
 import platform.Foundation.NSFileManager
 import platform.MediaPlayer.MPMediaItemPropertyArtist
 import platform.MediaPlayer.MPMediaItemPropertyTitle
@@ -871,15 +868,14 @@ internal class IosBookTtsListeningController {
     }
 
     private fun configureAudioSession(active: Boolean) {
-        val audioSession = AVAudioSession.sharedInstance()
-        if (active) {
-            audioSessionGeneration += 1
-            val categorySet = audioSession.setCategory(AVAudioSessionCategoryPlayback, error = null)
-            iosTtsListenLog("configureAudioSession active=$active setCategory=$categorySet")
-        }
-        val activated = audioSession.setActive(active = active, error = null)
-        audioSessionActive = active
-        iosTtsListenLog("configureAudioSession active=$active setActive=$activated")
+        // Activation-only (deactivation goes through the guarded
+        // IosTtsAudioSessionTeardown.deactivateIfStillOwner): setActive blocks
+        // on route negotiation, so it must stay off the main thread.
+        if (!active) return
+        audioSessionGeneration += 1
+        iosTtsListenLog("configureAudioSession requesting background activation")
+        IosTtsAudioSessionTeardown.activate()
+        audioSessionActive = true
     }
 
     /**

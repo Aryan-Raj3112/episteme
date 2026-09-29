@@ -7,7 +7,10 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -28,14 +32,17 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
@@ -47,6 +54,7 @@ import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Star
@@ -57,6 +65,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
@@ -66,6 +75,10 @@ import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.Slider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -77,13 +90,13 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -91,6 +104,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -949,15 +964,47 @@ internal fun SharedMobileEpubTtsControls(
     onOverlaySizeChange: (ReaderTtsOverlaySize) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    // onOpenSettings is kept for callers, but the overlay itself follows the
+    // Android benchmark (TtsOverlayControls has no settings gear): voice
+    // settings stay reachable through the reader toolbar TTS entry, and the
+    // overlay only shows while the chrome is visible.
     val progress = tts.progress
+    var rate by remember(tts.speechRate) { mutableStateOf(tts.speechRate) }
+    var pitch by remember(tts.speechPitch) { mutableStateOf(tts.speechPitch) }
+    val totalChunks = progress.chunks.size
+    val chunkIndex = progress.currentChunkIndex
+    val cleanChapterTitle = remember(progress.currentChunk?.chapterTitle) {
+        progress.currentChunk?.chapterTitle
+            ?.lineSequence()
+            ?.map { it.trim() }
+            ?.filter { it.isNotBlank() }
+            ?.joinToString(" - ")
+            ?.takeIf { it.isNotBlank() }
+    }
+    val chunkLabel = remember(chunkIndex, totalChunks) {
+        if (chunkIndex in 0 until totalChunks) "Part ${chunkIndex + 1}/$totalChunks" else null
+    }
+    val isSpeaking = tts.state == SharedMobileEpubLocalTtsState.SPEAKING
+    val canSkipPrevious = chunkIndex > 0 && totalChunks > 0
+    val canSkipNext = chunkIndex >= 0 && chunkIndex < totalChunks - 1
+    val rawVoiceId = remember(tts.selectedVoiceIdentifier) {
+        tts.selectedVoiceIdentifier
+            ?.substringAfterLast(".")
+            ?.substringBefore("-")
+            ?.trim()
+            .takeIf { !it.isNullOrBlank() }
+    }
+    val voiceShortName = rawVoiceId ?: readerString("label_default", "Default")
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .widthIn(max = if (overlaySize == ReaderTtsOverlaySize.MEDIUM) 560.dp else 400.dp)
             .animateContentSize(),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(28.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        tonalElevation = 6.dp
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)),
     ) {
         // Android parity (TtsOverlayControls): size changes crossfade, not snap.
         AnimatedContent(
@@ -965,68 +1012,304 @@ internal fun SharedMobileEpubTtsControls(
             transitionSpec = { fadeIn(animationSpec = tween(200)) togetherWith fadeOut(animationSpec = tween(200)) },
             label = "EpubTtsOverlaySize"
         ) { size ->
-            Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                if (size != ReaderTtsOverlaySize.SMALL) {
+            when (size) {
+                ReaderTtsOverlaySize.SMALL -> Row(
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    IconButton(
+                        onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.LARGE) },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.KeyboardArrowUp,
+                            readerString("content_desc_expand_reading_controls", "Expand reading controls"),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(
+                        onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.MEDIUM) },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.KeyboardArrowLeft,
+                            readerString("content_desc_expand_reading_controls", "Expand reading controls"),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    SharedEpubTtsPlayButton(
+                        isPlaying = isSpeaking,
+                        isLoading = progress.currentChunk == null,
+                        buttonSize = 36.dp,
+                        filledSize = 36.dp,
+                        iconSize = 20.dp,
+                        ringStroke = 2.dp,
+                        ringColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
+                        pauseDescription = readerString("tts_pause_reading", "Pause reading"),
+                        resumeDescription = readerString("tts_resume_reading", "Resume reading"),
+                        onClick = { if (isSpeaking) tts.pause() else tts.resume() },
+                    )
+                }
+                ReaderTtsOverlaySize.MEDIUM -> Row(
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 8.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Column(
-                        Modifier
-                            .weight(1f)
-                            .clickable(enabled = progress.currentChunk != null, onClick = onLocate)
-                            .padding(horizontal = 8.dp),
+                        modifier = Modifier.weight(1f).clip(RoundedCornerShape(16.dp)).clickable(onClick = onLocate)
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalArrangement = Arrangement.Center
                     ) {
                         Text(
-                            progress.currentChunk?.chapterTitle?.ifBlank { "Read aloud" } ?: "Preparing read aloud…",
+                            text = cleanChapterTitle ?: readerString("action_read_aloud", "Read aloud"),
                             style = MaterialTheme.typography.labelLarge,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        Text(
-                            progress.currentPositionLabel ?: "Device voice",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1
+                        val mediumSubtitle = chunkLabel
+                            ?: progress.currentPositionLabel
+                            ?: readerString("tts_device_voice", "Device voice")
+                        if (mediumSubtitle.isNotBlank()) {
+                            Text(
+                                text = mediumSubtitle,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    IconButton(
+                        enabled = canSkipPrevious,
+                        onClick = tts::skipPrevious,
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SkipPrevious,
+                            contentDescription = readerString("tts_previous_part", "Previous reading part"),
+                            modifier = Modifier.size(24.dp)
                         )
                     }
-                }
-                if (size != ReaderTtsOverlaySize.SMALL) {
-                    IconButton(onClick = tts::skipPrevious, enabled = progress.currentChunkIndex > 0) {
-                        Icon(Icons.Default.SkipPrevious, contentDescription = readerString("tts_previous_part", "Previous reading part"))
-                    }
-                }
-                IconButton(
-                    onClick = {
-                        if (tts.state == SharedMobileEpubLocalTtsState.SPEAKING) tts.pause() else tts.resume()
-                    }
-                ) {
-                    Icon(
-                        if (tts.state == SharedMobileEpubLocalTtsState.SPEAKING) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (tts.state == SharedMobileEpubLocalTtsState.SPEAKING) "Pause reading" else "Resume reading"
+                    SharedEpubTtsPlayButton(
+                        isPlaying = isSpeaking,
+                        isLoading = progress.currentChunk == null,
+                        buttonSize = 48.dp,
+                        filledSize = 44.dp,
+                        iconSize = 22.dp,
+                        ringStroke = 2.dp,
+                        ringColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                        pauseDescription = readerString("tts_pause_reading", "Pause reading"),
+                        resumeDescription = readerString("tts_resume_reading", "Resume reading"),
+                        onClick = { if (isSpeaking) tts.pause() else tts.resume() },
                     )
-                }
-                if (size != ReaderTtsOverlaySize.SMALL) {
                     IconButton(
+                        enabled = canSkipNext,
                         onClick = tts::skipNext,
-                        enabled = progress.currentChunkIndex in 0 until progress.chunks.lastIndex
+                        modifier = Modifier.size(40.dp)
                     ) {
-                        Icon(Icons.Default.SkipNext, contentDescription = readerString("tts_next_part", "Next reading part"))
+                        Icon(
+                            imageVector = Icons.Default.SkipNext,
+                            contentDescription = readerString("tts_next_part", "Next reading part"),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                        IconButton(
+                            onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.LARGE) },
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowUp,
+                                contentDescription = readerString("content_desc_expand_reading_controls", "Expand reading controls"),
+                                modifier = Modifier.size(22.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(
+                            onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.SMALL) },
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowRight,
+                                contentDescription = readerString("content_desc_collapse_reading_controls", "Collapse reading controls"),
+                                modifier = Modifier.size(22.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
-                if (size == ReaderTtsOverlaySize.LARGE) {
-                    IconButton(onClick = onLocate, enabled = progress.currentChunk != null) {
-                        Icon(SharedReaderIcons.PinDrop, contentDescription = readerString("tts_locate_part", "Locate current reading part"))
+                else -> Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            SharedEpubTtsChip(
+                                text = readerString("tts_mode_device_native", "Device Native"),
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                            SharedEpubTtsChip(
+                                text = voiceShortName,
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                maxWidth = 90.dp,
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        IconButton(onClick = tts::stop, modifier = Modifier.size(40.dp)) {
+                            Icon(
+                                Icons.Default.Close,
+                                readerString("content_desc_stop_tts", "Stop read aloud"),
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
-                }
-                if (size == ReaderTtsOverlaySize.LARGE) {
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = readerString("menu_tts_voice_settings", "TTS voice settings"))
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (cleanChapterTitle != null || chunkLabel != null) {
+                            Text(
+                                cleanChapterTitle ?: readerString("label_reading", "Reading"),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f).padding(end = 8.dp)
+                            )
+                            if (chunkLabel != null) {
+                                Text(
+                                    chunkLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(end = 8.dp)
+                                )
+                            }
+                        } else {
+                            Spacer(Modifier.weight(1f))
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            IconButton(onClick = onLocate, modifier = Modifier.size(36.dp)) {
+                                Icon(
+                                    SharedReaderIcons.PinDrop,
+                                    readerString("tts_locate_part", "Locate current reading part"),
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(
+                                onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.MEDIUM) },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.KeyboardArrowDown,
+                                    readerString("content_desc_collapse_reading_controls", "Collapse reading controls"),
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(
+                                onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.SMALL) },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.KeyboardArrowRight,
+                                    readerString("content_desc_collapse_reading_controls", "Collapse reading controls"),
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
-                }
-                SharedMobileEpubTtsOverlaySizeControls(size, onOverlaySizeChange)
-                IconButton(onClick = tts::stop) {
-                    Icon(Icons.Default.Close, contentDescription = readerString("menu_stop_reading", "Stop reading"), tint = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(
+                                enabled = canSkipPrevious,
+                                onClick = tts::skipPrevious,
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.SkipPrevious,
+                                    contentDescription = readerString("tts_previous_part", "Previous reading part"),
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                            SharedEpubTtsPlayButton(
+                                isPlaying = isSpeaking,
+                                isLoading = progress.currentChunk == null,
+                                buttonSize = 56.dp,
+                                filledSize = 56.dp,
+                                iconSize = 28.dp,
+                                ringStroke = 3.dp,
+                                ringColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                pauseDescription = readerString("tts_pause_reading", "Pause reading"),
+                                resumeDescription = readerString("tts_resume_reading", "Resume reading"),
+                                onClick = { if (isSpeaking) tts.pause() else tts.resume() },
+                            )
+                            IconButton(
+                                enabled = canSkipNext,
+                                onClick = tts::skipNext,
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.SkipNext,
+                                    contentDescription = readerString("tts_next_part", "Next reading part"),
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            SharedEpubTtsSliderBlock(
+                                labelKey = "tts_speed_label",
+                                labelFallback = "Speed %1\$s×",
+                                value = rate,
+                                range = 0.5f..3.0f,
+                                resetDescription = readerString("content_desc_reset_speed", "Reset speed"),
+                                onChange = { newRate ->
+                                    rate = newRate
+                                    tts.setSpeechParameters(newRate, pitch)
+                                },
+                                onReset = {
+                                    rate = 1.0f
+                                    tts.setSpeechParameters(1.0f, pitch)
+                                },
+                            )
+                            SharedEpubTtsSliderBlock(
+                                labelKey = "tts_pitch_label",
+                                labelFallback = "Pitch %1\$s×",
+                                value = pitch,
+                                range = 0.5f..2.0f,
+                                resetDescription = readerString("content_desc_reset_pitch", "Reset pitch"),
+                                onChange = { newPitch ->
+                                    pitch = newPitch
+                                    tts.setSpeechParameters(rate, newPitch)
+                                },
+                                onReset = {
+                                    pitch = 1.0f
+                                    tts.setSpeechParameters(rate, 1.0f)
+                                },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1051,14 +1334,34 @@ internal fun SharedMobileEpubCloudTtsControls(
 ) {
     val cloudState = tts.state
     val progress = cloudState.progress
+    val totalChunks = progress.chunks.size
+    val chunkIndex = progress.currentChunkIndex
+    val cleanChapterTitle = remember(progress.currentChunk?.chapterTitle) {
+        progress.currentChunk?.chapterTitle
+            ?.lineSequence()
+            ?.map { it.trim() }
+            ?.filter { it.isNotBlank() }
+            ?.joinToString(" - ")
+            ?.takeIf { it.isNotBlank() }
+    }
+    val chunkLabel = remember(chunkIndex, totalChunks) {
+        if (chunkIndex in 0 until totalChunks) "Part ${chunkIndex + 1}/$totalChunks" else null
+    }
+    // Android parity (EpubReaderControls spend notices): the engine preserves
+    // guard sentinels verbatim so the overlay can render countdown copy.
+    val guardNotice = remember(cloudState.errorMessage) {
+        parseSpendGuardSentinel(cloudState.errorMessage)
+    }
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .widthIn(max = if (overlaySize == ReaderTtsOverlaySize.MEDIUM) 560.dp else 400.dp)
             .animateContentSize(),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(28.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        tonalElevation = 6.dp,
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)),
     ) {
         // Android parity (TtsOverlayControls): size changes crossfade, not snap.
         AnimatedContent(
@@ -1066,117 +1369,317 @@ internal fun SharedMobileEpubCloudTtsControls(
             transitionSpec = { fadeIn(animationSpec = tween(200)) togetherWith fadeOut(animationSpec = tween(200)) },
             label = "EpubCloudTtsOverlaySize"
         ) { size ->
-            Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                if (size != ReaderTtsOverlaySize.SMALL) {
-                    Column(
-                        Modifier
-                            .weight(1f)
-                            .clickable(enabled = progress.currentChunk != null, onClick = onLocate)
-                            .padding(horizontal = 8.dp),
+            when (size) {
+                ReaderTtsOverlaySize.SMALL -> Row(
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    IconButton(
+                        onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.LARGE) },
+                        modifier = Modifier.size(36.dp)
                     ) {
-                        // Android parity (TtsOverlayControls balance chip):
-                        // credited-cloud balance next to the title.
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
+                        Icon(
+                            Icons.Default.KeyboardArrowUp,
+                            readerString("content_desc_expand_reading_controls", "Expand reading controls"),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(
+                        onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.MEDIUM) },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.KeyboardArrowLeft,
+                            readerString("content_desc_expand_reading_controls", "Expand reading controls"),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    SharedEpubTtsPlayButton(
+                        isPlaying = cloudState.isPlaying,
+                        isLoading = cloudState.isLoading,
+                        buttonSize = 36.dp,
+                        filledSize = 36.dp,
+                        iconSize = 20.dp,
+                        ringStroke = 2.dp,
+                        ringColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
+                        pauseDescription = readerString("tts_cloud_pause_reading", "Pause cloud reading"),
+                        resumeDescription = readerString("tts_cloud_resume_reading", "Resume cloud reading"),
+                        onClick = { if (cloudState.isPlaying) tts.pause() else tts.resume() },
+                    )
+                }
+                ReaderTtsOverlaySize.MEDIUM -> Row(
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 8.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f).clip(RoundedCornerShape(16.dp)).clickable(onClick = onLocate)
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = cleanChapterTitle ?: readerString("action_read_aloud", "Read aloud"),
+                            style = MaterialTheme.typography.labelLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        val mediumSubtitle = chunkLabel
+                            ?: cloudState.errorMessage
+                            ?: progress.currentPositionLabel
+                            ?: "Cloud AI · ${cloudState.cacheSummary.currentVoiceLabel}"
+                        if (mediumSubtitle.isNotBlank()) {
                             Text(
-                                progress.currentChunk?.chapterTitle?.ifBlank { "Cloud read aloud" } ?: "Preparing cloud audio…",
-                                style = MaterialTheme.typography.labelLarge,
+                                text = mediumSubtitle,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (cloudState.errorMessage != null) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    IconButton(
+                        onClick = tts::skipPrevious,
+                        enabled = chunkIndex > 0 && totalChunks > 0 && !cloudState.isLoading,
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SkipPrevious,
+                            contentDescription = readerString("tts_cloud_previous_part", "Previous cloud reading part"),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    SharedEpubTtsPlayButton(
+                        isPlaying = cloudState.isPlaying,
+                        isLoading = cloudState.isLoading,
+                        buttonSize = 48.dp,
+                        filledSize = 44.dp,
+                        iconSize = 22.dp,
+                        ringStroke = 2.dp,
+                        ringColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                        pauseDescription = readerString("tts_cloud_pause_reading", "Pause cloud reading"),
+                        resumeDescription = readerString("tts_cloud_resume_reading", "Resume cloud reading"),
+                        onClick = { if (cloudState.isPlaying) tts.pause() else tts.resume() },
+                    )
+                    IconButton(
+                        onClick = tts::skipNext,
+                        enabled = chunkIndex in 0 until totalChunks - 1 && !cloudState.isLoading,
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SkipNext,
+                            contentDescription = readerString("tts_cloud_next_part", "Next cloud reading part"),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                        IconButton(
+                            onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.LARGE) },
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowUp,
+                                contentDescription = readerString("content_desc_expand_reading_controls", "Expand reading controls"),
+                                modifier = Modifier.size(22.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(
+                            onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.SMALL) },
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowRight,
+                                contentDescription = readerString("content_desc_collapse_reading_controls", "Collapse reading controls"),
+                                modifier = Modifier.size(22.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+                else -> Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            SharedEpubTtsChip(
+                                text = readerString("tts_mode_cloud_ai", "Cloud AI"),
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                             )
                             if (isCloudSpendable && credits != null) {
-                                Text(
-                                    spendableDisplayText(credits, walletMicros, walletMigrated),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                    maxLines = 1,
-                                    modifier = Modifier
-                                        .background(
-                                            MaterialTheme.colorScheme.tertiaryContainer,
-                                            RoundedCornerShape(8.dp),
-                                        )
-                                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                                SharedEpubTtsChip(
+                                    text = spendableDisplayText(credits, walletMicros, walletMigrated),
+                                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
                                 )
                             }
                         }
-                        // Android parity (EpubReaderControls spend notices): the
-                        // engine preserves guard sentinels verbatim so the
-                        // overlay can render countdown copy from them.
-                        val guardNotice = remember(cloudState.errorMessage) {
-                            parseSpendGuardSentinel(cloudState.errorMessage)
-                        }
-                        Text(
-                            when {
-                                guardNotice != null && guardNotice.first == "RATE_LIMITED" -> readerString(
-                                    "tts_notice_rate_limited",
-                                    "Slowing down — retrying in %1\$s…",
-                                    formatSpendGuardCountdown(guardNotice.second),
-                                )
-                                guardNotice != null -> readerString(
-                                    "tts_notice_spend_limit",
-                                    "Daily cap reached — resets in %1\$s",
-                                    formatSpendGuardCountdown(guardNotice.second),
-                                )
-                                else -> cloudState.errorMessage ?: progress.currentPositionLabel ?: "Cloud AI · ${cloudState.cacheSummary.currentVoiceLabel}"
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (cloudState.errorMessage != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        // Android parity (TtsOverlayControls session spend):
-                        // mutually exclusive with the guard notice above.
-                        if (guardNotice == null && isCloudSpendable && walletMigrated &&
-                            cloudState.cloudSessionSpendMicros > 0
-                        ) {
-                            Text(
-                                readerString(
-                                    "tts_session_spend",
-                                    "This session %1\$s • ~\$0.04/min",
-                                    formatMicrosUsd(cloudState.cloudSessionSpendMicros),
-                                ),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                        Spacer(Modifier.width(8.dp))
+                        IconButton(onClick = tts::stop, modifier = Modifier.size(40.dp)) {
+                            Icon(
+                                Icons.Default.Close,
+                                readerString("content_desc_stop_tts", "Stop read aloud"),
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
-                }
-                if (size != ReaderTtsOverlaySize.SMALL) {
-                    IconButton(onClick = tts::skipPrevious, enabled = progress.currentChunkIndex > 0 && !cloudState.isLoading) {
-                        Icon(Icons.Default.SkipPrevious, contentDescription = readerString("tts_cloud_previous_part", "Previous cloud reading part"))
+                    if (guardNotice != null && isCloudSpendable) {
+                        Spacer(Modifier.height(8.dp))
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = if (guardNotice.first == "RATE_LIMITED") {
+                                    readerString(
+                                        "tts_notice_rate_limited",
+                                        "Slowing down — retrying in %1\$s…",
+                                        formatSpendGuardCountdown(guardNotice.second),
+                                    )
+                                } else {
+                                    readerString(
+                                        "tts_notice_spend_limit",
+                                        "Daily cap reached — resets in %1\$s",
+                                        formatSpendGuardCountdown(guardNotice.second),
+                                    )
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    } else if (isCloudSpendable && walletMigrated && cloudState.cloudSessionSpendMicros > 0) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = readerString(
+                                "tts_session_spend",
+                                "This session %1\$s • ~\$0.04/min",
+                                formatMicrosUsd(cloudState.cloudSessionSpendMicros),
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    } else {
+                        Spacer(Modifier.height(8.dp))
                     }
-                }
-                IconButton(
-                    onClick = { if (cloudState.isPlaying) tts.pause() else tts.resume() },
-                    enabled = cloudState.isLoading || cloudState.isPlaying || cloudState.isPaused,
-                ) {
-                    Icon(
-                        if (cloudState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (cloudState.isPlaying) "Pause cloud reading" else "Resume cloud reading",
-                    )
-                }
-                if (size != ReaderTtsOverlaySize.SMALL) {
-                    IconButton(onClick = tts::skipNext, enabled = progress.currentChunkIndex in 0 until progress.chunks.lastIndex && !cloudState.isLoading) {
-                        Icon(Icons.Default.SkipNext, contentDescription = readerString("tts_cloud_next_part", "Next cloud reading part"))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (cleanChapterTitle != null || chunkLabel != null) {
+                            Text(
+                                cleanChapterTitle ?: readerString("label_reading", "Reading"),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f).padding(end = 8.dp)
+                            )
+                            if (chunkLabel != null) {
+                                Text(
+                                    chunkLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(end = 8.dp)
+                                )
+                            }
+                        } else {
+                            Spacer(Modifier.weight(1f))
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            IconButton(onClick = onLocate, modifier = Modifier.size(36.dp)) {
+                                Icon(
+                                    SharedReaderIcons.PinDrop,
+                                    readerString("tts_cloud_locate_part", "Locate cloud reading part"),
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(
+                                onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.MEDIUM) },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.KeyboardArrowDown,
+                                    readerString("content_desc_collapse_reading_controls", "Collapse reading controls"),
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(
+                                onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.SMALL) },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.KeyboardArrowRight,
+                                    readerString("content_desc_collapse_reading_controls", "Collapse reading controls"),
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
-                }
-                if (size == ReaderTtsOverlaySize.LARGE) {
-                    IconButton(onClick = onLocate, enabled = progress.currentChunk != null) {
-                        Icon(SharedReaderIcons.PinDrop, contentDescription = readerString("tts_cloud_locate_part", "Locate cloud reading part"))
+                    Spacer(Modifier.height(8.dp))
+                    // No speed/pitch sliders: the cloud engine (AVAudioPlayer
+                    // chunk playback) exposes no rate API, unlike the local
+                    // AVSpeech engine. Android's shared overlay shows them
+                    // because ExoPlayer applies speed to both paths.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        IconButton(
+                            onClick = tts::skipPrevious,
+                            enabled = chunkIndex > 0 && totalChunks > 0 && !cloudState.isLoading,
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SkipPrevious,
+                                contentDescription = readerString("tts_cloud_previous_part", "Previous cloud reading part"),
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        SharedEpubTtsPlayButton(
+                            isPlaying = cloudState.isPlaying,
+                            isLoading = cloudState.isLoading,
+                            buttonSize = 56.dp,
+                            filledSize = 56.dp,
+                            iconSize = 28.dp,
+                            ringStroke = 3.dp,
+                            ringColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                            pauseDescription = readerString("tts_cloud_pause_reading", "Pause cloud reading"),
+                            resumeDescription = readerString("tts_cloud_resume_reading", "Resume cloud reading"),
+                            onClick = { if (cloudState.isPlaying) tts.pause() else tts.resume() },
+                        )
+                        IconButton(
+                            onClick = tts::skipNext,
+                            enabled = chunkIndex in 0 until totalChunks - 1 && !cloudState.isLoading,
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SkipNext,
+                                contentDescription = readerString("tts_cloud_next_part", "Next cloud reading part"),
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
                     }
-                }
-                SharedMobileEpubTtsOverlaySizeControls(size, onOverlaySizeChange)
-                IconButton(onClick = tts::stop) {
-                    Icon(Icons.Default.Close, contentDescription = readerString("tts_cloud_stop_reading", "Stop cloud reading"), tint = MaterialTheme.colorScheme.error)
                 }
             }
         }
@@ -1184,57 +1687,154 @@ internal fun SharedMobileEpubCloudTtsControls(
 }
 
 /**
- * Android exposes explicit size choices rather than a cyclic toggle. Keeping
- * all three choices visible also makes the compact state recoverable without
- * requiring a particular gesture, which is important on iOS where the reader
- * chrome may be hidden while TTS is active.
+ * Android benchmark (TtsOverlayControls mode/voice/balance chips):
+ * 8dp label chip. The voice chip caps at 90dp so a long voice name never
+ * pushes the close button off the card.
  */
 @Composable
-private fun SharedMobileEpubTtsOverlaySizeControls(
-    size: ReaderTtsOverlaySize,
-    onSizeChange: (ReaderTtsOverlaySize) -> Unit,
+private fun SharedEpubTtsChip(
+    text: String,
+    containerColor: androidx.compose.ui.graphics.Color,
+    contentColor: androidx.compose.ui.graphics.Color,
+    maxWidth: androidx.compose.ui.unit.Dp? = null,
 ) {
-    when (size) {
-        ReaderTtsOverlaySize.LARGE -> {
-            IconButton(
-                onClick = { onSizeChange(ReaderTtsOverlaySize.MEDIUM) },
-                modifier = Modifier.size(34.dp),
-            ) {
-                Icon(Icons.Default.KeyboardArrowDown, readerString("content_desc_collapse_reading_controls", "Collapse reading controls"), modifier = Modifier.size(18.dp))
-            }
-            IconButton(
-                onClick = { onSizeChange(ReaderTtsOverlaySize.SMALL) },
-                modifier = Modifier.size(34.dp),
-            ) {
-                Icon(Icons.Default.KeyboardArrowRight, readerString("content_desc_collapse_reading_controls", "Collapse reading controls"), modifier = Modifier.size(18.dp))
+    Surface(
+        color = containerColor,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.labelMedium,
+            color = contentColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .then(if (maxWidth != null) Modifier.widthIn(max = maxWidth) else Modifier)
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+        )
+    }
+}
+
+/**
+ * Android benchmark (TtsOverlayControls play buttons): tinted
+ * FilledIconButton with a loading ring sized to the variant
+ * (SMALL 36, MEDIUM 48/44, LARGE 56).
+ */
+@Composable
+private fun SharedEpubTtsPlayButton(
+    isPlaying: Boolean,
+    isLoading: Boolean,
+    buttonSize: androidx.compose.ui.unit.Dp,
+    filledSize: androidx.compose.ui.unit.Dp,
+    iconSize: androidx.compose.ui.unit.Dp,
+    ringStroke: androidx.compose.ui.unit.Dp,
+    ringColor: androidx.compose.ui.graphics.Color,
+    pauseDescription: String,
+    resumeDescription: String,
+    onClick: () -> Unit,
+) {
+    Box(modifier = Modifier.size(buttonSize), contentAlignment = Alignment.Center) {
+        FilledIconButton(
+            onClick = onClick,
+            modifier = Modifier.size(filledSize),
+            colors = IconButtonDefaults.filledIconButtonColors(
+                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                contentColor = MaterialTheme.colorScheme.primary
+            )
+        ) {
+            Icon(
+                if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                contentDescription = if (isPlaying) pauseDescription else resumeDescription,
+                modifier = Modifier.size(iconSize)
+            )
+        }
+        if (isLoading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(buttonSize),
+                color = ringColor,
+                strokeWidth = ringStroke
+            )
+        }
+    }
+}
+
+/**
+ * Android benchmark (TtsOverlayControls speed/pitch blocks): value + reset
+ * header with -/slider/+ stepper rows and the 2dp custom track.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SharedEpubTtsSliderBlock(
+    labelKey: String,
+    labelFallback: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    resetDescription: String,
+    onChange: (Float) -> Unit,
+    onReset: () -> Unit,
+) {
+    val step = { delta: Float ->
+        onChange((((value * 10f).roundToInt() / 10f) + delta).coerceIn(range.start, range.endInclusive))
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                readerString(labelKey, labelFallback, ((value * 10f).roundToInt() / 10f).toString()),
+                style = MaterialTheme.typography.labelMedium
+            )
+            IconButton(onClick = onReset, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.Refresh, resetDescription, modifier = Modifier.size(16.dp))
             }
         }
-        ReaderTtsOverlaySize.MEDIUM -> {
-            IconButton(
-                onClick = { onSizeChange(ReaderTtsOverlaySize.LARGE) },
-                modifier = Modifier.size(34.dp),
-            ) {
-                Icon(Icons.Default.KeyboardArrowUp, readerString("content_desc_expand_reading_controls", "Expand reading controls"), modifier = Modifier.size(18.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { step(-0.1f) }, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.Remove, contentDescription = null, modifier = Modifier.size(18.dp))
             }
-            IconButton(
-                onClick = { onSizeChange(ReaderTtsOverlaySize.SMALL) },
-                modifier = Modifier.size(34.dp),
-            ) {
-                Icon(Icons.Default.KeyboardArrowRight, readerString("content_desc_collapse_reading_controls", "Collapse reading controls"), modifier = Modifier.size(18.dp))
-            }
-        }
-        ReaderTtsOverlaySize.SMALL -> {
-            IconButton(
-                onClick = { onSizeChange(ReaderTtsOverlaySize.LARGE) },
-                modifier = Modifier.size(34.dp),
-            ) {
-                Icon(Icons.Default.KeyboardArrowUp, readerString("content_desc_expand_reading_controls", "Expand reading controls"), modifier = Modifier.size(18.dp))
-            }
-            IconButton(
-                onClick = { onSizeChange(ReaderTtsOverlaySize.MEDIUM) },
-                modifier = Modifier.size(34.dp),
-            ) {
-                Icon(Icons.Default.KeyboardArrowLeft, readerString("content_desc_expand_reading_controls", "Expand reading controls"), modifier = Modifier.size(18.dp))
+            Slider(
+                value = value,
+                onValueChange = onChange,
+                valueRange = range,
+                modifier = Modifier.weight(1f).height(20.dp),
+                thumb = {
+                    Box(
+                        modifier = Modifier
+                            .size(14.dp)
+                            .background(MaterialTheme.colorScheme.primary, CircleShape)
+                    )
+                },
+                track = { sliderState ->
+                    val span = sliderState.valueRange.endInclusive - sliderState.valueRange.start
+                    val fraction = if (span == 0f) 0f else {
+                        ((sliderState.value - sliderState.valueRange.start) / span).coerceIn(0f, 1f)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(2.dp)
+                            .background(
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.22f),
+                                RoundedCornerShape(1.dp)
+                            ),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(fraction)
+                                .height(2.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.primary,
+                                    RoundedCornerShape(1.dp)
+                                )
+                        )
+                    }
+                }
+            )
+            IconButton(onClick = { step(0.1f) }, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
             }
         }
     }
@@ -1283,38 +1883,10 @@ internal fun SharedMobileReaderTtsSettingsSheet(
     onCloudVoiceLanguageChange: (String) -> Unit = {},
     onClearCloudVoiceSamples: () -> Unit = {},
 ) {
-    var rate by remember(tts.speechRate) { mutableStateOf(tts.speechRate) }
-    var pitch by remember(tts.speechPitch) { mutableStateOf(tts.speechPitch) }
-    var showVoices by remember { mutableStateOf(false) }
-    var showCloudVoices by remember { mutableStateOf(false) }
-    val selectedVoice = tts.availableVoices.firstOrNull { it.identifier == tts.selectedVoiceIdentifier }
-    // Android benchmark (AndroidTtsSettings.kt:298-307/359-392): language
-    // filter over the device voice list, plus a shared quality filter fed by
-    // Android Voice.getQuality and iOS AVSpeechSynthesisVoice.quality.
-    val allLanguagesLabel = readerString("filter_all", "All")
-    val allQualitiesLabel = readerString("filter_all", "All")
-    var selectedLanguage by remember { mutableStateOf(allLanguagesLabel) }
-    var selectedQuality by remember { mutableStateOf<SharedMobileEpubVoiceQuality?>(null) }
-    val voiceLanguages = remember(tts.availableVoices, allLanguagesLabel) {
-        sharedMobileEpubVoiceLanguageOptions(tts.availableVoices, allLanguagesLabel)
-    }
-    val presentQualities = remember(tts.availableVoices) {
-        sharedMobileEpubVoiceQualityOptions(tts.availableVoices)
-    }
-    // The Android engine binds async, so a stale selection must fall back to
-    // "All" instead of filtering everything out.
-    val effectiveLanguage = selectedLanguage.takeIf { it in voiceLanguages } ?: allLanguagesLabel
-    val effectiveQuality = selectedQuality.takeIf { it in presentQualities }
-    var favoritesOnly by remember { mutableStateOf(false) }
-    val favoriteIds = tts.favoriteVoiceIdentifiers
-    val filteredVoices = remember(tts.availableVoices, effectiveLanguage, effectiveQuality, favoritesOnly, favoriteIds) {
-        tts.availableVoices.filteredForTtsDisplay(
-            effectiveLanguage,
-            allLanguagesLabel,
-            effectiveQuality,
-            favoritesOnly,
-            favoriteIds,
-        )
+    // Android benchmark (TtsSettingsSheet): the engine pill drives the tab —
+    // Cloud AI opens Cloud Voices, Device Native opens Device Voices.
+    var selectedTtsTab by remember(cloudTtsModeEnabled) {
+        mutableStateOf(if (cloudTtsModeEnabled) 0 else 1)
     }
     // Android benchmark (AndroidTtsSettings.kt:153/239/317/372/409/415): voice
     // selection and previews freeze while a session is active.
@@ -1323,749 +1895,887 @@ internal fun SharedMobileReaderTtsSettingsSheet(
         cloudTts?.state?.isPlaying == true
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Text(
-                readerString("menu_tts_voice_settings", "TTS Voice Settings"),
-                style = MaterialTheme.typography.titleLarge,
+                readerString("tts_settings", "Text-to-Speech Settings"),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 16.dp),
+            )
+            // Android benchmark: red banner while anything is playing.
+            if (ttsVoiceLocked) {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Default.Stop,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Spacer(Modifier.width(16.dp))
+                        Text(
+                            readerString(
+                                "tts_stop_to_change_settings",
+                                "Please stop playback to change settings.",
+                            ),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                }
+            }
+            val cloud = cloudTts
+            if (cloud == null) {
+                // Android benchmark (OSS branch): device voices only, no
+                // engine switcher or tabs.
+                SharedTtsDeviceVoicesPanel(
+                    tts = tts,
+                    deviceModeActive = true,
+                    locked = tts.isSessionActive,
+                )
+            } else {
+                Text(
+                    readerString("tts_active_engine", "Active TTS Engine"),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                        .background(
+                            MaterialTheme.colorScheme.surfaceContainerHigh,
+                            RoundedCornerShape(24.dp),
+                        )
+                        .padding(4.dp),
+                ) {
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxHeight()
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(
+                                if (cloudTtsModeEnabled) MaterialTheme.colorScheme.primary
+                                else Color.Transparent,
+                                RoundedCornerShape(20.dp),
+                            )
+                            .clickable(enabled = !ttsVoiceLocked) {
+                                onCloudTtsModeChange(true)
+                                if (selectedTtsTab == 1) selectedTtsTab = 0
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            readerString("tts_mode_cloud_ai", "Cloud AI"),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (cloudTtsModeEnabled) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxHeight()
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(
+                                if (!cloudTtsModeEnabled) MaterialTheme.colorScheme.primary
+                                else Color.Transparent,
+                                RoundedCornerShape(20.dp),
+                            )
+                            .clickable(enabled = !ttsVoiceLocked) {
+                                onCloudTtsModeChange(false)
+                                if (selectedTtsTab != 1) selectedTtsTab = 1
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            readerString("tts_mode_device_native", "Device Native"),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (!cloudTtsModeEnabled) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                SharedTtsTabStrip(
+                    selectedIndex = selectedTtsTab,
+                    labels = listOf(
+                        readerString("tts_tab_cloud_voices", "Cloud Voices"),
+                        readerString("tts_tab_device_voices", "Device Voices"),
+                        readerString("tts_tab_cloud_cache", "Cloud Cache"),
+                    ),
+                    onSelect = { selectedTtsTab = it },
+                )
+                Spacer(Modifier.height(16.dp))
+                when (selectedTtsTab) {
+                    0 -> SharedTtsCloudVoicesPanel(
+                        cloud = cloud,
+                        cloudTtsVoiceId = cloudTtsVoiceId,
+                        onCloudTtsVoiceChange = onCloudTtsVoiceChange,
+                        fishVoices = fishVoices,
+                        expectFishVoices = expectFishVoices,
+                        fishVoicesLoading = fishVoicesLoading,
+                        favoriteCloudVoiceIds = favoriteCloudVoiceIds,
+                        onToggleFavoriteCloudVoice = onToggleFavoriteCloudVoice,
+                        cloudVoiceLanguage = cloudVoiceLanguage,
+                        onCloudVoiceLanguageChange = onCloudVoiceLanguageChange,
+                        onClearCloudVoiceSamples = onClearCloudVoiceSamples,
+                        previewSampleText = tts.previewSampleText,
+                        cloudModeActive = cloudTtsModeEnabled,
+                        locked = ttsVoiceLocked,
+                    )
+                    1 -> SharedTtsDeviceVoicesPanel(
+                        tts = tts,
+                        deviceModeActive = !cloudTtsModeEnabled,
+                        locked = ttsVoiceLocked,
+                    )
+                    else -> SharedTtsCloudCachePanel(
+                        cloud = cloud,
+                        cloudTtsVoiceId = cloudTtsVoiceId,
+                        onClearCloudTtsCache = onClearCloudTtsCache,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Android benchmark (`TabRow` look): three equal tabs with an indicator
+ * under the selected one. Plain Row + clickable on purpose — full control
+ * of padding so labels never truncate on narrow phones.
+ */
+@Composable
+private fun SharedTtsTabStrip(
+    selectedIndex: Int,
+    labels: List<String>,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier = modifier.fillMaxWidth()) {
+        labels.forEachIndexed { index, label ->
+            Column(
+                modifier = Modifier.weight(1f)
+                    .padding(vertical = 12.dp)
+                    .clickable { onSelect(index) }
+                    .padding(horizontal = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    label,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (selectedIndex == index) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(4.dp))
+                Box(
+                    Modifier.fillMaxWidth().height(2.dp)
+                        .background(
+                            if (selectedIndex == index) MaterialTheme.colorScheme.primary
+                            else Color.Transparent,
+                        ),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Android benchmark (`TtsCacheTab`): total badge, voice filter, chapter
+ * rows with chunk counts, per-chapter delete, and a full-width
+ * voice-scoped clear button.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SharedTtsCloudCachePanel(
+    cloud: SharedMobileEpubCloudTts,
+    cloudTtsVoiceId: String,
+    onClearCloudTtsCache: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val cacheVoices = remember(cloud.state.cacheSummary) { cloud.cachedChapterVoices() }
+    var selectedCacheVoice by remember(cloudTtsVoiceId, cacheVoices) {
+        mutableStateOf(
+            cloudTtsVoiceId.takeIf { it in cacheVoices }
+                ?: cacheVoices.firstOrNull().orEmpty()
+        )
+    }
+    var cacheRevision by remember { mutableIntStateOf(0) }
+    val cacheChapters = remember(cloud.state.cacheSummary, selectedCacheVoice, cacheRevision) {
+        if (selectedCacheVoice.isBlank()) emptyList()
+        else cloud.cachedChapters(selectedCacheVoice)
+    }
+    val cacheTotalBytes = cacheChapters.sumOf { it.sizeBytes }
+    var filterMenuExpanded by remember { mutableStateOf(false) }
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                readerString("tts_tab_cloud_cache", "Cloud Cache"),
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
             )
-            cloudTts?.let { cloud ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+            if (cacheTotalBytes > 0) {
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    shape = RoundedCornerShape(8.dp),
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(readerString("tts_cloud_ai_reading", "Cloud AI reading"), fontWeight = FontWeight.SemiBold)
-                        Text(
-                            if (cloudTtsModeEnabled) {
-                                readerString(
-                                    "tts_cloud_mode_summary",
-                                    "Gemini Live · %1\$s",
-                                    cloud.state.cacheSummary.currentVoiceLabel,
-                                )
-                            } else {
-                                readerString("tts_use_device_speech", "Use device speech")
+                    Text(
+                        formatReaderTtsBytes(cacheTotalBytes),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
+            }
+        }
+        if (cacheVoices.isNotEmpty()) {
+            Box(modifier = Modifier.fillMaxWidth()) {
+                val filterInteraction = remember { MutableInteractionSource() }
+                LaunchedEffect(filterInteraction) {
+                    filterInteraction.interactions.collect {
+                        if (it is PressInteraction.Release) filterMenuExpanded = true
+                    }
+                }
+                OutlinedTextField(
+                    value = selectedCacheVoice.ifBlank { cloudTtsVoiceId },
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text(readerString("tts_voice_filter", "Voice Filter")) },
+                    trailingIcon = {
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                    },
+                    interactionSource = filterInteraction,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                DropdownMenu(
+                    expanded = filterMenuExpanded,
+                    onDismissRequest = { filterMenuExpanded = false },
+                ) {
+                    cacheVoices.forEach { voiceId ->
+                        DropdownMenuItem(
+                            text = { Text(voiceId) },
+                            trailingIcon = if (voiceId == selectedCacheVoice) {
+                                { Icon(Icons.Default.Check, contentDescription = null) }
+                            } else null,
+                            onClick = {
+                                selectedCacheVoice = voiceId
+                                filterMenuExpanded = false
                             },
+                        )
+                    }
+                }
+            }
+        }
+        if (cacheChapters.isEmpty()) {
+            Box(modifier = Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
+                Text(
+                    readerString(
+                        "tts_no_audio_cached_for_voice",
+                        "No audio cached for this voice.",
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth()
+                    .heightIn(max = 240.dp)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
+            ) {
+                items(cacheChapters.size) { index ->
+                    val chapter = cacheChapters[index]
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f).padding(horizontal = 16.dp, vertical = 8.dp),
+                        ) {
+                            Text(
+                                "${chapter.chapterTitle} " + readerQuantityString(
+                                    "tts_cache_chunk_count",
+                                    chapter.chunkCount,
+                                    "(%1\$d chunk)",
+                                    "(%1\$d chunks)",
+                                    chapter.chunkCount,
+                                ),
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(formatReaderTtsBytes(chapter.sizeBytes))
+                        }
+                        Box(
+                            modifier = Modifier.size(48.dp)
+                                .clickable {
+                                    cloud.deleteCachedChapter(chapter)
+                                    cacheRevision++
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = readerString("action_delete", "Delete"),
+                                tint = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    HorizontalDivider()
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            Button(
+                onClick = {
+                    cloud.deleteCachedVoice(selectedCacheVoice)
+                    cacheRevision++
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.Delete, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    readerString(
+                        "tts_clear_cache_for_voice",
+                        "Clear Cache for %1\$s",
+                        selectedCacheVoice,
+                    )
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Android benchmark (`AiVoicesTab`): header with Clear Samples, language
+ * filter, and a bordered voice list. Fish rows key on referenceId; Gemini
+ * rows stay static prebuilts. Selection/highlight only applies while the
+ * cloud engine is active.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SharedTtsCloudVoicesPanel(
+    cloud: SharedMobileEpubCloudTts,
+    cloudTtsVoiceId: String,
+    onCloudTtsVoiceChange: (String) -> Unit,
+    fishVoices: List<ReaderFishVoice>,
+    expectFishVoices: Boolean,
+    fishVoicesLoading: Boolean,
+    favoriteCloudVoiceIds: Set<String>,
+    onToggleFavoriteCloudVoice: (String) -> Unit,
+    cloudVoiceLanguage: String?,
+    onCloudVoiceLanguageChange: (String) -> Unit,
+    onClearCloudVoiceSamples: () -> Unit,
+    previewSampleText: String,
+    cloudModeActive: Boolean,
+    locked: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val cloudVoiceRows = remember(fishVoices, expectFishVoices) {
+        if (expectFishVoices) {
+            fishVoices.map {
+                SharedCloudVoiceRow(
+                    id = it.referenceId.ifBlank { it.id },
+                    name = it.title.ifBlank { it.referenceId.ifBlank { it.id } },
+                    description = it.description.ifBlank { it.referenceId.ifBlank { it.id } },
+                    fishReferenceId = it.referenceId.ifBlank { it.id },
+                    languages = it.languages,
+                    sampleAudioUrl = it.sampleAudioUrl.ifBlank { null },
+                )
+            }
+        } else {
+            ReaderCloudTtsVoices.map {
+                SharedCloudVoiceRow(it.id, it.name, it.description, null, emptyList(), null)
+            }
+        }
+    }
+    val cloudFavoritesLabel = readerString("tts_favorites", "Favorites")
+    val cloudAllLanguagesLabel = readerString("filter_all", "All")
+    val cloudLanguageOptions = remember(cloudVoiceRows, cloudFavoritesLabel, cloudAllLanguagesLabel) {
+        listOf(cloudFavoritesLabel, cloudAllLanguagesLabel) +
+            cloudVoiceRows.flatMap { it.languages }.filter { it.isNotBlank() }.distinct().sorted()
+    }
+    val effectiveCloudLanguage = cloudVoiceLanguage.takeIf { it in cloudLanguageOptions } ?: cloudAllLanguagesLabel
+    val showingCloudFavorites = effectiveCloudLanguage == cloudFavoritesLabel
+    val filteredCloudVoiceRows = remember(cloudVoiceRows, effectiveCloudLanguage, showingCloudFavorites, favoriteCloudVoiceIds) {
+        val base = when {
+            showingCloudFavorites || effectiveCloudLanguage == cloudAllLanguagesLabel -> cloudVoiceRows
+            else -> cloudVoiceRows.filter { effectiveCloudLanguage in it.languages }
+        }
+        if (showingCloudFavorites) base.filter { it.id in favoriteCloudVoiceIds } else base
+    }
+    var languageMenuExpanded by remember { mutableStateOf(false) }
+    val sampleState = cloud.voiceSampleState
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                readerString("tts_select_cloud_voice", "Select High-Quality Cloud Voice"),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            if (sampleState.cachedVoiceIds.isNotEmpty()) {
+                TextButton(
+                    onClick = onClearCloudVoiceSamples,
+                    modifier = Modifier.heightIn(min = 24.dp),
+                ) {
+                    Text(
+                        readerString("tts_clear_samples", "Clear Samples"),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+        }
+        Box(modifier = Modifier.fillMaxWidth()) {
+            // Android benchmark: the whole field opens the menu — a press
+            // interaction beats an arrow-only target for small trailing icons.
+            val filterInteraction = remember { MutableInteractionSource() }
+            LaunchedEffect(filterInteraction, locked) {
+                filterInteraction.interactions.collect {
+                    if (it is PressInteraction.Release && !locked) languageMenuExpanded = true
+                }
+            }
+            OutlinedTextField(
+                value = effectiveCloudLanguage,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text(readerString("tts_language_filter", "Language Filter")) },
+                trailingIcon = {
+                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                },
+                enabled = !locked,
+                interactionSource = filterInteraction,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            DropdownMenu(
+                expanded = languageMenuExpanded,
+                onDismissRequest = { languageMenuExpanded = false },
+            ) {
+                cloudLanguageOptions.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option) },
+                        leadingIcon = if (option == cloudFavoritesLabel) {
+                            {
+                                Icon(
+                                    Icons.Default.Star,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        } else null,
+                        trailingIcon = if (option == effectiveCloudLanguage) {
+                            { Icon(Icons.Default.Check, contentDescription = null) }
+                        } else null,
+                        onClick = {
+                            onCloudVoiceLanguageChange(option)
+                            languageMenuExpanded = false
+                        },
+                    )
+                }
+            }
+        }
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth()
+                .heightIn(max = 300.dp)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp)),
+        ) {
+            if (fishVoicesLoading) {
+                item {
+                    Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                    }
+                }
+            }
+            if (!fishVoicesLoading && expectFishVoices && cloudVoiceRows.isEmpty()) {
+                item {
+                    Text(
+                        readerString(
+                            "tts_no_cloud_voices",
+                            "No cloud voices available right now. Check your connection or API key.",
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(16.dp),
+                    )
+                }
+            }
+            if (!fishVoicesLoading && filteredCloudVoiceRows.isEmpty() &&
+                !(expectFishVoices && cloudVoiceRows.isEmpty())
+            ) {
+                item {
+                    Text(
+                        if (showingCloudFavorites) {
+                            readerString(
+                                "tts_no_favorite_voices",
+                                "No favorite voices yet. Tap the star on any voice to add it here.",
+                            )
+                        } else {
+                            readerString(
+                                "tts_no_voices_for_language",
+                                "No voices found for this language.",
+                            )
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(16.dp),
+                    )
+                }
+            }
+            items(filteredCloudVoiceRows.size) { index ->
+                val voice = filteredCloudVoiceRows[index]
+                val isSelected = cloudTtsVoiceId == voice.id
+                val isFavorite = voice.id in favoriteCloudVoiceIds
+                // Plain Row + Box click targets on purpose: they use the
+                // same foundation clickable as the working tab strip/pill.
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .background(
+                            if (isSelected && cloudModeActive) {
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                            } else MaterialTheme.colorScheme.surface,
+                        )
+                        .clickable(enabled = !locked && cloudModeActive) {
+                            cloud.setVoice(voice.id)
+                            onCloudTtsVoiceChange(voice.id)
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier.padding(start = 16.dp).size(24.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (isSelected && cloudModeActive) {
+                            Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        } else {
+                            Icon(Icons.Default.Cloud, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f).padding(horizontal = 16.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            voice.name,
+                            fontWeight = if (isSelected && cloudModeActive) FontWeight.Bold else FontWeight.Normal,
+                        )
+                        Text(
+                            voice.description,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    Switch(
-                        checked = cloudTtsModeEnabled,
-                        enabled = !tts.isSessionActive && !cloud.state.isLoading && !cloud.state.isPlaying,
-                        onCheckedChange = onCloudTtsModeChange,
+                    Box(
+                        modifier = Modifier.size(48.dp)
+                            .clickable { onToggleFavoriteCloudVoice(voice.id) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Default.Star,
+                            contentDescription = readerString(
+                                if (isFavorite) "tts_remove_favorite" else "tts_add_favorite",
+                                if (isFavorite) "Remove from favorites" else "Add to favorites",
+                            ),
+                            tint = if (isFavorite) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (!locked) {
+                        Box(
+                            modifier = Modifier.size(48.dp)
+                                .clickable {
+                                    cloud.playOrStopVoiceSample(
+                                        voice.id,
+                                        fishReferenceId = voice.fishReferenceId,
+                                        sampleAudioUrl = voice.sampleAudioUrl,
+                                        sampleText = previewSampleText,
+                                    )
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            when {
+                                sampleState.loadingVoiceId == voice.id ->
+                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                sampleState.playingVoiceId == voice.id ->
+                                    Icon(
+                                        Icons.Default.Stop,
+                                        contentDescription = readerString("tts_stop_preview", "Stop preview"),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                voice.id in sampleState.cachedVoiceIds ->
+                                    Icon(
+                                        Icons.Default.PlayCircle,
+                                        contentDescription = readerString("tts_preview_voice", "Preview %1\$s", voice.name),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                else ->
+                                    Icon(
+                                        Icons.Default.PlayArrow,
+                                        contentDescription = readerString("tts_preview_voice", "Preview %1\$s", voice.name),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            }
+        }
+    }
+}
+
+/**
+ * Android benchmark (`DeviceVoicesTab`): system-default card, preview-text
+ * editor, language filter, and voice list. The language filter is transient
+ * (Android never persists it); favorites are shared with the cloud tab.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SharedTtsDeviceVoicesPanel(
+    tts: SharedMobileEpubLocalTts,
+    deviceModeActive: Boolean,
+    locked: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val allLanguagesLabel = readerString("filter_all", "All")
+    val favoritesLabel = readerString("tts_favorites", "Favorites")
+    var sampleDraft by remember { mutableStateOf(tts.previewSampleText) }
+    var selectedLanguage by remember { mutableStateOf(allLanguagesLabel) }
+    var languageMenuExpanded by remember { mutableStateOf(false) }
+    val voiceLanguages = remember(tts.availableVoices, allLanguagesLabel, favoritesLabel) {
+        listOf(favoritesLabel, allLanguagesLabel) +
+            sharedMobileEpubVoiceLanguageOptions(tts.availableVoices, allLanguagesLabel)
+                .filter { it != allLanguagesLabel }
+    }
+    val effectiveLanguage = selectedLanguage.takeIf { it in voiceLanguages } ?: allLanguagesLabel
+    val showingFavorites = effectiveLanguage == favoritesLabel
+    val favoriteIds = tts.favoriteVoiceIdentifiers
+    val filteredVoices = remember(tts.availableVoices, effectiveLanguage, showingFavorites, favoriteIds) {
+        val base = when {
+            showingFavorites || effectiveLanguage == allLanguagesLabel -> tts.availableVoices
+            else -> tts.availableVoices.filter { it.language == effectiveLanguage }
+        }
+        if (showingFavorites) base.filter { it.identifier in favoriteIds } else base
+    }
+    val systemDefaultSelected = deviceModeActive && tts.selectedVoiceIdentifier == null
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = if (systemDefaultSelected) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.fillMaxWidth().clickable(enabled = !locked && deviceModeActive) {
+                tts.setVoice(null)
+            },
+        ) {
+            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Smartphone,
+                    contentDescription = null,
+                    tint = if (systemDefaultSelected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        readerString("tts_system_default_voice", "System Default Voice"),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        readerString("tts_uses_device_settings", "Uses device settings"),
+                        style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                if (cloudTtsModeEnabled) {
-                    // Android benchmark (AiVoicesTab rows): Fish rows key on
-                    // referenceId (what TTS requests send); Gemini rows stay
-                    // static prebuilts with no language info.
-                    val cloudVoiceRows = remember(fishVoices, expectFishVoices) {
-                        if (expectFishVoices) {
-                            fishVoices.map {
-                                SharedCloudVoiceRow(
-                                    id = it.referenceId.ifBlank { it.id },
-                                    name = it.title.ifBlank { it.referenceId.ifBlank { it.id } },
-                                    description = it.description.ifBlank { it.referenceId.ifBlank { it.id } },
-                                    fishReferenceId = it.referenceId.ifBlank { it.id },
-                                    languages = it.languages,
-                                    sampleAudioUrl = it.sampleAudioUrl.ifBlank { null },
+                if (systemDefaultSelected) {
+                    Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                readerString("tts_preview_text_label", "Voice preview text"),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            TextButton(
+                onClick = {
+                    tts.setPreviewSampleText("")
+                    sampleDraft = tts.previewSampleText
+                },
+                enabled = tts.previewSampleText != SHARED_MOBILE_TTS_SAMPLE_DEFAULT ||
+                    sampleDraft != SHARED_MOBILE_TTS_SAMPLE_DEFAULT,
+            ) { Text(readerString("action_reset", "Reset")) }
+        }
+        OutlinedTextField(
+            value = sampleDraft,
+            onValueChange = { next ->
+                sampleDraft = next.take(SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH)
+                tts.setPreviewSampleText(sampleDraft)
+            },
+            placeholder = { Text(SHARED_MOBILE_TTS_SAMPLE_DEFAULT) },
+            supportingText = { Text("${sampleDraft.length}/${SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH}") },
+            minLines = 2,
+            maxLines = 3,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Box(modifier = Modifier.fillMaxWidth()) {
+            val filterInteraction = remember { MutableInteractionSource() }
+            LaunchedEffect(filterInteraction, locked) {
+                filterInteraction.interactions.collect {
+                    if (it is PressInteraction.Release && !locked) languageMenuExpanded = true
+                }
+            }
+            OutlinedTextField(
+                value = effectiveLanguage,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text(readerString("tts_language_filter", "Language Filter")) },
+                trailingIcon = {
+                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                },
+                enabled = !locked,
+                interactionSource = filterInteraction,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            DropdownMenu(
+                expanded = languageMenuExpanded,
+                onDismissRequest = { languageMenuExpanded = false },
+            ) {
+                voiceLanguages.forEach { language ->
+                    DropdownMenuItem(
+                        text = { Text(language) },
+                        leadingIcon = if (language == favoritesLabel) {
+                            {
+                                Icon(
+                                    Icons.Default.Star,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
                                 )
                             }
-                        } else {
-                            ReaderCloudTtsVoices.map {
-                                SharedCloudVoiceRow(it.id, it.name, it.description, null, emptyList(), null)
-                            }
+                        } else null,
+                        trailingIcon = if (language == effectiveLanguage) {
+                            { Icon(Icons.Default.Check, contentDescription = null) }
+                        } else null,
+                        onClick = {
+                            selectedLanguage = language
+                            languageMenuExpanded = false
+                        },
+                    )
+                }
+            }
+        }
+        if (showingFavorites && filteredVoices.isEmpty()) {
+            Text(
+                readerString(
+                    "tts_no_favorite_voices",
+                    "No favorite voices yet. Tap the star on any voice to add it here.",
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+            )
+        }
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth()
+                .heightIn(max = 200.dp)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
+        ) {
+            items(filteredVoices.size) { index ->
+                val voice = filteredVoices[index]
+                val isSelected = deviceModeActive && voice.identifier == tts.selectedVoiceIdentifier
+                val isFavorite = voice.identifier in favoriteIds
+                // Plain Row + Box click targets on purpose: they use the
+                // same foundation clickable as the working tab strip/pill.
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .background(
+                            if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
+                            else MaterialTheme.colorScheme.surface,
+                        )
+                        .clickable(enabled = !locked && deviceModeActive) {
+                            tts.setVoice(voice.identifier)
+                        }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier.padding(start = 16.dp).size(24.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (isSelected) {
+                            Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         }
                     }
-                    // Language filter + favorites mirror the device-voices tab
-                    // and Android AiVoicesTab (Favorites/All always offered;
-                    // languageless rows hide under a specific filter).
-                    val cloudFavoritesLabel = readerString("tts_favorites", "Favorites")
-                    val cloudAllLanguagesLabel = readerString("filter_all", "All")
-                    val cloudLanguageOptions = remember(cloudVoiceRows, cloudFavoritesLabel, cloudAllLanguagesLabel) {
-                        listOf(cloudFavoritesLabel, cloudAllLanguagesLabel) +
-                            cloudVoiceRows.flatMap { it.languages }.filter { it.isNotBlank() }.distinct().sorted()
-                    }
-                    val effectiveCloudLanguage = cloudVoiceLanguage.takeIf { it in cloudLanguageOptions } ?: cloudAllLanguagesLabel
-                    val showingCloudFavorites = effectiveCloudLanguage == cloudFavoritesLabel
-                    val filteredCloudVoiceRows = remember(cloudVoiceRows, effectiveCloudLanguage, showingCloudFavorites, favoriteCloudVoiceIds) {
-                        val base = when {
-                            showingCloudFavorites || effectiveCloudLanguage == cloudAllLanguagesLabel -> cloudVoiceRows
-                            else -> cloudVoiceRows.filter { effectiveCloudLanguage in it.languages }
-                        }
-                        if (showingCloudFavorites) base.filter { it.id in favoriteCloudVoiceIds } else base
-                    }
-                    var showCloudLanguageOptions by remember { mutableStateOf(false) }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
+                    Column(
+                        modifier = Modifier.weight(1f).padding(horizontal = 16.dp, vertical = 8.dp),
                     ) {
                         Text(
-                            readerString("tts_select_cloud_voice", "Select High-Quality Cloud Voice"),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
+                            voice.name,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                         )
-                        if (cloud.voiceSampleState.cachedVoiceIds.isNotEmpty()) {
-                            TextButton(onClick = onClearCloudVoiceSamples) {
-                                Text(
-                                    readerString("tts_clear_samples", "Clear Samples"),
-                                    color = MaterialTheme.colorScheme.error,
-                                    style = MaterialTheme.typography.labelMedium,
-                                )
-                            }
-                        }
-                    }
-                    Box {
-                        Surface(
-                            modifier = Modifier.fillMaxWidth().clickable { showCloudLanguageOptions = true },
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        ) {
-                            Row(
-                                Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    effectiveCloudLanguage,
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                                Icon(
-                                    Icons.Default.ArrowDropDown,
-                                    contentDescription = readerString("tts_language_filter", "Language Filter"),
-                                )
-                            }
-                        }
-                        DropdownMenu(
-                            expanded = showCloudLanguageOptions,
-                            onDismissRequest = { showCloudLanguageOptions = false },
-                            modifier = Modifier.heightIn(max = 360.dp),
-                        ) {
-                            cloudLanguageOptions.forEach { option ->
-                                DropdownMenuItem(
-                                    text = { Text(option) },
-                                    trailingIcon = if (option == effectiveCloudLanguage) {
-                                        { Icon(Icons.Default.Check, contentDescription = null) }
-                                    } else null,
-                                    onClick = {
-                                        onCloudVoiceLanguageChange(option)
-                                        showCloudLanguageOptions = false
-                                    },
-                                )
-                            }
-                        }
-                    }
-                    Box {
-                        val selectedCloudVoice = cloudVoiceRows.firstOrNull { it.id == cloudTtsVoiceId }
-                        Surface(
-                            modifier = Modifier.fillMaxWidth().clickable { showCloudVoices = true },
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        ) {
-                            Row(
-                                Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(selectedCloudVoice?.name ?: cloudTtsVoiceId, fontWeight = FontWeight.SemiBold)
-                                    Text(
-                                        selectedCloudVoice?.description
-                                            ?: readerString("tts_cloud_ai_reading", "Cloud AI reading"),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                Icon(
-                                    Icons.Default.ArrowDropDown,
-                                    contentDescription = readerString(
-                                        "tts_choose_cloud_voice",
-                                        "Choose cloud voice",
-                                    ),
-                                )
-                            }
-                        }
-                        DropdownMenu(
-                            expanded = showCloudVoices,
-                            onDismissRequest = { showCloudVoices = false },
-                            modifier = Modifier.heightIn(max = 360.dp),
-                        ) {
-                            if (fishVoicesLoading) {
-                                DropdownMenuItem(
-                                    text = {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.Center,
-                                        ) {
-                                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                                        }
-                                    },
-                                    onClick = {},
-                                    enabled = false,
-                                )
-                            }
-                            if (!fishVoicesLoading && filteredCloudVoiceRows.isEmpty()) {
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            if (showingCloudFavorites) {
-                                                readerString(
-                                                    "tts_no_favorite_voices",
-                                                    "No favorite voices yet. Tap the star on any voice to add it here.",
-                                                )
-                                            } else if (expectFishVoices && cloudVoiceRows.isEmpty()) {
-                                                readerString(
-                                                    "tts_no_cloud_voices",
-                                                    "No cloud voices available right now. Check your connection or API key.",
-                                                )
-                                            } else {
-                                                readerString(
-                                                    "tts_no_voices_for_language",
-                                                    "No voices found for this language.",
-                                                )
-                                            },
-                                            style = MaterialTheme.typography.bodyMedium,
-                                        )
-                                    },
-                                    onClick = {},
-                                    enabled = false,
-                                )
-                            }
-                            filteredCloudVoiceRows.forEach { voice ->
-                                val sampleState = cloud.voiceSampleState
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(voice.name)
-                                            Text(voice.description, style = MaterialTheme.typography.bodySmall)
-                                        }
-                                    },
-                                    enabled = !ttsVoiceLocked,
-                                    onClick = {
-                                        cloud.setVoice(voice.id)
-                                        onCloudTtsVoiceChange(voice.id)
-                                        showCloudVoices = false
-                                    },
-                                    trailingIcon = {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            if (voice.id == cloudTtsVoiceId) {
-                                                Icon(Icons.Default.Check, contentDescription = null)
-                                            }
-                                            val isCloudFavorite = voice.id in favoriteCloudVoiceIds
-                                            IconButton(
-                                                onClick = { onToggleFavoriteCloudVoice(voice.id) },
-                                                enabled = !ttsVoiceLocked,
-                                            ) {
-                                                Icon(
-                                                    Icons.Default.Star,
-                                                    contentDescription = readerString(
-                                                        if (isCloudFavorite) "tts_remove_favorite" else "tts_add_favorite",
-                                                        if (isCloudFavorite) "Remove from favorites" else "Add to favorites",
-                                                    ),
-                                                    tint = if (isCloudFavorite) MaterialTheme.colorScheme.primary
-                                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                                                )
-                                            }
-                                            // Android benchmark (AiVoicesTab): per-voice
-                                            // sample preview with loading/playing states.
-                                            IconButton(
-                                                onClick = {
-                                                    cloud.playOrStopVoiceSample(
-                                                        voice.id,
-                                                        fishReferenceId = voice.fishReferenceId,
-                                                        sampleAudioUrl = voice.sampleAudioUrl,
-                                                        sampleText = tts.previewSampleText,
-                                                    )
-                                                },
-                                                enabled = !ttsVoiceLocked,
-                                            ) {
-                                                when {
-                                                    sampleState.loadingVoiceId == voice.id ->
-                                                        CircularProgressIndicator(
-                                                            modifier = Modifier.size(20.dp),
-                                                            strokeWidth = 2.dp
-                                                        )
-                                                    sampleState.playingVoiceId == voice.id ->
-                                                        Icon(
-                                                            Icons.Default.Stop,
-                                                            contentDescription = readerString("tts_stop_preview", "Stop preview"),
-                                                            tint = MaterialTheme.colorScheme.primary
-                                                        )
-                                                    voice.id in sampleState.cachedVoiceIds ->
-                                                        Icon(
-                                                            Icons.Default.PlayCircle,
-                                                            contentDescription = readerString("tts_preview_voice", "Preview %1\$s", voice.name),
-                                                            tint = MaterialTheme.colorScheme.primary
-                                                        )
-                                                    else ->
-                                                        Icon(
-                                                            Icons.Default.PlayArrow,
-                                                            contentDescription = readerString("tts_preview_voice", "Preview %1\$s", voice.name),
-                                                            tint = MaterialTheme.colorScheme.primary
-                                                        )
-                                                }
-                                            }
-                                        }
-                                    },
-                                )
-                            }
-                        }
-                    }
-                    // Android benchmark (TtsCacheTab): speaker filter with a
-                    // per-chapter list (counts + delete) and voice-scoped clear.
-                    val cacheVoices = remember(cloud.state.cacheSummary) { cloud.cachedChapterVoices() }
-                    var selectedCacheVoice by remember(cloudTtsVoiceId, cacheVoices) {
-                        mutableStateOf(
-                            cloudTtsVoiceId.takeIf { it in cacheVoices }
-                                ?: cacheVoices.firstOrNull().orEmpty()
-                        )
-                    }
-                    var cacheRevision by remember { mutableIntStateOf(0) }
-                    val cacheChapters = remember(cloud.state.cacheSummary, selectedCacheVoice, cacheRevision) {
-                        if (selectedCacheVoice.isBlank()) emptyList()
-                        else cloud.cachedChapters(selectedCacheVoice)
-                    }
-                    val cacheTotalBytes = cacheChapters.sumOf { it.sizeBytes }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
                         Text(
-                            readerString("tts_tab_cloud_cache", "Cloud audio cache"),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        if (cacheTotalBytes > 0) {
-                            Surface(
-                                color = MaterialTheme.colorScheme.secondaryContainer,
-                                shape = RoundedCornerShape(8.dp),
-                            ) {
-                                Text(
-                                    formatReaderTtsBytes(cacheTotalBytes),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                )
-                            }
-                        }
-                    }
-                    if (cacheVoices.size > 1) {
-                        var showCacheVoices by remember { mutableStateOf(false) }
-                        Box {
-                            Surface(
-                                modifier = Modifier.fillMaxWidth().clickable { showCacheVoices = true },
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            ) {
-                                Row(
-                                    Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Text(
-                                        selectedCacheVoice.ifBlank { cloudTtsVoiceId },
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    Icon(
-                                        Icons.Default.ArrowDropDown,
-                                        contentDescription = readerString("tts_filter_cached_voice", "Filter cached voice"),
-                                    )
-                                }
-                            }
-                            DropdownMenu(
-                                expanded = showCacheVoices,
-                                onDismissRequest = { showCacheVoices = false },
-                                modifier = Modifier.heightIn(max = 360.dp),
-                            ) {
-                                cacheVoices.forEach { voiceId ->
-                                    DropdownMenuItem(
-                                        text = { Text(voiceId) },
-                                        trailingIcon = if (voiceId == selectedCacheVoice) {
-                                            { Icon(Icons.Default.Check, contentDescription = null) }
-                                        } else null,
-                                        onClick = {
-                                            selectedCacheVoice = voiceId
-                                            showCacheVoices = false
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    if (cacheChapters.isEmpty()) {
-                        Text(
-                            readerString("tts_no_audio_cached_for_voice", "No cached audio for this voice"),
-                            style = MaterialTheme.typography.bodyMedium,
+                            sharedMobileEpubVoiceSubtitle(
+                                voice,
+                                sharedMobileEpubVoiceQualityLabel(voice.quality),
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    } else {
-                        Column(
-                            modifier = Modifier.fillMaxWidth()
-                                .heightIn(max = 240.dp)
-                                .border(
-                                    1.dp,
-                                    MaterialTheme.colorScheme.outlineVariant,
-                                    RoundedCornerShape(12.dp)
-                                ),
+                    }
+                    Box(
+                        modifier = Modifier.size(48.dp)
+                            .clickable { tts.toggleFavoriteVoice(voice.identifier) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Default.Star,
+                            contentDescription = if (isFavorite) {
+                                readerString("tts_remove_favorite", "Remove from favorites")
+                            } else {
+                                readerString("tts_add_favorite", "Add to favorites")
+                            },
+                            tint = if (isFavorite) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (!locked) {
+                        Box(
+                            modifier = Modifier.size(48.dp)
+                                .clickable { tts.previewVoice(voice.identifier) },
+                            contentAlignment = Alignment.Center,
                         ) {
-                            cacheChapters.forEach { chapter ->
-                                ListItem(
-                                    headlineContent = {
-                                        Text(
-                                            "${chapter.chapterTitle} (${chapter.chunkCount})",
-                                            fontWeight = FontWeight.Medium,
-                                        )
-                                    },
-                                    supportingContent = {
-                                        Text(formatReaderTtsBytes(chapter.sizeBytes))
-                                    },
-                                    trailingContent = {
-                                        IconButton(onClick = {
-                                            cloud.deleteCachedChapter(chapter)
-                                            cacheRevision++
-                                        }) {
-                                            Icon(
-                                                Icons.Default.Delete,
-                                                contentDescription = readerString("action_delete", "Delete"),
-                                                tint = MaterialTheme.colorScheme.error,
-                                            )
-                                        }
-                                    },
-                                )
-                                HorizontalDivider(
-                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                                )
-                            }
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        TextButton(
-                            onClick = {
-                                cloud.deleteCachedVoice(selectedCacheVoice)
-                                cacheRevision++
-                            }
-                        ) {
-                            Text(
-                                readerString(
-                                    "tts_clear_cache_for_voice",
-                                    "Clear cache for %1\$s",
-                                    selectedCacheVoice,
-                                ),
-                                color = MaterialTheme.colorScheme.error,
+                            Icon(
+                                Icons.Default.PlayArrow,
+                                contentDescription = readerString("tts_play_sample", "Play Sample"),
+                                tint = MaterialTheme.colorScheme.primary,
                             )
                         }
                     }
-                    if (cloud.state.cacheSummary.hasCachedAudio) {
-                        TextButton(onClick = onClearCloudTtsCache) {
-                            Text(readerString("tts_clear_cached_cloud_audio", "Clear cached cloud audio"))
-                        }
-                    }
+                    Spacer(Modifier.width(8.dp))
                 }
                 HorizontalDivider()
             }
-            // Local TTS only: custom preview text for voice samples. Editing
-            // is harmless during a session (only previewVoice reads it), so
-            // unlike voice selection it is never locked.
-            var sampleDraft by remember { mutableStateOf(tts.previewSampleText) }
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(readerString("tts_preview_text_label", "Voice preview text"), fontWeight = FontWeight.SemiBold)
-                    TextButton(
-                        onClick = {
-                            tts.setPreviewSampleText("")
-                            sampleDraft = tts.previewSampleText
-                        },
-                        enabled = tts.previewSampleText != SHARED_MOBILE_TTS_SAMPLE_DEFAULT ||
-                            sampleDraft != SHARED_MOBILE_TTS_SAMPLE_DEFAULT,
-                    ) { Text(readerString("action_reset", "Reset")) }
-                }
-                OutlinedTextField(
-                    value = sampleDraft,
-                    onValueChange = { next ->
-                        sampleDraft = next.take(SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH)
-                        tts.setPreviewSampleText(sampleDraft)
-                    },
-                    placeholder = { Text(SHARED_MOBILE_TTS_SAMPLE_DEFAULT) },
-                    supportingText = { Text("${sampleDraft.length}/${SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH}") },
-                    minLines = 2,
-                    maxLines = 3,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            Box {
-                Surface(
-                    modifier = Modifier.fillMaxWidth().clickable(enabled = !ttsVoiceLocked) { showVoices = true },
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh
-                ) {
-                    Row(
-                        Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                selectedVoice?.name ?: readerString("tts_system_default", "System default"),
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Text(
-                                selectedVoice?.let { voice ->
-                                    sharedMobileEpubVoiceSubtitle(
-                                        voice,
-                                        sharedMobileEpubVoiceQualityLabel(voice.quality),
-                                    )
-                                } ?: readerString("tts_device_voice_summary", "Uses the voice selected in system settings"),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Icon(
-                            Icons.Default.ArrowDropDown,
-                            contentDescription = readerString("tts_choose_voice", "Choose voice"),
-                        )
-                    }
-                }
-                DropdownMenu(
-                    expanded = showVoices,
-                    onDismissRequest = { showVoices = false },
-                    modifier = Modifier.heightIn(max = 360.dp)
-                ) {
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                if (favoriteIds.isNotEmpty()) {
-                                    readerString(
-                                        "tts_favorites_only_count",
-                                        "Favorites only (%1\$d)",
-                                        favoriteIds.size,
-                                    )
-                                } else {
-                                    readerString("tts_favorites_only", "Favorites only")
-                                }
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(
-                                Icons.Default.Star,
-                                contentDescription = null,
-                                tint = if (favoritesOnly) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        },
-                        trailingIcon = if (favoritesOnly) {
-                            { Icon(Icons.Default.Check, contentDescription = null) }
-                        } else null,
-                        onClick = { favoritesOnly = !favoritesOnly },
-                    )
-                    HorizontalDivider()
-                    if (voiceLanguages.size > 2) {
-                        var showLanguages by remember { mutableStateOf(false) }
-                        Box {
-                            DropdownMenuItem(
-                                text = { Text(effectiveLanguage) },
-                                trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) },
-                                onClick = { showLanguages = true },
-                            )
-                            DropdownMenu(
-                                expanded = showLanguages,
-                                onDismissRequest = { showLanguages = false },
-                            ) {
-                                voiceLanguages.forEach { language ->
-                                    DropdownMenuItem(
-                                        text = { Text(language) },
-                                        trailingIcon = if (language == effectiveLanguage) {
-                                            { Icon(Icons.Default.Check, contentDescription = null) }
-                                        } else null,
-                                        onClick = {
-                                            selectedLanguage = language
-                                            showLanguages = false
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                        HorizontalDivider()
-                    }
-                    if (presentQualities.size > 1) {
-                        var showQualities by remember { mutableStateOf(false) }
-                        Box {
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        effectiveQuality?.let { tier ->
-                                            sharedMobileEpubVoiceQualityLabel(tier)
-                                        } ?: allQualitiesLabel
-                                    )
-                                },
-                                trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) },
-                                onClick = { showQualities = true },
-                            )
-                            DropdownMenu(
-                                expanded = showQualities,
-                                onDismissRequest = { showQualities = false },
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text(allQualitiesLabel) },
-                                    trailingIcon = if (effectiveQuality == null) {
-                                        { Icon(Icons.Default.Check, contentDescription = null) }
-                                    } else null,
-                                    onClick = {
-                                        selectedQuality = null
-                                        showQualities = false
-                                    },
-                                )
-                                presentQualities.forEach { tier ->
-                                    DropdownMenuItem(
-                                        text = { Text(sharedMobileEpubVoiceQualityLabel(tier)) },
-                                        trailingIcon = if (tier == effectiveQuality) {
-                                            { Icon(Icons.Default.Check, contentDescription = null) }
-                                        } else null,
-                                        onClick = {
-                                            selectedQuality = tier
-                                            showQualities = false
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                        HorizontalDivider()
-                    }
-                    DropdownMenuItem(
-                        text = {
-                            Column {
-                                Text(readerString("tts_system_default", "System default"))
-                                Text(
-                                    readerString("tts_uses_device_settings", "Uses device settings"),
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                            }
-                        },
-                        enabled = !ttsVoiceLocked,
-                        onClick = { tts.setVoice(null); showVoices = false },
-                        trailingIcon = {
-                            IconButton(onClick = { tts.previewVoice(null) }, enabled = !ttsVoiceLocked) {
-                                Icon(
-                                    Icons.Default.PlayArrow,
-                                    contentDescription = readerString(
-                                        "tts_preview_system_voice",
-                                        "Preview system voice",
-                                    ),
-                                )
-                            }
-                        }
-                    )
-                    if (filteredVoices.isEmpty()) {
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    if (favoritesOnly) {
-                                        readerString(
-                                            "tts_no_favorite_voices",
-                                            "No favorite voices yet. Tap the star on any voice to add it here.",
-                                        )
-                                    } else {
-                                        readerString(
-                                            "tts_no_voices_match_filters",
-                                            "No voices match these filters",
-                                        )
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                            },
-                            enabled = false,
-                            onClick = {},
-                        )
-                    }
-                    filteredVoices.forEach { voice ->
-                        val isFavorite = voice.identifier in favoriteIds
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text(voice.name)
-                                    Text(
-                                        sharedMobileEpubVoiceSubtitle(
-                                            voice,
-                                            sharedMobileEpubVoiceQualityLabel(voice.quality),
-                                        ),
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                }
-                            },
-                            enabled = !ttsVoiceLocked,
-                            onClick = { tts.setVoice(voice.identifier); showVoices = false },
-                            trailingIcon = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    IconButton(onClick = { tts.toggleFavoriteVoice(voice.identifier) }) {
-                                        Icon(
-                                            Icons.Default.Star,
-                                            contentDescription = if (isFavorite) {
-                                                readerString(
-                                                    "tts_remove_from_favorites_named",
-                                                    "Remove %1\$s from favorites",
-                                                    voice.name,
-                                                )
-                                            } else {
-                                                readerString(
-                                                    "tts_add_to_favorites_named",
-                                                    "Add %1\$s to favorites",
-                                                    voice.name,
-                                                )
-                                            },
-                                            tint = if (isFavorite) MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                    IconButton(onClick = { tts.previewVoice(voice.identifier) }, enabled = !ttsVoiceLocked) {
-                                        Icon(
-                                            Icons.Default.PlayArrow,
-                                            contentDescription = readerString(
-                                                "tts_preview_voice",
-                                                "Preview %1\$s",
-                                                voice.name,
-                                            ),
-                                        )
-                                    }
-                                }
-                            }
-                        )
-                    }
-                }
-            }
-            Column {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(readerString("tts_speech_rate", "Speech rate"))
-                    Text("${(rate * 100).roundToInt()}%", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Slider(value = rate, onValueChange = {
-                    rate = it
-                    tts.setSpeechParameters(rate, pitch)
-                }, valueRange = 0.5f..3f)
-            }
-            Column {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(readerString("tts_pitch", "Pitch"))
-                    Text("${(pitch * 100).roundToInt()}%", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Slider(value = pitch, onValueChange = {
-                    pitch = it
-                    tts.setSpeechParameters(rate, pitch)
-                }, valueRange = 0.5f..2f)
-            }
-            TextButton(onClick = {
-                rate = 1f
-                pitch = 1f
-                tts.setSpeechParameters(rate, pitch)
-            }) { Text(readerString("action_reset", "Reset")) }
         }
     }
 }

@@ -187,6 +187,33 @@ class IosReaderAiAdaptersTest {
     }
 
     @Test
+    fun aiKeyStoreSupportsAllProvidersWithoutThrowing() {
+        // Android parity (saveAiByokKey/deleteAiByokKey/maskedAiByokKey):
+        // gemini, groq, AND fish must all round-trip through the store.
+        // Headless-safe: without a keychain entitlement the writes fail
+        // silently and reads return "", but nothing may throw (previously
+        // "fish" hit error("Unsupported AI provider")).
+        val store = IosReaderAiSettingsStore()
+        listOf("gemini", "groq", "fish").forEach { provider ->
+            store.saveKey(provider, "test-key-value")
+            store.deleteKey(provider)
+        }
+        val masked = store.maskedKeys()
+        assertTrue(masked.keys.containsAll(listOf("gemini", "groq", "fish")))
+        // A fish key in memory must survive a store save/load cycle
+        // (load() previously dropped fishKey entirely).
+        store.save(
+            ReaderAiByokSettings(
+                geminiKey = "",
+                groqKey = "",
+                fishKey = "",
+            )
+        )
+        // Load must not throw headless (keychain reads return "").
+        store.load()
+    }
+
+    @Test
     fun recapProgressTokensResolveToLocalizedCopy() {
         assertEquals(
             RecapProgressCopy("ai_recap_checking_past", "Checking past chapters..."),

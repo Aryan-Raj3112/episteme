@@ -131,6 +131,7 @@ internal class IosReaderAiSettingsStore(
         return ReaderAiByokSettings(
             geminiKey = IosReaderAiKeychain.read(IosReaderAiKeychain.GEMINI_ACCOUNT),
             groqKey = IosReaderAiKeychain.read(IosReaderAiKeychain.GROQ_ACCOUNT),
+            fishKey = IosReaderAiKeychain.read(IosReaderAiKeychain.FISH_ACCOUNT),
             useOneModel = defaults.objectForKey(KEY_USE_ONE_MODEL)?.let { defaults.boolForKey(KEY_USE_ONE_MODEL) } ?: true,
             modelForAll = defaults.stringForKey(KEY_MODEL_ALL).orEmpty(),
             defineModel = defaults.stringForKey(KEY_MODEL_DEFINE).orEmpty(),
@@ -146,6 +147,7 @@ internal class IosReaderAiSettingsStore(
         val sanitized = settings.sanitized()
         IosReaderAiKeychain.write(IosReaderAiKeychain.GEMINI_ACCOUNT, sanitized.geminiKey)
         IosReaderAiKeychain.write(IosReaderAiKeychain.GROQ_ACCOUNT, sanitized.groqKey)
+        IosReaderAiKeychain.write(IosReaderAiKeychain.FISH_ACCOUNT, sanitized.fishKey)
         defaults.setBool(sanitized.useOneModel, forKey = KEY_USE_ONE_MODEL)
         defaults.setObject(sanitized.modelForAll, forKey = KEY_MODEL_ALL)
         defaults.setObject(sanitized.defineModel, forKey = KEY_MODEL_DEFINE)
@@ -168,12 +170,14 @@ internal class IosReaderAiSettingsStore(
         return mapOf(
             "gemini" to maskedReaderAiKey(IosReaderAiKeychain.read(IosReaderAiKeychain.GEMINI_ACCOUNT)),
             "groq" to maskedReaderAiKey(IosReaderAiKeychain.read(IosReaderAiKeychain.GROQ_ACCOUNT)),
+            "fish" to maskedReaderAiKey(IosReaderAiKeychain.read(IosReaderAiKeychain.FISH_ACCOUNT)),
         )
     }
 
     private fun String.accountName(): String = when (lowercase()) {
         "gemini" -> IosReaderAiKeychain.GEMINI_ACCOUNT
         "groq" -> IosReaderAiKeychain.GROQ_ACCOUNT
+        "fish" -> IosReaderAiKeychain.FISH_ACCOUNT
         else -> error("Unsupported AI provider: $this")
     }
 
@@ -245,6 +249,7 @@ private fun iosStoreFishVoices(cacheKey: String, voices: List<com.aryan.reader.s
 internal object IosReaderAiKeychain {
     const val GEMINI_ACCOUNT = "gemini"
     const val GROQ_ACCOUNT = "groq"
+    const val FISH_ACCOUNT = "fish"
     private const val SERVICE = "com.aryan.reader.ai.byok.v1"
 
     fun read(account: String): String {

@@ -113,9 +113,6 @@ import platform.AVFAudio.AVSpeechSynthesisVoice
 import platform.AVFAudio.AVSpeechSynthesisVoiceQualityEnhanced
 import platform.AVFAudio.AVSpeechSynthesisVoiceQualityPremium
 import platform.AVFAudio.AVSpeechUtterance
-import platform.AVFAudio.AVAudioSession
-import platform.AVFAudio.AVAudioSessionCategoryPlayback
-import platform.AVFAudio.setActive
 import platform.MediaPlayer.MPMediaItemPropertyArtist
 import platform.MediaPlayer.MPMediaItemPropertyAlbumTitle
 import platform.MediaPlayer.MPMediaItemPropertyTitle
@@ -844,12 +841,12 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     }
 
     private fun configureAudioSession(active: Boolean) {
-        val audioSession = AVAudioSession.sharedInstance()
-        if (active) {
-            audioSessionGeneration += 1
-            audioSession.setCategory(AVAudioSessionCategoryPlayback, error = null)
-        }
-        audioSession.setActive(active = active, error = null)
+        // Activation-only (deactivation goes through the guarded
+        // IosTtsAudioSessionTeardown.deactivateIfStillOwner): both directions
+        // block on route negotiation, so they must stay off the main thread.
+        if (!active) return
+        audioSessionGeneration += 1
+        IosTtsAudioSessionTeardown.activate()
     }
 
     /**

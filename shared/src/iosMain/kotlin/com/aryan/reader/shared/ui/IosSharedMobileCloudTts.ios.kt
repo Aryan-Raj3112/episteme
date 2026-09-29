@@ -37,6 +37,7 @@ import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.sha256
 import com.aryan.reader.shared.ios.IosTtsAudioInterruption
 import com.aryan.reader.shared.ios.IosTtsAudioInterruptionMonitor
+import com.aryan.reader.shared.ios.IosTtsAudioSessionTeardown
 import kotlinx.cinterop.ObjCSignatureOverride
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
@@ -70,9 +71,6 @@ import kotlin.coroutines.resumeWithException
 import kotlin.io.encoding.Base64
 import platform.AVFAudio.AVAudioPlayer
 import platform.AVFAudio.AVAudioPlayerDelegateProtocol
-import platform.AVFAudio.AVAudioSession
-import platform.AVFAudio.AVAudioSessionCategoryPlayback
-import platform.AVFAudio.setActive
 import platform.Foundation.NSApplicationSupportDirectory
 import platform.Foundation.NSData
 import platform.Foundation.NSDate
@@ -1112,13 +1110,11 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     private fun hasActiveSession(): Boolean = chunks.isNotEmpty() && (state.isLoading || state.isPlaying || state.isPaused)
 
     private fun ensureAudioSession() {
-        val session = AVAudioSession.sharedInstance()
-        session.setCategory(AVAudioSessionCategoryPlayback, error = null)
-        session.setActive(true, error = null)
+        IosTtsAudioSessionTeardown.activate()
     }
 
     private fun deactivateAudioSession() {
-        AVAudioSession.sharedInstance().setActive(false, error = null)
+        IosTtsAudioSessionTeardown.deactivate()
     }
 
     private fun cacheFile(chunk: ReaderTtsChunk): String {
