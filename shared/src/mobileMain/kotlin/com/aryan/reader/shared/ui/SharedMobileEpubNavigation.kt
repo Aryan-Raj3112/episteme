@@ -406,6 +406,20 @@ internal fun String.sharedMobileEpubSelectionShiftMessageOrNull(): String? {
 }
 
 /**
+ * Generic `{"message": ...}` trace payload (readerDesktopPositionTraceLog and
+ * siblings). Forwarded to native logs only while the EPUB restore guard is
+ * armed, so scroll-trace volume stays bounded to the restore window.
+ */
+internal fun String.sharedMobileEpubTraceMessageOrNull(): String? {
+    return runCatching { SharedMobileEpubJson.parseToJsonElement(this).jsonObject }
+        .getOrNull()
+        ?.get("message")
+        ?.jsonPrimitive
+        ?.contentOrNull
+        ?.takeIf(String::isNotBlank)
+}
+
+/**
  * Android parity (ChapterWebView restoreHighlights): the authoritative highlight list
  * is pushed into the WebView via window.readerApplyHighlights instead of reloading the
  * document. The JSON shape matches what the shared selection script's
@@ -675,7 +689,8 @@ internal fun sharedMobileEpubNavigationScript(
     locator: ReaderLocator,
     fragment: String?,
     targetChunkIndex: Int?,
-    targetChunkHtml: String?
+    targetChunkHtml: String?,
+    preferExact: Boolean = false
 ): String {
     val locatorJson = buildJsonObject {
         locator.chapterIndex?.let { put("chapterIndex", it) }
@@ -704,7 +719,42 @@ internal fun sharedMobileEpubNavigationScript(
     }
     val needsChunkWait = targetChunkIndex != null && targetChunkHtml != null &&
         targetChunkHtml.length > ReaderHtmlDocumentBuilder.MaxInlineVirtualChunkChars
-    val scrollBody = """
+    // A reopen restore must never scroll approximately: the document is still
+    // settling (the chapter can be collapsed to its intrinsic size until it is
+    // rendered), so a ratio or host_top scroll against that document parks on
+    // the chapter top and overwrites the exact landing the boot anchor and the
+    // retry loop already achieved (observed: exact_range at 3166px, then
+    // content_ratio at 528px of a 569px document, then chapter start). Android
+    // parity: scrollToCfi retries the exact target and only falls back when it
+    // genuinely cannot resolve. preferExact therefore retries exact-only and
+    // never approximates; explicit user navigations keep their immediate
+    // approximate feedback as the last step of the retry budget.
+    val scrollBody = if (preferExact) {
+        """
+          if (fragment) {
+            var chapter = null;
+            if (locator.chapterIndex !== undefined && locator.chapterIndex !== null) {
+              chapter = document.querySelector('[data-reader-chapter-index="' + locator.chapterIndex + '"]');
+            }
+            var target = null;
+            var candidates = (chapter || document).querySelectorAll('[id]');
+            for (var index = 0; index < candidates.length; index++) {
+              if (candidates[index].id === fragment) { target = candidates[index]; break; }
+            }
+            if (target) {
+              target.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'auto' });
+              return true;
+            }
+          }
+          if (window.readerScrollToLocator) {
+            try {
+              if (window.readerScrollToLocator(locator, { source: 'ios_mobile', exactOnly: true })) return true;
+            } catch (_) {}
+          }
+          return false;
+        """.trimIndent()
+    } else {
+        """
           if (fragment) {
             var chapter = null;
             if (locator.chapterIndex !== undefined && locator.chapterIndex !== null) {
@@ -727,9 +777,19 @@ internal fun sharedMobileEpubNavigationScript(
             } catch (_) {}
           }
           return false;
-    """.trimIndent()
-    return if (needsChunkWait) {
-        """
+        """.trimIndent()
+    }
+    // Both branches retry: a skipped exact scroll (target chunk still
+    // streaming in, chapter not rendered yet) must keep polling instead of
+    // giving up after one attempt, which is what an undefined return value
+    // used to do.
+    val exactRetryLimit = if (needsChunkWait) 40 else 8
+    val fallbackScroll = if (preferExact) {
+        "readerDesktopPositionTraceLog('event=web_navigation_exact_unresolved ' + readerLocatorTrace(locator));"
+    } else {
+        "try { if (window.readerScrollToLocator && !window.readerScrollToLocator(locator, { source: 'ios_mobile_fallback' })) { } } catch (_) {}"
+    }
+    return """
         (function () {
           var locator = $locatorJson;
           var fragment = $fragmentJson;
@@ -744,20 +804,13 @@ internal fun sharedMobileEpubNavigationScript(
             try {
               if (attempt()) { window.clearInterval(timer); return; }
             } catch (_) {}
-            if (tries >= 40) window.clearInterval(timer);
+            if (tries >= $exactRetryLimit) {
+              window.clearInterval(timer);
+              $fallbackScroll
+            }
           }, 125);
         })();
         """.trimIndent()
-    } else {
-        """
-        (function () {
-          var locator = $locatorJson;
-          var fragment = $fragmentJson;
-          $chunkInjection
-        $scrollBody
-        })();
-        """.trimIndent()
-    }
 }
 
 internal fun sharedMobileEpubTtsNavigationScript(locator: ReaderLocator?): String {

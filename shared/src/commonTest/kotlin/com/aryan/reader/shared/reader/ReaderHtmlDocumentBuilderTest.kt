@@ -528,6 +528,42 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `vertical document reasserts restore landing while chunks settle`() {
+        val body = (0 until 45).joinToString("") { index -> "<p id=\"p$index\">Paragraph $index</p>" }
+        val book = SharedEpubBook(
+            id = "restore-settle-book",
+            fileName = "restore-settle.epub",
+            title = "Restore settle",
+            chapters = listOf(SharedEpubChapter("chapter", "Chapter", "Paragraph", htmlContent = body))
+        )
+        val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(book, chapterIndex = 0)
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = book,
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+            renderedChapterRange = 0..0,
+            virtualizedChapterChunks = mapOf(0 to chunks),
+        )
+
+        // Restore settling contract (a reopen must not fall back to the
+        // chapter top after an exact landing): the window-load boot scroll
+        // skips once a landing is recorded, above-viewport chunk fills are
+        // traced, and each fill re-asserts the latest tracked landing
+        // exact-only while no takeover happened. Skipped exact scrolls
+        // return false so the didFinish navigation script keeps polling for
+        // the target chunk (Android scrollToCfi retry-loop parity).
+        assertTrue(html.contains("function restoreLandingUsable()"))
+        assertTrue(html.contains("function reassertRestoreLanding(reason)"))
+        assertTrue(html.contains("function scheduleRestoreSettle()"))
+        assertTrue(html.contains("reason=already_landed"))
+        assertTrue(html.contains("event=web_chunk_compensate index="))
+        assertTrue(html.contains("reassertRestoreLanding('chunk_settle')"))
+        assertTrue(html.contains("reassertRestoreLanding('fonts_ready')"))
+        assertTrue(html.contains("event=web_restore_settled"))
+        assertTrue(html.contains("reason=exact_only_no_range"))
+        assertTrue(html.contains("return false;"))
+    }
+
+    @Test
     fun `vertical document reports visible locator from top reader edge`() {
         val html = ReaderHtmlDocumentBuilder.verticalDocument(
             book = repeatedWordBook("alpha beta gamma"),

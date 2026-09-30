@@ -954,6 +954,11 @@ fun SharedMobilePdfReaderHost(
     var pendingTtsStartAtLastChunk by remember(readerSessionKey) { mutableStateOf(false) }
     var pendingTtsPlayWhenReady by remember(readerSessionKey) { mutableStateOf(true) }
     var ttsHighlightBounds by remember(readerSessionKey) { mutableStateOf<List<PdfPageBounds>>(emptyList()) }
+    var lastCloudTtsCompletionCount by remember(readerSessionKey) { mutableStateOf(cloudTtsState.completionCount) }
+    // Pins cloud chaining to this book (engines are app-shared, like EPUB's
+    // ttsSessionBookId): a cloud session finishing in another book must not
+    // hijack this reader's page turn.
+    var pdfCloudTtsBookId by remember(readerSessionKey) { mutableStateOf<String?>(null) }
     // Clean->raw mapping for the active TTS page (Android indexMap parity).
     // Chunk offsets are clean-text offsets; highlight must map them back
     // through this before `rectsForRangeNormalized`, else highlights land on
@@ -979,6 +984,7 @@ fun SharedMobilePdfReaderHost(
             pendingTtsStart = null
             pendingTtsStartAtLastChunk = false
             pendingTtsCloud = false
+            pdfCloudTtsBookId = null
             ttsHighlightBounds = emptyList()
             ttsProcessed = null
         }
@@ -1154,6 +1160,11 @@ fun SharedMobilePdfReaderHost(
     val isPdfTtsPlayingOrLoading =
         pdfTts.state == SharedMobileEpubLocalTtsState.SPEAKING || pendingTtsStart != null ||
             cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
+    // Highlight + page gating (renderers, FAB): a paused local session keeps
+    // its highlight, and cloud speech counts exactly like device speech —
+    // otherwise cloud highlights never reach the page surface.
+    val isPdfTtsHighlightActive = pdfTts.isSessionActive || pendingTtsStart != null ||
+        cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
     val pdfSliderBottomPadding = sharedMobilePdfSliderBottomPadding(pdfBottomChromePadding, isJumpHistoryVisible)
     // In Always Show mode vertical content is anchored below the status bar
     // so the first page never draws underneath it. In Sync with Menus the
@@ -1274,6 +1285,7 @@ fun SharedMobilePdfReaderHost(
         pendingTtsStart = null
         pendingTtsStartAtLastChunk = false
         pendingTtsCloud = false
+        pdfCloudTtsBookId = null
         ttsHighlightBounds = emptyList()
         ttsProcessed = null
     }
@@ -1444,6 +1456,7 @@ fun SharedMobilePdfReaderHost(
                 val planned = PdfTtsSessionPlanner.pageFromRawPdfium(targetPdf, raw, rawStart)
                 ttsProcessed = planned.processed
                 if (planned.chunks.isNotEmpty()) {
+                    pdfCloudTtsBookId = book.id
                     controller.start(planned.chunks, pdfCardTitle, book.id)
                 }
             }
@@ -2254,6 +2267,7 @@ fun SharedMobilePdfReaderHost(
             pendingTtsCloud = false
             ttsProcessed = planned.processed
             pdfTts.stop()
+            pdfCloudTtsBookId = book.id
             cloudTts.start(planned.chunks, pdfCardTitle, book.id)
         } else {
             pendingTtsStart = null
@@ -2270,14 +2284,19 @@ fun SharedMobilePdfReaderHost(
         }
     }
 
-    LaunchedEffect(readerSessionKey, pdfTts.progress.currentChunk, ttsTextSession, ttsPageIndex, ttsProcessed, ownsTts) {
+    // Device TTS wins while it has a chunk; otherwise the cloud chunk drives
+    // highlight + follow, so cloud speech highlights exactly like device TTS.
+    val activePdfTtsChunk = PdfTtsSessionPlanner.activeChunk(
+        pdfTts.progress.currentChunk, cloudTtsState.progress.currentChunk
+    )
+    LaunchedEffect(readerSessionKey, pdfTts.progress.currentChunk, cloudTtsState.progress.currentChunk, ttsTextSession, ttsPageIndex, ttsProcessed, ownsTts) {
         if (!ownsTts) return@LaunchedEffect
         val session = ttsTextSession
         // Chunk offsets are clean-text offsets; map back to raw Pdfium via
         // the stored indexMap (Android parity). Without this the highlight
         // rects miss on hyphenated / newline-heavy pages.
-        val range = PdfTtsSessionPlanner.rawHighlightRange(ttsProcessed, pdfTts.progress.currentChunk)
-            ?: PdfTtsSessionPlanner.highlightRange(pdfTts.progress.currentChunk, session?.pageCharCount ?: 0)
+        val range = PdfTtsSessionPlanner.rawHighlightRange(ttsProcessed, activePdfTtsChunk)
+            ?: PdfTtsSessionPlanner.highlightRange(activePdfTtsChunk, session?.pageCharCount ?: 0)
         ttsHighlightBounds = if (session != null && range != null) {
             session.rectsForRangeNormalized(range.start, range.length)
         } else {
@@ -2311,6 +2330,47 @@ fun SharedMobilePdfReaderHost(
             }
         } else {
             pdfTts.stop()
+            ttsHighlightBounds = emptyList()
+            ttsProcessed = null
+        }
+    }
+
+    // Cloud parity with the local chain above (and EPUB's cloudChain): a page
+    // finishing naturally starts the next page as a continued session. Without
+    // this cloud speech stopped at the first page end.
+    LaunchedEffect(readerSessionKey, cloudTtsState.completionCount, ownsTts) {
+        if (!ownsTts) return@LaunchedEffect
+        if (cloudTtsState.completionCount == lastCloudTtsCompletionCount) return@LaunchedEffect
+        lastCloudTtsCompletionCount = cloudTtsState.completionCount
+        val controller = cloudTts ?: return@LaunchedEffect
+        if (pdfCloudTtsBookId != book.id) return@LaunchedEffect
+        val next = PdfTtsSessionPlanner.nextPage(ttsPageIndex, pageCount)
+        if (next != null) {
+            ttsPageIndex = next
+            ttsProcessed = null
+            navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, next), recordHistory = false, reason = PdfNavigationReason.TTS)
+            val prefetched = prefetchedTtsTextSession.takeIf { prefetchedTtsPageIndex == next }
+            if (prefetched != null) {
+                val planned = PdfTtsSessionPlanner.pageFromRawPdfium(
+                    next, prefetched.textForRange(0, prefetched.pageCharCount).orEmpty(), 0
+                )
+                if (planned.chunks.isNotEmpty()) {
+                    pendingTtsStart = null
+                    ttsProcessed = planned.processed
+                    controller.start(planned.chunks, pdfCardTitle, book.id, continueSession = true)
+                } else {
+                    pendingTtsStart = 0
+                    pendingTtsCloud = true
+                }
+            } else {
+                // Text session for the next page loads async; queue the
+                // continued start behind it via the pending effect.
+                pendingTtsStart = 0
+                pendingTtsCloud = true
+            }
+        } else {
+            controller.stop()
+            pdfCloudTtsBookId = null
             ttsHighlightBounds = emptyList()
             ttsProcessed = null
         }
@@ -2791,7 +2851,7 @@ fun SharedMobilePdfReaderHost(
                         showPageGap = showVerticalPageGap,
                         showPageNumberOverlay = showPageNumberOverlay,
                         searchResults = searchResults,
-                        ttsPageIndex = ttsPageIndex.takeIf { pdfTts.isSessionActive || pendingTtsStart != null },
+                        ttsPageIndex = ttsPageIndex.takeIf { isPdfTtsHighlightActive },
                         ttsHighlightBounds = ttsHighlightBounds,
                         activeStroke = activeStroke,
                         activeStrokeOwnerPdfPage = activeStrokeOwnerPdfPage,
@@ -2886,7 +2946,7 @@ fun SharedMobilePdfReaderHost(
                         rightToLeftPagination = rightToLeftPagination,
                         showPageNumberOverlay = showPageNumberOverlay,
                         searchResults = searchResults,
-                        ttsPageIndex = ttsPageIndex.takeIf { pdfTts.isSessionActive || pendingTtsStart != null },
+                        ttsPageIndex = ttsPageIndex.takeIf { isPdfTtsHighlightActive },
                         ttsHighlightBounds = ttsHighlightBounds,
                         activeStroke = activeStroke,
                         activeStrokeOwnerPdfPage = activeStrokeOwnerPdfPage,
@@ -3150,6 +3210,7 @@ fun SharedMobilePdfReaderHost(
                             pendingTtsStart = null
                             pendingTtsStartAtLastChunk = false
                             pendingTtsCloud = false
+                            pdfCloudTtsBookId = null
                             ttsHighlightBounds = emptyList()
                             ttsProcessed = null
                         },

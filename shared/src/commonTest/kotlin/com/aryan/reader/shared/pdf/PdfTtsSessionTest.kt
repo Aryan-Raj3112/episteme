@@ -130,4 +130,13 @@ class PdfTtsSessionTest {
         val planned = PdfTtsSessionPlanner.pageFromRawPdfium(0, "Short.", 500)
         assertTrue(planned.chunks.isEmpty())
     }
+
+    @Test
+    fun `active chunk prefers device speech and falls back to cloud`() {
+        val local = PdfTtsSessionPlanner.page(0, "Local sentence.").chunks.first()
+        val cloud = PdfTtsSessionPlanner.page(0, "Cloud sentence.").chunks.first()
+        assertEquals(local, PdfTtsSessionPlanner.activeChunk(local, cloud))
+        assertEquals(cloud, PdfTtsSessionPlanner.activeChunk(null, cloud))
+        assertNull(PdfTtsSessionPlanner.activeChunk(null, null))
+    }
 }

@@ -153,7 +153,23 @@ object ReaderHtmlDocumentBuilder {
                 requested[index] = false;
                 var newHeight = host.getBoundingClientRect().height;
                 if (host.getBoundingClientRect().bottom < 0 && Math.abs(newHeight - oldHeight) > 0.5) {
-                    window.scrollBy(0, newHeight - oldHeight);
+                    var heightDelta = newHeight - oldHeight;
+                    window.scrollBy(0, heightDelta);
+                    if (typeof readerDesktopPositionTraceLog === 'function') {
+                        readerDesktopPositionTraceLog('event=web_chunk_compensate index=' + index + ' delta=' + Math.round(heightDelta) + ' scrollY=' + Math.round(window.scrollY));
+                    }
+                    // Above-viewport chunks resolve from estimated placeholder
+                    // heights; the compensation keeps content stable but can
+                    // still mistrack a fresh restore landing while the guard
+                    // already resolved on first confirmation. Re-assert the
+                    // latest tracked landing while it is usable: exactOnly, so
+                    // this never parks at the chapter top — it only corrects
+                    // drift, and any takeover clears the landing first.
+                    // Bounded by chunk fills: each re-assert is exact, the next
+                    // one needs a new fill, and fills are finite.
+                    if (typeof reassertRestoreLanding === 'function') {
+                      reassertRestoreLanding('chunk_settle');
+                    }
                 }
                 // Android parity (restoreHighlights on chunk load): freshly provided
                 // chunks have no markers yet, so re-apply the current highlight list.

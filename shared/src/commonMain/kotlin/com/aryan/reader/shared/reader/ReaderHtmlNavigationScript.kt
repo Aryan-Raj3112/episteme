@@ -23,6 +23,23 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
               var lastReportedStartOffset = -1;
               var pendingRestoreLocator = null;
               var pendingRestoreUntil = 0;
+              // Last tracked exact landing { locator, targetY, at }.
+              // The restore guard resolves on the first visible confirmation,
+              // but the document keeps settling afterwards: webfonts swap,
+              // virtualized chunks above the viewport resolve and compensate,
+              // late reloads re-run the boot scroll. Android re-asserts the
+              // target persistently (scrollToCfi stabilization loop); here the
+              // fonts.ready and chunk-settle hooks re-assert this landing while
+              // it is still usable. Any takeover clears it first, so an active
+              // reader is never moved. Bounded to 8s after the landing.
+              var lastRestoreLanding = null;
+              function restoreLandingUsable() {
+                if (!lastRestoreLanding || !lastRestoreLanding.locator) return null;
+                try {
+                  if (Date.now() - lastRestoreLanding.at > 8000) return null;
+                } catch (_) {}
+                return lastRestoreLanding;
+              }
               var reportTimer = null;
               var selectionMenuTimer = null;
               var readerCurrentHighlights = [];
@@ -749,14 +766,14 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
                   ' ' + readerLocatorTrace(locator) +
                   (shouldCenterScrollTarget(options) ? ' align=center' : '')
                 );
-                if (scrollToVerticalPage(locator, options)) return;
+                if (scrollToVerticalPage(locator, options)) return true;
                 var chapterIndex = locator.chapterIndex;
                 if (chapterIndex === undefined || chapterIndex === null || chapterIndex === '') {
                   chapterIndex = document.body.getAttribute('data-reader-active-chapter-index');
                 }
                 if (chapterIndex === null || chapterIndex === '') {
                   readerDesktopPositionTraceLog('event=web_scroll_to_locator_skip reason=missing_chapter ' + readerLocatorTrace(locator));
-                  return;
+                  return true;
                 }
                 var activeStart = locatorStartOffset(locator);
                 if (activeStart === undefined || activeStart === null) {
@@ -772,7 +789,7 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
                     'event=web_scroll_to_locator_skip reason=missing_host requestedChapter=' + chapterIndex +
                     ' activeStart=' + activeStart + ' ' + readerLocatorTrace(locator)
                   );
-                  return;
+                  return true;
                 }
                 prepareVerticalScrollMeasurement(chapter);
                 var stableCfi = stableReaderCfi(locator.cfi);
@@ -783,7 +800,7 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
                 if (exactCfi && (activeStart === undefined || activeStart === null)) {
                   var cfiRect = exactCfi.getBoundingClientRect();
                   scrollToTopWithTrace(scrollTargetTopFromRect(cfiRect, options), 'exact_cfi', locator, scrollTraceExtra('requestedChapter=' + chapterIndex, options), options);
-                  return;
+                  return true;
                 }
                 var exact = activeStart === null
                   ? null
@@ -807,7 +824,15 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
                       if (rangeRect && (rangeRect.top !== 0 || rangeRect.bottom !== 0)) {
                         var exactResult = scrollToTopWithTrace(scrollTargetTopFromRect(rangeRect, options), 'exact_range', locator, scrollTraceExtra('requestedChapter=' + chapterIndex, options), options);
                         if (!exactResult.clamped || !isVerticalReaderDocument()) {
-                          return;
+                          if (shouldTrackScrollRestore(options) && isVerticalReaderDocument()) {
+                            try {
+                              lastRestoreLanding = { locator: locator, targetY: exactResult.targetY, at: Date.now() };
+                            } catch (_) {
+                              lastRestoreLanding = { locator: locator, targetY: exactResult.targetY, at: 0 };
+                            }
+                            scheduleRestoreSettle();
+                          }
+                          return true;
                         }
                         readerDesktopPositionTraceLog(
                           'event=web_scroll_to_locator_clamped strategy=exact_range requestedChapter=' + chapterIndex +
@@ -819,6 +844,22 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
                       }
                     }
                   }
+                  // exactOnly (initial restore): the exact range is unresolvable
+                  // while the target virtualized chunk is still missing. A
+                  // ratio scroll against the stub document lands somewhere
+                  // bogus (observed: 375px of a 569px stub, then a visible
+                  // lurch to 2243px once the chunk arrives). Skip instead —
+                  // the didFinish navigation script carries the chunk and
+                  // lands exact. Never used for explicit user navigations,
+                  // which keep the immediate ratio feedback.
+                  if (options && options.exactOnly) {
+                    readerDesktopPositionTraceLog('event=web_scroll_to_locator_skip reason=exact_only_no_range ' + readerLocatorTrace(locator));
+                    // False (not undefined): the didFinish navigation script
+                    // retries a skipped exact scroll while the target chunk
+                    // streams in (Android parity: scrollToCfi retry loop).
+                    // Every other caller ignores the return value.
+                    return false;
+                  }
                   var contentStart = numberAttribute(content, 'data-reader-content-start', numberAttribute(chapter, 'data-reader-page-start', 0));
                   var contentEnd = numberAttribute(content, 'data-reader-content-end', numberAttribute(chapter, 'data-reader-page-end', contentStart));
                   if (contentEnd > contentStart && activeStart > contentStart) {
@@ -826,13 +867,102 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
                     var contentRect = content.getBoundingClientRect();
                     var approximateY = contentRect.top + window.scrollY + (content.scrollHeight * ratio);
                     scrollToTopWithTrace(scrollTargetTopFromY(approximateY, options), 'content_ratio', locator, scrollTraceExtra('requestedChapter=' + chapterIndex + ' ratio=' + ratio.toFixed(4), options), options);
-                    return;
+                    return true;
                   }
+                }
+                // exactOnly: precise marker/block hits still scroll, but never
+                // park on the chapter top as a "restore" — that visible jump
+                // to 0 is exactly the reset users reported.
+                if ((options && options.exactOnly) && !exact && !exactBlock) {
+                  readerDesktopPositionTraceLog('event=web_scroll_to_locator_skip reason=exact_only_no_marker ' + readerLocatorTrace(locator));
+                  // False: retryable skip, see exact_only_no_range above.
+                  return false;
                 }
                 var rect = target.getBoundingClientRect();
                 scrollToTopWithTrace(scrollTargetTopFromRect(rect, options), exact ? 'exact_marker' : (exactBlock ? 'exact_block' : 'host_top'), locator, scrollTraceExtra('requestedChapter=' + chapterIndex, options), options);
+                return true;
+              }
+              /**
+               * Re-run the last exact landing while it is still usable.
+               * Android parity: scrollToCfi keeps re-asserting the target until
+               * it sticks, so the document settling (content-visibility
+               * expansion, chunk compensation, font swap) cannot strand the
+               * reader away from the restored text. exactOnly, so it corrects
+               * drift and never parks at the chapter top. Any takeover cleared
+               * the landing first, and the 8s bound keeps it finite.
+               */
+              function reassertRestoreLanding(reason) {
+                var landing = restoreLandingUsable();
+                if (!landing) return false;
+                readerDesktopPositionTraceLog(
+                  'event=web_restore_reassert source=' + reason + ' fromY=' + landing.targetY +
+                  ' scrollY=' + Math.round(window.scrollY) +
+                  ' maxScroll=' + Math.round(verticalScrollMetrics().maxScroll) +
+                  ' ' + readerLocatorTrace(landing.locator)
+                );
+                lastRestoreLanding = null;
+                scrollToLocator(landing.locator, { source: reason, exactOnly: true });
+                // Keep the original bound: a re-assert must not extend the
+                // window, and a skipped re-assert keeps the landing for the
+                // next settling hook.
+                if (lastRestoreLanding) {
+                  try { lastRestoreLanding.at = landing.at; } catch (_) {}
+                } else {
+                  lastRestoreLanding = landing;
+                }
+                return true;
+              }
+              var restoreSettleTimer = null;
+              /**
+               * Stabilize the restore landing the way Android's scrollToCfi
+               * loop does: keep re-asserting it while the document is still
+               * changing shape under it (the chapter expands from its
+               * contain-intrinsic-size once rendered, chunks above resolve and
+               * compensate, fonts swap). Stops as soon as the position holds
+               * still, and a takeover or the 8s landing bound ends it, so it
+               * can never fight an active reader or run unbounded.
+               */
+              function scheduleRestoreSettle() {
+                if (restoreSettleTimer) return;
+                var stableSamples = 0;
+                restoreSettleTimer = window.setInterval(function () {
+                  var landing = restoreLandingUsable();
+                  if (!landing) {
+                    window.clearInterval(restoreSettleTimer);
+                    restoreSettleTimer = null;
+                    return;
+                  }
+                  if (Math.abs(window.scrollY - landing.targetY) <= 2) {
+                    stableSamples++;
+                    if (stableSamples >= 3) {
+                      readerDesktopPositionTraceLog('event=web_restore_settled scrollY=' + Math.round(window.scrollY));
+                      window.clearInterval(restoreSettleTimer);
+                      restoreSettleTimer = null;
+                    }
+                    return;
+                  }
+                  stableSamples = 0;
+                  reassertRestoreLanding('settle');
+                  if (restoreSettleTimer === null) return;
+                  var settled = restoreLandingUsable();
+                  if (!settled || Math.abs(window.scrollY - settled.targetY) <= 2) {
+                    window.clearInterval(restoreSettleTimer);
+                    restoreSettleTimer = null;
+                  }
+                }, 150);
               }
               function scrollToActiveLocator() {
+                // Window load re-fires this after the didFinish navigation
+                // script already landed exact. A second scroll would only
+                // fight the settling document (chunk compensation, font swap),
+                // so skip once a landing is recorded. When nothing landed yet
+                // (stub document at parse/load) this still runs as before.
+                if (restoreLandingUsable()) {
+                  readerDesktopPositionTraceLog(
+                    'event=web_scroll_to_locator_skip reason=already_landed ' + readerLocatorTrace(lastRestoreLanding.locator)
+                  );
+                  return;
+                }
                 scrollToLocator({
                   chapterIndex: document.body.getAttribute('data-reader-active-chapter-index'),
                   pageIndex: numberAttribute(document.body, 'data-reader-active-page-index', null),
@@ -841,7 +971,7 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
                   blockIndex: numberAttribute(document.body, 'data-reader-active-block-index', null),
                   charOffset: numberAttribute(document.body, 'data-reader-active-char-offset', null),
                   cfi: document.body.getAttribute('data-reader-active-cfi')
-                });
+                }, { exactOnly: true });
               }
               window.readerScrollToLocator = scrollToLocator;
               function textNodesUnder(root, includeWhitespace) {
@@ -1342,6 +1472,9 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
                 return positionFromReaderHost(chapter, requestedOffset, preferredY, 'restore_locator_visible');
               }
               function clearPendingRestoreLocator(reason) {
+                // Any takeover also voids the fonts.ready re-assert below:
+                // the reader is deliberately somewhere else now.
+                lastRestoreLanding = null;
                 if (!pendingRestoreLocator) return;
                 readerDesktopPositionTraceLog(
                   'event=web_restore_guard_cleared reason=' + reason +

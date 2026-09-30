@@ -1623,6 +1623,18 @@ internal fun readerHtmlAnnotationScript(): String = """
               });
               scrollToActiveLocator();
               reportVisiblePage();
+              // Re-assert the restore landing once webfonts settle: the exact
+              // scroll measures against fallback metrics while fonts swap, and
+              // the reflow drifts the anchor. The landing is only dropped by a
+              // takeover (gesture/transient scroll) or after its bound, and it
+              // is re-asserted exact-only — never parked at the chapter top.
+              if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
+                document.fonts.ready.then(function () {
+                  if (typeof reassertRestoreLanding === 'function') {
+                    reassertRestoreLanding('fonts_ready');
+                  }
+                });
+              }
               window.setTimeout(function () { readerPaginationLayoutLog('initial_timeout'); }, 80);
               window.addEventListener('load', scrollToActiveLocator, { once: true });
               window.addEventListener('load', reportVisiblePage, { once: true });

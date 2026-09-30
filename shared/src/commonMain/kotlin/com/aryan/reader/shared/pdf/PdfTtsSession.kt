@@ -46,6 +46,15 @@ object PdfTtsSessionPlanner {
         return planned.copy(processed = processed)
     }
 
+    /**
+     * The chunk driving PDF highlight + follow. Device (local) TTS wins while
+     * it has a chunk; otherwise the cloud chunk drives — cloud speech
+     * previously had no highlight at all because only the local progress was
+     * observed.
+     */
+    fun activeChunk(local: ReaderTtsChunk?, cloud: ReaderTtsChunk?): ReaderTtsChunk? =
+        local ?: cloud
+
     /** Maps a clean-text TTS chunk back to the raw Pdfium range for highlight. */
     fun rawHighlightRange(
         processed: PdfProcessedText?,

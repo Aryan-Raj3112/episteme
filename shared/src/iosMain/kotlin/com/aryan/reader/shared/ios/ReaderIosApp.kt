@@ -328,6 +328,8 @@ import com.aryan.reader.shared.ui.rememberSharedMobileEpubLocalTts
 import com.aryan.reader.shared.ui.SharedMobileEpubLocalTtsState
 import com.aryan.reader.shared.ui.withoutIosFolderFilter
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
+import com.aryan.reader.shared.reader.epubPositionSummary
+import com.aryan.reader.shared.reader.logEpubPositionSave
 import com.aryan.reader.shared.reader.sharedEpubOpenTrace
 import com.aryan.reader.shared.reader.sharedEpubOpenTraceElapsedMs
 import com.aryan.reader.shared.reader.sharedEpubOpenTraceMark
@@ -2839,13 +2841,25 @@ private fun loadPersistedIosEpubBookState(book: BookItem): BookItem {
     try {
         val encoded = NSUserDefaults.standardUserDefaults.stringForKey(book.iosEpubReaderStateKey())
         encodedChars = encoded?.length ?: 0
-        if (encoded == null) return book
-        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(encoded).books.firstOrNull() ?: return book
+        if (encoded == null) {
+            logEpubPositionSave("event=restore_empty bookId=${book.id}")
+            return book
+        }
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(encoded).books.firstOrNull()
+        if (decoded == null) {
+            logEpubPositionSave("event=restore_decode_empty bookId=${book.id} encodedChars=$encodedChars")
+            return book
+        }
         val normalized = decoded.migrateAndroidEpubFormatSettings()
         val restored = book.withNewerReaderSession(normalized)
         if (normalized != decoded) {
             persistIosEpubBookState(normalized)
         }
+        logEpubPositionSave(
+            "event=restore bookId=${book.id} keptCurrent=${restored === book} " +
+                "hasPosition=${restored.readerPosition != null} " +
+                "restored=${restored.readerPosition.epubPositionSummary()} lastPage=${restored.lastPageIndex}"
+        )
         return restored
     } finally {
         sharedEpubOpenTrace { "library persistedStateRestore bookId=${book.id} encodedChars=$encodedChars ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(restoreMark))}" }
@@ -5757,9 +5771,18 @@ private fun ReaderIosApp(
                                 )
                                 val updatedBook = currentBook.withReaderSessionState(sessionBook)
                                 if (updatedBook !== currentBook) {
+                                    logEpubPositionSave(
+                                        "event=persist bookId=${book.id} page=${snapshot.pageIndex}/${snapshot.pageCount} " +
+                                            "progress=${snapshot.progressPercent} locator=${snapshot.locator.epubPositionSummary()}"
+                                    )
                                     persistIosEpubBookState(updatedBook)
                                     activeReaderBook = updatedBook
                                     state = state.withUpdatedIosBook(updatedBook)
+                                } else {
+                                    logEpubPositionSave(
+                                        "event=persist_skip reason=unchanged bookId=${book.id} " +
+                                            "page=${snapshot.pageIndex} locator=${snapshot.locator.epubPositionSummary()}"
+                                    )
                                 }
                             },
                             onMetadataLoaded = { title, author ->

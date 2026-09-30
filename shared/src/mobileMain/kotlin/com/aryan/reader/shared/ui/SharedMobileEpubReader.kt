@@ -84,6 +84,9 @@ import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.ReaderTtsPlanner
 import com.aryan.reader.shared.reader.ReaderTtsStartTag
+import com.aryan.reader.shared.reader.epubPositionSummary
+import com.aryan.reader.shared.reader.logEpubPositionSave
+import com.aryan.reader.shared.reader.shouldDropPreRestoreBridgePosition
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderLifecycleAction
 import com.aryan.reader.shared.ReaderAutoScrollProfile
@@ -382,6 +385,19 @@ fun SharedMobileEpubReaderScreen(
     var pages by remember(book.id) { mutableStateOf<List<ReaderPage>>(emptyList()) }
     var measuredPagesApplied by remember(book.id) { mutableStateOf(false) }
     var currentLocator by remember(book.id) { mutableStateOf(book.readerPosition) }
+    // Restore guard (WebView branch): pre-anchor reports in the restored
+    // chapter are dropped until the anchor is confirmed, the chapter moves,
+    // or the user navigates explicitly — see shouldDropPreRestoreBridgePosition.
+    var restoreAnchor by remember(book.id) { mutableStateOf(book.readerPosition) }
+    fun clearRestoreAnchor(reason: String) {
+        if (restoreAnchor != null) {
+            logEpubPositionSave(
+                "event=restore_guard_cleared reason=$reason bookId=${book.id} " +
+                    "anchor=${restoreAnchor.epubPositionSummary()}"
+            )
+            restoreAnchor = null
+        }
+    }
     var currentPageIndex by remember(book.id) { mutableStateOf(book.lastPageIndex ?: 0) }
     var currentChapterIndex by remember(book.id) {
         mutableIntStateOf(book.readerPosition?.chapterIndex?.coerceAtLeast(0) ?: 0)
@@ -1035,11 +1051,26 @@ fun SharedMobileEpubReaderScreen(
 
     LaunchedEffect(currentLocator, settings, bookmarks, highlights, currentPageIndex, pageCount, isLocalFormatMode, localFormatSettings, autoScrollIsLocal, autoScrollLocalProfile) {
         delay(220)
-        currentReaderSnapshot()?.let(onReaderStateChange)
+        val snapshot = currentReaderSnapshot()
+        if (snapshot == null) {
+            logEpubPositionSave("event=autosave_skip reason=null_locator bookId=${book.id}")
+        } else {
+            logEpubPositionSave(
+                "event=autosave_emit bookId=${book.id} page=${snapshot.pageIndex}/${snapshot.pageCount} " +
+                    "progress=${snapshot.progressPercent} locator=${snapshot.locator.epubPositionSummary()}"
+            )
+        }
+        snapshot?.let(onReaderStateChange)
     }
 
     fun closeReader() {
-        currentReaderSnapshot()?.let(onReaderStateChange)
+        val snapshot = currentReaderSnapshot()
+        logEpubPositionSave(
+            "event=close_save bookId=${book.id} " +
+                (snapshot?.let { "page=${it.pageIndex}/${it.pageCount} progress=${it.progressPercent} locator=${it.locator.epubPositionSummary()}" }
+                    ?: "snapshot=null")
+        )
+        snapshot?.let(onReaderStateChange)
         onBack()
     }
 
@@ -1092,6 +1123,7 @@ fun SharedMobileEpubReaderScreen(
         fragment: String? = null,
         detachFromTts: Boolean = true,
     ) {
+        clearRestoreAnchor("explicit_navigate")
         if (detachFromTts) detachVerticalReaderFromTts()
         val epub = loadedBook
         locator.chapterIndex?.let { chapterIndex ->
@@ -1232,6 +1264,7 @@ fun SharedMobileEpubReaderScreen(
 
     fun navigateChapter(direction: Int) {
         val epub = loadedBook ?: return
+        clearRestoreAnchor("chapter_turn")
         val targetChapterIndex = (currentChapterIndex + direction).coerceIn(0, epub.chapters.lastIndex)
         if (targetChapterIndex == currentChapterIndex) return
         // The JS pull gesture posts its progress:0 reset just before the
@@ -1300,11 +1333,17 @@ fun SharedMobileEpubReaderScreen(
                 currentChunkIndex = activeTtsChunk?.index,
             )
         ) {
-            ReaderLifecycleAction.SAVE_POSITION -> {
-                // Android requests a final CFI on pause. Persist the latest
-                // portable locator immediately instead of awaiting the debounce.
-                currentReaderSnapshot()?.let(onReaderStateChange)
-            }
+                ReaderLifecycleAction.SAVE_POSITION -> {
+                    // Android requests a final CFI on pause. Persist the latest
+                    // portable locator immediately instead of awaiting the debounce.
+                    val snapshot = currentReaderSnapshot()
+                    logEpubPositionSave(
+                        "event=lifecycle_save bookId=${book.id} " +
+                            (snapshot?.let { "page=${it.pageIndex}/${it.pageCount} progress=${it.progressPercent} locator=${it.locator.epubPositionSummary()}" }
+                                ?: "snapshot=null")
+                    )
+                    snapshot?.let(onReaderStateChange)
+                }
             ReaderLifecycleAction.LOCATE_TTS -> {
                 // Speech may advance while backgrounded. Restore the active
                 // chunk unless the user intentionally detached from it.
@@ -1373,6 +1412,7 @@ fun SharedMobileEpubReaderScreen(
     fun navigateSearchResult(result: SharedMobileEpubSearchResult) {
         val epub = loadedBook ?: return
         val chapter = epub.chapters.getOrNull(result.chapterIndex) ?: return
+        clearRestoreAnchor("search")
         detachVerticalReaderFromTts()
         captureCurrentEpubLocator { current ->
             jumpHistory = jumpHistory.record(
@@ -2346,7 +2386,13 @@ fun SharedMobileEpubReaderScreen(
                                         locator = locator,
                                         fragment = explicitNavigationFragment,
                                         targetChunkIndex = navigationChunkIndex,
-                                        targetChunkHtml = navigationChunkHtml
+                                        targetChunkHtml = navigationChunkHtml,
+                                        // No explicit target and no command means this
+                                        // script carries the reopen restore: land it
+                                        // exact only (never ratio/host_top against a
+                                        // still-settling document). Every user-initiated
+                                        // navigation keeps its approximate feedback.
+                                        preferExact = explicitNavigationLocator == null && commandScript == null
                                     )
                                 )
                             }
@@ -2428,11 +2474,81 @@ fun SharedMobileEpubReaderScreen(
                                     "readerPointerActivity" -> {
                                         if (!(autoScrollMusicianMode && autoScrollModeActive)) showChrome = !showChrome
                                     }
-                                    "readerDragActivity" -> temporarilyPauseAutoScroll(300L)
+                                    "readerDragActivity" -> {
+                                        // A real scroll gesture is a takeover: the reader
+                                        // is the user's now, so stop dropping reports
+                                        // below the restore anchor. Autoscroll is
+                                        // JS-driven and never posts this.
+                                        clearRestoreAnchor("user_drag")
+                                        temporarilyPauseAutoScroll(300L)
+                                    }
+                                    // JS restore/scroll traces are invisible on iOS otherwise
+                                    // (bridge-or-gated-console only). Forward them while the
+                                    // restore guard is armed so a still-failing initial scroll
+                                    // can be diagnosed without drowning in scroll volume. The
+                                    // JS guard's own give-up/user-takeover events also release
+                                    // the Kotlin anchor: expiry means the anchor never became
+                                    // reachable, and a user gesture means the reader is theirs.
+                                    "readerDesktopPositionTraceLog" -> {
+                                        payload.sharedMobileEpubTraceMessageOrNull()?.let { trace ->
+                                            // Rare scroll-actor events are always worth one
+                                            // line, even after the guard resolved: a
+                                            // post-landing jump to the chapter top is
+                                            // invisible otherwise (the guard resolves on
+                                            // first confirmation while chunks/fonts still
+                                            // settle). Per-frame position payloads stay
+                                            // bounded to the armed restore window.
+                                            val alwaysForward = trace.contains("web_restore_") ||
+                                                trace.contains("web_scroll_to_locator_") ||
+                                                trace.contains("web_chunk_compensate") ||
+                                                trace.contains("web_navigation_") ||
+                                                trace.contains("web_fonts_ready")
+                                            if (restoreAnchor == null && !alwaysForward) return@let
+                                            logEpubPositionSave("event=js_restore_trace bookId=${book.id} trace=$trace")
+                                            if (restoreAnchor != null) {
+                                                when {
+                                                    trace.contains("guard_expired") ->
+                                                        // Hold the anchor: the document never
+                                                        // showed the restored text, so
+                                                        // accepting a report would persist
+                                                        // whatever the reader happens to
+                                                        // show (chapter start) over the
+                                                        // saved position. Reports below the
+                                                        // anchor stay dropped until the anchor
+                                                        // is reached or the user takes over.
+                                                        logEpubPositionSave(
+                                                            "event=restore_guard_expired_hold bookId=${book.id} " +
+                                                                "anchor=${restoreAnchor.epubPositionSummary()}"
+                                                        )
+                                                    trace.contains("guard_cleared") ->
+                                                        clearRestoreAnchor("js_guard_cleared")
+                                                }
+                                            }
+                                        }
+                                    }
                                     "readerPositionChanged" -> payload.sharedMobileEpubLocatorOrNull()?.let { position ->
                                         webViewPositionController.updateObservedLocator(position)
                                         val reportedChapter = position.chapterIndex
                                         if (reportedChapter == null || reportedChapter == currentChapterIndex) {
+                                            if (shouldDropPreRestoreBridgePosition(restoreAnchor, position)) {
+                                                logEpubPositionSave(
+                                                    "event=bridge_position_drop reason=pre_restore bookId=${book.id} " +
+                                                        "locator=${position.epubPositionSummary()} " +
+                                                        "anchor=${restoreAnchor.epubPositionSummary()}"
+                                                )
+                                                return@let
+                                            }
+                                            if (restoreAnchor != null) {
+                                                logEpubPositionSave(
+                                                    "event=restore_guard_resolved bookId=${book.id} " +
+                                                        "locator=${position.epubPositionSummary()}"
+                                                )
+                                                restoreAnchor = null
+                                            }
+                                            logEpubPositionSave(
+                                                "event=bridge_position_accept bookId=${book.id} " +
+                                                    "locator=${position.epubPositionSummary()} currentChapter=$currentChapterIndex"
+                                            )
                                             currentLocator = position
                                             currentPageIndex = (position.pageIndex ?: currentPageIndex).coerceIn(0, pageCount - 1)
                                             position.chapterIndex?.let { currentChapterIndex = it }
@@ -2450,8 +2566,17 @@ fun SharedMobileEpubReaderScreen(
                                             if (!(autoScroll && !autoScrollTemporarilyPaused)) {
                                                 commandScript = null
                                             }
+                                        } else {
+                                            logEpubPositionSave(
+                                                "event=bridge_position_drop reason=chapter_mismatch bookId=${book.id} " +
+                                                    "reportedChapter=$reportedChapter currentChapter=$currentChapterIndex " +
+                                                    "locator=${position.epubPositionSummary()}"
+                                            )
                                         }
-                                    }
+                                    } ?: logEpubPositionSave(
+                                        "event=bridge_position_unparseable bookId=${book.id} " +
+                                            "payloadChars=${payload.length} head=${payload.take(160)}"
+                                    )
                                     "readerChapterBoundary" -> when (payload.sharedMobileEpubDirectionOrNull()) {
                                         "previous" -> navigateChapter(-1)
                                         "next" -> navigateChapter(1)

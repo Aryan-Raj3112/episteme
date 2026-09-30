@@ -45,6 +45,7 @@ import com.aryan.reader.shared.reader.sharedEpubResourceMimeType
 import com.aryan.reader.shared.reader.sharedEpubOpenTrace
 import com.aryan.reader.shared.reader.sharedEpubOpenTraceElapsedMs
 import com.aryan.reader.shared.reader.sharedEpubOpenTraceMark
+import com.aryan.reader.shared.reader.logEpubPositionSave
 import com.aryan.reader.shared.reader.sharedEpubOpenTraceMs
 import com.aryan.reader.shared.reduce
 import kotlinx.coroutines.Dispatchers
@@ -1141,6 +1142,10 @@ private class IosEpubWebViewCoordinator(
             htmlLoadStartMark = sharedEpubOpenTraceMark()
             reportedFirstPosition = false
             sharedEpubOpenTrace { "webview loadHTML start chars=${html.length} chunks=${contentChunks.size}" }
+            // A second loadHTMLString after a restore landing resets scrollY
+            // to 0 with no JS scroll trace, so it is indistinguishable from a
+            // scroll bug. Make every native reload visible in the position log.
+            logEpubPositionSave("event=webview_reload chars=${html.length} chunks=${contentChunks.size}")
             webView.loadHTMLString(html, baseURL = null)
             return
         }
