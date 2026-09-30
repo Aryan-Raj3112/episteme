@@ -119,7 +119,7 @@ struct ContentView: View {
                     scheduleImportedFolderScan(
                         bridge: bridge,
                         folderName: folderName,
-                        sourceURL: folderURL
+                        sourceURL: sourceURLForFolder(named: folderName, fallback: folderURL, bridge: bridge)
                     )
                     return
                 }
@@ -153,6 +153,8 @@ struct ContentView: View {
                 } else if importKind == .cover {
                     bridge.recordImportedCover(filePath: nil)
                 } else if importKind == .folder {
+                    let detail = wasCancelled ? "user_cancelled" : "picker_failed \(folderScanErrorDetail(error))"
+                    logFolderScan("picker.failed \(detail)", bridge: bridge)
                     bridge.recordImportedFolder(
                         folderName: "folder",
                         fileNames: [],
@@ -161,7 +163,9 @@ struct ContentView: View {
                         relativePaths: [],
                         fileSizes: [],
                         lastModifiedTimestamps: [],
-                        scanSucceeded: false
+                        scanSucceeded: false,
+                        scanStatusRaw: ImportedFolderScanStatus.unavailable.rawValue,
+                        scanDetail: detail
                     )
                 } else if importKind == .audiobookFolder {
                     bridge.recordImportedFiles(
@@ -418,6 +422,33 @@ struct ContentView: View {
 
 private let importedFolderBookmarksKey = "reader.ios.importedFolderBookmarks.v1"
 
+/// Shared diagnostics tag with Kotlin's `LOCAL_FOLDER_SCAN_LOG_TAG`. Filter
+/// the exported diagnostics for this single string to see the whole
+/// folder-scan pipeline (bookmark resolution, security-scoped copy,
+/// managed-copy swap, scan consumption).
+let localFolderScanLogTag = "LocalFolderScan"
+private let localFolderScanLogger = Logger(subsystem: "com.aryan.reader", category: localFolderScanLogTag)
+
+private enum ImportedFolderScanStatus: String {
+    case complete = "COMPLETE"
+    case partial = "PARTIAL"
+    case unavailable = "UNAVAILABLE"
+}
+
+/// Single-line pipeline log that lands in both the unified log and the Kotlin
+/// diagnostic export (via the bridge), so one tag covers both stores.
+func logFolderScan(_ message: String, bridge: ReaderIosBridge?) {
+    let singleLine = message.replacingOccurrences(of: "\n", with: " ")
+    localFolderScanLogger.info("\(singleLine, privacy: .public)")
+    bridge?.logFolderScanDiagnostic(message: singleLine)
+}
+
+private func folderScanErrorDetail(_ error: Error) -> String {
+    let nsError = error as NSError
+    let description = nsError.localizedDescription.replacingOccurrences(of: "\n", with: " ")
+    return "domain=\(nsError.domain) code=\(nsError.code) desc=\(String(description.prefix(200)))"
+}
+
 @MainActor
 private var importedFolderScanTasks: [String: Task<Void, Never>] = [:]
 
@@ -452,6 +483,10 @@ private func rememberImportedFolder(_ url: URL, bridge: ReaderIosBridge) -> Stri
         if let matchedFolderName {
             if shouldRefreshMatch { bookmarks[matchedFolderName] = bookmark }
             UserDefaults.standard.set(bookmarks, forKey: importedFolderBookmarksKey)
+            logFolderScan(
+                "remember matched folder=\(matchedFolderName) refreshed=\(shouldRefreshMatch)",
+                bridge: bridge
+            )
             return matchedFolderName
         }
         let folderName = bridge.availableImportedFolderName(
@@ -460,9 +495,14 @@ private func rememberImportedFolder(_ url: URL, bridge: ReaderIosBridge) -> Stri
         )
         bookmarks[folderName] = bookmark
         UserDefaults.standard.set(bookmarks, forKey: importedFolderBookmarksKey)
+        logFolderScan("remember created folder=\(folderName) bookmarks=\(bookmarks.count)", bridge: bridge)
         return folderName
     } catch {
         // The managed copy remains usable if a document provider cannot issue a bookmark.
+        logFolderScan(
+            "remember bookmark_failed folder=\(baseName) \(folderScanErrorDetail(error))",
+            bridge: bridge
+        )
         return bridge.availableImportedFolderName(
             preferredName: baseName,
             existingNames: Array(bookmarks.keys)
@@ -470,12 +510,15 @@ private func rememberImportedFolder(_ url: URL, bridge: ReaderIosBridge) -> Stri
     }
 }
 
-private func updateImportedFolderBookmark(_ url: URL, folderName: String) {
+private func updateImportedFolderBookmark(_ url: URL, folderName: String, bridge: ReaderIosBridge? = nil) {
     guard let bookmark = try? url.bookmarkData(
         options: [.minimalBookmark],
         includingResourceValuesForKeys: nil,
         relativeTo: nil
-    ) else { return }
+    ) else {
+        logFolderScan("bookmark.reissue_failed folder=\(folderName)", bridge: bridge)
+        return
+    }
     var bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
     bookmarks[folderName] = bookmark
     UserDefaults.standard.set(bookmarks, forKey: importedFolderBookmarksKey)
@@ -506,29 +549,74 @@ private func captureUnifiedLogEntries() -> String? {
 
 private func refreshImportedFolders(bridge: ReaderIosBridge) {
     let bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
+    logFolderScan("refresh.begin folders=\(bookmarks.count)", bridge: bridge)
     for (folderName, bookmark) in bookmarks {
-        var isStale = false
-        guard let folderURL = try? URL(
-            resolvingBookmarkData: bookmark,
-            options: [.withoutUI],
-            relativeTo: nil,
-            bookmarkDataIsStale: &isStale
-        ) else {
+        let folderURL: URL
+        do {
+            var isStale = false
+            folderURL = try URL(
+                resolvingBookmarkData: bookmark,
+                options: [.withoutUI],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+            if isStale {
+                updateImportedFolderBookmark(folderURL, folderName: folderName, bridge: bridge)
+            }
+        } catch {
+            logFolderScan(
+                "refresh.resolve_failed folder=\(folderName) \(folderScanErrorDetail(error))",
+                bridge: bridge
+            )
             recordImportedFolderScan(
                 bridge: bridge,
                 folderName: folderName,
-                scan: ImportedFolderScan(files: [], succeeded: false)
+                scan: ImportedFolderScan(
+                    files: [],
+                    succeeded: false,
+                    status: .unavailable,
+                    detail: "resolve_failed \(folderScanErrorDetail(error))"
+                )
             )
             continue
-        }
-        if isStale {
-            updateImportedFolderBookmark(folderURL, folderName: folderName)
         }
         scheduleImportedFolderScan(
             bridge: bridge,
             folderName: folderName,
             sourceURL: folderURL
         )
+    }
+}
+
+/// Re-resolves the scan URL from the stored bookmark. The picker URL is only
+/// guaranteed valid inside the fileImporter callback, while the scan runs
+/// detached afterwards; the bookmark created in the same callback is the
+/// durable handle.
+private func sourceURLForFolder(named folderName: String, fallback: URL, bridge: ReaderIosBridge) -> URL {
+    let bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
+    guard let bookmark = bookmarks[folderName] else {
+        logFolderScan("picker.no_bookmark folder=\(folderName) using_picker_url", bridge: bridge)
+        return fallback
+    }
+    do {
+        var isStale = false
+        let resolved = try URL(
+            resolvingBookmarkData: bookmark,
+            options: [.withoutUI],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        )
+        if isStale {
+            updateImportedFolderBookmark(resolved, folderName: folderName, bridge: bridge)
+        }
+        logFolderScan("picker.url_resolved folder=\(folderName) stale=\(isStale)", bridge: bridge)
+        return resolved
+    } catch {
+        logFolderScan(
+            "picker.resolve_failed folder=\(folderName) \(folderScanErrorDetail(error)) using_picker_url",
+            bridge: bridge
+        )
+        return fallback
     }
 }
 
@@ -764,6 +852,20 @@ private func replaceImportedFolderFile(folderName: String, managedPath: String) 
 private struct ImportedFolderScan: Sendable {
     let files: [ImportedReaderFile]
     let succeeded: Bool
+    let status: ImportedFolderScanStatus
+    let detail: String
+
+    init(
+        files: [ImportedReaderFile],
+        succeeded: Bool,
+        status: ImportedFolderScanStatus? = nil,
+        detail: String = ""
+    ) {
+        self.files = files
+        self.succeeded = succeeded
+        self.status = status ?? (succeeded ? .complete : .unavailable)
+        self.detail = detail
+    }
 }
 
 private func recordImportedFolderScan(
@@ -771,6 +873,11 @@ private func recordImportedFolderScan(
     folderName: String,
     scan: ImportedFolderScan
 ) {
+    logFolderScan(
+        "scan.recorded folder=\(folderName) succeeded=\(scan.succeeded) " +
+            "status=\(scan.status.rawValue) files=\(scan.files.count) detail=\(scan.detail)",
+        bridge: bridge
+    )
     bridge.recordImportedFolder(
         folderName: folderName,
         fileNames: scan.files.map(\.name),
@@ -779,16 +886,37 @@ private func recordImportedFolderScan(
         relativePaths: scan.files.map(\.relativePath),
         fileSizes: scan.files.map { String($0.fileSize) },
         lastModifiedTimestamps: scan.files.map { String($0.lastModifiedTimestamp) },
-        scanSucceeded: scan.succeeded
+        scanSucceeded: scan.succeeded,
+        scanStatusRaw: scan.status.rawValue,
+        scanDetail: scan.detail
     )
 }
 
-nonisolated private func copyImportedFolderToAppSupport(_ sourceURL: URL, folderName: String? = nil) -> ImportedFolderScan {
-    let didStartAccessing = sourceURL.startAccessingSecurityScopedResource()
-    defer {
-        if didStartAccessing {
-            sourceURL.stopAccessingSecurityScopedResource()
+private enum FolderScanCopyError: Error {
+    case hashFailed(String)
+
+    var detail: String {
+        switch self {
+        case .hashFailed(let relative):
+            return "hash_failed relative=\(relative)"
         }
+    }
+}
+
+nonisolated private func copyImportedFolderToAppSupport(_ sourceURL: URL, folderName: String? = nil) -> ImportedFolderScan {
+    let name = folderName ?? sourceURL.lastPathComponent
+    let didStartAccessing = sourceURL.startAccessingSecurityScopedResource()
+    guard didStartAccessing else {
+        localFolderScanLogger.error("scan.access_denied folder=\(name, privacy: .public)")
+        return ImportedFolderScan(
+            files: [],
+            succeeded: false,
+            status: .unavailable,
+            detail: "access_denied startAccessingSecurityScopedResource=false"
+        )
+    }
+    defer {
+        sourceURL.stopAccessingSecurityScopedResource()
     }
 
     var pendingStagingRoot: URL?
@@ -802,7 +930,7 @@ nonisolated private func copyImportedFolderToAppSupport(_ sourceURL: URL, folder
         )
         let folderRoot = appSupport
             .appendingPathComponent("LocalFolders", isDirectory: true)
-            .appendingPathComponent(safeLocalFolderName(folderName ?? sourceURL.lastPathComponent), isDirectory: true)
+            .appendingPathComponent(safeLocalFolderName(name), isDirectory: true)
         let stagingRoot = folderRoot.deletingLastPathComponent()
             .appendingPathComponent(".\(folderRoot.lastPathComponent)-\(UUID().uuidString).staging", isDirectory: true)
         pendingStagingRoot = stagingRoot
@@ -814,73 +942,150 @@ nonisolated private func copyImportedFolderToAppSupport(_ sourceURL: URL, folder
             .fileSizeKey,
             .contentModificationDateKey
         ]
-        var enumerationFailed = false
+        // A single unreadable child must not discard the whole folder (Android
+        // marks the same situation PARTIAL). Keep going and let the engine
+        // keep books the partial pass could not see.
+        var sawChildError = false
+        var skippedCount = 0
+        var firstSkipDetail = ""
+        func noteSkipped(_ detail: String) {
+            skippedCount += 1
+            if firstSkipDetail.isEmpty { firstSkipDetail = String(detail.prefix(200)) }
+        }
         guard let enumerator = fileManager.enumerator(
             at: sourceURL,
             includingPropertiesForKeys: resourceKeys,
             options: [.skipsHiddenFiles, .skipsPackageDescendants],
-            errorHandler: { _, _ in
-                enumerationFailed = true
-                return false
+            errorHandler: { url, error in
+                sawChildError = true
+                let nsError = error as NSError
+                let detail = "child=\(url.lastPathComponent) domain=\(nsError.domain) code=\(nsError.code)"
+                if firstSkipDetail.isEmpty { firstSkipDetail = detail }
+                localFolderScanLogger.error("scan.child_error folder=\(name, privacy: .public) \(detail, privacy: .public)")
+                return true
             }
         ) else {
             try? fileManager.removeItem(at: stagingRoot)
-            return ImportedFolderScan(files: [], succeeded: false)
+            pendingStagingRoot = nil
+            localFolderScanLogger.error("scan.enumerator_nil folder=\(name, privacy: .public)")
+            return ImportedFolderScan(files: [], succeeded: false, status: .unavailable, detail: "enumerator_nil")
         }
 
         var imported: [ImportedReaderFile] = []
         for case let itemURL as URL in enumerator {
-            let values = try itemURL.resourceValues(forKeys: Set(resourceKeys))
-            let relativePath = itemURL.path.replacingOccurrences(
-                of: sourceURL.path + "/",
-                with: "",
-                options: [.anchored]
-            )
-            let stagingURL = stagingRoot.appendingPathComponent(relativePath)
-            let destinationURL = folderRoot.appendingPathComponent(relativePath)
-            if values.isDirectory == true {
-                try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: true)
-            } else if values.isRegularFile == true {
-                try fileManager.createDirectory(
-                    at: stagingURL.deletingLastPathComponent(),
-                    withIntermediateDirectories: true
+            do {
+                let values = try itemURL.resourceValues(forKeys: Set(resourceKeys))
+                let relativePath = itemURL.path.replacingOccurrences(
+                    of: sourceURL.path + "/",
+                    with: "",
+                    options: [.anchored]
                 )
-                try fileManager.copyItem(at: itemURL, to: stagingURL)
-                guard let contentId = sha256FileId(stagingURL) else {
-                    try? fileManager.removeItem(at: stagingURL)
-                    enumerationFailed = true
-                    break
-                }
-                imported.append(
-                    ImportedReaderFile(
-                        name: itemURL.lastPathComponent,
-                        path: destinationURL.path,
-                        contentId: contentId,
-                        relativePath: relativePath,
-                        fileSize: Int64(values.fileSize ?? 0),
-                        lastModifiedTimestamp: Int64(
-                            (values.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000
+                let stagingURL = stagingRoot.appendingPathComponent(relativePath)
+                let destinationURL = folderRoot.appendingPathComponent(relativePath)
+                if values.isDirectory == true {
+                    try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: true)
+                } else if values.isRegularFile == true {
+                    try fileManager.createDirectory(
+                        at: stagingURL.deletingLastPathComponent(),
+                        withIntermediateDirectories: true
+                    )
+                    try fileManager.copyItem(at: itemURL, to: stagingURL)
+                    guard let contentId = sha256FileId(stagingURL) else {
+                        try? fileManager.removeItem(at: stagingURL)
+                        throw FolderScanCopyError.hashFailed(relativePath)
+                    }
+                    imported.append(
+                        ImportedReaderFile(
+                            name: itemURL.lastPathComponent,
+                            path: destinationURL.path,
+                            contentId: contentId,
+                            relativePath: relativePath,
+                            fileSize: Int64(values.fileSize ?? 0),
+                            lastModifiedTimestamp: Int64(
+                                (values.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000
+                            )
                         )
                     )
-                )
+                }
+            } catch {
+                let detail: String
+                if let copyError = error as? FolderScanCopyError {
+                    detail = copyError.detail
+                } else {
+                    detail = folderScanErrorDetail(error)
+                }
+                noteSkipped(detail)
+                localFolderScanLogger.error("scan.file_skipped folder=\(name, privacy: .public) \(detail, privacy: .public)")
             }
         }
-        guard !enumerationFailed else {
-            try? fileManager.removeItem(at: stagingRoot)
-            return ImportedFolderScan(files: [], succeeded: false)
-        }
+        let isPartial = sawChildError || skippedCount > 0
+        let status: ImportedFolderScanStatus = isPartial ? .partial : .complete
+        let detail = isPartial ? "partial skipped=\(skippedCount) first=\(firstSkipDetail)" : ""
+        // Swap the staging copy into place without ever destroying the previous
+        // managed copy on failure: move the old directory aside first, so a
+        // failed second rename can restore it and "keeping the previous scan"
+        // stays true. `replaceItemAt` on a directory can remove the
+        // destination and then fail, which deleted books out from under the
+        // library rows that still reference them.
         if fileManager.fileExists(atPath: folderRoot.path) {
-            _ = try fileManager.replaceItemAt(folderRoot, withItemAt: stagingRoot)
+            let backupRoot = folderRoot.deletingLastPathComponent()
+                .appendingPathComponent(".\(folderRoot.lastPathComponent)-\(UUID().uuidString).backup", isDirectory: true)
+            do {
+                try fileManager.moveItem(at: folderRoot, to: backupRoot)
+            } catch {
+                try? fileManager.removeItem(at: stagingRoot)
+                pendingStagingRoot = nil
+                let swapDetail = "swap_backup_failed \(folderScanErrorDetail(error))"
+                localFolderScanLogger.error("scan.swap_failed folder=\(name, privacy: .public) \(swapDetail, privacy: .public)")
+                return ImportedFolderScan(files: [], succeeded: false, status: .unavailable, detail: swapDetail)
+            }
+            do {
+                try fileManager.moveItem(at: stagingRoot, to: folderRoot)
+                pendingStagingRoot = nil
+                try? fileManager.removeItem(at: backupRoot)
+            } catch {
+                let swapDetail = "swap_failed \(folderScanErrorDetail(error))"
+                if fileManager.fileExists(atPath: folderRoot.path) {
+                    try? fileManager.removeItem(at: folderRoot)
+                }
+                do {
+                    try fileManager.moveItem(at: backupRoot, to: folderRoot)
+                    try? fileManager.removeItem(at: stagingRoot)
+                    pendingStagingRoot = nil
+                    localFolderScanLogger.error("scan.swap_restored folder=\(name, privacy: .public) \(swapDetail, privacy: .public)")
+                    return ImportedFolderScan(
+                        files: [],
+                        succeeded: false,
+                        status: .unavailable,
+                        detail: "\(swapDetail) restored_previous"
+                    )
+                } catch {
+                    let restoreDetail = "\(swapDetail) restore_failed \(folderScanErrorDetail(error))"
+                    localFolderScanLogger.error("scan.swap_failed folder=\(name, privacy: .public) \(restoreDetail, privacy: .public)")
+                    return ImportedFolderScan(files: [], succeeded: false, status: .unavailable, detail: restoreDetail)
+                }
+            }
         } else {
-            try fileManager.moveItem(at: stagingRoot, to: folderRoot)
+            do {
+                try fileManager.moveItem(at: stagingRoot, to: folderRoot)
+                pendingStagingRoot = nil
+            } catch {
+                try? fileManager.removeItem(at: stagingRoot)
+                pendingStagingRoot = nil
+                let swapDetail = "first_move_failed \(folderScanErrorDetail(error))"
+                localFolderScanLogger.error("scan.swap_failed folder=\(name, privacy: .public) \(swapDetail, privacy: .public)")
+                return ImportedFolderScan(files: [], succeeded: false, status: .unavailable, detail: swapDetail)
+            }
         }
-        pendingStagingRoot = nil
-        return ImportedFolderScan(files: imported, succeeded: true)
+        localFolderScanLogger.info("scan.succeeded folder=\(name, privacy: .public) status=\(status.rawValue, privacy: .public) files=\(imported.count, privacy: .public) skipped=\(skippedCount, privacy: .public)")
+        return ImportedFolderScan(files: imported, succeeded: true, status: status, detail: detail)
     } catch {
         if let pendingStagingRoot {
             try? FileManager.default.removeItem(at: pendingStagingRoot)
         }
-        return ImportedFolderScan(files: [], succeeded: false)
+        let scanDetail = "copy_failed \(folderScanErrorDetail(error))"
+        localFolderScanLogger.error("scan.failed folder=\(name, privacy: .public) \(scanDetail, privacy: .public)")
+        return ImportedFolderScan(files: [], succeeded: false, status: .unavailable, detail: scanDetail)
     }
 }
 

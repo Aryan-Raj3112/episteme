@@ -192,6 +192,9 @@ import com.aryan.reader.shared.cloudSnapshotHasLocalUpdates
 import com.aryan.reader.shared.booksRemovedByCloudTombstones
 import com.aryan.reader.shared.mergeCloudLibrarySnapshotWithDownloadedBooks
 import com.aryan.reader.shared.enqueueMobileFolderScan
+import com.aryan.reader.shared.LOCAL_FOLDER_SCAN_LOG_TAG
+import com.aryan.reader.shared.effectiveScanStatus
+import com.aryan.reader.shared.parseLocalFolderScanStatus
 import com.aryan.reader.shared.mobileExternalFileCloseAction
 import com.aryan.reader.shared.MobileExternalOpenAction
 import com.aryan.reader.shared.mobileExternalOpenAction
@@ -741,6 +744,8 @@ class ReaderIosBridge internal constructor(
         fileSizes: List<String> = emptyList(),
         lastModifiedTimestamps: List<String> = emptyList(),
         scanSucceeded: Boolean = true,
+        scanStatusRaw: String = "COMPLETE",
+        scanDetail: String = "",
     ) {
         val imported = fileNames.mapIndexed { index, fileName ->
             IosImportedFile(
@@ -770,13 +775,21 @@ class ReaderIosBridge internal constructor(
                 lastModified = file.lastModifiedTimestamp,
             )
         }
+        val reportedStatus = parseLocalFolderScanStatus(scanStatusRaw)
         pendingFolderScans = enqueueMobileFolderScan(
             pendingFolderScans,
             SharedMobileFolderScanResult(
                 folderName = folderName,
                 files = scannedFiles,
                 succeeded = scanSucceeded,
+                scanStatus = reportedStatus,
             ),
+        )
+        IosDiagnosticLogStore.record(
+            LOCAL_FOLDER_SCAN_LOG_TAG,
+            "record folder=$folderName succeeded=$scanSucceeded " +
+                "status=$reportedStatus files=${imported.size} " +
+                "detail=${scanDetail.take(300).replace('\n', ' ')}",
         )
         latestNativeEvent = if (!scanSucceeded) {
             "Could not refresh $folderName; keeping the previous scan"
@@ -823,6 +836,16 @@ class ReaderIosBridge internal constructor(
     fun recordNativeEvent(message: String) {
         latestNativeEvent = message
         IosDiagnosticLogStore.record("ReaderIosNative", message)
+    }
+
+    /**
+     * Swift-side folder-scan pipeline logs with the shared [LOCAL_FOLDER_SCAN_LOG_TAG]
+     * so the native copy/swap stages appear in the exported diagnostics next to
+     * the Kotlin record/consume lines. Single-line messages only; the caller
+     * keeps dynamic values compact.
+     */
+    fun logFolderScanDiagnostic(message: String) {
+        IosDiagnosticLogStore.record(LOCAL_FOLDER_SCAN_LOG_TAG, message.replace('\n', ' '))
     }
 
     fun externalFileBehavior(): String = loadIosLibrarySnapshot().externalFileBehavior
@@ -4946,6 +4969,12 @@ private fun ReaderIosApp(
         }
 
         bridge.pendingFolderScans.firstOrNull()?.let { scan ->
+            val effectiveStatus = scan.effectiveScanStatus
+            IosDiagnosticLogStore.record(
+                LOCAL_FOLDER_SCAN_LOG_TAG,
+                "consume folder=${scan.folderName} succeeded=${scan.succeeded} " +
+                    "status=$effectiveStatus files=${scan.files.size}",
+            )
             if (!scan.succeeded) {
                 showMessage("Could not refresh ${scan.folderName}; keeping the previous scan")
                 bridge.consumeFolderScan()
@@ -4972,6 +5001,13 @@ private fun ReaderIosApp(
                 files = scan.files,
                 remoteMetadata = emptyMap(),
                 nowMillis = now,
+                scanStatus = effectiveStatus,
+            )
+            IosDiagnosticLogStore.record(
+                LOCAL_FOLDER_SCAN_LOG_TAG,
+                "applied folder=${scan.folderName} status=$effectiveStatus " +
+                    "new=${syncResult.stats.newBooks} updated=${syncResult.stats.updatedBooks} " +
+                    "removed=${syncResult.stats.removedBooks} migrated=${syncResult.stats.migratedBooks}",
             )
             val syncedFolder = folderForScan.copy(lastScanTime = now)
             state = syncResult.state.copy(

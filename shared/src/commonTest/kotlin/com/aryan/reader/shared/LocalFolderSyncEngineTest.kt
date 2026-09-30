@@ -317,6 +317,32 @@ class LocalFolderSyncEngineTest {
     }
 
     @Test
+    fun `unavailable folder scan keeps missing books and scan watermark`() {
+        val missing = book(id = "local_Missing.pdf", path = "C:/Library/Missing.pdf")
+        val folder = syncedFolder().copy(lastScanTime = 800L)
+        val state = SharedReaderScreenState(
+            rawLibraryBooks = listOf(missing),
+            syncedFolders = listOf(folder),
+            lastFolderScanTime = 800L
+        )
+
+        val result = LocalFolderSyncEngine.syncFolder(
+            state = state,
+            folder = folder,
+            files = emptyList(),
+            remoteMetadata = emptyMap(),
+            nowMillis = 1_000L,
+            scanStatus = LocalFolderScanStatus.UNAVAILABLE
+        )
+
+        assertEquals(listOf(missing), result.state.rawLibraryBooks)
+        assertTrue(result.removedBookIds.isEmpty())
+        assertEquals(0, result.stats.removedBooks)
+        assertEquals(800L, result.state.syncedFolders.single().lastScanTime)
+        assertEquals(800L, result.state.lastFolderScanTime)
+    }
+
+    @Test
     fun `metadata-only pass does not advance physical scan watermark`() {
         val folder = syncedFolder().copy(lastScanTime = 800L)
         val state = SharedReaderScreenState(
