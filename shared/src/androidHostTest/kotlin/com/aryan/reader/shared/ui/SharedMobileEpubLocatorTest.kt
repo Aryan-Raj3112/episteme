@@ -87,6 +87,24 @@ class SharedMobileEpubLocatorTest {
     }
 
     @Test
+    fun `mid block page start keeps intra block cfi offset`() {
+        val blocks = sharedEpubHtmlToSemanticBlocks("<p>0123456789</p>")
+        val page = ReaderPage(
+            pageIndex = 1,
+            chapterIndex = 0,
+            chapterTitle = "",
+            text = "56789",
+            startOffset = 5,
+            endOffset = 10,
+            semanticBlocks = blocks
+        )
+        val locator = page.toMobileEpubLocator(null)
+        assertEquals(5, locator.startOffset)
+        assertEquals(5, locator.charOffset)
+        assertEquals("/4/2:5", locator.cfi)
+    }
+
+    @Test
     fun `missing blocks fall back to plain text locator`() {
         val page = ReaderPage(
             pageIndex = 1,

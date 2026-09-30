@@ -313,10 +313,15 @@ private class SemanticHtmlParser(
     /**
      * Computes a structural CFI-style path from this element up to (excluding) the body element.
      *
-     * The per-parent "meaningful children" lookup is cached: every element in a chapter walks the
-     * same ancestor chain, and re-filtering each ancestor's children (previously with an
-     * allocating per-text-node whitespace normalization) made parsing quadratic on large
-     * documents and showed up in ANR traces.
+     * Android benchmark parity (app/src/main/assets/epub_reader.js
+     * getCfiPathForElement): siblings are ELEMENT nodes only, text nodes are
+     * folded into the trailing `:charOffset`. Including non-blank TextNodes
+     * here shifted every `/4/...` step vs the legacy WebView and broke
+     * cross-mode CFI resolution, so this stays element-only.
+     *
+     * The per-parent element-children lookup is cached: every element in a
+     * chapter walks the same ancestor chain, and re-filtering each ancestor's
+     * children made parsing quadratic on large documents (ANR traces).
      */
     private fun Element.getCfiPath(): String {
         val path = mutableListOf<Int>()
@@ -324,9 +329,7 @@ private class SemanticHtmlParser(
         while (currentNode != null && (currentNode !is Element || currentNode.tagName() != "body")) {
             val parent = currentNode.parent() ?: break
             val children = cfiMeaningfulChildrenCache.getOrPut(parent) {
-                parent.childNodes().filter { node ->
-                    node is Element || (node is TextNode && !node.isBlank())
-                }
+                parent.childNodes().filter { node -> node is Element }
             }
             val nodeIndex = children.indexOf(currentNode)
             if (nodeIndex == -1) {

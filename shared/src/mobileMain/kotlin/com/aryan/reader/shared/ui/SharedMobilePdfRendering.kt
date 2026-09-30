@@ -734,6 +734,13 @@ internal fun SharedMobilePdfVerticalPages(
     navigationRequestPage: Int,
     navigationRequestToken: Int,
     navigationCenterFraction: Float,
+    /**
+     * True for animated follow transitions (TTS). Vertical navigation is
+     * otherwise instant; animating every jump would visibly scroll long
+     * distances. TTS follow moves one page/highlight at a time, where an
+     * instant snap reads as jarring stutter.
+     */
+    animateNavigation: Boolean = false,
     showPageGap: Boolean,
     showPageNumberOverlay: Boolean,
     searchResults: List<SharedPdfSearchResult>,
@@ -844,7 +851,7 @@ internal fun SharedMobilePdfVerticalPages(
     // the page the reader was on. Android never re-navigates on a layout change.
     // Rotation position is owned by the orientation re-anchor below.
     val hasMeasuredViewport = viewportSize.height > 0
-    LaunchedEffect(navigationRequestToken, pageCount, hasMeasuredViewport, navigationRender.aspectRatio) {
+    LaunchedEffect(navigationRequestToken, pageCount, hasMeasuredViewport, navigationRender.aspectRatio, animateNavigation) {
         if (viewportSize.height <= 0) return@LaunchedEffect
         val target = navigationRequestPage.coerceIn(0, pageCount - 1)
         val pageHeight = (viewportSize.width / navigationRender.aspectRatio.coerceIn(0.1f, 10f)).roundToInt()
@@ -853,15 +860,22 @@ internal fun SharedMobilePdfVerticalPages(
             pageHeightPx = pageHeight,
             pageFraction = navigationCenterFraction
         )
-        // Android parity (PdfViewerScreen verticalReaderState.scrollToPage):
-        // vertical-scroll navigation is ALWAYS instant, for every navigation
-        // reason — page turns, TOC, search, slider, TTS and links all snap.
-        // Only pagination animates (see animatesPagination()). The previous
-        // animateScrollToItem made long jumps visibly scroll the whole way.
-        listState.scrollToItem(
-            index = target,
-            scrollOffset = centeredOffset
-        )
+        // Vertical-scroll navigation is instant except for TTS follow:
+        // paginated TTS already animates (animatesPagination), and an
+        // instant snap on every chunk change reads as jarring stutter.
+        // Long non-TTS jumps stay instant so they don't visibly scroll the
+        // whole way.
+        if (animateNavigation) {
+            listState.animateScrollToItem(
+                index = target,
+                scrollOffset = centeredOffset
+            )
+        } else {
+            listState.scrollToItem(
+                index = target,
+                scrollOffset = centeredOffset
+            )
+        }
     }
     LaunchedEffect(listState, pageCount) {
         snapshotFlow {
@@ -981,7 +995,10 @@ internal fun SharedMobilePdfVerticalPages(
                         focusedSearchResult = searchResults.getOrNull(state.activeSearchResultIndex)
                             ?.takeIf { it.pageIndex == pdfPage },
                         searchHighlightMode = state.searchHighlightMode,
-                        ttsHighlights = if (ttsPageIndex == pdfPage && !zoomCamera.isZoomed()) ttsHighlightBounds else emptyList(),
+                        // TTS highlight stays visible while zoomed (Android
+                        // parity): suppressing it made speech appear
+                        // un-highlighted the moment the user pinched in.
+                        ttsHighlights = if (ttsPageIndex == pdfPage) ttsHighlightBounds else emptyList(),
                         annotations = state.annotations.filter { it.pageIndex == pdfPage },
                         activeStroke = activeStroke,
                         customFontFamilies = customFontFamilies,
@@ -1556,7 +1573,8 @@ internal fun SharedMobilePdfPaginatedPages(
                                     focusedSearchResult = searchResults.getOrNull(state.activeSearchResultIndex)
                                         ?.takeIf { it.pageIndex == pdfPage },
                                     searchHighlightMode = state.searchHighlightMode,
-                                    ttsHighlights = if (ttsPageIndex == pdfPage && !activeZoomCamera.isZoomed()) ttsHighlightBounds else emptyList(),
+                                    // Same zoom parity as the vertical list above.
+                                    ttsHighlights = if (ttsPageIndex == pdfPage) ttsHighlightBounds else emptyList(),
                                     annotations = state.annotations.filter { it.pageIndex == pdfPage },
                                     activeStroke = activeStroke,
                                     customFontFamilies = customFontFamilies,

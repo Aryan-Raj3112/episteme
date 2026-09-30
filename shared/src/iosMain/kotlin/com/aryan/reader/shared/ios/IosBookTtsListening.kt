@@ -747,16 +747,27 @@ internal class IosBookTtsListeningController {
                                 "elapsed=${currentTimestamp() - startedAt}ms"
                         )
                     }
+                    // Shared-first parity: no `headless/...` CFIs. Emit the
+                    // stable `desktop:chapter:start:end` form with real
+                    // plain-text offsets so Listen progress is resumable in
+                    // the reader (ReaderTtsPlanner falls back to
+                    // offset/text matching for desktop anchors).
+                    val plainText = chapter.plainText
+                    var searchFrom = 0
                     IosTtsListenChapter(
                         index = index,
                         id = chapter.id,
                         title = chapter.title.ifBlank { "Chapter ${index + 1}" },
-                        chunks = splitSharedTtsListenChunks(chapter.plainText).mapIndexed { chunkIndex, text ->
+                        chunks = splitSharedTtsListenChunks(plainText).map { text ->
+                            val offset = plainText.indexOf(text, startIndex = searchFrom)
+                                .takeIf { it >= 0 } ?: searchFrom
+                            searchFrom = (offset + text.length).coerceAtMost(plainText.length)
+                            val end = (offset + text.length).coerceAtMost(plainText.length)
                             IosTtsListenChunk(
                                 text = text,
                                 spokenText = ReaderTtsReplacementEngine.apply(text, replacements, book.id).text,
-                                sourceCfi = "headless/$index/$chunkIndex",
-                                startOffsetInSource = 0,
+                                sourceCfi = "desktop:$index:$offset:$end",
+                                startOffsetInSource = offset,
                             )
                         },
                     )
@@ -783,12 +794,20 @@ internal class IosBookTtsListeningController {
         )
         iosTtsListenLog("buildIosEpubListenChapters spineDocs=${spineChapters.size} path=$path")
         return spineChapters.mapIndexed { index, spineChapter ->
-            val chunks = splitSharedTtsListenChunks(spineChapter.plainText).mapIndexed { chunkIndex, text ->
+            // Same stable-CFI contract as the shared-book path above: real
+            // offsets, no `headless/...`, so progress survives into the reader.
+            val plainText = spineChapter.plainText
+            var searchFrom = 0
+            val chunks = splitSharedTtsListenChunks(plainText).map { text ->
+                val offset = plainText.indexOf(text, startIndex = searchFrom)
+                    .takeIf { it >= 0 } ?: searchFrom
+                searchFrom = (offset + text.length).coerceAtMost(plainText.length)
+                val end = (offset + text.length).coerceAtMost(plainText.length)
                 IosTtsListenChunk(
                     text = text,
                     spokenText = ReaderTtsReplacementEngine.apply(text, replacements, book.id).text,
-                    sourceCfi = "headless/$index/$chunkIndex",
-                    startOffsetInSource = 0,
+                    sourceCfi = "desktop:$index:$offset:$end",
+                    startOffsetInSource = offset,
                 )
             }
             IosTtsListenChapter(
@@ -818,11 +837,12 @@ internal class IosBookTtsListeningController {
                 val offset = normalized.indexOf(chunkText, startIndex = searchFrom)
                     .takeIf { it >= 0 }
                     ?: searchFrom
-                searchFrom = offset + chunkText.length
+                searchFrom = (offset + chunkText.length).coerceAtMost(normalized.length)
+                val end = (offset + chunkText.length).coerceAtMost(normalized.length)
                 IosTtsListenChunk(
                     text = chunkText,
                     spokenText = ReaderTtsReplacementEngine.apply(chunkText, replacements, book.id).text,
-                    sourceCfi = "pdf-page:$pageIndex",
+                    sourceCfi = "pdf-page:$pageIndex:$offset:$end",
                     startOffsetInSource = offset,
                 )
             }

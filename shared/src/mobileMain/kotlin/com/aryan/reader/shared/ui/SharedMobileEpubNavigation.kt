@@ -617,14 +617,29 @@ internal fun sharedMobileEpubActiveTocScript(book: SharedEpubBook, chapterIndex:
 
 internal fun ReaderPage.toMobileEpubLocator(book: SharedEpubBook?): ReaderLocator {
     val chapter = book?.chapters?.getOrNull(chapterIndex)
-    val textBlock = semanticBlocks
+    // Android benchmark (LocatorConverter.getCfiFromLocator +
+    // semanticCfiForBlock): the CFI keeps the intra-block offset of the page
+    // start, not a constant `:0`. Emitting `:0` collapsed every page that
+    // starts mid-block onto the block head, which read as inaccurate resume /
+    // TTS / highlight positions vs Android.
+    val textBlocks = semanticBlocks
         .flatMap { it.flattenForLocator() }
         .filterIsInstance<SemanticTextBlock>()
-        .firstOrNull { it.text.isNotBlank() }
-    val localCharOffset = 0
-    val androidStyleCfi = textBlock?.cfi
-        ?.takeIf { it.startsWith("/") }
-        ?.let { "$it:$localCharOffset" }
+        .filter { it.text.isNotBlank() }
+    val textBlock = textBlocks.firstOrNull { block ->
+        val end = block.startCharOffsetInSource + block.text.length
+        end > startOffset
+    } ?: textBlocks.firstOrNull()
+    val androidStyleCfi = textBlock?.let { block ->
+        val base = block.cfi?.takeIf { it.startsWith("/") } ?: return@let null
+        // Keep the explicit `:offset` suffix (including `:0`) so emitted
+        // locators stay byte-stable with previously persisted CFIs; the
+        // value now carries the real intra-block offset instead of a
+        // constant 0.
+        val local = (startOffset - block.startCharOffsetInSource)
+            .coerceIn(0, block.text.length)
+        "$base:$local"
+    }
     return ReaderLocator(
         chapterIndex = chapterIndex,
         chapterId = chapter?.id,
@@ -634,7 +649,9 @@ internal fun ReaderPage.toMobileEpubLocator(book: SharedEpubBook?): ReaderLocato
         endOffset = startOffset,
         textQuote = text.take(120),
         blockIndex = textBlock?.blockIndex,
-        charOffset = textBlock?.startCharOffsetInSource,
+        // Null when no semantic block backs the page (plain-text fallback);
+        // otherwise the absolute page-start offset (Android Locator parity).
+        charOffset = textBlock?.let { startOffset },
         cfi = androidStyleCfi
     )
 }

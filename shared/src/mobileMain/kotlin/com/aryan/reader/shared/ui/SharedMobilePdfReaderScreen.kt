@@ -954,6 +954,17 @@ fun SharedMobilePdfReaderHost(
     var pendingTtsStartAtLastChunk by remember(readerSessionKey) { mutableStateOf(false) }
     var pendingTtsPlayWhenReady by remember(readerSessionKey) { mutableStateOf(true) }
     var ttsHighlightBounds by remember(readerSessionKey) { mutableStateOf<List<PdfPageBounds>>(emptyList()) }
+    // Clean->raw mapping for the active TTS page (Android indexMap parity).
+    // Chunk offsets are clean-text offsets; highlight must map them back
+    // through this before `rectsForRangeNormalized`, else highlights land on
+    // the wrong glyphs / vanish on hyphenated pages.
+    var ttsProcessed by remember(readerSessionKey) {
+        mutableStateOf<com.aryan.reader.shared.pdf.PdfProcessedText?>(null)
+    }
+    // True when the queued `pendingTtsStart` belongs to a cloud start that is
+    // waiting on the async text session (see toggleCloudTts). Local starts
+    // via requestTts always use the local engine.
+    var pendingTtsCloud by remember(readerSessionKey) { mutableStateOf(false) }
     var lastTtsCompletionCount by remember(readerSessionKey) { mutableStateOf(pdfTts.completionCount) }
     var hasOwnedTts by remember(readerSessionKey) { mutableStateOf(false) }
     LaunchedEffect(readerSessionKey, ownsTts) {
@@ -967,7 +978,9 @@ fun SharedMobilePdfReaderHost(
             hasOwnedTts = false
             pendingTtsStart = null
             pendingTtsStartAtLastChunk = false
+            pendingTtsCloud = false
             ttsHighlightBounds = emptyList()
+            ttsProcessed = null
         }
     }
     val ttsTextSession = rememberPdfTextPageSession(book, ttsPageIndex, pdfPassword)
@@ -1260,7 +1273,9 @@ fun SharedMobilePdfReaderHost(
         if (ownsTts) cloudTts?.stop()
         pendingTtsStart = null
         pendingTtsStartAtLastChunk = false
+        pendingTtsCloud = false
         ttsHighlightBounds = emptyList()
+        ttsProcessed = null
     }
 
     fun dispatchNativePdfAction(
@@ -1366,15 +1381,26 @@ fun SharedMobilePdfReaderHost(
         }
     }
 
+    /**
+     * Starts local PDF TTS.
+     *
+     * A null [pageIndex] means "the most visible page" (center-based
+     * `currentPdfHistoryPage()`), not the last committed `readerState.pageIndex`
+     * which lags while scrolling. Toolbar TTS passes null; selection TTS
+     * passes an explicit display page + raw Pdfium char index. [startCharIndex]
+     * is a RAW Pdfium index and is mapped to clean speech text inside
+     * `pageFromRawPdfium` (Android `indexMap` parity).
+     */
     fun requestTts(
-        pageIndex: Int = readerState.pageIndex,
+        pageIndex: Int? = null,
         startCharIndex: Int = 0,
         startAtLastChunk: Boolean = false,
         playWhenReady: Boolean = true
     ) {
         if (!ownsTts) return
         cloudTts?.stop()
-        val target = pageIndex.coerceIn(0, (displayPageCount - 1).coerceAtLeast(0))
+        val target = (pageIndex ?: currentPdfHistoryPage())
+            .coerceIn(0, (displayPageCount - 1).coerceAtLeast(0))
         pdfTts.prepare()
         ttsPageIndex = sharedPdfPdfPageIndexAt(virtualLayout, target)
             ?: sharedPdfNearestPdfPageIndex(virtualLayout, target)
@@ -1392,10 +1418,31 @@ fun SharedMobilePdfReaderHost(
             cloudTtsState.isPlaying || cloudTtsState.isLoading -> controller.pause()
             cloudTtsState.isPaused -> controller.resume()
             else -> {
-                val session = ttsTextSession ?: return
+                // Cloud starts from the most visible page too (not the stale
+                // committed page), honoring a pending selection start when
+                // one was just requested.
+                val targetDisplay = currentPdfHistoryPage()
+                    .coerceIn(0, (displayPageCount - 1).coerceAtLeast(0))
+                val targetPdf = sharedPdfPdfPageIndexAt(virtualLayout, targetDisplay)
+                    ?: sharedPdfNearestPdfPageIndex(virtualLayout, targetDisplay)
+                    ?: targetDisplay.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+                val session = ttsTextSession?.takeIf { ttsPageIndex == targetPdf }
+                ttsPageIndex = targetPdf
+                navigateToPage(targetDisplay, recordHistory = false, reason = PdfNavigationReason.TTS)
+                if (session == null) {
+                    // Text session for the new page loads async; queue the
+                    // cloud start behind it like the local path.
+                    pendingTtsStart = pendingTtsStart ?: 0
+                    pendingTtsStartAtLastChunk = false
+                    pendingTtsCloud = true
+                    return
+                }
                 pdfTts.stop()
-                val source = session.textForRange(0, session.pageCharCount).orEmpty()
-                val planned = PdfTtsSessionPlanner.page(ttsPageIndex, source, 0)
+                val raw = session.textForRange(0, session.pageCharCount).orEmpty()
+                val rawStart = pendingTtsStart ?: 0
+                pendingTtsStart = null
+                val planned = PdfTtsSessionPlanner.pageFromRawPdfium(targetPdf, raw, rawStart)
+                ttsProcessed = planned.processed
                 if (planned.chunks.isNotEmpty()) {
                     controller.start(planned.chunks, pdfCardTitle, book.id)
                 }
@@ -2184,20 +2231,34 @@ fun SharedMobilePdfReaderHost(
         if (!ownsTts) return@LaunchedEffect
         val start = pendingTtsStart ?: return@LaunchedEffect
         val session = ttsTextSession ?: return@LaunchedEffect
-        val source = session.textForRange(0, session.pageCharCount).orEmpty()
-        val planned = PdfTtsSessionPlanner.page(ttsPageIndex, source, start)
+        // Raw Pdfium text + raw start index; planning normalizes and maps
+        // via indexMap (Android parity). Never plan on raw text directly.
+        val raw = session.textForRange(0, session.pageCharCount).orEmpty()
+        val planned = PdfTtsSessionPlanner.pageFromRawPdfium(ttsPageIndex, raw, start)
         if (planned.chunks.isEmpty()) {
             val next = PdfTtsSessionPlanner.nextPage(ttsPageIndex, pageCount)
             if (next == null) {
                 pendingTtsStart = null
+                pendingTtsCloud = false
+                ttsProcessed = null
                 pdfTts.stop()
             } else {
                 ttsPageIndex = next
                 pendingTtsStart = 0
+                // Keep the queued engine (cloud vs local) across the skip.
                 navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, next), recordHistory = false, reason = PdfNavigationReason.TTS)
             }
+        } else if (pendingTtsCloud && cloudTts != null) {
+            pendingTtsStart = null
+            pendingTtsStartAtLastChunk = false
+            pendingTtsCloud = false
+            ttsProcessed = planned.processed
+            pdfTts.stop()
+            cloudTts.start(planned.chunks, pdfCardTitle, book.id)
         } else {
             pendingTtsStart = null
+            pendingTtsCloud = false
+            ttsProcessed = planned.processed
             pdfTts.start(
                 chunks = planned.chunks,
                 bookTitle = pdfCardTitle,
@@ -2209,16 +2270,22 @@ fun SharedMobilePdfReaderHost(
         }
     }
 
-    LaunchedEffect(readerSessionKey, pdfTts.progress.currentChunk, ttsTextSession, ttsPageIndex, ownsTts) {
+    LaunchedEffect(readerSessionKey, pdfTts.progress.currentChunk, ttsTextSession, ttsPageIndex, ttsProcessed, ownsTts) {
         if (!ownsTts) return@LaunchedEffect
         val session = ttsTextSession
-        val range = PdfTtsSessionPlanner.highlightRange(pdfTts.progress.currentChunk, session?.pageCharCount ?: 0)
+        // Chunk offsets are clean-text offsets; map back to raw Pdfium via
+        // the stored indexMap (Android parity). Without this the highlight
+        // rects miss on hyphenated / newline-heavy pages.
+        val range = PdfTtsSessionPlanner.rawHighlightRange(ttsProcessed, pdfTts.progress.currentChunk)
+            ?: PdfTtsSessionPlanner.highlightRange(pdfTts.progress.currentChunk, session?.pageCharCount ?: 0)
         ttsHighlightBounds = if (session != null && range != null) {
             session.rectsForRangeNormalized(range.start, range.length)
         } else {
             emptyList()
         }
         if (range != null) {
+            // Animated TTS follow (see vertical animateNavigation): an
+            // instant snap on every chunk change reads as jarring stutter.
             navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, ttsPageIndex), recordHistory = false, centerFraction = ttsHighlightBounds.centerYFraction(), reason = PdfNavigationReason.TTS)
         }
     }
@@ -2230,12 +2297,14 @@ fun SharedMobilePdfReaderHost(
         val next = PdfTtsSessionPlanner.nextPage(ttsPageIndex, pageCount)
         if (next != null) {
             ttsPageIndex = next
+            ttsProcessed = null
             navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, next), recordHistory = false, reason = PdfNavigationReason.TTS)
             val prefetched = prefetchedTtsTextSession.takeIf { prefetchedTtsPageIndex == next }
-            val source = prefetched?.textForRange(0, prefetched.pageCharCount).orEmpty()
-            val planned = PdfTtsSessionPlanner.page(next, source)
+            val raw = prefetched?.textForRange(0, prefetched.pageCharCount).orEmpty()
+            val planned = PdfTtsSessionPlanner.pageFromRawPdfium(next, raw, 0)
             if (planned.chunks.isNotEmpty()) {
                 pendingTtsStart = null
+                ttsProcessed = planned.processed
                 pdfTts.start(planned.chunks, pdfCardTitle, bookId = book.id)
             } else {
                 pendingTtsStart = 0
@@ -2243,6 +2312,7 @@ fun SharedMobilePdfReaderHost(
         } else {
             pdfTts.stop()
             ttsHighlightBounds = emptyList()
+            ttsProcessed = null
         }
     }
 
@@ -2714,6 +2784,10 @@ fun SharedMobilePdfReaderHost(
                         navigationRequestPage = navigationRequestPage,
                         navigationRequestToken = navigationRequestToken,
                         navigationCenterFraction = navigationCenterFraction,
+                        // TTS follow animates in vertical mode too (paginated
+                        // already animates via animatesPagination); instant
+                        // snaps on every chunk read as jarring stutter.
+                        animateNavigation = navigationReason == PdfNavigationReason.TTS,
                         showPageGap = showVerticalPageGap,
                         showPageNumberOverlay = showPageNumberOverlay,
                         searchResults = searchResults,
@@ -3075,7 +3149,9 @@ fun SharedMobilePdfReaderHost(
                             if (ownsTts) pdfTts.stop()
                             pendingTtsStart = null
                             pendingTtsStartAtLastChunk = false
+                            pendingTtsCloud = false
                             ttsHighlightBounds = emptyList()
+                            ttsProcessed = null
                         },
                         overlaySize = ttsOverlaySize,
                         onOverlaySizeChange = {
@@ -4734,8 +4810,11 @@ fun SharedMobilePdfReaderHost(
                     noteAnnotationId = null
                 },
                 onReadAloud = {
+                    // Annotations are keyed by PDF page; requestTts takes a
+                    // display page, so map once here (not inside requestTts).
                     requestTts(
-                        pageIndex = annotation.pageIndex,
+                        pageIndex = sharedPdfDisplayIndexFor(virtualLayout, annotation.pageIndex)
+                            ?: annotation.pageIndex,
                         startCharIndex = annotation.rangeStartIndex ?: 0,
                     )
                     noteAnnotationId = null
