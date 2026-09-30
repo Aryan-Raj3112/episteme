@@ -48,6 +48,25 @@ fun cloudKitSplitLibraryRecordName(recordName: String): CloudKitLibraryRecordRef
     )
 }
 
+/**
+ * Whether [id] can be used as part of a CloudKit record name.
+ *
+ * Record names may not contain '/' and must be stable on every device, so a
+ * device-local absolute path is doubly invalid: rejected by CloudKit, and
+ * different on every install. Android derives the book id from a content hash
+ * (`FileHasher.calculateSha256`) and gates on a non-null cloud filename; iOS
+ * reaches the same name via `stableImportId`, which falls back to `localPath`
+ * when a caller omits the id. This predicate lets the data plane refuse such a
+ * book up front and say so, instead of letting the server reject a malformed
+ * name on every single pass.
+ */
+fun isValidCloudKitLibraryId(id: String): Boolean {
+    val trimmed = id.trim()
+    return trimmed.isNotEmpty() &&
+        trimmed.length <= 255 &&
+        trimmed.none { it == '/' || it == ':' || it.isISOControl() }
+}
+
 fun cloudKitBookStateRecordName(bookId: String): String =
     cloudKitLibraryRecordName(CLOUDKIT_RECORD_BOOK_STATE, bookId)
 

@@ -189,6 +189,7 @@ import com.aryan.reader.shared.canOpenMobilePdfTab
 import com.aryan.reader.shared.canUseCloudSync
 import com.aryan.reader.shared.cloudSyncSetupRoute
 import com.aryan.reader.shared.cloudSnapshotHasLocalUpdates
+import com.aryan.reader.shared.booksRemovedByCloudTombstones
 import com.aryan.reader.shared.mergeCloudLibrarySnapshotWithDownloadedBooks
 import com.aryan.reader.shared.enqueueMobileFolderScan
 import com.aryan.reader.shared.mobileExternalFileCloseAction
@@ -963,6 +964,83 @@ class ReaderIosBridge internal constructor(
         importedFiles = importedFiles.filterNot { it.path in filePaths }
         persistImportedFiles(importedFiles)
         latestNativeEvent = "Removed ${filePaths.size} file(s) from iOS library"
+    }
+
+    /**
+     * Deletes every local artifact that belongs to a book that is going away.
+     *
+     * Android parity: `RecentFilesRepository.deleteFilePermanently` runs
+     * `bookImporter.deleteBookByUriString` and then
+     * `cleanupLocalBookArtifacts`, which drops the cached cover, all six PDF
+     * sidecar files, the PDF text cache and the pagination cache. iOS only
+     * dropped the library row, so the bytes under `Imports/`, the cover under
+     * `Covers/` and the `PdfSidecars/` file all survived a delete. That is not
+     * cosmetic: a later re-import of the same file resolves to the same
+     * content-hash id and silently re-adopts the orphan, so the book the user
+     * deleted on device A quietly comes back on device B.
+     *
+     * Only paths inside `Imports/` are removed. Books can still reference a file
+     * under `Documents/` (older installs, external files the user owns), and
+     * deleting those would destroy a file the app does not own. Skipped paths
+     * are reported in the log rather than silently orphaned.
+     */
+    fun purgeDeletedBookArtifacts(
+        bookIds: List<String>,
+        bookPaths: List<String>,
+        coverPaths: List<String>,
+        notifyNativeEvent: Boolean = false,
+    ): Int {
+        if (bookIds.isEmpty() && bookPaths.isEmpty() && coverPaths.isEmpty()) return 0
+        val importsRoot = iosImportsDirectoryPath()?.canonicalIosFilePath()
+        val coversRoot = iosCoversDirectoryPath()?.canonicalIosFilePath()
+        var removedFiles = 0
+        val skipped = mutableListOf<String>()
+
+        bookPaths.forEach { path ->
+            val canonicalPath = path.canonicalIosFilePath()
+            if (importsRoot != null && canonicalPath.startsWith("$importsRoot/")) {
+                if (NSFileManager.defaultManager.fileExistsAtPath(canonicalPath)) {
+                    val ok = runCatching {
+                        NSFileManager.defaultManager.removeItemAtPath(canonicalPath, error = null)
+                    }.isSuccess
+                    if (ok) removedFiles++
+                }
+            } else {
+                skipped += canonicalPath
+            }
+        }
+
+        coverPaths.forEach { path ->
+            val canonicalPath = path.canonicalIosFilePath()
+            if (coversRoot != null && canonicalPath.startsWith("$coversRoot/")) {
+                runCatching {
+                    NSFileManager.defaultManager.removeItemAtPath(canonicalPath, error = null)
+                }
+            }
+        }
+
+        bookIds.forEach { bookId ->
+            IosPdfCloudSidecarStore.delete(bookId)
+            NSUserDefaults.standardUserDefaults.removeObjectForKey(
+                IosPdfReaderSidecarTimestampDefaultsPrefix + bookId.normalizedId(),
+            )
+        }
+
+        if (bookPaths.isNotEmpty()) {
+            importedFiles = importedFiles.filterNot { it.path in bookPaths }
+            persistImportedFiles(importedFiles)
+        }
+
+        IosDiagnosticLogStore.record(
+            "CloudKitSync",
+            "delete_purge ids=${bookIds.joinToString(",")} files=$removedFiles " +
+                "covers=${coverPaths.size} sidecars=${bookIds.size}" +
+                if (skipped.isEmpty()) "" else " skippedOutsideImports=${skipped.size}",
+        )
+        if (notifyNativeEvent) {
+            latestNativeEvent = "Removed ${bookIds.size} book(s) from iOS library"
+        }
+        return removedFiles
     }
 
     fun setFolderFileDeletionHandler(handler: (String, List<String>) -> Unit) {
@@ -4663,6 +4741,25 @@ private fun ReaderIosApp(
                 ).copy(bookmarks = bookmarks),
             )
         }
+        // A remote tombstone that wins the LWW race must take the local bytes
+        // with it. Android does that: a remote `isDeleted` doc newer than local
+        // runs `bookStore.deleteFilePermanently(bookId)`, which deletes the file
+        // and every local artifact (cover, PDF sidecars, caches). iOS used to
+        // rebuild the snapshot only, so the row disappeared while the file,
+        // cover and sidecar stayed on disk. Because import identity is the file
+        // content hash, re-importing the same book then matched the orphaned
+        // file and the "deleted" book silently came back.
+        val booksRemovedByTombstone = booksRemovedByCloudTombstones(
+            local = localSnapshot,
+            merged = mergedSnapshot,
+        )
+        if (booksRemovedByTombstone.isNotEmpty()) {
+            bridge.purgeDeletedBookArtifacts(
+                bookIds = booksRemovedByTombstone.map { it.id },
+                bookPaths = booksRemovedByTombstone.mapNotNull { it.path },
+                coverPaths = booksRemovedByTombstone.mapNotNull { it.coverImagePath },
+            )
+        }
         val mergedPdfSidecars = mergedSnapshot.pdfSidecars
         if (mergedPdfSidecars.isNotEmpty()) {
             scope.launch(Dispatchers.Default) {
@@ -4795,7 +4892,21 @@ private fun ReaderIosApp(
                         uriString = null,
                         localPath = file.path,
                         size = file.fileSize,
-                        id = file.contentId.takeIf(String::isNotBlank),
+                        // Identity order mirrors Android (`addFileToRecent` uses the
+                        // SHA-256 content hash, which is also the CloudKit record
+                        // name): a catalog-supplied content id, then the file's own
+                        // content hash, and only then a path-derived fallback.
+                        //
+                        // Never leave this null. SharedImportPlanner.stableImportId
+                        // falls back to localPath, and a device-local absolute path
+                        // becomes the CloudKit record name: it contains '/', it embeds
+                        // this device's UDID and app-container GUID, and it differs
+                        // between a device that imported the book and one that
+                        // downloaded it. That is what made one book sync as two
+                        // records and materialize as two files.
+                        id = file.contentId.takeIf { it.isNotBlank() }
+                            ?: iosFileContentSha256Hex(file.path)
+                            ?: "ios_import_${file.path.stableIosImportedFilePath().normalizedId()}",
                     )
                 },
                 existingBookIds = state.rawLibraryBooks.mapTo(mutableSetOf()) { it.id },
@@ -4949,13 +5060,19 @@ private fun ReaderIosApp(
                 )
         }
         .map { it.id }
-    // Key on emptiness so a mid-loop state update (which shrinks the list)
-    // does not cancel the coroutine; the loop re-reads the pending set each
-    // iteration, so newly downloaded books get picked up too. Books whose
-    // extraction yields nothing usable are tracked in `attempted` so they
-    // cannot re-match and spin forever.
-    LaunchedEffect(pendingPresentationIds.isNotEmpty()) {
-        val attempted = mutableSetOf<String>()
+    // Key on the pending id set, not on its emptiness. Keying on a boolean meant
+    // the effect only ran on the empty -> non-empty edge, so a book that arrived
+    // from a CloudKit pull while other books were still pending never started
+    // extraction: covers showed up only after opening the book. The `attempted`
+    // set is hoisted so a relaunch resumes with the work already done instead of
+    // re-extracting it, which is what previously made a mid-loop state update
+    // (which shrinks the list) cancel the coroutine.
+    // Plain remembered set, not snapshot state: it is only read and written
+    // inside the effect, and mutating a `mutableStateOf` collection in place
+    // is not safe to read from a coroutine.
+    val presentationAttempted = remember { mutableSetOf<String>() }
+    LaunchedEffect(pendingPresentationIds) {
+        val attempted = presentationAttempted
         while (true) {
             val book = state.rawLibraryBooks.firstOrNull { candidate ->
                 candidate.id !in attempted &&
@@ -6784,15 +6901,35 @@ private fun ReaderIosApp(
                                 },
                                 onDeleteBooks = { bookIds ->
                                     val removedBooks = state.rawLibraryBooks.filter { it.id in bookIds }
-                                    removedBooks.filter { it.sourceFolder == null }
-                                        .mapNotNull { it.path }
-                                        .let(bridge::removeImportedFiles)
+                                    val cloudRemoved = removedBooks.filter { it.sourceFolder == null }
+                                    // Purges the file, the cached cover and the PDF
+                                    // sidecar together, matching Android's
+                                    // cleanupLocalBookArtifacts instead of leaving
+                                    // the cover and sidecar behind.
+                                    bridge.purgeDeletedBookArtifacts(
+                                        bookIds = cloudRemoved.map { it.id },
+                                        bookPaths = cloudRemoved.mapNotNull { it.path },
+                                        coverPaths = cloudRemoved.mapNotNull { it.coverImagePath },
+                                        notifyNativeEvent = true,
+                                    )
                                     removedBooks.filter { it.sourceFolder != null }
                                         .groupBy { it.sourceFolder.orEmpty() }
                                         .forEach { (folder, books) ->
                                             bridge.removeFolderManagedFiles(folder, books.mapNotNull { it.path })
                                         }
-                                    state = state.removeIosBooks(bookIds, recordCloudDeletion = true)
+                                    val next = state.removeIosBooks(bookIds, recordCloudDeletion = true)
+                                    state = next
+                                    // Android writes the delete intent durably
+                                    // *before* the local delete
+                                    // (MainViewModel:8909) and lets
+                                    // CloudBookDeleteWorker publish the tombstone.
+                                    // Persisting here closes the 500 ms debounce
+                                    // window where a kill would lose the
+                                    // tombstone, and requesting a sync means the
+                                    // delete reaches the other device now instead
+                                    // of waiting for an unrelated trigger.
+                                    persistIosLibrarySnapshot(next)
+                                    requestCloudSyncIfEligible()
                                 },
                                 onDeleteShelves = { shelfIds ->
                                     SharedLibraryEditor.deleteShelvesInState(state, shelfIds)
@@ -7034,15 +7171,22 @@ private fun ReaderIosApp(
 
                                     override fun deleteBooks(bookIds: Set<String>) {
                                         val removedBooks = state.rawLibraryBooks.filter { it.id in bookIds }
-                                        removedBooks.filter { it.sourceFolder == null }
-                                            .mapNotNull { it.path }
-                                            .let(bridge::removeImportedFiles)
+                                        val cloudRemoved = removedBooks.filter { it.sourceFolder == null }
+                                        bridge.purgeDeletedBookArtifacts(
+                                            bookIds = cloudRemoved.map { it.id },
+                                            bookPaths = cloudRemoved.mapNotNull { it.path },
+                                            coverPaths = cloudRemoved.mapNotNull { it.coverImagePath },
+                                            notifyNativeEvent = true,
+                                        )
                                         removedBooks.filter { it.sourceFolder != null }
                                             .groupBy { it.sourceFolder.orEmpty() }
                                             .forEach { (folder, books) ->
                                                 bridge.removeFolderManagedFiles(folder, books.mapNotNull { it.path })
                                             }
-                                        state = state.removeIosBooks(bookIds, recordCloudDeletion = true)
+                                        val next = state.removeIosBooks(bookIds, recordCloudDeletion = true)
+                                        state = next
+                                        persistIosLibrarySnapshot(next)
+                                        requestCloudSyncIfEligible()
                                     }
                                 },
                                 onCreateShelf = { name -> state = state.createIosShelf(name, emptySet()) },
@@ -9407,7 +9551,11 @@ private fun List<IosImportedFile>.toImportedBooks(existingBooks: List<BookItem>)
                 localPath = file.path,
                 size = 0L,
                 sourceFolder = file.sourceFolder.takeIf { it.isNotBlank() },
+                // Content hash before the path fallback, for the same reason as the
+                // other import site: the id is the CloudKit record name and must be
+                // identical on every device for the same bytes.
                 id = file.contentId.takeIf { it.isNotBlank() }
+                    ?: iosFileContentSha256Hex(file.path)
                     ?: "ios_import_${file.path.stableIosImportedFilePath().normalizedId()}",
             )
         },

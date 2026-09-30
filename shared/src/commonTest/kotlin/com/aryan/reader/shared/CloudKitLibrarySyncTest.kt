@@ -124,6 +124,36 @@ class CloudKitLibrarySyncTest {
     }
 
     @Test
+    fun `a device local path is rejected as a cloud record id`() {
+        // Regression: a catalog import left the id null, so
+        // SharedImportPlanner.stableImportId fell back to localPath and the
+        // CloudKit record name became this device's absolute path. It contains
+        // '/' (rejected by CloudKit) and embeds the UDID plus the app-container
+        // GUID, so the same book could never match on another device.
+        assertFalse(isValidCloudKitLibraryId("/Users/aryan/Documents/Pride_and_Prejudice.epub"))
+        assertFalse(
+            isValidCloudKitLibraryId(
+                "/Users/aryan/Library/Developer/CoreSimulator/Devices/" +
+                    "A8975043/data/Containers/Data/Application/AF01/Documents/book.epub"
+            )
+        )
+    }
+
+    @Test
+    fun `stable portable ids are accepted as cloud record ids`() {
+        for (id in listOf(
+            "ios_import_pride_and_prejudice_epub",
+            "3f2a1b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c",
+            "abc-123_XYZ.9",
+        )) {
+            assertTrue(isValidCloudKitLibraryId(id), id)
+        }
+        assertFalse(isValidCloudKitLibraryId(""))
+        assertFalse(isValidCloudKitLibraryId("   "))
+        assertFalse(isValidCloudKitLibraryId("a:b"))
+    }
+
+    @Test
     fun `record name split rejects malformed names`() {
         assertNull(cloudKitSplitLibraryRecordName("BookState"))
         assertNull(cloudKitSplitLibraryRecordName("BookState:"))

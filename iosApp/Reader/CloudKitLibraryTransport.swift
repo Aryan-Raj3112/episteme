@@ -35,6 +35,19 @@ final class CloudKitLibraryTransport {
         case retryAfter(TimeInterval)
         case transient(String)
         case deterministic(String)
+
+        /// The associated reason, which `localizedDescription` otherwise drops.
+        /// Without it a thrown `TransportError` reaches the log as "The
+        /// operation couldn't be completed. (…TransportError error 2.)", which is
+        /// how a CloudKit asset failure looked like an unexplained retry loop.
+        var reason: String {
+            switch self {
+            case .unavailable(let detail): return "unavailable: \(detail)"
+            case .retryAfter(let seconds): return "retryAfter: \(seconds)s"
+            case .transient(let detail): return "transient: \(detail)"
+            case .deterministic(let detail): return "deterministic: \(detail)"
+            }
+        }
     }
 
     static let zoneName = "LibraryZone"
@@ -302,6 +315,16 @@ final class CloudKitLibraryTransport {
     /// multi-book pull does one round trip instead of one per book. Maps each
     /// requested id to its materialised asset URL; missing/failed records are
     /// simply absent from the result.
+    /// Download book bytes and return paths this app owns.
+    ///
+    /// A `CKAsset.fileURL` is not a durable reference: CloudKit materializes it
+    /// into its own temporary directory and deletes it once the record that owns
+    /// it is released. Returning that URL and reading it after the call returns
+    /// races the cleanup — the pull path does several more awaits before it
+    /// copies the file, and the observed failure was
+    /// `The file "….01cf03…" doesn't exist`. The bytes are therefore copied into
+    /// an app-owned staging directory here, while the record is still alive.
+    /// The caller must call `discardStagedAssets()` when finished.
     func fetchContentAssets(bookIds: [String]) async throws -> [String: URL] {
         guard !bookIds.isEmpty else { return [:] }
         let idToBook = Dictionary(
@@ -315,17 +338,105 @@ final class CloudKitLibraryTransport {
         let result: [String: URL]
         do {
             let fetched = try await database.records(for: Array(idToBook.keys))
-            result = fetched.reduce(into: [:]) { acc, entry in
-                guard let bookId = idToBook[entry.key],
-                      case .success(let record) = entry.value,
-                      let url = (record["contentAsset"] as? CKAsset)?.fileURL else { return }
-                acc[bookId] = url
+            var staged: [String: URL] = [:]
+            for (id, outcome) in fetched {
+                guard let bookId = idToBook[id],
+                      case .success(let record) = outcome,
+                      let source = (record["contentAsset"] as? CKAsset)?.fileURL else { continue }
+                // `record` stays bound in this scope for the whole copy, which
+                // keeps the CKAsset's temp file alive.
+                staged[bookId] = try stageAssetSync(source, named: "\(bookId).asset")
             }
+            result = staged
         } catch {
             throw mapCKError(error)
         }
         logger.info("cloudkit_sync.fetch_assets requested=\(bookIds.count) got=\(result.count)")
         return result
+    }
+
+    /// Copy a CloudKit-materialized asset into app-owned staging.
+    ///
+    /// `CKAsset.fileURL` can name a file that has not been materialized yet:
+    /// CloudKit creates the temp file lazily, so an immediate copy fails with
+    /// `NSCocoaErrorDomain/4` ("doesn't exist") even though the record and its
+    /// asset are perfectly valid. The observed symptom was one new temp UUID per
+    /// retry with nothing ever copied. Poll briefly for the file to appear before
+    /// copying, and report a transient failure so the durable outbox retries with
+    /// a fresh fetch rather than the caller's backoff being blamed.
+    private func stageAsset(_ source: URL, named name: String) async throws -> URL {
+        guard await waitForFileToAppear(at: source) else {
+            throw TransportError.transient("CloudKit asset was not materialized: \(source.lastPathComponent)")
+        }
+        let directory = try assetStagingDirectory()
+        // Namespaced by pid so two passes (pull and push can overlap) never
+        // delete each other's staging files.
+        let destination = directory.appendingPathComponent("\(ProcessInfo.processInfo.processIdentifier)-\(name)")
+        try? FileManager.default.removeItem(at: destination)
+        do {
+            try FileManager.default.copyItem(at: source, to: destination)
+        } catch {
+            throw TransportError.transient("CloudKit asset copy failed: \(error.localizedDescription)")
+        }
+        return destination
+    }
+
+    /// Wait for a lazily-materialized temp file to exist. Returns false if it
+    /// never shows up within the budget.
+    /// Synchronous variant for callers already holding a strong reference to the
+    /// record on the current task.
+    private func stageAssetSync(_ source: URL, named name: String) throws -> URL {
+        guard FileManager.default.fileExists(atPath: source.path) else {
+            logger.error(
+                "cloudkit_sync.stage_asset failed=missing name=\(name, privacy: .public)"
+            )
+            throw TransportError.transient("CloudKit asset was not materialized: \(source.lastPathComponent)")
+        }
+        let directory = try assetStagingDirectory()
+        let destination = directory.appendingPathComponent("\(ProcessInfo.processInfo.processIdentifier)-\(name)")
+        try? FileManager.default.removeItem(at: destination)
+        do {
+            try FileManager.default.copyItem(at: source, to: destination)
+        } catch {
+            logger.error(
+                "cloudkit_sync.stage_asset failed=copy name=\(name, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
+            throw TransportError.transient("CloudKit asset copy failed: \(error.localizedDescription)")
+        }
+        logger.info("cloudkit_sync.stage_asset failed=none name=\(name, privacy: .public)")
+        return destination
+    }
+
+    /// Wait for a lazily-materialized temp file to exist. Returns false if it
+    /// never shows up within the budget.
+    private func waitForFileToAppear(at url: URL, timeout: TimeInterval = 3.0) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if FileManager.default.fileExists(atPath: url.path) { return true }
+            try? await Task.sleep(nanoseconds: 60_000_000)   // 60ms
+        }
+        return FileManager.default.fileExists(atPath: url.path)
+    }
+
+    private func assetStagingDirectory() throws -> URL {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("cloudkit-assets", isDirectory: true)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base
+    }
+
+    /// Remove every staged asset for this process. Safe to call when nothing was
+    /// staged, and safe to call twice.
+    func discardStagedAssets() {
+        guard let directory = try? assetStagingDirectory() else { return }
+        let prefix = "\(ProcessInfo.processInfo.processIdentifier)-"
+        let contents = (try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        )) ?? []
+        for url in contents where url.lastPathComponent.hasPrefix(prefix) {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     /// Download one `FontContent` asset (font bytes).
@@ -336,10 +447,13 @@ final class CloudKitLibraryTransport {
         return try await fetchAsset(recordName: name, key: "contentAsset")
     }
 
+    /// Staged for the same reason as [fetchContentAssets]: the returned path
+    /// must outlive the `CKRecord` that owns the CloudKit temp file.
     private func fetchAsset(recordName: String, key: String) async throws -> URL? {
         do {
             let record = try await database.record(for: CKRecord.ID(recordName: recordName, zoneID: zoneID))
-            return (record[key] as? CKAsset)?.fileURL
+            guard let source = (record[key] as? CKAsset)?.fileURL else { return nil }
+            return try await stageAsset(source, named: "\(recordName.replacingOccurrences(of: ":", with: "-")).asset")
         } catch let error as CKError where error.code == .unknownItem {
             return nil
         } catch {
@@ -425,8 +539,14 @@ final class CloudKitLibraryTransport {
     func mapCKError(_ error: Error) -> TransportError {
         guard let ckError = error as? CKError else {
             let nsError = error as NSError
-            logger.error("cloudkit_sync.error non_ck ns=\(nsError.domain)/\(nsError.code) msg=\(error.localizedDescription, privacy: .public)")
-            return .transient(nsError.localizedDescription)
+            // A `TransportError` thrown by our own code (asset staging) carries
+            // the real reason in its payload; `localizedDescription` drops it and
+            // reports "TransportError error 2" instead, which is how a CloudKit
+            // asset failure looked like an unexplained retry loop.
+            let reason = (error as? TransportError)?.reason
+                ?? "\(nsError.domain)/\(nsError.code): \(nsError.localizedDescription)"
+            logger.error("cloudkit_sync.error non_ck ns=\(nsError.domain)/\(nsError.code) reason=\(reason, privacy: .public)")
+            return .transient(reason)
         }
         // One authoritative failure line. Raw `code.rawValue` is stable across SDKs
         // (7 requestRateLimited, 14 serverRecordChanged, 19 constraintViolation,

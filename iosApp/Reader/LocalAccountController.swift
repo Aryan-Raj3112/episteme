@@ -61,8 +61,14 @@ final class LocalAccountController: NSObject, ObservableObject {
     private static let cloudSyncOutboxPushKey = "reader.ios.cloudSyncOutbox.v2.push"
     private static let cloudShelfObservationsKey = "reader.ios.cloudShelfObservations.v1"
     private static let cloudFontObservationsKey = "reader.ios.cloudFontObservations.v1"
-    private static let cloudSyncRetryBaseDelay: TimeInterval = 5
-    private static let cloudSyncRetryMaxDelay: TimeInterval = 15 * 60
+    /// Retry backoff mirrors Android's `CloudFolderSyncWorker`
+    /// (`retryDelayMs = (1L shl attempts.coerceIn(0, 8)) * 1_000`): 2s, 4s, 8s …
+    /// capped at 256s with 8 attempts. The previous iOS curve started at 5s,
+    /// doubled to 12 attempts, and capped at 15 minutes, so a handful of
+    /// transient failures parked sync for a quarter of an hour — long enough
+    /// that sync looked broken and hid the underlying error.
+    private static let cloudSyncRetryMaxAttempts: Int = 8
+    private static let cloudSyncRetryMaxDelay: TimeInterval = 256
     /// Pure-CloudKit library sync (Pro, iOS-only). Drive/Firestore stays
     /// dormant for later cross-platform work; this flag selects the data
     /// plane for library sync. Persisted so a debug toggle survives relaunch.
@@ -909,6 +915,40 @@ final class LocalAccountController: NSObject, ObservableObject {
         }
     }
 
+    /// Record a failed pass, or give up once the retry budget is spent.
+    ///
+    /// Android terminates rather than looping forever: `CloudFolderSyncWorker`
+    /// quarantines the outbox row once `attempts >= MAX_OUTBOX_ATTEMPTS` and
+    /// records the reason. iOS previously only clamped the attempt counter, so a
+    /// permanently failing pass retried every 256s indefinitely and never
+    /// surfaced. Quarantining clears the slot (a later trigger starts clean) and
+    /// returns the message to show, so the failure becomes visible instead of
+    /// silently looping.
+    private func recordCloudSyncFailure(
+        operation: CloudSyncOperation,
+        snapshotJSON: String,
+        previousAttempt: Int,
+        error: Error
+    ) -> String? {
+        let detail = safeCloudKitError(error)
+        guard previousAttempt < Self.cloudSyncRetryMaxAttempts else {
+            cloudKitLog(
+                "\(operation.rawValue)_quarantined attempt=\(previousAttempt) error=\(detail)"
+            )
+            clearCloudSyncOutbox(operation)
+            return "iCloud sync gave up after \(previousAttempt) attempts: \(detail)"
+        }
+        cloudKitLog(
+            "\(operation.rawValue)_retry_queued attempt=\(previousAttempt + 1) error=\(detail)"
+        )
+        saveCloudSyncOutbox(
+            snapshotJSON: snapshotJSON,
+            operation: operation,
+            previousAttempt: previousAttempt
+        )
+        return nil
+    }
+
     private func loadCloudSyncOutbox(_ operation: CloudSyncOperation) -> CloudSyncOutboxItem? {
         guard let data = UserDefaults.standard.data(forKey: Self.cloudSyncOutboxKey(operation)) else {
             return nil
@@ -921,10 +961,10 @@ final class LocalAccountController: NSObject, ObservableObject {
         operation: CloudSyncOperation,
         previousAttempt: Int
     ) {
-        let attempt = min(previousAttempt + 1, 12)
+        let attempt = min(previousAttempt + 1, Self.cloudSyncRetryMaxAttempts)
         let delay = min(
             Self.cloudSyncRetryMaxDelay,
-            Self.cloudSyncRetryBaseDelay * pow(2, Double(max(0, attempt - 1)))
+            pow(2, Double(attempt))
         )
         let item = CloudSyncOutboxItem(
             snapshotJSON: snapshotJSON,
@@ -3131,13 +3171,17 @@ final class LocalAccountController: NSObject, ObservableObject {
                 return
             }
             let previousAttempt = loadCloudSyncOutbox(.pull)?.attempt ?? 0
-            cloudKitLog("pull_retry_queued pass=\(passId) attempt=\(previousAttempt + 1) error=\(safeCloudKitError(error))")
-            saveCloudSyncOutbox(snapshotJSON: preparedLocalJSON, operation: .pull, previousAttempt: previousAttempt)
+            let quarantined = recordCloudSyncFailure(
+                operation: .pull,
+                snapshotJSON: preparedLocalJSON,
+                previousAttempt: previousAttempt,
+                error: error
+            )
             bridge?.completeCloudSync(
                 remoteSnapshotJson: nil,
                 downloadedBookIds: [],
                 downloadedBookPaths: [],
-                status: "iCloud sync failed: \(error.localizedDescription)"
+                status: quarantined ?? "iCloud sync failed: \(error.localizedDescription)"
             )
         }
     }
@@ -3209,13 +3253,17 @@ final class LocalAccountController: NSObject, ObservableObject {
                 return
             }
             let previousAttempt = loadCloudSyncOutbox(.push)?.attempt ?? 0
-            cloudKitLog("push_retry_queued pass=\(passId) attempt=\(previousAttempt + 1) error=\(safeCloudKitError(error))")
-            saveCloudSyncOutbox(snapshotJSON: preparedSnapshotJSON, operation: .push, previousAttempt: previousAttempt)
+            let quarantined = recordCloudSyncFailure(
+                operation: .push,
+                snapshotJSON: preparedSnapshotJSON,
+                previousAttempt: previousAttempt,
+                error: error
+            )
             bridge?.completeCloudSync(
                 remoteSnapshotJson: nil,
                 downloadedBookIds: [],
                 downloadedBookPaths: [],
-                status: "iCloud upload failed: \(error.localizedDescription)"
+                status: quarantined ?? "iCloud upload failed: \(error.localizedDescription)"
             )
         }
     }
@@ -3774,6 +3822,17 @@ final class LocalAccountController: NSObject, ObservableObject {
         if !((book["sourceFolder"] is NSNull) || book["sourceFolder"] == nil) { return false }
         if let path = book["path"] as? String, path.hasPrefix("opds-pse://") { return false }
         guard let displayName = book["displayName"] as? String else { return false }
+        // A device-local absolute path as the book id produces a CloudKit record
+        // name the server rejects on every pass, so the book silently never
+        // syncs. Refuse it up front and say which book, instead. Android reaches
+        // the same conclusion by gating on a non-null cloud filename
+        // (sharedCloudBookContentFileName).
+        let id = book["id"] as? String ?? ""
+        let validId = CloudKitLibrarySyncKt.isValidCloudKitLibraryId(id: id)
+        if !validId {
+            cloudKitLog("book_unsyncable reason=invalid_id displayName=\(displayName)")
+        }
+        guard validId else { return false }
         return !CloudBook.manualOnlyExtensions.contains(
             URL(fileURLWithPath: displayName).pathExtension.lowercased()
         )
@@ -3948,6 +4007,17 @@ final class LocalAccountController: NSObject, ObservableObject {
         var pending: [Pending] = []
         for (bookId, fields) in maps.states {
             guard maps.tombstones[bookId] == nil else { continue }
+            // Skip records whose id is not a usable CloudKit record name. Books
+            // imported by an older build had a device-local absolute path as
+            // their id, and those `BookContent` records are still in the private
+            // database. Their asset can never be staged, so without this one
+            // poisoned record fails the whole pull on every pass and the outbox
+            // spins until it quarantines. The upload side already refuses these
+            // (`cloudKitBookIsSyncable`); this keeps the two symmetric.
+            guard CloudKitLibrarySyncKt.isValidCloudKitLibraryId(id: bookId) else {
+                cloudKitLog("book_undownloadable reason=invalid_id id=\(bookId)")
+                continue
+            }
             let remoteContentTs = maps.contentModified[bookId] ?? 0
             guard remoteContentTs > 0 else { continue }
             let local = localById[bookId]
@@ -3969,6 +4039,10 @@ final class LocalAccountController: NSObject, ObservableObject {
         }
         guard !pending.isEmpty else { return [] }
         // Pass 2: one batched download for every book this pass needs.
+        // `discardStagedAssets` in a `defer` because the staged copies are
+        // ours to clean: they must not survive the pass, and must not be left
+        // behind when a later book in the batch fails.
+        defer { cloudKitTransport.discardStagedAssets() }
         let assets = try await cloudKitTransport.fetchContentAssets(bookIds: pending.map(\.bookId))
         let imports = try cloudImportsDirectory()
         var downloaded: [DownloadedCloudBook] = []
@@ -4015,6 +4089,7 @@ final class LocalAccountController: NSObject, ObservableObject {
             let localTs = (local?["timestamp"] as? NSNumber)?.int64Value ?? 0
             guard !localExists || remoteTs > localTs else { continue }
             guard let assetURL = try await cloudKitTransport.fetchFontAsset(fontId: fontId) else { continue }
+            defer { cloudKitTransport.discardStagedAssets() }
             let fileName = (fields["fileName"] as? String).flatMap {
                 URL(fileURLWithPath: $0).lastPathComponent
             }.flatMap { $0.isEmpty ? nil : $0 } ?? "font-\(fontId)"
