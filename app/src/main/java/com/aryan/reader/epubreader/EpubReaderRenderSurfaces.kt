@@ -298,6 +298,7 @@ internal fun EpubReaderRenderSurfaces(
     isSavingAndExitingState: MutableState<Boolean>,
     isSummarizationLoadingState: MutableState<Boolean>,
     isSwitchingToPaginatedState: MutableState<Boolean>,
+    isVerticalRestoreSettledState: MutableState<Boolean>,
     lastHighlightClickTimeState: MutableState<Long>,
     lastKnownLocatorState: MutableState<Locator?>,
     lastScrollHideTimeState: MutableState<Long>,
@@ -415,6 +416,7 @@ internal fun EpubReaderRenderSurfaces(
     var isSavingAndExiting by isSavingAndExitingState
     var isSummarizationLoading by isSummarizationLoadingState
     var isSwitchingToPaginated by isSwitchingToPaginatedState
+    var isVerticalRestoreSettled by isVerticalRestoreSettledState
     var lastHighlightClickTime by lastHighlightClickTimeState
     var lastKnownLocator by lastKnownLocatorState
     var lastScrollHideTime by lastScrollHideTimeState
@@ -1330,6 +1332,12 @@ internal fun EpubReaderRenderSurfaces(
                                             onScrollFinished = { success ->
                                                 Timber.tag("BookmarkDiagnosis").d("Scroll finished callback. Success: $success")
                                                 navigation.isNavigatingToPosition = false
+                                                if (!isVerticalRestoreSettled) {
+                                                    Timber.tag(TAG_EPUB_VERTICAL_OPEN_DIAG).d(
+                                                        "restore_settled chapter=$targetChapterIndex success=$success"
+                                                    )
+                                                    isVerticalRestoreSettled = true
+                                                }
                                             },
                                             ttsScope = scope,
                                             onTtsTextReady = { jsonString ->

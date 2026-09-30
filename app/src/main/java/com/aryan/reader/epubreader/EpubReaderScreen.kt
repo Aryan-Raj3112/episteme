@@ -694,6 +694,28 @@ fun EpubReaderHost(
     val webViewRefForTtsState = remember { mutableStateOf<WebView?>(null) }
     var webViewRefForTts by webViewRefForTtsState
 
+    val isVerticalRestoreSettledState = remember { mutableStateOf(true) }
+    var isVerticalRestoreSettled by isVerticalRestoreSettledState
+    var verticalRestoreStartedAtMillis by remember { mutableLongStateOf(0L) }
+
+    // Last position handed to the persistence layer. The locator doubles as the dedupe key for
+    // the background flush so lifecycle events never re-write a position already stored, and the
+    // CFI is retained separately because the vertical surface restores from it: writing a position
+    // without one would fall the next open back to a chapter-start restore.
+    val lastPersistedLocatorState = remember { mutableStateOf(initialLocator) }
+    var lastPersistedLocator by lastPersistedLocatorState
+    val lastPersistedCfiState = remember { mutableStateOf(initialCfi) }
+    var lastPersistedCfi by lastPersistedCfiState
+    var lastPersistedCfiChapter by remember { mutableIntStateOf(initialLocator?.chapterIndex ?: -1) }
+    val emitReadingPosition by rememberUpdatedState<(Locator, String?, Float) -> Unit>({ locator, cfi, progress ->
+        lastPersistedLocator = locator
+        if (!cfi.isNullOrBlank()) {
+            lastPersistedCfi = cfi
+            lastPersistedCfiChapter = locator.chapterIndex
+        }
+        onSavePosition(locator, cfi, progress)
+    })
+
     val showAiHubSheetState = remember { mutableStateOf(false) }
     var showAiHubSheet by showAiHubSheetState
     val summarizationResultState = remember { mutableStateOf<SummarizationResult?>(null) }
@@ -1274,7 +1296,49 @@ fun EpubReaderHost(
 
         Timber.tag("TTS_LOCATE")
             .d("Saving resolved locator position. chapter=${locator.chapterIndex}, block=${locator.blockIndex}, progress=$progress")
-        onSavePosition(locator, cfiForWebView, progress)
+        emitReadingPosition(locator, cfiForWebView, progress)
+    }
+
+    /**
+     * Persists the last locator this reader is certain about, without waiting on the WebView.
+     *
+     * The live position for the vertical surfaces can only be resolved by a JavaScript round trip
+     * that needs the main looper. Android freezes cached processes shortly after the app leaves the
+     * foreground, so that round trip is regularly cut short and the session's last position is lost.
+     * Writing the locator we already resolved in memory keeps a durable record; whenever the
+     * JavaScript path does complete it lands afterwards and overwrites this with the exact value.
+     */
+    fun flushInMemoryReadingPosition(reason: String) {
+        val locator = if (isNativeVerticalMode) currentNativeVerticalLocator() else lastKnownLocator
+        if (locator == null || locator == lastPersistedLocator) {
+            Timber.tag(TAG_EPUB_VERTICAL_OPEN_DIAG).d(
+                "flush_skip reason=$reason locator=${locator ?: "none"} persisted=${lastPersistedLocator ?: "none"}"
+            )
+            return
+        }
+
+        val chapterLengthChars = chapters.getOrNull(locator.chapterIndex)?.plainTextCharacterCount()?.toLong() ?: 0L
+        val boundedOffset = locator.charOffset.toLong().coerceIn(0L, chapterLengthChars)
+        val completedCharsInPreviousChapters =
+            chapters.take(locator.chapterIndex).sumOf { it.plainTextCharacterCount().toLong() }
+        val progress = if (totalBookLengthChars > 0) {
+            mobileEpubCharacterProgress(
+                totalBookCharacters = totalBookLengthChars,
+                completedChapterCharacters = completedCharsInPreviousChapters,
+                currentChapterOffset = boundedOffset,
+                isAtEndOfBook = locator.chapterIndex == chapters.lastIndex && chapterLengthChars > 0 && boundedOffset >= chapterLengthChars
+            )
+        } else {
+            0f
+        }
+        // Only reuse a retained CFI when it was resolved for this same chapter; a CFI from another
+        // chapter would resolve against the wrong document and drop the next open to chapter start.
+        val cfiForFlushedLocator = lastPersistedCfi.takeIf { lastPersistedCfiChapter == locator.chapterIndex }
+
+        Timber.tag(TAG_EPUB_VERTICAL_OPEN_DIAG).d(
+            "flush reason=$reason locator=$locator progress=$progress"
+        )
+        emitReadingPosition(locator, cfiForFlushedLocator, progress)
     }
 
     fun ensureVerticalChunksLoaded(targetChunk: Int) {
@@ -2115,6 +2179,9 @@ fun EpubReaderHost(
 
     val lifecycleOwner = LocalLifecycleOwner.current
     val latestWebViewRefForTts by rememberUpdatedState(webViewRefForTts)
+    val latestFlushInMemoryReadingPosition by rememberUpdatedState<(String) -> Unit>({ reason ->
+        flushInMemoryReadingPosition(reason)
+    })
     val latestIsActiveReaderTtsForCurrentBook by rememberUpdatedState(isActiveReaderTtsForCurrentBook())
     val latestSaveActiveTtsPosition by rememberUpdatedState<suspend (String) -> Boolean>({ reason ->
         saveActiveTtsPosition(reason)
@@ -2132,20 +2199,35 @@ fun EpubReaderHost(
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE) {
-                if (latestIsActiveReaderTtsForCurrentBook) {
-                    scope.launch {
-                        if (!latestSaveActiveTtsPosition("lifecycle_pause")) {
-                            Timber.d("ON_PAUSE detected. Falling back to WebView CFI save.")
-                            latestWebViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> {
+                    latestFlushInMemoryReadingPosition("lifecycle_pause")
+                    if (latestIsActiveReaderTtsForCurrentBook) {
+                        scope.launch {
+                            if (!latestSaveActiveTtsPosition("lifecycle_pause")) {
+                                Timber.d("ON_PAUSE detected. Falling back to WebView CFI save.")
+                                latestWebViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
+                            }
                         }
+                    } else {
+                        Timber.d("ON_PAUSE detected. Requesting final CFI for robust save.")
+                        latestWebViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
                     }
-                } else {
-                    Timber.d("ON_PAUSE detected. Requesting final CFI for robust save.")
-                    latestWebViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
                 }
-            } else if (event == Lifecycle.Event.ON_RESUME && latestIsActiveReaderTtsForCurrentBook) {
-                latestQueueLifecycleTtsLocate()
+
+                Lifecycle.Event.ON_STOP -> {
+                    // ON_PAUSE is not guaranteed to reach the persistence layer before Android
+                    // freezes the process, so the last in-memory position is written again here.
+                    latestFlushInMemoryReadingPosition("lifecycle_stop")
+                }
+
+                Lifecycle.Event.ON_RESUME -> {
+                    if (latestIsActiveReaderTtsForCurrentBook) {
+                        latestQueueLifecycleTtsLocate()
+                    }
+                }
+
+                else -> Unit
             }
         }
 
@@ -2159,6 +2241,7 @@ fun EpubReaderHost(
     DisposableEffect(Unit) {
         onDispose {
             Timber.d("Disposing reader. Last known chapter was ${latestChapterIndex}. Position saved periodically.")
+            flushInMemoryReadingPosition("reader_dispose")
             webViewRefForTts = null
             chapterHead = ""
             chapterChunks = emptyList()
@@ -2169,10 +2252,38 @@ fun EpubReaderHost(
         }
     }
 
-    LaunchedEffect(currentScrollYPosition, isChapterReadyForBookmarkCheck) {
+    LaunchedEffect(verticalRestoreStartedAtMillis, isVerticalRestoreSettled) {
+        if (isVerticalRestoreSettled || verticalRestoreStartedAtMillis <= 0L) return@LaunchedEffect
+        delay(VERTICAL_RESTORE_SETTLE_TIMEOUT_MILLIS)
+        if (isVerticalRestoreSettled) return@LaunchedEffect
+        Timber.tag(TAG_EPUB_VERTICAL_OPEN_DIAG).w(
+            "restore_settle_timeout chapter=$currentChapterIndex afterMs=${VERTICAL_RESTORE_SETTLE_TIMEOUT_MILLIS}"
+        )
+        isVerticalRestoreSettled = true
+    }
+
+    LaunchedEffect(currentScrollYPosition, isChapterReadyForBookmarkCheck, isVerticalRestoreSettled) {
         if (!isChapterReadyForBookmarkCheck) return@LaunchedEffect
+        if (!shouldSaveVerticalOpenPosition(
+                isVerticalMode = currentRenderMode == RenderMode.VERTICAL_SCROLL && !isNativeVerticalMode,
+                hasWebView = webViewRefForTts != null,
+                isChapterReady = isChapterReadyForBookmarkCheck,
+                isRestoreSettled = isVerticalRestoreSettled
+            )
+        ) {
+            Timber.tag(TAG_EPUB_VERTICAL_OPEN_DIAG).d(
+                "save_skip mode=$currentRenderMode native=$isNativeVerticalMode " +
+                    "hasWebView=${webViewRefForTts != null} chapterReady=$isChapterReadyForBookmarkCheck " +
+                    "restoreSettled=$isVerticalRestoreSettled y=$currentScrollYPosition"
+            )
+            return@LaunchedEffect
+        }
 
         delay(1500L)
+        if (!isVerticalRestoreSettled) {
+            Timber.tag(TAG_EPUB_VERTICAL_OPEN_DIAG).d("save_skip_after_delay restore_settled=false")
+            return@LaunchedEffect
+        }
         Timber.d("User stopped scrolling. Requesting CFI for auto-save...")
         webViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
     }
@@ -2233,6 +2344,15 @@ fun EpubReaderHost(
         isChapterParsing = true
         isChapterReadyForBookmarkCheck = false
         navigation.activeFragmentId = null
+
+        val restoringFromCfi = !cfiToLoad.isNullOrBlank()
+        if (restoringFromCfi) {
+            verticalRestoreStartedAtMillis = System.currentTimeMillis()
+            isVerticalRestoreSettled = false
+            Timber.tag(TAG_EPUB_VERTICAL_OPEN_DIAG).d(
+                "restore_pending chapter=$currentChapterIndex cfi=${cfiToLoad?.take(80)}"
+            )
+        }
 
         val result = loadChapterContent(
             context = context,
@@ -2471,7 +2591,7 @@ fun EpubReaderHost(
             Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
                 "save_position page=$pageToSave locator=$locator chapter=$chapterIndex progress=$progress"
             )
-            onSavePosition(locator, null, progress)
+            emitReadingPosition(locator, null, progress)
         } else {
             Timber.w("Could not auto-save paginated position. Locator or chapterIndex was null.")
             Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).w(
@@ -2625,7 +2745,7 @@ fun EpubReaderHost(
                                 }
 
                                 Timber.d("Final save for native vertical view. Page: $pageToSave, Locator: $locator, Progress: $progress%")
-                                onSavePosition(locator, null, progress)
+                                emitReadingPosition(locator, null, progress)
                             } else {
                                 Timber.w("Final save for native vertical view failed. Locator is null.")
                             }
@@ -2676,7 +2796,7 @@ fun EpubReaderHost(
 
                             Timber.d("Final save for paginated view. Page: $pageToSave, Locator: $locator, Progress: $progress%"
                             )
-                            onSavePosition(locator, null, progress)
+                            emitReadingPosition(locator, null, progress)
                         } else {
                             Timber.w("Final save for paginated view failed. Locator is null."
                             )
@@ -4490,6 +4610,7 @@ fun EpubReaderHost(
                     isSavingAndExitingState = isSavingAndExitingState,
                     isSummarizationLoadingState = isSummarizationLoadingState,
                     isSwitchingToPaginatedState = isSwitchingToPaginatedState,
+                    isVerticalRestoreSettledState = isVerticalRestoreSettledState,
                     lastHighlightClickTimeState = lastHighlightClickTimeState,
                     lastKnownLocatorState = lastKnownLocatorState,
                     lastScrollHideTimeState = lastScrollHideTimeState,
@@ -4552,7 +4673,7 @@ fun EpubReaderHost(
                     walletMicros = walletMicros,
                     walletMigrated = walletMigrated,
                     coverImagePath = coverImagePath,
-                    onSavePosition = onSavePosition,
+                    onSavePosition = { locator, cfi, progress -> emitReadingPosition(locator, cfi, progress) },
                     onRenderModeChange = onRenderModeChange,
                     onNavigateBack = onNavigateBack,
                     currentChapterInPaginatedMode = currentChapterInPaginatedMode,

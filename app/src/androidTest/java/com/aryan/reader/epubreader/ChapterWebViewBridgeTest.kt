@@ -78,6 +78,21 @@ class ChapterWebViewBridgeTest {
     }
 
     @Test
+    fun cfiJsBridge_onScrollFinished_forwardsSuccessToCallback() {
+        val results = mutableListOf<Boolean>()
+        val bridge = CfiJsBridge(
+            onCfiReady = {},
+            onCfiForBookmarkReady = {},
+            onScrollFinishedCallback = { success -> results += success }
+        )
+
+        bridge.onScrollFinished(true)
+        bridge.onScrollFinished(false)
+
+        assertThat(results).containsExactly(true, false).inOrder()
+    }
+
+    @Test
     fun ttsJsBridge_onStructuredTextExtracted_callsHandlerWithJson() {
         val latch = CountDownLatch(1)
         var receivedJson: String? = null
