@@ -364,11 +364,17 @@ struct ContentView: View {
         .onChange(of: localStoreKit.proSyncEnabled) { _, isPro in
             localAccount.setProSyncEnabled(isPro)
         }
-        .onChange(of: scenePhase) { _, phase in
+        .onChange(of: scenePhase, perform: { phase in
             if phase == .active {
                 IosBackgroundSync.endGrace()
                 bridge.updateAppActive(active: true)
-                refreshImportedFolders(bridge: bridge)
+                // `scenePhase` becomes `.active` on every app switch and
+                // notification dismissal, not only on a cold start, so the scan
+                // is gated on a per-folder cooldown. The user-initiated
+                // refresh path stays ungated.
+                if bridge.shouldRescanFoldersOnForeground() {
+                    refreshImportedFolders(bridge: bridge)
+                }
                 // Android parity: Billing re-queries on every foreground/auth
                 // emission (no Worker). Reconcile StoreKit + re-arm the cloud
                 // outbox on every foreground transition.
@@ -389,7 +395,7 @@ struct ContentView: View {
                 IosBackgroundSync.beginGrace()
                 IosBackgroundSync.scheduleRefresh()
             }
-        }
+        })
     }
 
     private var allowedReaderImportTypes: [UTType] {
@@ -673,9 +679,19 @@ private func scheduleImportedFolderScan(
         }
         guard importedFolderScanGenerations[folderName] == generation else { return }
         let scan = await Task.detached(priority: .userInitiated) {
-            copyImportedFolderToAppSupport(sourceURL, folderName: folderName)
+            scanImportedFolderInPlace(sourceURL, folderName: folderName) {
+                Task.isCancelled
+            }
         }.value
+        // A newer scan (or an unlink) superseded this one while it ran. Applying
+        // a stale result would reconcile against a folder view that no longer
+        // exists and could infer deletions from it.
         guard importedFolderScanGenerations[folderName] == generation else { return }
+        if !scan.succeeded && scan.status == .unavailable && scan.detail.hasPrefix("cancelled") {
+            localFolderScanLogger.info("scan.cancelled folder=\(folderName, privacy: .public)")
+            importedFolderScanTasks.removeValue(forKey: folderName)
+            return
+        }
         recordImportedFolderScan(bridge: bridge, folderName: folderName, scan: scan)
         importedFolderScanTasks.removeValue(forKey: folderName)
     }
@@ -911,6 +927,189 @@ private enum FolderScanCopyError: Error {
     }
 }
 
+/// Enumerates a linked folder without copying it.
+///
+/// This replaces the previous whole-folder copy. The app does not need its
+/// own duplicate of files the user already has on the device, and a copy-based
+/// scan can never be cheap because the copy is the point. This one reads
+/// metadata only — name, relative path, size, mtime — which is what Android's
+/// `FolderSyncWorker.scanFolderFiles` does over SAF.
+///
+/// Filters mirror `FolderSyncWorker.scanFolderFiles`: dotfiles and the
+/// sidecar directory are skipped so the sidecars never become books, and a
+/// single unreadable child marks the pass PARTIAL rather than letting the
+/// engine infer deletions from a view it could not see.
+nonisolated private func scanImportedFolderInPlace(
+    _ sourceURL: URL,
+    folderName: String,
+    isCancelled: @Sendable () -> Bool = { false }
+) -> ImportedFolderScan {
+    let didStartAccessing = sourceURL.startAccessingSecurityScopedResource()
+    guard didStartAccessing else {
+        localFolderScanLogger.error("scan.access_denied folder=\(folderName, privacy: .public)")
+        return ImportedFolderScan(
+            files: [],
+            succeeded: false,
+            status: .unavailable,
+            detail: "access_denied startAccessingSecurityScopedResource=false"
+        )
+    }
+    defer { sourceURL.stopAccessingSecurityScopedResource() }
+
+    let fileManager = FileManager.default
+    let resourceKeys: [URLResourceKey] = [
+        .isRegularFileKey,
+        .isDirectoryKey,
+        .fileSizeKey,
+        .contentModificationDateKey
+    ]
+    // Android skips dotfiles and the sidecar directory during recursion
+    // (FolderSyncWorker.kt:927). The enumerator cannot prune a directory it
+    // has already descended into, so the check is applied to the path.
+    let sidecarDirectoryName = "EpistemeSyncData"
+    let sourcePrefix = sourceURL.standardizedFileURL.path
+
+    var sawChildError = false
+    var skippedCount = 0
+    var firstSkipDetail = ""
+    func noteSkipped(_ detail: String) {
+        skippedCount += 1
+        if firstSkipDetail.isEmpty { firstSkipDetail = String(detail.prefix(200)) }
+    }
+
+    guard let enumerator = fileManager.enumerator(
+        at: sourceURL,
+        includingPropertiesForKeys: resourceKeys,
+        options: [.skipsHiddenFiles, .skipsPackageDescendants],
+        errorHandler: { url, error in
+            sawChildError = true
+            let nsError = error as NSError
+            let detail = "child=\(url.lastPathComponent) domain=\(nsError.domain) code=\(nsError.code)"
+            if firstSkipDetail.isEmpty { firstSkipDetail = detail }
+            localFolderScanLogger.error("scan.child_error folder=\(folderName, privacy: .public) \(detail, privacy: .public)")
+            return true
+        }
+    ) else {
+        localFolderScanLogger.error("scan.enumerator_nil folder=\(folderName, privacy: .public)")
+        return ImportedFolderScan(files: [], succeeded: false, status: .unavailable, detail: "enumerator_nil")
+    }
+
+    var scanned: [ImportedReaderFile] = []
+    var wasCancelled = false
+    for case let itemURL as URL in enumerator {
+        // Abort the walk rather than finishing a result nobody will apply.
+        // Android does the same via its `isStopped` checks (FolderSyncWorker).
+        if isCancelled() {
+            wasCancelled = true
+            break
+        }
+        do {
+            let values = try itemURL.resourceValues(forKeys: Set(resourceKeys))
+            let itemPath = itemURL.standardizedFileURL.path
+            guard itemPath.hasPrefix(sourcePrefix + "/") else {
+                noteSkipped("outside_root relative=\(itemURL.lastPathComponent)")
+                continue
+            }
+            let relativePath = String(itemPath.dropFirst(sourcePrefix.count + 1))
+            if values.isDirectory == true {
+                if relativePath == sidecarDirectoryName || relativePath.hasPrefix("\(sidecarDirectoryName)/") {
+                    continue
+                }
+                continue
+            }
+            guard values.isRegularFile == true else { continue }
+            // Sidecars and the app's own temp files are dot-prefixed; skip them
+            // the way Android does so they never become books.
+            guard !itemURL.lastPathComponent.hasPrefix(".") else { continue }
+            guard !itemURL.lastPathComponent.lowercased().hasSuffix(".json") else { continue }
+            scanned.append(
+                ImportedReaderFile(
+                    name: itemURL.lastPathComponent,
+                    // The book keeps a provider ref, not this absolute path: the
+                    // app container moves, and a provider path is only valid
+                    // while its scope is held.
+                    path: encodedFolderBookRef(folderName: folderName, relativePath: relativePath),
+                    // No content hash: hashing every file on every scan is the
+                    // cost this change exists to remove. Android's folder scan
+                    // does not hash either.
+                    contentId: "",
+                    relativePath: relativePath,
+                    fileSize: Int64(values.fileSize ?? 0),
+                    lastModifiedTimestamp: Int64(
+                        (values.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000
+                    )
+                )
+            )
+        } catch {
+            let detail: String
+            if let copyError = error as? FolderScanCopyError {
+                detail = copyError.detail
+            } else {
+                detail = folderScanErrorDetail(error)
+            }
+            noteSkipped(detail)
+            localFolderScanLogger.error("scan.file_skipped folder=\(folderName, privacy: .public) \(detail, privacy: .public)")
+        }
+    }
+
+    if wasCancelled {
+        localFolderScanLogger.info("scan.cancelled folder=\(folderName, privacy: .public) seen=\(scanned.count, privacy: .public)")
+        return ImportedFolderScan(
+            files: [],
+            succeeded: false,
+            status: .unavailable,
+            detail: "cancelled after \(scanned.count) entries"
+        )
+    }
+
+    let isPartial = sawChildError || skippedCount > 0
+    let status: ImportedFolderScanStatus = isPartial ? .partial : .complete
+    let detail = isPartial ? "partial skipped=\(skippedCount) first=\(firstSkipDetail)" : ""
+    localFolderScanLogger.info(
+        "scan.succeeded folder=\(folderName, privacy: .public) status=\(status.rawValue, privacy: .public) files=\(scanned.count, privacy: .public) skipped=\(skippedCount, privacy: .public) in_place=true"
+    )
+    return ImportedFolderScan(files: scanned, succeeded: true, status: status, detail: detail)
+}
+
+/// Scheme for a book that lives in a linked folder, matching Kotlin's
+/// `SharedIosBookSourceRef.providerScheme`. The Kotlin side owns the decoder;
+/// this must stay byte-compatible with it, including the percent-encoding.
+private let folderBookRefScheme = "ios-folder-book://"
+
+/// Percent-encodes a single path segment. Lossless by necessity: a folder name
+/// is arbitrary user text, and a lossy scheme would make a ref resolve to a
+/// *different* folder, which reads the wrong book rather than failing.
+/// Keep in sync with `SharedIosBookSourceRef.encodeComponent`.
+private func encodeRefComponent(_ value: String) -> String {
+    let allowed = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._")
+    var out = ""
+    for byte in Array(value.utf8) {
+        let scalar = Character(UnicodeScalar(byte))
+        if allowed.contains(scalar) {
+            out.append(scalar)
+        } else {
+            out.append(String(format: "%%%02X", byte))
+        }
+    }
+    return out.isEmpty ? "%20" : out
+}
+
+nonisolated private func encodedFolderBookRef(folderName: String, relativePath: String) -> String {
+    let normalized = relativePath
+        .split(separator: "/")
+        .filter { !$0.isEmpty && $0 != "." }
+        .joined(separator: "/")
+    return folderBookRefScheme + encodeRefComponent(folderName) + "/" + normalized
+}
+
+/// Legacy whole-folder copy, retained but no longer called.
+///
+/// `scanImportedFolderInPlace` replaced this: it enumerates without copying, so
+/// the app no longer keeps a second copy of files the user already has on the
+/// device. This stays until the in-place path has proven itself across a
+/// release, because it is the fallback that restores a folder from a backup if
+/// the ref migration turns out to be wrong. Delete it with the managed copy
+/// cleanup in the migration phase, not before.
 nonisolated private func copyImportedFolderToAppSupport(_ sourceURL: URL, folderName: String? = nil) -> ImportedFolderScan {
     let name = folderName ?? sourceURL.lastPathComponent
     let didStartAccessing = sourceURL.startAccessingSecurityScopedResource()

@@ -193,6 +193,8 @@ import com.aryan.reader.shared.booksRemovedByCloudTombstones
 import com.aryan.reader.shared.mergeCloudLibrarySnapshotWithDownloadedBooks
 import com.aryan.reader.shared.enqueueMobileFolderScan
 import com.aryan.reader.shared.LOCAL_FOLDER_SCAN_LOG_TAG
+import com.aryan.reader.shared.LocalFolderRescanPolicy
+import com.aryan.reader.shared.toSharedFolderBookMetadata
 import com.aryan.reader.shared.effectiveScanStatus
 import com.aryan.reader.shared.parseLocalFolderScanStatus
 import com.aryan.reader.shared.mobileExternalFileCloseAction
@@ -1070,6 +1072,56 @@ class ReaderIosBridge internal constructor(
 
     fun setFolderFileDeletionHandler(handler: (String, List<String>) -> Unit) {
         folderFileDeletionHandler = handler
+    }
+
+    /**
+     * Per-folder `lastScanTime` snapshot published by the screen so the bridge
+     * can answer the foreground-rescan question without owning `state`.
+     */
+    internal var folderScanWatermarks: Map<String, Long> = emptyMap()
+
+    /**
+     * Whether a lifecycle-triggered refresh is worth running right now.
+     *
+     * `scenePhase == .active` fires on every app switch and notification
+     * dismissal, not just on a cold start, so scanning unconditionally made a
+     * directory walk the app's dominant foreground cost. The watermark is per
+     * folder so one recently-scanned folder does not hold up the rest.
+     *
+     * The bridge does not own `state`, so the caller publishes the watermarks
+     * via [publishFolderScanWatermarks] whenever the screen state changes.
+     */
+    fun shouldRescanFoldersOnForeground(): Boolean =
+        shouldRescanFoldersOnForeground(currentTimestamp())
+
+    fun shouldRescanFoldersOnForeground(nowMillis: Long): Boolean {
+        val watermarks = folderScanWatermarks
+        if (watermarks.isEmpty()) return false
+        val due = watermarks.filter { (_, lastScanTime) ->
+            LocalFolderRescanPolicy.shouldScanOnForeground(
+                lastScanTimeMillis = lastScanTime,
+                nowMillis = nowMillis,
+            )
+        }
+        if (due.isEmpty()) {
+            val soonest = watermarks.values.minOf { lastScanTime ->
+                LocalFolderRescanPolicy.remainingCooldownMillis(lastScanTime, nowMillis)
+            }
+            IosDiagnosticLogStore.record(
+                LOCAL_FOLDER_SCAN_LOG_TAG,
+                "foreground.skipped folders=${watermarks.size} cooldownRemainingMs=$soonest",
+            )
+            return false
+        }
+        IosDiagnosticLogStore.record(
+            LOCAL_FOLDER_SCAN_LOG_TAG,
+            "foreground.scan folders=${due.size} of ${watermarks.size}",
+        )
+        return true
+    }
+
+    fun publishFolderScanWatermarks(folders: Map<String, Long>) {
+        folderScanWatermarks = folders
     }
 
     fun setFolderFileReplacementHandler(handler: (String, String) -> String?) {
@@ -2200,22 +2252,91 @@ private fun persistIosSyncEnabled(enabled: Boolean) {
     NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = IosSyncEnabledDefaultsKey)
 }
 
+/**
+ * One-time migration off the managed copy.
+ *
+ * Books added before in-place reads carry an absolute path under
+ * `Application Support/LocalFolders/<folder>/`, so the same book has two
+ * possible identities: the old row keyed by that path, and the new row keyed by
+ * a provider ref. The engine matches on `sourceFolder` and stable id, so the
+ * old rows must be re-pointed rather than left to be re-added.
+ *
+ * The relative path is recovered from the managed path by locating the
+ * `LocalFolders` component and taking everything after the folder segment, which
+ * keeps this correct when the app container moves.
+ */
+internal fun SharedReaderScreenState.migratedIosFolderBooks(
+    folderName: String
+): SharedReaderScreenState {
+    val managedRootFragment = "/LocalFolders/${safeIosManagedFolderName(folderName)}/"
+    var migratedCount = 0
+    val migratedBooks = rawLibraryBooks.map { book ->
+        val path = book.path
+        if (book.sourceFolder != folderName || path == null || !SharedIosBookSourceRef.isManagedCopyPath(path)) {
+            return@map book
+        }
+        val relativePath = path.substringAfter(managedRootFragment, "")
+        if (relativePath.isBlank()) {
+            return@map book
+        }
+        migratedCount++
+        book.copy(
+            path = SharedIosBookSourceRef.encode(folderName, relativePath),
+            coverImagePath = book.coverImagePath,
+        )
+    }
+    if (migratedCount == 0) return this
+    IosDiagnosticLogStore.record(
+        LOCAL_FOLDER_SCAN_LOG_TAG,
+        "migrate folder=$folderName books=$migratedCount",
+    )
+    purgeIosManagedFolderCopy(folderName)
+    return copy(rawLibraryBooks = migratedBooks)
+}
+
+/**
+ * Deletes the managed copy of a linked folder once every book in it has been
+ * re-pointed at the provider.
+ *
+ * This is the point where the duplicate finally goes away, and the reason the
+ * whole migration exists: until now the user's books existed twice on the
+ * device. Only the folder named here is removed, and only after the rewrite
+ * above succeeded, so a failed migration never destroys the copy that is still
+ * being read from.
+ */
+private fun purgeIosManagedFolderCopy(folderName: String) {
+    val appSupport = (NSFileManager.defaultManager.URLsForDirectory(
+        directory = NSApplicationSupportDirectory,
+        inDomains = NSUserDomainMask,
+    ).firstOrNull() as? NSURL)?.path ?: return
+    val managedRoot = "$appSupport/LocalFolders/${safeIosManagedFolderName(folderName)}"
+    if (!NSFileManager.defaultManager.fileExistsAtPath(managedRoot)) return
+    val removed = NSFileManager.defaultManager.removeItemAtPath(managedRoot, error = null)
+    IosDiagnosticLogStore.record(
+        LOCAL_FOLDER_SCAN_LOG_TAG,
+        "migrate.purge folder=$folderName root=$managedRoot removed=$removed",
+    )
+}
+
+/** Mirrors Swift's `safeLocalFolderName`; keep the two in step. */
+internal fun safeIosManagedFolderName(name: String): String {
+    val cleaned = name.replace("/", "_").trim()
+    return cleaned.ifEmpty { "Imported Folder" }
+}
+
 internal fun SharedLibrarySnapshot.withResolvedIosBookPaths(): SharedLibrarySnapshot {
     val resolvedBooks = books
         .map { book ->
-            // A linked-folder ref only resolves while its security scope is
-            // held, so a plain existence check reports it missing and the
-            // folder-sync reconciliation would delete the book. Availability
-            // for a ref is decided by the ref-aware check instead.
-            val isProviderRef = SharedIosBookSourceRef.isProviderRef(book.path)
+            // A linked-folder ref resolves through its bookmark, so
+            // availability has to be decided by the ref-aware check rather
+            // than a bare `fileExistsAtPath` on the ref string (which is never
+            // a path and would report every linked-folder book as missing).
             val resolvedPath = book.path?.resolvedIosImportedFilePath()
             book.copy(
                 path = resolvedPath,
                 coverImagePath = book.coverImagePath?.resolvedIosCoverPathOrNull(),
                 isAvailable = resolvedPath?.startsWith("opds-pse://") == true ||
-                    (!isProviderRef &&
-                        !resolvedPath.isNullOrBlank() &&
-                        NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)),
+                    resolvedPath.isIosReadableBookPath(),
             )
         }
         .distinctBy { book -> book.path?.takeIf(String::isNotBlank)?.let { "path:$it" } ?: "id:${book.id}" }
@@ -2893,6 +3014,43 @@ private fun loadPersistedIosEpubBookState(book: BookItem): BookItem {
 private fun persistIosEpubBookState(book: BookItem) {
     val encoded = SharedLibrarySnapshotJson.encode(SharedLibrarySnapshot(books = listOf(book)))
     NSUserDefaults.standardUserDefaults.setObject(encoded, forKey = book.iosEpubReaderStateKey())
+    persistIosFolderSidecar(book)
+}
+
+/**
+ * Writes a folder book's sidecar so its reading state travels with the file.
+ *
+ * Android parity: `RecentFilesRepository.syncLocalMetadataToFolder` on reader
+ * close, and on a custom rename. The same "not dirty means no sidecar" gate
+ * applies, so a book that was merely opened and closed leaves no litter.
+ *
+ * Failures are logged and swallowed. The in-memory and snapshot state is
+ * already correct, and a sidecar that cannot be written must not interrupt
+ * reading — the next close will retry.
+ */
+private fun persistIosFolderSidecar(book: BookItem) {
+    val folderName = book.sourceFolder?.takeIf { it.isNotBlank() } ?: return
+    if (!SharedIosBookSourceRef.isProviderRef(book.path)) return
+    val metadata = book.toSharedFolderBookMetadata() ?: return
+    val folderRoot = IosFolderBookScope.current().resolveFolderPath(folderName)
+    if (folderRoot == null) {
+        IosDiagnosticLogStore.record(
+            LOCAL_FOLDER_SCAN_LOG_TAG,
+            "sidecar.skip folder=$folderName id=${book.id} reason=unresolved",
+        )
+        return
+    }
+    if (IosFolderSidecarStore.writeMetadata(folderRoot, metadata)) {
+        IosDiagnosticLogStore.record(
+            LOCAL_FOLDER_SCAN_LOG_TAG,
+            "sidecar.written folder=$folderName id=${book.id}",
+        )
+    } else {
+        IosDiagnosticLogStore.record(
+            LOCAL_FOLDER_SCAN_LOG_TAG,
+            "sidecar.write_failed folder=$folderName id=${book.id}",
+        )
+    }
 }
 
 private fun BookItem.iosEpubReaderStateKey(): String {
@@ -4496,6 +4654,16 @@ private fun ReaderIosApp(
         )
     }
 
+    // Publish the per-folder scan watermarks so `bridge` can decide whether a
+    // foreground transition is worth a directory walk. Kept next to the other
+    // syncedFolders-driven effects so the two cannot drift apart.
+    LaunchedEffect(state.syncedFolders) {
+        bridge.publishFolderScanWatermarks(
+            state.syncedFolders
+                .filter { it.localSyncEnabled }
+                .associate { it.name to it.lastScanTime }
+        )
+    }
     // Register every local folder as a logical root + LOCAL_MIRROR binding
     // (Android `registerLocalCloudFolders` parity). Registration is not
     // selection: unselected roots stay inert until the user opts in.
@@ -4625,6 +4793,7 @@ private fun ReaderIosApp(
             state = state.copy(isRefreshing = false)
         }
     }
+
 
     fun removeManagedExternalBook(book: BookItem) {
         book.path?.let { bridge.removeImportedFiles(listOf(it)) }
@@ -5036,6 +5205,15 @@ private fun ReaderIosApp(
                 state = state.copy(isRefreshing = bridge.pendingFolderScans.isNotEmpty())
                 return@LaunchedEffect
             }
+            // Books indexed before in-place reads still point at the managed
+            // copy. Re-point them at a provider ref so the next reconciliation
+            // does not see every book as a new file and re-add it. Without
+            // this, the old rows would linger alongside the ref-backed ones.
+            val migratedState = state.migratedIosFolderBooks(scan.folderName)
+            if (migratedState !== state) {
+                state = migratedState
+                persistIosLibrarySnapshot(state)
+            }
             val folderForScan = configuredFolder
                 ?: SyncedFolder(
                     uriString = "ios-local-folder://${scan.folderName.normalizedId()}",
@@ -5043,11 +5221,25 @@ private fun ReaderIosApp(
                     lastScanTime = 0L,
                     cloudRootId = newIosCloudRootId(),
                 )
+            // Sidecars carry reading position, highlights and edited metadata
+            // for folder books, so they survive a rescan, a device change and a
+            // reinstall. Android reads them here too; iOS previously hardcoded
+            // an empty map, which is why a folder book's state was lost.
+            val folderRoot = IosFolderBookScope.current().resolveFolderPath(scan.folderName)
+            val remoteMetadata = folderRoot
+                ?.let { root -> IosFolderSidecarStore.readAllMetadata(root) }
+                .orEmpty()
+            if (remoteMetadata.isNotEmpty()) {
+                IosDiagnosticLogStore.record(
+                    LOCAL_FOLDER_SCAN_LOG_TAG,
+                    "sidecars.read folder=${scan.folderName} count=${remoteMetadata.size}",
+                )
+            }
             val syncResult = LocalFolderSyncEngine.syncFolder(
                 state = state,
                 folder = folderForScan.copy(uriString = scan.folderName),
                 files = scan.files,
-                remoteMetadata = emptyMap(),
+                remoteMetadata = remoteMetadata,
                 nowMillis = now,
                 scanStatus = effectiveStatus,
             )
@@ -5187,6 +5379,16 @@ private fun ReaderIosApp(
                     )
             } ?: break
             attempted += book.id
+            // A folder book and an imported book reach this loop by different
+            // routes (folder scan vs. picker import), and a cover that silently
+            // fails to appear is indistinguishable from one that was never
+            // attempted. Log the resolved path so a failure is attributable.
+            IosDiagnosticLogStore.record(
+                LOCAL_FOLDER_SCAN_LOG_TAG,
+                "presentation.start id=${book.id} type=${book.type} " +
+                    "sourceFolder=${book.sourceFolder} path=${book.path} " +
+                    "resolved=${book.path.resolveIosEpubSourcePath()}",
+            )
             // PDF cover/metadata extraction rasterizes a page through PDFium; keep it off the
             // UI thread and serialized with the shared reader pipeline (Android parity).
             val presentation = withContext(Dispatchers.Default) {
@@ -5199,6 +5401,11 @@ private fun ReaderIosApp(
             val coverPath = presentation.coverBytes
                 ?.takeIf { it.isNotEmpty() }
                 ?.let { bytes -> persistIosGeneratedCover(book, bytes) }
+            IosDiagnosticLogStore.record(
+                LOCAL_FOLDER_SCAN_LOG_TAG,
+                "presentation.done id=${book.id} coverBytes=${presentation.coverBytes?.size} " +
+                    "coverPath=$coverPath title=${presentation.title} series=${presentation.seriesName}",
+            )
             if (
                 presentation.title != null ||
                 presentation.author != null ||
@@ -9290,6 +9497,18 @@ private fun SharedReaderScreenState.withUpdatedIosMetadata(edited: BookItem): Sh
 private fun persistIosEpubMetadataEdit(current: BookItem, edited: BookItem): Result<BookItem> = runCatching {
     val updated = current.withUserEditedMetadata(edited)
     if (current.type != FileType.EPUB || updated === current) return@runCatching updated
+    // A linked-folder book is the user's own file, not an app-owned import.
+    // Rewriting the EPUB in place would modify a file the user may sync through
+    // another app, and the sidecar in `EpistemeSyncData/` is the supported way
+    // to carry a title/author edit for a folder book. Refuse rather than
+    // silently touching their data; the in-memory edit still applies.
+    if (SharedIosBookSourceRef.isProviderRef(current.path)) {
+        IosDiagnosticLogStore.record(
+            LOCAL_FOLDER_SCAN_LOG_TAG,
+            "epubMetadata.skipped id=${current.id} reason=linked_folder_book path=${current.path}",
+        )
+        return@runCatching updated
+    }
     val sourcePath = current.path?.takeIf(String::isNotBlank)
         ?: error("Book file is not available.")
     require(NSFileManager.defaultManager.fileExistsAtPath(sourcePath)) {
