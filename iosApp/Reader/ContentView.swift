@@ -229,6 +229,11 @@ struct ContentView: View {
             bridge.setFolderFileAdditionHandler { folderName, sourcePath, fileName in
                 addImportedFolderFile(folderName: folderName, sourcePath: sourcePath, fileName: fileName)
             }
+            // Lets Kotlin resolve an in-place book ref through the bookmark.
+            // Installed before any folder state is read.
+            bridge.setFolderBookmarkResolver { folderName in
+                resolveImportedFolderPath(folderName)
+            }
             audiobookPlayer.onPlaybackUpdate = { isPlaying, isLoading, positionMs, durationMs, speed, sleepTimerRemainingMs, error in
                 bridge.updateAudiobookPlaybackState(
                     isPlaying: isPlaying,
@@ -420,7 +425,54 @@ struct ContentView: View {
     }
 }
 
+/// A linked folder is read in place, so its bookmark must keep resolving to a
+/// URL that can start a security scope.
+///
+/// Note there is deliberately no `.withSecurityScope` here. That option is
+/// `API_UNAVAILABLE(ios)` — `NSURLBookmarkCreationWithSecurityScope` and
+/// `NSURLBookmarkResolutionWithSecurityScope` exist only on macOS and
+/// Mac Catalyst. On iOS the picker grants an implicit ephemeral scope that
+/// `NSURLBookmarkCreationWithoutImplicitSecurityScope` documents as valid
+/// "until reboot at the latest", which is what makes an in-place read survive
+/// relaunch without the macOS-only option.
+private let importedFolderBookmarkOptions: URL.BookmarkCreationOptions = [
+    .minimalBookmark
+]
+
 private let importedFolderBookmarksKey = "reader.ios.importedFolderBookmarks.v1"
+
+/// Resolves a stored folder bookmark. The resolution must ask for the security
+/// scope, and that scope must be held for as long as the caller reads from the
+/// URL, which is why every read site goes through `withImportedFolderScope`
+/// rather than resolving a URL and using it directly.
+private func resolveImportedFolderBookmark(
+    _ bookmark: Data,
+    folderName: String,
+    bridge: ReaderIosBridge? = nil
+) throws -> (url: URL, isStale: Bool) {
+    var isStale = false
+    let url = try URL(
+        resolvingBookmarkData: bookmark,
+        // `.withSecurityScope` is macOS-only (API_UNAVAILABLE(ios)). On iOS the
+        // bookmark carries an implicit ephemeral scope, and
+        // `.withoutImplicitStartAccessing` (iOS 14.2+) keeps that scope from
+        // being torn down when this call returns, so the caller can decide when
+        // to stop it.
+        options: [.withoutUI, .withoutImplicitStartAccessing],
+        relativeTo: nil,
+        bookmarkDataIsStale: &isStale
+    )
+    if isStale {
+        logFolderScan("bookmark.stale folder=\(folderName) reissuing", bridge: bridge)
+        updateImportedFolderBookmark(url, folderName: folderName, bridge: bridge)
+    }
+    return (url, isStale)
+}
+
+private func storedImportedFolderBookmark(folderName: String) -> Data? {
+    let bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
+    return bookmarks[folderName]
+}
 
 /// Shared diagnostics tag with Kotlin's `LOCAL_FOLDER_SCAN_LOG_TAG`. Filter
 /// the exported diagnostics for this single string to see the whole
@@ -461,7 +513,7 @@ private func rememberImportedFolder(_ url: URL, bridge: ReaderIosBridge) -> Stri
     var bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
     do {
         let bookmark = try url.bookmarkData(
-            options: [.minimalBookmark],
+            options: importedFolderBookmarkOptions,
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
@@ -512,7 +564,7 @@ private func rememberImportedFolder(_ url: URL, bridge: ReaderIosBridge) -> Stri
 
 private func updateImportedFolderBookmark(_ url: URL, folderName: String, bridge: ReaderIosBridge? = nil) {
     guard let bookmark = try? url.bookmarkData(
-        options: [.minimalBookmark],
+        options: importedFolderBookmarkOptions,
         includingResourceValuesForKeys: nil,
         relativeTo: nil
     ) else {
@@ -547,22 +599,15 @@ private func captureUnifiedLogEntries() -> String? {
     return nil
 }
 
+@MainActor
 private func refreshImportedFolders(bridge: ReaderIosBridge) {
     let bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
     logFolderScan("refresh.begin folders=\(bookmarks.count)", bridge: bridge)
     for (folderName, bookmark) in bookmarks {
         let folderURL: URL
         do {
-            var isStale = false
-            folderURL = try URL(
-                resolvingBookmarkData: bookmark,
-                options: [.withoutUI],
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            )
-            if isStale {
-                updateImportedFolderBookmark(folderURL, folderName: folderName, bridge: bridge)
-            }
+            let resolved = try resolveImportedFolderBookmark(bookmark, folderName: folderName)
+            folderURL = resolved.url
         } catch {
             logFolderScan(
                 "refresh.resolve_failed folder=\(folderName) \(folderScanErrorDetail(error))",
@@ -593,24 +638,14 @@ private func refreshImportedFolders(bridge: ReaderIosBridge) {
 /// detached afterwards; the bookmark created in the same callback is the
 /// durable handle.
 private func sourceURLForFolder(named folderName: String, fallback: URL, bridge: ReaderIosBridge) -> URL {
-    let bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
-    guard let bookmark = bookmarks[folderName] else {
+    guard let bookmark = storedImportedFolderBookmark(folderName: folderName) else {
         logFolderScan("picker.no_bookmark folder=\(folderName) using_picker_url", bridge: bridge)
         return fallback
     }
     do {
-        var isStale = false
-        let resolved = try URL(
-            resolvingBookmarkData: bookmark,
-            options: [.withoutUI],
-            relativeTo: nil,
-            bookmarkDataIsStale: &isStale
-        )
-        if isStale {
-            updateImportedFolderBookmark(resolved, folderName: folderName, bridge: bridge)
-        }
-        logFolderScan("picker.url_resolved folder=\(folderName) stale=\(isStale)", bridge: bridge)
-        return resolved
+        let resolved = try resolveImportedFolderBookmark(bookmark, folderName: folderName)
+        logFolderScan("picker.url_resolved folder=\(folderName) stale=\(resolved.isStale)", bridge: bridge)
+        return resolved.url
     } catch {
         logFolderScan(
             "picker.resolve_failed folder=\(folderName) \(folderScanErrorDetail(error)) using_picker_url",
@@ -681,24 +716,15 @@ private func removeImportedFolder(named folderName: String) {
 }
 
 private func deleteImportedFolderFiles(folderName: String, managedPaths: [String]) {
-    let bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
-    guard let bookmark = bookmarks[folderName] else { return }
-    var isStale = false
-    guard let sourceRoot = try? URL(
-        resolvingBookmarkData: bookmark,
-        options: [.withoutUI],
-        relativeTo: nil,
-        bookmarkDataIsStale: &isStale
-    ), let appSupport = try? FileManager.default.url(
-        for: .applicationSupportDirectory,
-        in: .userDomainMask,
-        appropriateFor: nil,
-        create: true
+    guard let bookmark = storedImportedFolderBookmark(folderName: folderName),
+          let sourceRoot = try? resolveImportedFolderBookmark(bookmark, folderName: folderName).url,
+          let appSupport = try? FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
     ) else {
         return
-    }
-    if isStale {
-        updateImportedFolderBookmark(sourceRoot, folderName: folderName)
     }
 
     let managedRoot = appSupport
@@ -726,24 +752,15 @@ private func deleteImportedFolderFiles(folderName: String, managedPaths: [String
 }
 
 private func addImportedFolderFile(folderName: String, sourcePath: String, fileName: String) -> String? {
-    let bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
-    guard let bookmark = bookmarks[folderName] else { return nil }
-    var isStale = false
-    guard let sourceRoot = try? URL(
-        resolvingBookmarkData: bookmark,
-        options: [.withoutUI],
-        relativeTo: nil,
-        bookmarkDataIsStale: &isStale
-    ), let appSupport = try? FileManager.default.url(
-        for: .applicationSupportDirectory,
-        in: .userDomainMask,
-        appropriateFor: nil,
-        create: true
-    ) else {
+    guard let bookmark = storedImportedFolderBookmark(folderName: folderName) else { return nil }
+    guard let sourceRoot = try? resolveImportedFolderBookmark(bookmark, folderName: folderName).url,
+          let appSupport = try? FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+          ) else {
         return nil
-    }
-    if isStale {
-        updateImportedFolderBookmark(sourceRoot, folderName: folderName)
     }
 
     let managedRoot = appSupport
@@ -797,24 +814,15 @@ private func uniqueImportedFolderFileName(
 }
 
 private func replaceImportedFolderFile(folderName: String, managedPath: String) -> String? {
-    let bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
-    guard let bookmark = bookmarks[folderName] else { return nil }
-    var isStale = false
-    guard let sourceRoot = try? URL(
-        resolvingBookmarkData: bookmark,
-        options: [.withoutUI],
-        relativeTo: nil,
-        bookmarkDataIsStale: &isStale
-    ), let appSupport = try? FileManager.default.url(
-        for: .applicationSupportDirectory,
-        in: .userDomainMask,
-        appropriateFor: nil,
-        create: true
-    ) else {
+    guard let bookmark = storedImportedFolderBookmark(folderName: folderName) else { return nil }
+    guard let sourceRoot = try? resolveImportedFolderBookmark(bookmark, folderName: folderName).url,
+          let appSupport = try? FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+          ) else {
         return nil
-    }
-    if isStale {
-        updateImportedFolderBookmark(sourceRoot, folderName: folderName)
     }
 
     let managedRoot = appSupport
@@ -1175,6 +1183,40 @@ nonisolated private func copyImportedAudiobookFolderToAppSupport(_ sourceURL: UR
     } catch {
         return ImportedFolderScan(files: [], succeeded: false)
     }
+}
+
+/// Resolves a linked folder's root path for the Kotlin side, holding the
+/// security scope for the duration of the call. Kotlin cannot read the
+/// bookmark itself, so this is the bridge that lets an in-place book ref
+/// (`ios-folder-book://<folder>/<relative path>`) become a real path.
+///
+/// The scope is released when this returns. That is correct for enumeration,
+/// stat and hashing, but a long-lived read (a PDF keeps its fd for the whole
+/// session) must hold a scope token instead — see `IosFolderScopeRegistry`.
+nonisolated func resolveImportedFolderPath(_ folderName: String) -> String? {
+    guard let bookmark = UserDefaults.standard
+        .dictionary(forKey: importedFolderBookmarksKey)?[folderName] as? Data else {
+        return nil
+    }
+    var isStale = false
+    guard let url = try? URL(
+        resolvingBookmarkData: bookmark,
+        // `.withSecurityScope` is macOS-only (API_UNAVAILABLE(ios)); on iOS the
+        // bookmark carries an implicit ephemeral scope.
+        options: [.withoutUI, .withoutImplicitStartAccessing],
+        relativeTo: nil,
+        bookmarkDataIsStale: &isStale
+    ) else {
+        return nil
+    }
+    guard url.startAccessingSecurityScopedResource() else {
+        // A resolved-but-unscoped URL is worse than none: reads through it can
+        // silently return nothing, so report the folder as unreachable.
+        localFolderScanLogger.error("ref.resolve_access_denied folder=\(folderName, privacy: .public)")
+        return nil
+    }
+    defer { url.stopAccessingSecurityScopedResource() }
+    return url.standardizedFileURL.path
 }
 
 nonisolated private func safeLocalFolderName(_ name: String) -> String {

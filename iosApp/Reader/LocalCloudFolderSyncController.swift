@@ -579,7 +579,15 @@ final class LocalCloudFolderSyncController {
         guard let bookmarks = UserDefaults.standard.dictionary(forKey: "reader.ios.importedFolderBookmarks.v1") as? [String: Data],
               let bookmark = bookmarks[folderName] else { return nil }
         var stale = false
-        return try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale)
+        // `.withSecurityScope` is macOS-only (API_UNAVAILABLE(ios)); on iOS the
+        // bookmark carries an implicit ephemeral scope. Keep it alive past this
+        // call so the caller can hold it for the transfer.
+        return try? URL(
+            resolvingBookmarkData: bookmark,
+            options: [.withoutUI, .withoutImplicitStartAccessing],
+            relativeTo: nil,
+            bookmarkDataIsStale: &stale
+        )
     }
 
     func mimeType(for name: String) -> String? {

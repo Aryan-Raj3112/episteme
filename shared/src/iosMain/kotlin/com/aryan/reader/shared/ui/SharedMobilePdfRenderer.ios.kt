@@ -57,6 +57,7 @@ import platform.posix.memcpy
 import kotlin.math.roundToInt
 import kotlin.time.TimeSource
 import kotlin.coroutines.coroutineContext
+import com.aryan.reader.shared.ios.resolveIosReadablePath
 
 @Composable
 internal actual fun rememberSharedMobilePdfPageRender(
@@ -315,7 +316,7 @@ private object IosPdfiumRenderer {
         reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
         preserveImageColors: Boolean = false,
     ): List<SharedMobilePdfTileRender> = IosPdfiumRuntime.withPdfium {
-        val resolvedPath = path.resolvedIosPdfPath() ?: return@withPdfium emptyList()
+        val resolvedPath = path.resolveIosReadablePath() ?: return@withPdfium emptyList()
         if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return@withPdfium emptyList()
         val document = FPDF_LoadDocument(resolvedPath, password) ?: return@withPdfium emptyList()
         try {
@@ -409,7 +410,7 @@ private object IosPdfiumRenderer {
         preserveImageColors: Boolean = false,
     ): SharedMobilePdfPageRender =
         IosPdfiumRuntime.withPdfium {
-        val resolvedPath = path.resolvedIosPdfPath()
+        val resolvedPath = path.resolveIosReadablePath()
         if (resolvedPath.isNullOrBlank()) {
             return@withPdfium SharedMobilePdfPageRender(errorMessage = "PDF path is unavailable")
         }
@@ -534,7 +535,7 @@ private object IosPdfiumRenderer {
         preserveImageColors: Boolean = false,
     ): SharedMobilePdfPageThumbnail? =
         IosPdfiumRuntime.withPdfium {
-            val resolvedPath = path.resolvedIosPdfPath() ?: return@withPdfium null
+            val resolvedPath = path.resolveIosReadablePath() ?: return@withPdfium null
             if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return@withPdfium null
             val document = FPDF_LoadDocument(resolvedPath, password) ?: return@withPdfium null
             try {
@@ -615,12 +616,6 @@ private object IosPdfiumRenderer {
                 FPDF_CloseDocument(document)
             }
         }
-}
-
-private fun String?.resolvedIosPdfPath(): String? {
-    val value = this?.trim()?.takeIf { it.isNotBlank() } ?: return null
-    if (!value.startsWith("file://")) return value
-    return NSURL.URLWithString(value)?.path ?: value.removePrefix("file://")
 }
 
 internal actual suspend fun sharedMobilePdfOcrTextBounds(

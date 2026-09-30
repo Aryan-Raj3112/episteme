@@ -18,8 +18,9 @@ class IosReaderAiAdaptersTest {
         val expected = "keychain-regression-value"
         IosReaderAiKeychain.delete(account)
         try {
-            val wrote = IosReaderAiKeychain.write(account, expected)
-            if (!wrote) {
+            // write returns null on success, or a diagnostic string on failure.
+            val writeError = IosReaderAiKeychain.write(account, expected)
+            if (writeError != null) {
                 // Unsigned/simulator test hosts often lack keychain entitlement
                 // (errSecMissingEntitlement). Production app has the entitlement;
                 // this host cannot exercise the Security framework round-trip.

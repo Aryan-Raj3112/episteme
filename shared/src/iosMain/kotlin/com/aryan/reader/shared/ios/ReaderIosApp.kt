@@ -1080,6 +1080,19 @@ class ReaderIosBridge internal constructor(
         folderFileAdditionHandler = handler
     }
 
+    /**
+     * Installs the native bookmark lookup that turns a `ios-folder-book://`
+     * ref into a real path. Swift owns the bookmarks, so it has to supply this;
+     * without it a linked-folder ref can never be resolved and every such book
+     * reads as unavailable.
+     */
+    fun setFolderBookmarkResolver(handler: ((String) -> String?)?) {
+        IosFolderBookScope.install(
+            handler?.let { resolve -> IosFolderBookmarkResolver { folderName -> resolve(folderName) } }
+                ?: IosFolderBookmarkResolver { null }
+        )
+    }
+
     internal fun addFolderManagedFile(folderName: String, sourcePath: String, fileName: String): String? {
         return folderFileAdditionHandler?.invoke(folderName, sourcePath, fileName)
     }
@@ -1579,6 +1592,11 @@ class ReaderIosBridge internal constructor(
                 inDomains = NSUserDomainMask,
             ).firstOrNull() as? NSURL
             )?.path
+        // `LocalFolders` only ever held the managed copy of a linked folder.
+        // Once books are read in place nothing is written there, so removing it
+        // is a no-op — but it is listed defensively rather than left to a
+        // future edit that could turn it into a recursive delete of a path the
+        // user owns.
         listOf("Imports", "Documents", "Covers", "Fonts", "LocalFolders", "PdfSidecars", "MetadataBackups")
             .mapNotNull { directoryName -> appSupportPath?.let { "$it/$directoryName" } }
             .forEach { path -> fileManager.removeItemAtPath(path, error = null) }
@@ -2185,12 +2203,18 @@ private fun persistIosSyncEnabled(enabled: Boolean) {
 internal fun SharedLibrarySnapshot.withResolvedIosBookPaths(): SharedLibrarySnapshot {
     val resolvedBooks = books
         .map { book ->
+            // A linked-folder ref only resolves while its security scope is
+            // held, so a plain existence check reports it missing and the
+            // folder-sync reconciliation would delete the book. Availability
+            // for a ref is decided by the ref-aware check instead.
+            val isProviderRef = SharedIosBookSourceRef.isProviderRef(book.path)
             val resolvedPath = book.path?.resolvedIosImportedFilePath()
             book.copy(
                 path = resolvedPath,
                 coverImagePath = book.coverImagePath?.resolvedIosCoverPathOrNull(),
                 isAvailable = resolvedPath?.startsWith("opds-pse://") == true ||
-                    (!resolvedPath.isNullOrBlank() &&
+                    (!isProviderRef &&
+                        !resolvedPath.isNullOrBlank() &&
                         NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)),
             )
         }
@@ -3843,9 +3867,14 @@ private fun ReaderIosApp(
         val openMark = sharedEpubOpenTraceMark()
         sharedEpubOpenTrace { "library openBook start bookId=${book.id} type=${book.type} temporary=$temporary" }
         val canDownload = cloudSyncEligible()
+        // A linked-folder ref only resolves while its scope is held, and this
+        // runs outside any held scope. Treat "cannot prove it is gone" as
+        // present, because the preflight removes a folder book from the library
+        // when this is false.
         val localFileExists = book.path?.let { path ->
             path.startsWith("opds-pse://") ||
-                NSFileManager.defaultManager.fileExistsAtPath(path)
+                SharedIosBookSourceRef.isProviderRef(path) ||
+                path.isIosReadableBookPath()
         } == true
         when (
             mobileBookOpenPreflightAction(
@@ -3893,7 +3922,12 @@ private fun ReaderIosApp(
         }
         if (book.type !in IOS_NATIVE_READER_FILE_TYPES) {
             if (temporary) {
-                book.path?.let { NSFileManager.defaultManager.removeItemAtPath(it, error = null) }
+                // Only ever a staging file the app owns. A linked-folder ref is
+                // not a path and must never be handed to a filesystem delete,
+                // or this would remove the user's own file.
+                book.path
+                    ?.takeUnless { SharedIosBookSourceRef.isProviderRef(it) }
+                    ?.let { NSFileManager.defaultManager.removeItemAtPath(it, error = null) }
             }
             state = state.copy(
                 bannerMessage = BannerMessage("${book.type.name} is not supported by the iOS reader yet")
@@ -5023,6 +5057,23 @@ private fun ReaderIosApp(
                     "new=${syncResult.stats.newBooks} updated=${syncResult.stats.updatedBooks} " +
                     "removed=${syncResult.stats.removedBooks} migrated=${syncResult.stats.migratedBooks}",
             )
+            // A no-change foreground must report updated=0. When it does not, the
+            // scanned size/mtime for the drifted book is logged so the offending
+            // field can be identified without a device repro.
+            if (syncResult.stats.updatedBooks > 0 && syncResult.stats.newBooks == 0) {
+                syncResult.state.rawLibraryBooks
+                    .filter { it.sourceFolder == scan.folderName }
+                    .forEach { book ->
+                        val scanned = scan.files.firstOrNull { it.stableBookId == book.id }
+                        IosDiagnosticLogStore.record(
+                            LOCAL_FOLDER_SCAN_LOG_TAG,
+                            "applied.drift folder=${scan.folderName} id=${book.id} " +
+                                "scannedSize=${scanned?.size} scannedMtime=${scanned?.lastModified} " +
+                                "bookSize=${book.fileSize} bookMtime=${book.fileContentModifiedTimestamp} " +
+                                "scannedPath=${scanned?.path} bookPath=${book.path}",
+                        )
+                    }
+            }
             val syncedFolder = folderForScan.copy(lastScanTime = now)
             state = syncResult.state.copy(
                 syncedFolders = (

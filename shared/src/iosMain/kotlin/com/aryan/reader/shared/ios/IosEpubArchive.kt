@@ -1700,10 +1700,21 @@ private fun inflateRawZipEntry(compressed: ByteArray, expectedSize: Int): ByteAr
     return output
 }
 
+/**
+ * A linked-folder book stores a provider ref rather than an app-managed path,
+ * so the shared resolver unwraps it. The basename fallback below is a repair
+ * path for legacy relative imports and must never run for a provider ref: the
+ * ref is not a filesystem path, so a stale one would otherwise silently
+ * resolve to an unrelated same-named file under Imports/ and read the wrong
+ * book.
+ */
 internal fun String?.resolveIosEpubSourcePath(): String? {
-    val raw = this?.takeIf(String::isNotBlank) ?: return null
-    if (NSFileManager.defaultManager.fileExistsAtPath(raw)) return raw
-    val fileName = raw.substringAfterLast('/').takeIf(String::isNotBlank) ?: return null
+    if (SharedIosBookSourceRef.isProviderRef(this)) {
+        return resolveIosFolderBookPath(this)
+    }
+    val candidate = resolveIosReadablePath() ?: return null
+    if (NSFileManager.defaultManager.fileExistsAtPath(candidate)) return candidate
+    val fileName = candidate.substringAfterLast('/').takeIf(String::isNotBlank) ?: return null
     val appSupport = NSFileManager.defaultManager.URLsForDirectory(
         directory = NSApplicationSupportDirectory,
         inDomains = NSUserDomainMask

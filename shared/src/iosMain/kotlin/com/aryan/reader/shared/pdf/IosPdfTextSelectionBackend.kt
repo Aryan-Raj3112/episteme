@@ -62,6 +62,7 @@ import kotlinx.coroutines.withContext
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSLock
 import platform.Foundation.NSURL
+import com.aryan.reader.shared.ios.resolveIosReadablePath
 
 /**
  * Lifecycle-managed handle to a PDF document together with the loaded text
@@ -386,7 +387,7 @@ internal class IosPdfTextPage internal constructor(
         }
 
         fun open(path: String?, pageIndex: Int, password: String? = null): IosPdfTextPage? {
-            val resolvedPath = path.resolvedIosPdfPath() ?: return null
+            val resolvedPath = path.resolveIosReadablePath() ?: return null
             if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return null
             ensureLibraryInitialized()
             val document = FPDF_LoadDocument(resolvedPath, password) ?: return null
@@ -417,11 +418,6 @@ internal class IosPdfTextPage internal constructor(
             }
         }
 
-        private fun String?.resolvedIosPdfPath(): String? {
-            val value = this?.trim()?.takeIf { it.isNotBlank() } ?: return null
-            if (!value.startsWith("file://")) return value
-            return NSURL.URLWithString(value)?.path ?: value.removePrefix("file://")
-        }
     }
 }
 

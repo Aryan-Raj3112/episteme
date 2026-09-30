@@ -234,6 +234,12 @@ enum class MobileBookOpenPreflightAction {
  * Mirrors Android's recent-item click ordering. Folder-backed entries are
  * checked before availability so a file removed outside the app is cleaned
  * from the library instead of being mistaken for a cloud-only download.
+ *
+ * [localFileExists] must be a positive confirmation that the file is gone, not
+ * a failure to prove it is present. A caller that cannot resolve a path (a
+ * security-scoped provider ref whose scope is not currently held, for example)
+ * must pass `true`: reporting `false` here removes the book from the library,
+ * which is unrecoverable for a file the user still has on disk.
  */
 fun mobileBookOpenPreflightAction(
     book: BookItem,
