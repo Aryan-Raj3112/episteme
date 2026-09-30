@@ -334,6 +334,23 @@ struct ContentView: View {
                 cloudFolderSync.requestSyncAll(replace: false)
                 await cloudFolderSync.awaitIdle()
             }
+            // CloudKit silent push accelerates sync; it is never required for it.
+            // A notification that launches the app fires before this closure
+            // exists, so IosPushNotifications completes those with .noData and
+            // the BGTaskScheduler/foreground paths handle the work instead.
+            // Same pull-only entry point the BG task uses, so the push path
+            // cannot diverge from the scheduled one.
+            IosPushNotifications.pullHandler = { [localAccount] in
+                await localAccount.handleBackgroundRefresh()
+            }
+            #if DEBUG
+            // Verifies the push -> pull -> completion chain on a simulator,
+            // where APNs is never delivered. Opt in with the
+            // -episteme.simulate-cloudkit-push launch argument.
+            if ProcessInfo.processInfo.arguments.contains(IosPushNotifications.simulatePushLaunchArgument) {
+                IosPushNotifications.simulateCloudKitPushAfterStartup()
+            }
+            #endif
         }
         .onChange(of: localStoreKit.proSyncEnabled) { _, isPro in
             localAccount.setProSyncEnabled(isPro)

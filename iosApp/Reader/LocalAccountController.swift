@@ -3430,6 +3430,11 @@ final class LocalAccountController: NSObject, ObservableObject {
     /// of starting from a stale load.
     private let cloudKitBaselineLock = AsyncMutex()
 
+    /// Serializes every CloudKit write (record saves and tombstoned-content
+    /// reclaims) across pull and push. Held only for the duration of the write
+    /// calls, never across a zone fetch, so it cannot serialize whole passes.
+    private let cloudKitWriteLock = AsyncMutex()
+
     /// Monotonic pass label (`p1`, `p2`, …) for log correlation. Pull and push
     /// can overlap and they share one OSLog category, so without this an
     /// interleaved read of a sync window cannot be attributed to a pass.
@@ -3463,6 +3468,60 @@ final class LocalAccountController: NSObject, ObservableObject {
             }
             for id in delta.deletedRecordIDs {
                 cloudKitForgetDeleted(id, maps: &maps)
+            }
+            // Legacy cleanup (Pride_and_Prejudice.epub and siblings): older
+            // builds used a device-local absolute path as the book id. Those
+            // records can never be downloaded — the pull guard refuses them
+            // every pass (`book_undownloadable reason=invalid_id`) — and can
+            // never match a local book, so they are dead weight in both the
+            // zone and the shadow. The shadow holds them even though the
+            // record itself rarely reappears in deltas, which is why the log
+            // spam never stopped: the download loop iterates the shadow.
+            //
+            // Scrub them from the shadow and delete the zone records directly
+            // by constructed name. Only ids failing the exact validation the
+            // download guard uses are touched; a valid content-hash or
+            // `ios_import_*` id can never fail it, so valid records are not
+            // deletion candidates. Deleting a name that does not exist reports
+            // unknownItem, which counts as success.
+            let legacyIds = cloudKitLegacyEntityIds(in: maps)
+            if !legacyIds.isEmpty {
+                var legacyRecordIDs: [CKRecord.ID] = []
+                for entityId in legacyIds {
+                    for recordType in [
+                        CloudKitLibrarySyncKt.CLOUDKIT_RECORD_BOOK_STATE,
+                        CloudKitLibrarySyncKt.CLOUDKIT_RECORD_BOOK_CONTENT,
+                        CloudKitLibrarySyncKt.CLOUDKIT_RECORD_BOOK_TOMBSTONE,
+                    ] {
+                        legacyRecordIDs.append(CKRecord.ID(
+                            recordName: CloudKitLibrarySyncKt.cloudKitLibraryRecordName(
+                                recordType: recordType, id: entityId
+                            ),
+                            zoneID: cloudKitTransport.zoneID
+                        ))
+                    }
+                }
+                cloudKitLog(
+                    "legacy_record_cleanup count=\(legacyIds.count) "
+                        + "ids=\(legacyIds.map { String($0.suffix(48)) }.joined(separator: ","))"
+                )
+                // Throw on failure so the token below is not saved past
+                // records we failed to remove; the pass retries via the
+                // outbox and deletes are idempotent.
+                try await cloudKitTransport.deleteRecordIDs(legacyRecordIDs)
+                cloudKitScrubLegacyEntityIds(legacyIds, maps: &maps)
+            }
+            // Records that DO appear in this delta but carry an unusable
+            // entity id (field-less records, sidecars whose zone name cannot
+            // be constructed locally): delete by their actual record ID.
+            let legacyDeltaIDs = delta.records.compactMap { record -> CKRecord.ID? in
+                guard let entityId = cloudKitCleanupEntityId(record) else { return nil }
+                guard !CloudKitLibrarySyncKt.isValidCloudKitLibraryId(id: entityId) else { return nil }
+                return record.recordID
+            }
+            if !legacyDeltaIDs.isEmpty {
+                cloudKitLog("legacy_record_cleanup_delta count=\(legacyDeltaIDs.count)")
+                try await cloudKitTransport.deleteRecordIDs(legacyDeltaIDs)
             }
             let nextBaseline = CloudKitBaseline(
                 token: cloudKitTransport.archiveChangeToken(delta.token),
@@ -3512,11 +3571,70 @@ final class LocalAccountController: NSObject, ObservableObject {
         }
     }
 
-    private func cloudKitAccumulate(record: CKRecord, maps: inout CloudKitRemoteMaps) {
+    /// Entity ids in the shadow that can never be valid book ids: legacy
+    /// device-local absolute paths from older builds. Union over every
+    /// book-keyed map. Anything returned here is deleted from the zone and
+    /// scrubbed from the shadow by the caller in `cloudKitFetchMaps`.
+    private func cloudKitLegacyEntityIds(in maps: CloudKitRemoteMaps) -> [String] {
+        var ids = Set<String>()
+        for id in maps.states.keys
+            where !CloudKitLibrarySyncKt.isValidCloudKitLibraryId(id: id) {
+            ids.insert(id)
+        }
+        for id in maps.tombstones.keys
+            where !CloudKitLibrarySyncKt.isValidCloudKitLibraryId(id: id) {
+            ids.insert(id)
+        }
+        for id in maps.contentModified.keys
+            where !CloudKitLibrarySyncKt.isValidCloudKitLibraryId(id: id) {
+            ids.insert(id)
+        }
+        for id in maps.sidecars.keys
+            where !CloudKitLibrarySyncKt.isValidCloudKitLibraryId(id: id) {
+            ids.insert(id)
+        }
+        return ids.sorted()
+    }
+
+    private func cloudKitScrubLegacyEntityIds(_ ids: [String], maps: inout CloudKitRemoteMaps) {
+        for id in ids {
+            maps.states.removeValue(forKey: id)
+            maps.tombstones.removeValue(forKey: id)
+            maps.contentModified.removeValue(forKey: id)
+            maps.sidecars.removeValue(forKey: id)
+        }
+    }
+
+    /// The entity id a fetched record claims, for legacy cleanup. Prefers the
+    /// `bookId` field — the same value `cloudKitAccumulate` keys the shadow
+    /// by — falling back to the record-name id part for field-less records.
+    /// Returns nil for record types the cleanup does not own.
+    private func cloudKitCleanupEntityId(_ record: CKRecord) -> String? {
+        switch record.recordType {
+        case CloudKitLibrarySyncKt.CLOUDKIT_RECORD_BOOK_STATE,
+             CloudKitLibrarySyncKt.CLOUDKIT_RECORD_BOOK_CONTENT,
+             CloudKitLibrarySyncKt.CLOUDKIT_RECORD_BOOK_TOMBSTONE,
+             CloudKitLibrarySyncKt.CLOUDKIT_RECORD_PDF_SIDECAR:
+            break
+        default:
+            return nil
+        }
         let fields = cloudKitTransport.recordFields(record)
+        if let bookId = fields["bookId"] as? String, !bookId.isEmpty {
+            return bookId
+        }
+        return CloudKitLibrarySyncKt.cloudKitSplitLibraryRecordName(
+            recordName: record.recordID.recordName
+        )?.id as String?
+    }
+    private func cloudKitAccumulate(record: CKRecord, maps: inout CloudKitRemoteMaps) {        let fields = cloudKitTransport.recordFields(record)
         switch record.recordType {
         case CloudKitLibrarySyncKt.CLOUDKIT_RECORD_BOOK_STATE:
             guard let bookId = fields["bookId"] as? String, !bookId.isEmpty else { return }
+            // Legacy path-id records must not poison the shadow while awaiting
+            // deletion (see legacy cleanup in `cloudKitFetchMaps`). A valid id
+            // can never fail this check.
+            guard CloudKitLibrarySyncKt.isValidCloudKitLibraryId(id: bookId) else { return }
             if (fields["isDeleted"] as? NSNumber)?.boolValue == true {
                 maps.tombstones[bookId] = max(
                     maps.tombstones[bookId] ?? 0,
@@ -3528,18 +3646,21 @@ final class LocalAccountController: NSObject, ObservableObject {
             }
         case CloudKitLibrarySyncKt.CLOUDKIT_RECORD_BOOK_CONTENT:
             guard let bookId = fields["bookId"] as? String, !bookId.isEmpty else { return }
+            guard CloudKitLibrarySyncKt.isValidCloudKitLibraryId(id: bookId) else { return }
             // Query results never carry asset bytes; only the content clock
             // is available here. Bytes download lazily by record name.
             maps.contentModified[bookId] = (fields["fileContentModifiedTimestamp"] as? NSNumber)?.int64Value ?? 0
         case CloudKitLibrarySyncKt.CLOUDKIT_RECORD_PDF_SIDECAR:
             guard let bookId = fields["bookId"] as? String,
                   let data = fields["data"] as? String, !data.isEmpty else { return }
+            guard CloudKitLibrarySyncKt.isValidCloudKitLibraryId(id: bookId) else { return }
             let timestamp = (fields["timestamp"] as? NSNumber)?.int64Value ?? 0
             if timestamp >= (maps.sidecars[bookId]?.timestamp ?? -1) {
                 maps.sidecars[bookId] = (timestamp, data)
             }
         case CloudKitLibrarySyncKt.CLOUDKIT_RECORD_BOOK_TOMBSTONE:
             guard let bookId = fields["bookId"] as? String else { return }
+            guard bookId.isEmpty || CloudKitLibrarySyncKt.isValidCloudKitLibraryId(id: bookId) else { return }
             maps.tombstones[bookId] = max(
                 maps.tombstones[bookId] ?? 0,
                 (fields["lastModifiedTimestamp"] as? NSNumber)?.int64Value ?? 0
@@ -3664,6 +3785,14 @@ final class LocalAccountController: NSObject, ObservableObject {
         // remote BookState clock, but a deleted book has no BookState, so every
         // pass re-published every tombstone (the repeating `BookTombstone`
         // entries in the save logs).
+        // Content records to reclaim once the tombstone that authorizes the
+        // delete is durably stored. Android publishes the tombstone first and
+        // only then removes the payload (CloudBookDeleteWorker:122-139 writes
+        // the tombstone, :181-191 deletes the Drive file). Reclaiming the
+        // content record first loses the delete entirely if the process dies in
+        // between: the bytes are gone but no tombstone exists, so no other
+        // device ever learns the book was removed.
+        var contentRecordsToReclaim: [CKRecord.ID] = []
         for tombstone in CloudKitLibraryMapper.parseTombstones(preparedLocalJSON) {
             guard let bookId = tombstone["bookId"] as? String, !bookId.isEmpty else { continue }
             let deletedAt = (tombstone["deletedAt"] as? NSNumber)?.int64Value ?? 0
@@ -3687,19 +3816,40 @@ final class LocalAccountController: NSObject, ObservableObject {
             // Deleting the content record reclaims the asset; the tombstone
             // record remains the authoritative delete marker.
             if maps.contentModified[bookId] != nil {
-                try? await cloudKitTransport.deleteRecordIDs([CKRecord.ID(
+                contentRecordsToReclaim.append(CKRecord.ID(
                     recordName: CloudKitLibrarySyncKt.cloudKitBookContentRecordName(bookId: bookId),
                     zoneID: cloudKitTransport.zoneID
-                )])
+                ))
             }
         }
         try await cloudKitUploadFontDirty(preparedLocalJSON: preparedLocalJSON, maps: maps, records: &records)
         cloudKitUploadShelfDirty(preparedLocalJSON: preparedLocalJSON, maps: maps, records: &records)
-        var start = records.startIndex
-        while start < records.endIndex {
-            let end = records.index(start, offsetBy: 300, limitedBy: records.endIndex) ?? records.endIndex
-            try await cloudKitTransport.saveRecords(Array(records[start..<end]))
-            start = end
+        // Every CloudKit mutation goes through one lock. Pull and push are
+        // independent passes on purpose (a push must not queue behind a long
+        // pull), but both end in cloudKitUploadDirty and both write the same
+        // BookState records. Two concurrent modifyRecords calls for one record
+        // make CloudKit reject the whole batch - the log showed
+        // `save_record_failed record=BookState:<id> error=Atomic failure`,
+        // which failed a pull, surfaced "iCloud sync failed", and burned a retry
+        // cycle before recovering. Android serializes the same work with
+        // CloudBookSyncBarrier.withAccountLock(accountId).
+        //
+        // Only the writes are locked. Fetching and dirty classification stay
+        // outside, so a long pull still cannot stop a push from starting, and
+        // re-reading the zone is idempotent, so a slightly stale
+        // classification just re-sends the same local winner.
+        try await cloudKitWriteLock.withLock {
+            var start = records.startIndex
+            while start < records.endIndex {
+                let end = records.index(start, offsetBy: 300, limitedBy: records.endIndex) ?? records.endIndex
+                try await cloudKitTransport.saveRecords(Array(records[start..<end]))
+                start = end
+            }
+            if !contentRecordsToReclaim.isEmpty {
+                // A failure here only delays asset reclamation; the tombstone is
+                // already durable and a later pass retries.
+                try? await cloudKitTransport.deleteRecordIDs(contentRecordsToReclaim)
+            }
         }
         return records.count
     }
