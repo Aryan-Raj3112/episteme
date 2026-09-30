@@ -1426,6 +1426,15 @@
         dynamicStyleElement.innerHTML = [sizeCss, lineHeightCss, typographyOverrideCss, fontCss, alignCss, gapCss, viewportContainmentCss, imageCss, horizontalMarginCss, hideImagesCss].join("\n");
         applyReaderImageAnchors();
         setTimeout(applyReaderImageAnchors, 80);
+        // The stylesheet above is what collapses author-fixed-layout image wrappers, so a
+        // style change can break an image that was already laid out. Re-run the recovery
+        // once the new rules have been parsed instead of waiting for a reload.
+        if (window.recoverCollapsedReaderImages) {
+            window.recoverCollapsedReaderImages();
+            setTimeout(function () {
+                if (window.recoverCollapsedReaderImages) window.recoverCollapsedReaderImages();
+            }, 120);
+        }
         logVerticalJitter(
             "jsStyleApply scrollY=" +
                 scrollYBeforeStyle +
@@ -2396,6 +2405,131 @@
         },
     };
 
+    function readerUsableContentWidth() {
+        var host = document.getElementById("content-container") || document.body;
+        var width = host && host.clientWidth ? host.clientWidth : 0;
+        if (!width) width = document.documentElement.clientWidth || window.innerWidth || 0;
+        return Math.max(1, Math.round(width - 32));
+    }
+
+    function readerImageScaleFactor() {
+        try {
+            var raw = parseFloat(
+                window.getComputedStyle(document.documentElement).getPropertyValue("--reader-image-size"),
+            );
+            if (!isNaN(raw) && raw > 0) return raw;
+        } catch (e) {}
+        return 1;
+    }
+
+    /**
+     * Releases degenerate wrappers between a decoded image and the content box.
+     *
+     * Fixed-layout publications (Calibre/Kobo comics and manga) wrap every page in
+     * position:absolute divs sized in absolute px. The reader's containment rule
+     * (max-width:100%!important on every descendant) plus width:auto on images
+     * makes those wrappers shrink-to-fit against a percentage that resolves through the
+     * image itself, so the whole chain collapses to 0x0 while the bitmap decodes fine.
+     * The direct wrapper always loses its author height cap (a figure with
+     * max-height:60% resolves against a figure that has no height yet); anything
+     * further up is only touched when it measured 0 wide, so reflowable chapters keep
+     * their authored geometry.
+     */
+    function releaseDegenerateReaderAncestors(img) {
+        var boundary = document.getElementById("content-container") || document.body;
+        var direct = img.parentElement;
+        var released = 0;
+
+        if (direct) {
+            direct.style.setProperty("height", "auto", "important");
+            direct.style.setProperty("max-height", "none", "important");
+            released++;
+        }
+
+        var node = direct;
+        while (node && node !== boundary && node !== document.body && node !== document.documentElement) {
+            var style = window.getComputedStyle(node);
+            var positioned = style.position === "absolute" || style.position === "fixed";
+            if (node.clientWidth === 0 && positioned) {
+                node.style.setProperty("width", "auto", "important");
+                node.style.setProperty("max-width", "100%", "important");
+                node.style.setProperty("min-width", "0", "important");
+                node.style.setProperty("height", "auto", "important");
+                node.style.setProperty("max-height", "none", "important");
+                node.style.setProperty("overflow", "visible", "important");
+                released++;
+            }
+            node = node.parentElement;
+        }
+        return released;
+    }
+
+    /**
+     * Gives a decoded-but-unlaid-out image an explicit box.
+     *
+     * Every size has to be pinned: the imageCss block caps the image with
+     * max-width:min(100%,..) which resolves against the (0 wide) author wrapper and
+     * re-clamps any width we set, so width/height plus their max/min counterparts are all
+     * written inline with !important. Inline !important outranks the injected stylesheet,
+     * which is what makes this stick.
+     */
+    function recoverCollapsedReaderImage(img) {
+        if (!img || img.naturalWidth <= 0 || img.naturalHeight <= 0) return false;
+
+        // A width the browser already laid out is authoritative: only the height is missing.
+        var heightOnly = img.clientWidth > 0 && img.clientHeight === 0;
+        if (!heightOnly && (img.clientWidth !== 0 || img.clientHeight !== 0)) return false;
+
+        var contentWidth = readerUsableContentWidth();
+        var scale = readerImageScaleFactor();
+        var width = heightOnly
+            ? img.clientWidth
+            : Math.max(1, Math.min(img.naturalWidth, Math.round(contentWidth * scale)));
+        var height = Math.round((width * img.naturalHeight) / img.naturalWidth);
+
+        // Cap to the viewport so a full-page scan never blows out the scroll range, then
+        // re-derive the width so the recovered box keeps the author's aspect ratio.
+        var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+        if (viewportHeight > 0 && height > Math.round(viewportHeight * 0.92)) {
+            height = Math.round(viewportHeight * 0.92);
+            width = Math.max(1, Math.round((height * img.naturalWidth) / img.naturalHeight));
+        }
+
+        var released = releaseDegenerateReaderAncestors(img);
+        img.style.setProperty("width", width + "px", "important");
+        img.style.setProperty("max-width", width + "px", "important");
+        img.style.setProperty("min-width", width + "px", "important");
+        img.style.setProperty("height", height + "px", "important");
+        img.style.setProperty("max-height", height + "px", "important");
+        img.style.setProperty("min-height", height + "px", "important");
+
+        try {
+            console.log(
+                "EpubBlankDiag: event=android_img_recovered src=" +
+                    ((img.getAttribute("src") || "").split("/").pop() || "").slice(-40) +
+                    " nat=" + img.naturalWidth + "x" + img.naturalHeight +
+                    " box=" + width + "x" + height +
+                    " releasedAncestors=" + released,
+            );
+        } catch (e) {}
+        return true;
+    }
+
+    window.recoverCollapsedReaderImages = function () {
+        var recovered = 0;
+        var candidates = document.querySelectorAll("img, image");
+        for (var i = 0; i < candidates.length; i++) {
+            if (recoverCollapsedReaderImage(candidates[i])) recovered++;
+        }
+        if (recovered > 0) {
+            if (window.reportScrollState) window.reportScrollState();
+            setTimeout(function () {
+                if (window.reportScrollState) window.reportScrollState();
+            }, 150);
+        }
+        return recovered;
+    };
+
     window.checkImagesForDiagnosis = function () {
         const images = document.querySelectorAll("img, image"); // 'image' for SVG images
         const logTag = "ImageDiagnosis";
@@ -2425,85 +2559,11 @@
                         "'",
                 );
 
-                // FIX: If height has collapsed, manually calculate and set it forcefully.
-                // Covers both the historical clientWidth>0/height==0 case and the
-                // Standard Ebooks figure collapse where the image is fully 0x0 while
-                // the bitmap decoded (naturalWidth>0). Parent-relative max-height
-                // (100%/60% in local.css) resolving against a 0-height figure is the
-                // usual cause; the imageCss cap (none then the JS-measured px cap) plus
-                // this band-aid recovers paint even if a publication rule still wins.
-                var collapsedHeightOnly = img.complete && img.naturalWidth > 0 && img.clientWidth > 0 && img.clientHeight === 0;
-                var collapsedFully = img.complete && img.naturalWidth > 0 && img.naturalHeight > 0 && img.clientWidth === 0 && img.clientHeight === 0;
-                if (collapsedHeightOnly || collapsedFully) {
-                    console.log(logTag + ": CORRECTING GEOMETRY for Image #" + index + " mode=" + (collapsedFully ? "fully-collapsed-0x0" : "height-only"));
-                    try { console.log("EpubBlankDiag: event=android_img_correct idx=" + index + " mode=" + (collapsedFully ? "0x0" : "h0") + " nat=" + img.naturalWidth + "x" + img.naturalHeight + " client=" + img.clientWidth + "x" + img.clientHeight + " src=" + ((img.getAttribute('src') || '').split('/').pop() || '').slice(-40)); } catch (e) {}
-                    const parent = img.parentElement;
-
-                    if (parent) {
-                        const parentStyle = window.getComputedStyle(parent);
-                        console.log(
-                            logTag +
-                                ": Parent <" +
-                                parent.tagName +
-                                "> computed height: " +
-                                parentStyle.height +
-                                ", overflow: " +
-                                parentStyle.overflow,
-                        );
-                        // Force the parent's height to be determined by its content. This is crucial.
-                        parent.style.setProperty("height", "auto", "important");
-                        parent.style.setProperty("max-height", "none", "important");
-                        if (collapsedFully && parent.tagName === "FIGURE") {
-                            parent.style.setProperty("width", "auto", "important");
-                            parent.style.setProperty("max-width", "100%", "important");
-                            parent.style.setProperty("overflow", "visible", "important");
-                        }
-                    }
-
-                    // Remove the conflicting max-height property first; on 0x0 images
-                    // clientWidth is 0 so derive width from the figure/content width.
-                    img.style.setProperty("max-height", "none", "important");
-                    var targetWidth = img.clientWidth;
-                    if (!targetWidth) {
-                        try {
-                            var host = img.closest ? (img.closest("figure") || img.parentElement) : img.parentElement;
-                            targetWidth = host ? host.clientWidth : 0;
-                        } catch (e) { targetWidth = 0; }
-                    }
-                    if (!targetWidth) {
-                        try { targetWidth = Math.min(img.naturalWidth, (document.documentElement.clientWidth || window.innerWidth || 0) - 32); } catch (e) {}
-                    }
-                    if (targetWidth && targetWidth > 0) {
-                        var aspect = img.naturalHeight / img.naturalWidth;
-                        var h = Math.round(targetWidth * aspect);
-                        // Cap to viewport so portrait scans never blow out scroll range.
-                        try {
-                            var vh = window.innerHeight || document.documentElement.clientHeight || 0;
-                            if (vh > 0 && h > Math.round(vh * 0.92)) h = Math.round(vh * 0.92);
-                        } catch (e) {}
-                        img.style.setProperty("width", targetWidth + "px", "important");
-                        img.style.setProperty("height", h + "px", "important");
-                    } else {
-                        var aspectOnly = img.naturalHeight / img.naturalWidth;
-                        var fallbackW = img.clientWidth || 0;
-                        var correctH = fallbackW * aspectOnly;
-                        img.style.setProperty("height", correctH + "px", "important");
-                    }
-
-                    console.log(logTag + ": Corrective styles applied to Image #" + index + ". Verifying height after a short delay for reflow...");
-
-                    // After applying styles, wait a moment for the browser to reflow the layout
-                    // before reporting the new height and updating the scroll state.
-                    setTimeout(
-                        function () {
-                            console.log(logTag + ": Verified height for Image #" + index + ": " + img.clientHeight + "px");
-                            try { console.log("EpubBlankDiag: event=android_img_corrected idx=" + index + " now=" + img.clientWidth + "x" + img.clientHeight); } catch (e) {}
-                            if (window.reportScrollState) window.reportScrollState(); // Update scroll metrics now that the image has height
-                        },
-
-                        150,
-                    );
-                }
+                // A decoded bitmap with no layout box is unambiguously broken, whatever the
+                // publication CSS did. Covers the historical clientWidth>0/height==0 case, the
+                // Standard Ebooks figure collapse (parent-relative max-height resolving against
+                // a 0-height figure) and the fixed-layout comic/manga chain collapse.
+                recoverCollapsedReaderImage(img);
 
                 img.onerror = function () {
                     console.log(logTag + ": ERROR: Image #" + index + " FAILED to load. Src was: '" + src + "'");

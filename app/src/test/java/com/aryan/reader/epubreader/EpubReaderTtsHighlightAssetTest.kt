@@ -71,9 +71,51 @@ class EpubReaderTtsHighlightAssetTest {
     fun `vertical webview recovers fully collapsed zero by zero images`() {
         val js = epubReaderAsset().readText()
 
-        assertTrue(js.contains("fully-collapsed-0x0"))
-        assertTrue(js.contains("android_img_correct"))
-        assertTrue(js.contains("android_img_corrected"))
+        // A decoded bitmap with no layout box is unambiguously broken, whatever the
+        // publication CSS did: Standard Ebooks figures collapse through a parent-relative
+        // max-height, and fixed-layout comics/manga collapse through the containment rule's
+        // percentage max-width resolving against a zero-width position:absolute wrapper.
+        assertTrue(js.contains("function recoverCollapsedReaderImage(img)"))
+        assertTrue(js.contains("window.recoverCollapsedReaderImages = function ()"))
+        assertTrue(js.contains("if (!img || img.naturalWidth <= 0 || img.naturalHeight <= 0) return false;"))
+        assertTrue(js.contains("recoverCollapsedReaderImage(img);"))
+        assertTrue(js.contains("android_img_recovered"))
+    }
+
+    @Test
+    fun `vertical webview recovery overrides the percentage caps that defeat it`() {
+        val js = epubReaderAsset().readText()
+
+        // The recovery used to set only width/height, so `max-width: min(100%, ..)` from
+        // imageCss re-clamped the width to 0 against the collapsed wrapper and the image
+        // stayed invisible. Every bound has to be pinned inline, where !important
+        // outranks the injected stylesheet.
+        assertTrue(js.contains("""img.style.setProperty("width", width + "px", "important");"""))
+        assertTrue(js.contains("""img.style.setProperty("max-width", width + "px", "important");"""))
+        assertTrue(js.contains("""img.style.setProperty("min-width", width + "px", "important");"""))
+        assertTrue(js.contains("""img.style.setProperty("height", height + "px", "important");"""))
+        assertTrue(js.contains("""img.style.setProperty("max-height", height + "px", "important");"""))
+        assertTrue(js.contains("""img.style.setProperty("min-height", height + "px", "important");"""))
+    }
+
+    @Test
+    fun `vertical webview recovery releases only degenerate fixed layout wrappers`() {
+        val js = epubReaderAsset().readText()
+
+        assertTrue(js.contains("function releaseDegenerateReaderAncestors(img)"))
+        // The walk stops at the content box, so reflowable chapters keep authored geometry.
+        assertTrue(js.contains("var boundary = document.getElementById(\"content-container\") || document.body;"))
+        assertTrue(js.contains("while (node && node !== boundary && node !== document.body && node !== document.documentElement) {"))
+        assertTrue(js.contains("if (node.clientWidth === 0 && positioned) {"))
+        assertTrue(js.contains("releasedAncestors="))
+    }
+
+    @Test
+    fun `vertical webview re-runs recovery after style and chunk updates`() {
+        val js = epubReaderAsset().readText()
+
+        assertTrue(js.contains("if (window.recoverCollapsedReaderImages) {"))
+        assertTrue(js.contains("setTimeout(window.checkImagesForDiagnosis, 100);"))
     }
 
     @Test
