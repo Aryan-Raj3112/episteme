@@ -3133,12 +3133,14 @@ fun SharedMobilePdfReaderHost(
                     exit = slideOutVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeOut(tween(PdfChromeMotionDurationMillis)),
                     modifier = Modifier.align(Alignment.BottomCenter)
                 ) {
-                    val jumpBarPageTemplate = readerString("pdf_page_short", "Page %1\$d")
+                    // Captured so the (non-composable) caption lambda can still localize.
+                    // String.format is JVM-only, so it cannot be used on Kotlin/Native.
+                    val jumpBarStrings = LocalSharedStringResolver.current
                     val jumpBarLabels = SharedPdfJumpHistoryBarLabels(
-                        jumpBack = readerString("content_desc_jump_back", "Previous jump"),
-                        jumpForward = readerString("content_desc_jump_forward", "Next jump"),
-                        clear = readerString("action_clear", "Clear"),
-                        page = { jumpBarPageTemplate.format(it) }
+                        jumpBack = jumpBarStrings.string("content_desc_jump_back", "Previous jump"),
+                        jumpForward = jumpBarStrings.string("content_desc_jump_forward", "Next jump"),
+                        clear = jumpBarStrings.string("action_clear", "Clear"),
+                        page = { page -> jumpBarStrings.string("pdf_page_short", "Page %1\$d", page) }
                     )
                     SharedMobilePdfJumpHistoryBar(
                         backPage = jumpHistory.backPage,

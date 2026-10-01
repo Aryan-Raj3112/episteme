@@ -172,6 +172,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.aryan.reader.shared.reader.mobileEpubSystemBarsVisibility
 import com.aryan.reader.shared.reader.writeSharedReaderDiagnostic
+import com.aryan.reader.shared.deduplicatedReaderBookmarks
+import com.aryan.reader.shared.ui.LocalSharedStringResolver
+import com.aryan.reader.shared.ui.SharedEpubBookmarkRow
+import com.aryan.reader.shared.ui.SharedEpubBookmarkStrings
+import com.aryan.reader.shared.ui.SharedEpubBookmarksList
 
 data class SharedMobileEpubReaderSnapshot(
     val locator: ReaderLocator,
@@ -1606,6 +1611,29 @@ fun SharedMobileEpubReaderScreen(
                         )
                     }
                 }
+                // Android benchmark (SharedEpubBookmarksList): the drawer bookmark list and
+                // its rename/delete dialogs are one shared widget; only the strings and the
+                // scrollbar slot are host-supplied.
+                // pageOf is a plain (Int, Int) -> String, so capture the resolver to
+                // localize inside it; readerString is @Composable.
+                val bookmarkStringsResolver = LocalSharedStringResolver.current
+                val bookmarkDefaultLabel = readerString("content_desc_bookmark", "Bookmark")
+                val bookmarkStrings = SharedEpubBookmarkStrings(
+                    empty = readerString("no_bookmarks_yet", "No bookmarks yet"),
+                    defaultLabel = bookmarkDefaultLabel,
+                    pageOf = { page, total ->
+                        bookmarkStringsResolver.string("page_of_format", "Page %1\$d of %2\$d", page, total)
+                    },
+                    moreOptionsDescription = readerString("content_desc_more_options_bookmark", "Bookmark options"),
+                    renameAction = readerString("action_rename", "Rename"),
+                    deleteAction = readerString("action_delete", "Delete"),
+                    renameDialogTitle = readerString("dialog_rename_bookmark", "Rename Bookmark"),
+                    newNameLabel = readerString("label_new_name", "New name"),
+                    saveAction = readerString("action_save", "Save"),
+                    cancelAction = readerString("action_cancel", "Cancel"),
+                    deleteDialogTitle = readerString("dialog_delete_bookmark", "Delete Bookmark?"),
+                    deleteDialogDescription = readerString("dialog_delete_bookmark_desc", "This bookmark will be removed from the book."),
+                )
                 HorizontalPager(state = drawerPagerState, modifier = Modifier.fillMaxWidth().weight(1f)) { page ->
                     when (page) {
                         0 -> SharedMobileEpubToc(
@@ -1620,19 +1648,27 @@ fun SharedMobileEpubReaderScreen(
                             },
                             modifier = Modifier.fillMaxSize()
                         )
-                        1 -> SharedMobileEpubBookmarks(
-                            bookmarks = bookmarks,
-                            onBookmarkClick = { bookmark ->
+                        1 -> SharedEpubBookmarksList(
+                            bookmarks = bookmarks.deduplicatedReaderBookmarks(),
+                            rowOf = { bookmark ->
+                                SharedEpubBookmarkRow(
+                                    key = bookmark.id,
+                                    title = bookmark.label?.takeIf { it.isNotBlank() }
+                                        ?: bookmark.preview.ifBlank { bookmarkDefaultLabel },
+                                    chapterTitle = bookmark.chapterTitle
+                                )
+                            },
+                            strings = bookmarkStrings,
+                            onNavigateToBookmark = { bookmark ->
                                 recordJumpAndNavigate(bookmark.locator)
                                 scope.launch { drawerState.close() }
                             },
-                            onBookmarkRename = { bookmark, label ->
+                            onRenameBookmark = { bookmark, label ->
                                 bookmarks = bookmarks.map { existing ->
                                     if (existing.id == bookmark.id) existing.copy(label = label.trim().ifBlank { null }) else existing
                                 }
                             },
-                            onBookmarkDelete = { bookmark -> bookmarks = bookmarks.filterNot { it.id == bookmark.id } },
-                            modifier = Modifier.fillMaxSize()
+                            onDeleteBookmark = { bookmark -> bookmarks = bookmarks.filterNot { it.id == bookmark.id } }
                         )
                         2 -> SharedMobileEpubHighlights(
                             highlights = highlights,

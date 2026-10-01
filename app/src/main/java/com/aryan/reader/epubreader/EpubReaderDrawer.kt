@@ -111,6 +111,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import com.aryan.reader.shared.ui.toBookmarkRow
 
 @Composable
 fun VerticalScrollbar(
@@ -633,9 +634,19 @@ private fun BookmarksList(
     onDeleteBookmark: (Bookmark) -> Unit
 ) {
     val context = LocalContext.current
-    com.aryan.reader.shared.ui.SharedAndroidEpubBookmarksList(
-        bookmarks = bookmarks,
-        strings = com.aryan.reader.shared.ui.SharedAndroidEpubBookmarkStrings(
+    val bookmarkDefaultLabel = stringResource(R.string.content_desc_bookmark)
+    val bookmarkPageOf: (Int, Int) -> String = { page, total ->
+        context.getString(R.string.page_of_format, page, total)
+    }
+    com.aryan.reader.shared.ui.SharedEpubBookmarksList(
+        bookmarks = bookmarks.toList(),
+        rowOf = { bookmark ->
+            bookmark.toBookmarkRow(
+                defaultLabel = bookmarkDefaultLabel,
+                pageOf = bookmarkPageOf
+            )
+        },
+        strings = com.aryan.reader.shared.ui.SharedEpubBookmarkStrings(
             empty = stringResource(R.string.no_bookmarks_yet),
             defaultLabel = stringResource(R.string.content_desc_bookmark),
             pageOf = { page, total -> context.getString(R.string.page_of_format, page, total) },
