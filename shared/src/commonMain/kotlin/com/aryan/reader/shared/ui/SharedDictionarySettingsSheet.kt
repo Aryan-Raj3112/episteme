@@ -16,12 +16,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
@@ -158,42 +156,46 @@ private fun SharedAppSelectionDropdown(
     var expanded by remember { mutableStateOf(false) }
     val selectedApp = apps.find { it.packageName == selectedPackageName }
     val hasSelection = !selectedPackageName.isNullOrEmpty() && selectedApp != null
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-        OutlinedTextField(
-            value = if (hasSelection) selectedApp.label else "",
-            onValueChange = {},
-            readOnly = true,
-            singleLine = true,
-            placeholder = { Text(labels.selectApp) },
-            leadingIcon = if (hasSelection && selectedApp.hasIcon) ({ appIcon(selectedApp.packageName) }) else null,
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-            colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
-        )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(
-                text = { Text(labels.none, color = if (!hasSelection) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
-                trailingIcon = if (!hasSelection) ({ Icon(Icons.Default.Check, contentDescription = labels.selected, tint = MaterialTheme.colorScheme.primary) }) else null,
-                onClick = { onSelect(""); expanded = false }
+    SharedExposedDropdownMenuField(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        modifier = Modifier.fillMaxWidth(),
+        field = {
+            OutlinedTextField(
+                value = if (hasSelection) selectedApp.label else "",
+                onValueChange = {},
+                readOnly = true,
+                singleLine = true,
+                placeholder = { Text(labels.selectApp) },
+                leadingIcon = if (hasSelection && selectedApp.hasIcon) ({ appIcon(selectedApp.packageName) }) else null,
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+                colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
             )
-            if (apps.isNotEmpty()) HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-            apps.forEach { app ->
-                val selected = app.packageName == selectedPackageName
-                DropdownMenuItem(
-                    text = { Text(app.label) },
-                    leadingIcon = {
-                        if (app.hasIcon) {
-                            appIcon(app.packageName)
-                        } else {
-                            Box(Modifier.size(24.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp)), Alignment.Center) {
-                            }
+        },
+    ) {
+        DropdownMenuItem(
+            text = { Text(labels.none, color = if (!hasSelection) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
+            trailingIcon = if (!hasSelection) ({ Icon(Icons.Default.Check, contentDescription = labels.selected, tint = MaterialTheme.colorScheme.primary) }) else null,
+            onClick = { onSelect(""); expanded = false }
+        )
+        if (apps.isNotEmpty()) HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        apps.forEach { app ->
+            val selected = app.packageName == selectedPackageName
+            DropdownMenuItem(
+                text = { Text(app.label) },
+                leadingIcon = {
+                    if (app.hasIcon) {
+                        appIcon(app.packageName)
+                    } else {
+                        Box(Modifier.size(24.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp)), Alignment.Center) {
                         }
-                    },
-                    trailingIcon = if (selected) ({ Icon(Icons.Default.Check, contentDescription = labels.selected, tint = MaterialTheme.colorScheme.primary) }) else null,
-                    onClick = { onSelect(app.packageName); expanded = false }
-                )
-            }
+                    }
+                },
+                trailingIcon = if (selected) ({ Icon(Icons.Default.Check, contentDescription = labels.selected, tint = MaterialTheme.colorScheme.primary) }) else null,
+                onClick = { onSelect(app.packageName); expanded = false }
+            )
         }
     }
 }

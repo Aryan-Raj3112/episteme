@@ -36,7 +36,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
@@ -188,7 +187,7 @@ internal fun SharedMobileAutoScrollControls(
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
-                            DropdownMenu(
+                            SharedDropdownMenu(
                                 expanded = showModeMenu,
                                 onDismissRequest = { showModeMenu = false }
                             ) {
@@ -428,7 +427,7 @@ private fun SharedMobileAutoScrollSpeedMenu(
                 .clickable { expanded = true }
                 .padding(4.dp)
         )
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        SharedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             sharedMobileAutoScrollSpeedOptions.forEach { option ->
                 DropdownMenuItem(
                     text = { Text(sharedMobileAutoScrollSpeedLabel(option)) },

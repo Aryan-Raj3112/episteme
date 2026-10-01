@@ -30,7 +30,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.ScrollState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.Dp
@@ -77,7 +76,7 @@ fun SharedReaderOverflowMenu(
     state: SharedReaderOverflowMenuState,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    DropdownMenu(
+    SharedDropdownMenu(
         expanded = state.menuExpanded.value,
         onDismissRequest = state::dismiss,
         content = content,

@@ -101,7 +101,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -5566,7 +5565,7 @@ private fun SharedMobilePdfReaderTopBar(
                 }) {
                     Icon(Icons.Default.MoreVert, contentDescription = readerString("tooltip_more_options", "PDF options"))
                 }
-                DropdownMenu(
+                SharedDropdownMenu(
                     expanded = showMoreMenu,
                     onDismissRequest = { showMoreMenu = false }
                 ) {
@@ -6765,7 +6764,7 @@ private fun SharedMobilePdfBookmarksDrawerPage(
                 badge = {
                     Box {
                         IconButton(onClick = { menuBookmark = bookmark }) { Icon(Icons.Default.MoreVert, contentDescription = readerString("content_desc_more_options_bookmark", "Bookmark options"), modifier = Modifier.size(18.dp)) }
-                        DropdownMenu(expanded = menuBookmark?.pageIndex == bookmark.pageIndex, onDismissRequest = { menuBookmark = null }) {
+                        SharedDropdownMenu(expanded = menuBookmark?.pageIndex == bookmark.pageIndex, onDismissRequest = { menuBookmark = null }) {
                             DropdownMenuItem(text = { Text("Rename") }, onClick = { renameBookmark = bookmark; menuBookmark = null })
                             DropdownMenuItem(text = { Text("Delete") }, onClick = { deleteBookmark = bookmark; menuBookmark = null })
                         }
@@ -6848,7 +6847,7 @@ private fun SharedMobilePdfAnnotationsDrawerPage(
                     trailingContent = {
                         Box {
                             IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Default.MoreVert, "Highlight options") }
-                            DropdownMenu(menuExpanded, { menuExpanded = false }) {
+                            SharedDropdownMenu(menuExpanded, { menuExpanded = false }) {
                                 DropdownMenuItem(
                                     text = { Text(if (annotation.note.isNullOrBlank()) "Add note" else "Edit note") },
                                     onClick = { menuExpanded = false; onEditNote(annotation) }

@@ -79,7 +79,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.Slider
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -401,7 +400,7 @@ internal fun SharedMobileEpubTopBar(
                     onClick = { onShowMoreChange(true) },
                     modifier = Modifier.testTag(SharedMobileEpubAxTags.MORE).semantics { contentDescription = moreOptionsContentDescription }
                 ) { Icon(Icons.Default.MoreVert, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
-                DropdownMenu(expanded = showMore, onDismissRequest = { onShowMoreChange(false) }) {
+                SharedDropdownMenu(expanded = showMore, onDismissRequest = { onShowMoreChange(false) }) {
                     DropdownMenuItem(
                         text = { Text(readerString("title_customize_toolbar", "Customize Toolbar")) },
                         onClick = { onShowMoreChange(false); onCustomizeTools() },
@@ -2192,7 +2191,7 @@ private fun SharedTtsCloudCachePanel(
                     },
                         modifier = Modifier.fillMaxWidth(),
                 )
-                DropdownMenu(
+                SharedDropdownMenu(
                     expanded = filterMenuExpanded,
                     onDismissRequest = { filterMenuExpanded = false },
                 ) {
@@ -2378,20 +2377,7 @@ private fun SharedTtsCloudVoicesPanel(
                 }
             }
         }
-        Box(
-            modifier = Modifier.fillMaxWidth()
-                // Open the menu from a real click on the wrapper rather than by collecting
-                // PressInteraction from a readOnly field: a disabled field emits none at all, and
-                // the collection was unreliable inside the settings sheet on iOS.
-                .clickable(enabled = !locked) {
-                    trace(
-                        "cloud.languageFilter.tap expandedBefore=$languageMenuExpanded " +
-                            "locked=$locked options=${cloudLanguageOptions.size} " +
-                            "selected=$effectiveCloudLanguage"
-                    )
-                    languageMenuExpanded = true
-                }
-        ) {
+        Box(modifier = Modifier.fillMaxWidth()) {
             // Android benchmark: the whole field opens the menu — a press
             // interaction beats an arrow-only target for small trailing icons.
             OutlinedTextField(
@@ -2405,13 +2391,27 @@ private fun SharedTtsCloudVoicesPanel(
                 enabled = !locked,
                 modifier = Modifier.fillMaxWidth(),
             )
-            DropdownMenu(
+            // Transparent click layer: a readOnly OutlinedTextField consumes the tap itself, so
+            // the clickable has to sit on top of it rather than wrap it.
+            if (!locked) {
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .clickable {
+                            trace(
+                                "cloud.languageFilter.tap expandedBefore=$languageMenuExpanded " +
+                                    "locked=$locked options=${cloudLanguageOptions.size} " +
+                                    "selected=$effectiveCloudLanguage"
+                            )
+                            languageMenuExpanded = true
+                        }
+                )
+            }
+            SharedDropdownMenu(
                 expanded = languageMenuExpanded,
                 onDismissRequest = { languageMenuExpanded = false },
             ) {
-                // Composed only when the popup actually renders. A tap with no matching
-                // "menuComposed" line means the Popup is not being presented at all
-                // (DropdownMenu inside a ModalBottomSheet is unreliable on iOS/CMP).
+                // Composed only when the popup actually renders.
                 trace("cloud.languageFilter.menuComposed options=${cloudLanguageOptions.size}")
                 cloudLanguageOptions.forEach { option ->
                     DropdownMenuItem(
@@ -2686,20 +2686,7 @@ private fun SharedTtsDeviceVoicesPanel(
             maxLines = 3,
             modifier = Modifier.fillMaxWidth(),
         )
-        Box(
-            modifier = Modifier.fillMaxWidth()
-                // Open the menu from a real click on the wrapper rather than by collecting
-                // PressInteraction from a readOnly field: a disabled field emits none at all, and
-                // the collection was unreliable inside the settings sheet on iOS.
-                .clickable(enabled = !locked) {
-                    trace(
-                        "device.languageFilter.tap expandedBefore=$languageMenuExpanded " +
-                            "locked=$locked options=${voiceLanguages.size} " +
-                            "selected=$effectiveLanguage"
-                    )
-                    languageMenuExpanded = true
-                }
-        ) {
+        Box(modifier = Modifier.fillMaxWidth()) {
             OutlinedTextField(
                 value = effectiveLanguage,
                 onValueChange = {},
@@ -2711,7 +2698,28 @@ private fun SharedTtsDeviceVoicesPanel(
                 enabled = !locked,
                 modifier = Modifier.fillMaxWidth(),
             )
-            DropdownMenu(
+            // Transparent click layer over the whole field.
+            //
+            // A readOnly OutlinedTextField still installs its own pointer input (focus and text
+            // selection), so it consumes the tap and a `clickable` on the wrapper Box never sees
+            // it — the menu silently never opened. Drawing the field non-interactively and
+            // putting the clickable on top keeps the exact visuals and makes the whole field the
+            // target, matching the Android benchmark behaviour.
+            if (!locked) {
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .clickable {
+                            trace(
+                                "device.languageFilter.tap expandedBefore=$languageMenuExpanded " +
+                                    "locked=$locked options=${voiceLanguages.size} " +
+                                    "selected=$effectiveLanguage"
+                            )
+                            languageMenuExpanded = true
+                        }
+                )
+            }
+            SharedDropdownMenu(
                 expanded = languageMenuExpanded,
                 onDismissRequest = { languageMenuExpanded = false },
             ) {

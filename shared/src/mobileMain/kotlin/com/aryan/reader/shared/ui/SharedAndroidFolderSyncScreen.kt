@@ -28,7 +28,6 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -301,7 +300,7 @@ private fun SharedAndroidFolderCard(
                 if (!folder.isAppManaged && !folder.isCloudPlaceholder) {
                     Box {
                         IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.MoreVert, strings.optionsDescription) }
-                        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                        SharedDropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                             DropdownMenuItem(text = { Text(strings.editFilters) }, onClick = { showMenu = false; onEdit() })
                             DropdownMenuItem(
                                 text = { Text(if (folder.localSyncEnabled) strings.disableLocalSync else strings.enableLocalSync) },

@@ -20,7 +20,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -223,32 +222,32 @@ fun SharedAiSettingsScreen(
 
             HorizontalDivider()
             Text(strings.addOrReplaceKey, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            ExposedDropdownMenuBox(
+            SharedExposedDropdownMenuField(
                 expanded = providerMenuExpanded,
                 onExpandedChange = { providerMenuExpanded = it },
                 modifier = Modifier.fillMaxWidth(),
+                field = {
+                    OutlinedTextField(
+                        value = strings.providerLabels[selectedProvider].orEmpty(),
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text(strings.providerLabel) },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = providerMenuExpanded) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                },
             ) {
-                OutlinedTextField(
-                    value = strings.providerLabels[selectedProvider].orEmpty(),
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text(strings.providerLabel) },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = providerMenuExpanded) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(),
-                )
-                ExposedDropdownMenu(expanded = providerMenuExpanded, onDismissRequest = { providerMenuExpanded = false }) {
-                    strings.providerLabels.keys.toList().forEach { provider ->
-                        DropdownMenuItem(
-                            text = { Text(strings.providerLabels[provider].orEmpty()) },
-                            onClick = {
-                                selectedProvider = provider
-                                providerMenuExpanded = false
-                            },
-                            trailingIcon = if (provider == selectedProvider) {
-                                { Icon(Icons.Default.Check, contentDescription = null) }
-                            } else null,
-                        )
-                    }
+                strings.providerLabels.keys.toList().forEach { provider ->
+                    DropdownMenuItem(
+                        text = { Text(strings.providerLabels[provider].orEmpty()) },
+                        onClick = {
+                            selectedProvider = provider
+                            providerMenuExpanded = false
+                        },
+                        trailingIcon = if (provider == selectedProvider) {
+                            { Icon(Icons.Default.Check, contentDescription = null) }
+                        } else null,
+                    )
                 }
             }
             OutlinedTextField(
@@ -339,42 +338,39 @@ fun SharedAiSettingsScreen(
                     )
                 }
                 if (currentSettings.ttsProvider == "gemini") {
-                    ExposedDropdownMenuBox(
+                    SharedExposedDropdownMenuField(
                         expanded = ttsVoiceMenuExpanded,
                         onExpandedChange = { ttsVoiceMenuExpanded = it },
                         modifier = Modifier.fillMaxWidth(),
+                        field = {
+                            val selectedVoice = ReaderCloudTtsVoices.firstOrNull { it.id == currentSettings.ttsSpeakerId }
+                                ?: ReaderCloudTtsVoices.first()
+                            OutlinedTextField(
+                                value = "${selectedVoice.name} · ${selectedVoice.description}",
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Voice") },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = ttsVoiceMenuExpanded) },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        },
                     ) {
-                        val selectedVoice = ReaderCloudTtsVoices.firstOrNull { it.id == currentSettings.ttsSpeakerId }
-                            ?: ReaderCloudTtsVoices.first()
-                        OutlinedTextField(
-                            value = "${selectedVoice.name} · ${selectedVoice.description}",
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Voice") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = ttsVoiceMenuExpanded) },
-                            modifier = Modifier.fillMaxWidth().menuAnchor(),
-                        )
-                        ExposedDropdownMenu(
-                            expanded = ttsVoiceMenuExpanded,
-                            onDismissRequest = { ttsVoiceMenuExpanded = false },
-                        ) {
-                            ReaderCloudTtsVoices.forEach { voice ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(voice.name)
-                                            Text(voice.description, style = MaterialTheme.typography.bodySmall)
-                                        }
-                                    },
-                                    onClick = {
-                                        updateSettings(currentSettings.copy(ttsSpeakerId = voice.id))
-                                        ttsVoiceMenuExpanded = false
-                                    },
-                                    trailingIcon = if (voice.id == currentSettings.ttsSpeakerId) {
-                                        { Icon(Icons.Default.Check, contentDescription = null) }
-                                    } else null,
-                                )
-                            }
+                        ReaderCloudTtsVoices.forEach { voice ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(voice.name)
+                                        Text(voice.description, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                },
+                                onClick = {
+                                    updateSettings(currentSettings.copy(ttsSpeakerId = voice.id))
+                                    ttsVoiceMenuExpanded = false
+                                },
+                                trailingIcon = if (voice.id == currentSettings.ttsSpeakerId) {
+                                    { Icon(Icons.Default.Check, contentDescription = null) }
+                                } else null,
+                            )
                         }
                     }
                 }
@@ -403,45 +399,42 @@ fun SharedAiSettingsScreen(
                         } else base
                     }
                     if (fishFilterLanguages.size > 2 || onToggleFavoriteFishVoice != null) {
-                        ExposedDropdownMenuBox(
+                        SharedExposedDropdownMenuField(
                             expanded = fishLanguageMenuExpanded,
                             onExpandedChange = { fishLanguageMenuExpanded = it },
                             modifier = Modifier.fillMaxWidth(),
+                            field = {
+                                OutlinedTextField(
+                                    value = effectiveFishLanguage,
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    label = { Text(strings.languageFilterLabel) },
+                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = fishLanguageMenuExpanded) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            },
                         ) {
-                            OutlinedTextField(
-                                value = effectiveFishLanguage,
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text(strings.languageFilterLabel) },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = fishLanguageMenuExpanded) },
-                                modifier = Modifier.fillMaxWidth().menuAnchor(),
-                            )
-                            ExposedDropdownMenu(
-                                expanded = fishLanguageMenuExpanded,
-                                onDismissRequest = { fishLanguageMenuExpanded = false },
-                            ) {
-                                fishFilterLanguages.forEach { lang ->
-                                    DropdownMenuItem(
-                                        text = { Text(lang) },
-                                        leadingIcon = if (lang == strings.favoritesLabel) {
-                                            {
-                                                Icon(
-                                                    Icons.Default.Star,
-                                                    contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                )
-                                            }
-                                        } else null,
-                                        trailingIcon = if (lang == effectiveFishLanguage) {
-                                            { Icon(Icons.Default.Check, contentDescription = null) }
-                                        } else null,
-                                        onClick = {
-                                            internalFishLanguage = lang
-                                            onFishLanguageSelectionChange?.invoke(lang)
-                                            fishLanguageMenuExpanded = false
-                                        },
-                                    )
-                                }
+                            fishFilterLanguages.forEach { lang ->
+                                DropdownMenuItem(
+                                    text = { Text(lang) },
+                                    leadingIcon = if (lang == strings.favoritesLabel) {
+                                        {
+                                            Icon(
+                                                Icons.Default.Star,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                            )
+                                        }
+                                    } else null,
+                                    trailingIcon = if (lang == effectiveFishLanguage) {
+                                        { Icon(Icons.Default.Check, contentDescription = null) }
+                                    } else null,
+                                    onClick = {
+                                        internalFishLanguage = lang
+                                        onFishLanguageSelectionChange?.invoke(lang)
+                                        fishLanguageMenuExpanded = false
+                                    },
+                                )
                             }
                         }
                     }
@@ -453,27 +446,25 @@ fun SharedAiSettingsScreen(
                         )
                     }
                     if (visibleFishVoices.isNotEmpty()) {
-                        ExposedDropdownMenuBox(
+                        SharedExposedDropdownMenuField(
                             expanded = fishVoiceMenuExpanded,
                             onExpandedChange = { fishVoiceMenuExpanded = it },
                             modifier = Modifier.fillMaxWidth(),
+                            field = {
+                                val selectedFishVoice = fishVoices.firstOrNull {
+                                    it.referenceId == currentSettings.ttsSpeakerId || it.id == currentSettings.ttsSpeakerId
+                                }
+                                OutlinedTextField(
+                                    value = selectedFishVoice?.let { "${it.title} · ${it.description}".trimEnd(' ', '·') }
+                                        ?: currentSettings.ttsSpeakerId.ifBlank { "Select a voice" },
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    label = { Text("Voice") },
+                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = fishVoiceMenuExpanded) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            },
                         ) {
-                            val selectedFishVoice = fishVoices.firstOrNull {
-                                it.referenceId == currentSettings.ttsSpeakerId || it.id == currentSettings.ttsSpeakerId
-                            }
-                            OutlinedTextField(
-                                value = selectedFishVoice?.let { "${it.title} · ${it.description}".trimEnd(' ', '·') }
-                                    ?: currentSettings.ttsSpeakerId.ifBlank { "Select a voice" },
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("Voice") },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = fishVoiceMenuExpanded) },
-                                modifier = Modifier.fillMaxWidth().menuAnchor(),
-                            )
-                            ExposedDropdownMenu(
-                                expanded = fishVoiceMenuExpanded,
-                                onDismissRequest = { fishVoiceMenuExpanded = false },
-                            ) {
                                 visibleFishVoices.forEach { voice ->
                                     val isFavorite = voice.referenceId in favoriteFishVoiceIds
                                     DropdownMenuItem(
@@ -511,7 +502,6 @@ fun SharedAiSettingsScreen(
                                     )
                                 }
                             }
-                        }
                     } else if (!fishVoicesLoading) {
                         Text(
                             when {
@@ -714,7 +704,11 @@ private fun SharedAiModelSelector(
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }, modifier = Modifier.fillMaxWidth()) {
+        SharedExposedDropdownMenuField(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        modifier = Modifier.fillMaxWidth(),
+        field = {
             OutlinedTextField(
                 value = selected?.let { option ->
                     option.priceLabel?.let { "${option.label} · $it" } ?: option.label
@@ -723,22 +717,22 @@ private fun SharedAiModelSelector(
                 readOnly = true,
                 label = { Text(strings.modelLabel) },
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                modifier = Modifier.fillMaxWidth().menuAnchor(),
+                modifier = Modifier.fillMaxWidth(),
             )
-            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                DropdownMenuItem(
-                    text = { Text(strings.noModelSelected) },
-                    onClick = { onSelected(""); expanded = false },
-                    trailingIcon = if (selectedId.isBlank()) ({ Icon(Icons.Default.Check, contentDescription = null) }) else null,
-                )
-                options.forEach { option ->
-                    DropdownMenuItem(
-                        text = { Text(option.priceLabel?.let { "${option.label} · $it" } ?: option.label) },
-                        onClick = { onSelected(option.id); expanded = false },
-                        trailingIcon = if (option.id == selected?.id) ({ Icon(Icons.Default.Check, contentDescription = null) }) else null,
-                    )
-                }
-            }
+        },
+    ) {
+        DropdownMenuItem(
+            text = { Text(strings.noModelSelected) },
+            onClick = { onSelected(""); expanded = false },
+            trailingIcon = if (selectedId.isBlank()) ({ Icon(Icons.Default.Check, contentDescription = null) }) else null,
+        )
+        options.forEach { option ->
+            DropdownMenuItem(
+                text = { Text(option.priceLabel?.let { "${option.label} · $it" } ?: option.label) },
+                onClick = { onSelected(option.id); expanded = false },
+                trailingIcon = if (option.id == selected?.id) ({ Icon(Icons.Default.Check, contentDescription = null) }) else null,
+            )
         }
+    }
     }
 }

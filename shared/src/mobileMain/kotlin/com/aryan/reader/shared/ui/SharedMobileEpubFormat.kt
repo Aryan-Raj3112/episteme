@@ -50,7 +50,6 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -192,7 +191,7 @@ internal fun SharedMobileEpubFormatSheet(
                         Text(if (isLocalMode) "Local Format" else "Global Format", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                         Icon(Icons.Default.ArrowDropDown, contentDescription = readerString("format_select_mode", "Select format mode"), tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                     }
-                    DropdownMenu(expanded = showModeMenu, onDismissRequest = { showModeMenu = false }) {
+                    SharedDropdownMenu(expanded = showModeMenu, onDismissRequest = { showModeMenu = false }) {
                         DropdownMenuItem(text = { Column { Text(readerString("format_global", "Global Format"), fontWeight = FontWeight.Bold); Text(
                                     readerString("auto_scroll_desc_global", "Applies to all files"),
                                     style = MaterialTheme.typography.bodySmall,

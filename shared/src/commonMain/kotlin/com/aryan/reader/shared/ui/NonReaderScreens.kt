@@ -52,7 +52,6 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -783,7 +782,7 @@ private fun SelectionToolbar(
                         IconButton(onClick = { exportMenuExpanded = true }, modifier = Modifier.size(40.dp)) {
                             Icon(Icons.Default.MoreVert, contentDescription = readerString("desktop_more", "More"), modifier = Modifier.size(18.dp))
                         }
-                        DropdownMenu(expanded = exportMenuExpanded, onDismissRequest = { exportMenuExpanded = false }) {
+                        SharedDropdownMenu(expanded = exportMenuExpanded, onDismissRequest = { exportMenuExpanded = false }) {
                             DropdownMenuItem(
                                 leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) },
                                 text = { Text(readerString("action_export_annotations", "Export annotations")) },
@@ -873,7 +872,7 @@ private fun RecentLimitMenu(
             Spacer(Modifier.width(8.dp))
             Text(if (normalizedLimit == 0) "No limit" else "$normalizedLimit")
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        SharedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             listOf(0, 10, 20, 50, 100).forEach { limit ->
                 DropdownMenuItem(
                     text = { Text(if (limit == 0) "No limit" else "$limit files") },
@@ -1224,7 +1223,7 @@ private fun LibraryMoreActionsMenu(
                 modifier = Modifier.size(20.dp)
             )
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        SharedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(
                 leadingIcon = {
                     Icon(

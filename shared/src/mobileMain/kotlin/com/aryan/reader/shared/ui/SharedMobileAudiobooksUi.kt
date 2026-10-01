@@ -65,7 +65,6 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -1033,7 +1032,7 @@ private fun ListenSortMenu(selected: SharedAudiobookSort, onSelected: (SharedAud
             label = { Text(readerString(selected.stringKey, selected.fallbackLabel)) },
             leadingIcon = { Icon(Icons.Default.Sort, contentDescription = null, modifier = Modifier.size(18.dp)) },
         )
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        SharedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             SharedAudiobookSort.entries.forEach { option ->
                 DropdownMenuItem(
                     text = {
@@ -1131,7 +1130,7 @@ fun SharedMobileAudiobookPlayerSheet(
                     IconButton(onClick = { showMenu = true }) {
                         Icon(Icons.Default.MoreVert, contentDescription = readerString("content_desc_more_options", "More options"))
                     }
-                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                    SharedDropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                         DropdownMenuItem(
                             text = { Text(readerString("audiobooks_stop_playback", "Stop playback")) },
                             leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },
@@ -1529,7 +1528,7 @@ fun SharedMobileAudiobookMiniPlayer(
                     IconButton(onClick = { menuExpanded = true }) {
                         Icon(Icons.Default.MoreVert, contentDescription = readerString("content_desc_more_options", "More options"))
                     }
-                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    SharedDropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                         DropdownMenuItem(
                             text = { Text(readerString("audiobooks_stop_playback", "Stop playback")) },
                             leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },
@@ -1619,7 +1618,7 @@ fun SharedMobileAudiobookMiniPlayerFrame(
                     IconButton(onClick = { menuExpanded = true }) {
                         Icon(Icons.Default.MoreVert, contentDescription = readerString("content_desc_more_options", "More options"))
                     }
-                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    SharedDropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                         DropdownMenuItem(
                             text = { Text(readerString("audiobooks_stop_playback", "Stop playback")) },
                             leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },
@@ -1896,7 +1895,7 @@ fun SharedMobileTtsPlayerSheet(
                     IconButton(onClick = { showMenu = true }) {
                         Icon(Icons.Default.MoreVert, contentDescription = readerString("content_desc_more_options", "More options"))
                     }
-                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                    SharedDropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                         if (onOpenVoiceSettings != null) {
                             DropdownMenuItem(
                                 text = { Text(readerString("menu_tts_voice_settings", "TTS Voice Settings")) },
@@ -2329,7 +2328,7 @@ fun SharedMobileTtsMiniPlayer(
                     IconButton(onClick = { menuExpanded = true }) {
                         Icon(Icons.Default.MoreVert, contentDescription = readerString("content_desc_more_options", "More options"))
                     }
-                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    SharedDropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                         DropdownMenuItem(
                             text = { Text(readerString("audiobooks_stop_playback", "Stop playback")) },
                             leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },

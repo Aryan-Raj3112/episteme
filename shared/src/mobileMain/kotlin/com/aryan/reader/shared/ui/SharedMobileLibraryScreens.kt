@@ -61,7 +61,6 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -1917,7 +1916,7 @@ private fun SharedMobileShelfDetail(
                                 Spacer(Modifier.width(8.dp))
                                 Text(sortOrder.sharedMobileLabel())
                             }
-                            DropdownMenu(
+                            SharedDropdownMenu(
                                 expanded = showSortMenu,
                                 onDismissRequest = { showSortMenu = false },
                             ) {
@@ -1945,7 +1944,7 @@ private fun SharedMobileShelfDetail(
                                 IconButton(onClick = { showMoreMenu = true }) {
                                     Icon(Icons.Default.MoreVert, contentDescription = readerString("content_desc_more_options", "More options"))
                                 }
-                                DropdownMenu(
+                                SharedDropdownMenu(
                                     expanded = showMoreMenu,
                                     onDismissRequest = { showMoreMenu = false },
                                 ) {
@@ -2196,7 +2195,7 @@ private fun SharedMobileAddBooksToShelfScreen(
                                 Spacer(Modifier.width(8.dp))
                                 Text(sortOrder.sharedMobileLabel())
                             }
-                            DropdownMenu(
+                            SharedDropdownMenu(
                                 expanded = showSortMenu,
                                 onDismissRequest = { showSortMenu = false },
                             ) {
@@ -2789,7 +2788,7 @@ private fun SharedMobileHomeTopBar(
                 IconButton(onClick = { showOptionsMenu = true }, modifier = Modifier.testTag("MobileHomeMore")) {
                     Icon(Icons.Default.MoreVert, contentDescription = readerString("tooltip_more_options", "More Options"))
                 }
-                DropdownMenu(
+                SharedDropdownMenu(
                     expanded = showOptionsMenu,
                     onDismissRequest = { showOptionsMenu = false },
                 ) {

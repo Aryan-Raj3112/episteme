@@ -67,7 +67,6 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -151,7 +150,7 @@ fun SharedMobileLibrarySortControl(
             Spacer(Modifier.width(8.dp))
             Text(labels[sortOrder].orEmpty())
         }
-        DropdownMenu(
+        SharedDropdownMenu(
             expanded = showSortMenu,
             onDismissRequest = { showSortMenu = false },
         ) {
@@ -506,7 +505,7 @@ internal fun SharedMobileCompactSelectionActions(
         IconButton(onClick = { showMore = true }) {
             Icon(Icons.Default.MoreVert, contentDescription = labels.moreOptions)
         }
-        DropdownMenu(expanded = showMore, onDismissRequest = { showMore = false }) {
+        SharedDropdownMenu(expanded = showMore, onDismissRequest = { showMore = false }) {
             onTag?.let { action ->
                 DropdownMenuItem(
                     text = { Text(labels.tag) },
@@ -824,7 +823,7 @@ internal fun SharedMobileContextualTopBar(
                 IconButton(onClick = { showMoreMenu = true }) {
                     Icon(Icons.Default.MoreVert, contentDescription = "More actions")
                 }
-                DropdownMenu(
+                SharedDropdownMenu(
                     expanded = showMoreMenu,
                     onDismissRequest = { showMoreMenu = false }
                 ) {
@@ -1723,7 +1722,7 @@ internal fun SharedMobileFolderCard(
                     IconButton(onClick = { showMenu = true }) {
                         Icon(Icons.Default.MoreVert, contentDescription = "Folder options")
                     }
-                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                    SharedDropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                         DropdownMenuItem(
                             text = { Text(readerString("menu_edit_filters", "Edit Filters")) },
                             onClick = { showMenu = false; onEditFilters() },

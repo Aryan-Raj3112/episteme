@@ -24,7 +24,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
@@ -419,7 +418,7 @@ fun <T> SharedAndroidPdfHighlightsList(
                             IconButton(onClick = { menuExpanded = true }) {
                                 Icon(Icons.Default.MoreVert, contentDescription = strings.optionsDescription)
                             }
-                            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                            SharedDropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                                 DropdownMenuItem(
                                     text = { Text(if (note(highlight).isNullOrBlank()) strings.addNoteAction else strings.editNoteAction) },
                                     onClick = {
@@ -509,7 +508,7 @@ fun <T> SharedAndroidPdfBookmarksList(
                         IconButton(onClick = { bookmarkMenuExpandedFor = bookmark }) {
                             Icon(Icons.Default.MoreVert, contentDescription = strings.moreOptionsDescription)
                         }
-                        DropdownMenu(
+                        SharedDropdownMenu(
                             expanded = bookmarkMenuExpandedFor == bookmark,
                             onDismissRequest = { bookmarkMenuExpandedFor = null },
                         ) {
@@ -654,7 +653,7 @@ fun <T> SharedEpubBookmarksList(
                             IconButton(onClick = { bookmarkMenuExpandedFor = row.key }) {
                                 Icon(Icons.Default.MoreVert, contentDescription = strings.moreOptionsDescription)
                             }
-                            DropdownMenu(
+                            SharedDropdownMenu(
                                 expanded = bookmarkMenuExpandedFor == row.key,
                                 onDismissRequest = { bookmarkMenuExpandedFor = null },
                             ) {
