@@ -559,6 +559,11 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     private var activeUtterance: AVSpeechUtterance? = null
     private var activeSpokenOffset = 0
     private var activeUtteranceBaseOffset = 0
+    // Session identity, so a surface sharing this engine can tell its own session
+    // apart from another surface's. Android benchmark: `TtsState.playbackSource`.
+    private var activePlaybackSource: String? = null
+    private var activeBookId: String? = null
+    private var activeTotalChapters: Int = 0
     private var wantsPlayback = true
     private var audioSessionActive = false
     private var audioSessionGeneration = 0
@@ -579,6 +584,11 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         installRemoteCommands()
     }
 
+    override val playbackSource: String? get() = activePlaybackSource
+    override val sessionBookId: String? get() = activeBookId
+    override val sessionTotalChapters: Int get() = activeTotalChapters
+    override val currentSpokenOffset: Int get() = activeSpokenOffset
+
     override fun prepare() {
         iosTtsStartLog("local.prepare")
         if (!audioSessionActive) {
@@ -593,8 +603,14 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         bookTitle: String,
         bookId: String?,
         startChunkIndex: Int,
-        playWhenReady: Boolean
+        playWhenReady: Boolean,
+        playbackSource: String?,
+        totalChapters: Int,
+        continueSession: Boolean,
+        authToken: String?,
     ) {
+        // The local engine never spends credits, so continueSession/authToken are accepted
+        // only to keep one signature across engines.
         val readableChunks = chunks.filter { it.spokenText.isNotBlank() }
         if (readableChunks.isEmpty()) {
             iosTtsStartLog("local.start empty", "chunks=${chunks.size}")
@@ -611,6 +627,9 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         this.chunks = readableChunks
         this.bookTitle = bookTitle
+        activePlaybackSource = playbackSource
+        activeBookId = bookId
+        activeTotalChapters = totalChapters
         currentChunkIndex = startChunkIndex.coerceIn(0, readableChunks.lastIndex) - 1
         sessionId += 1
         wantsPlayback = playWhenReady
@@ -702,6 +721,10 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         currentChunkIndex = -1
         wantsPlayback = false
         isSessionActive = false
+        // Clearing the session tag is what lets another surface claim the engine next.
+        activePlaybackSource = null
+        activeBookId = null
+        activeTotalChapters = 0
         progress = ReaderTtsProgress()
         state = SharedMobileEpubLocalTtsState.IDLE
         clearNowPlaying()

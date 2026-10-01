@@ -254,6 +254,21 @@ interface SharedMobileEpubLocalTts {
     val isVoiceSelectionLocked: Boolean get() = isSessionActive
     /** Increments only when every chunk finishes naturally; explicit stop does not increment it. */
     val completionCount: Long
+    /**
+     * Which surface owns the current session, or null when idle. Read back by a surface
+     * sharing this engine to tell its own session apart from another surface's.
+     * Android benchmark: `TtsPlaybackManager.TtsState.playbackSource`.
+     */
+    val playbackSource: String?
+    /** Book the current session is reading, or null when idle. */
+    val sessionBookId: String?
+    /** Chapter count for the current session; 0 when the caller did not supply one. */
+    val sessionTotalChapters: Int
+    /**
+     * Character offset into the current chunk that speech has reached. Listen persists this so
+     * a resumed session continues from the word rather than the start of the chunk.
+     */
+    val currentSpokenOffset: Int
     /** Starts platform audio preparation while document text is still being extracted. */
     fun prepare()
     fun start(
@@ -261,7 +276,21 @@ interface SharedMobileEpubLocalTts {
         bookTitle: String,
         bookId: String? = null,
         startChunkIndex: Int = 0,
-        playWhenReady: Boolean = true
+        playWhenReady: Boolean = true,
+        // Which surface owns this session. Null = the in-book reader, which is the
+        // historical behaviour; audiobook Listen passes
+        // [SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK] so the two surfaces can share one
+        // engine without either mistaking the other's session for its own.
+        // Android benchmark: `TtsPlaybackManager.TtsState.playbackSource`.
+        playbackSource: String? = null,
+        // Total chapters in the book, when the caller knows it. Listen needs this for
+        // whole-book progress; the reader's page-based sessions leave it 0.
+        totalChapters: Int = 0,
+        // Resume an in-flight cloud session (keeps the USD session spend) rather than
+        // starting a fresh one. Android benchmark: `KEY_CONTINUE_SESSION`.
+        continueSession: Boolean = false,
+        // Signed-in credential for credited cloud synthesis, when the caller has one.
+        authToken: String? = null,
     )
     fun pause()
     fun resume()

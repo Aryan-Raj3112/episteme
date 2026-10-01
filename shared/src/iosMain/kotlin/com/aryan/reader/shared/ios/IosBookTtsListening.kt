@@ -72,6 +72,7 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.serializer
 import com.aryan.reader.shared.ReaderTtsVoiceOverride
+import com.aryan.reader.shared.ui.SharedMobileEpubLocalTtsState
 import com.aryan.reader.shared.ui.SharedMobileEpubVoice
 import com.aryan.reader.shared.ui.iosTtsLanguageDisplayName
 import com.aryan.reader.shared.ui.iosTtsVoiceQuality
@@ -109,6 +110,8 @@ internal const val IOS_TTS_LISTEN_TAG = "ReaderBookTtsIOS"
  */
 private const val IOS_LISTEN_TTS_VOICE_OVERRIDE_KEY = "reader.bookTtsListening.voiceOverride"
 private const val IOS_READER_TTS_VOICE_KEY = "reader.tts.voiceIdentifier"
+private const val ENGINE_OBSERVATION_INTERVAL_MS = 120L
+
 private const val IOS_LISTEN_TTS_FAVORITES_KEY = "reader.bookTtsListening.favoriteVoices"
 private const val IOS_LISTEN_TTS_SAMPLE_TEXT_KEY = "reader.bookTtsListening.previewSampleText"
 private const val IOS_READER_TTS_RATE_KEY = "reader.tts.speechRate"
@@ -163,7 +166,18 @@ internal data class IosTtsListenBook(
  *   persist, sleep-timer stop persist and completion persist
  * - auto-advance across chapters, skipping chapters with no readable text
  */
-internal class IosBookTtsListeningController {
+internal class IosBookTtsListeningController(
+    /**
+     * The app-level shared engine, the same instance the in-book reader drives.
+     *
+     * Android benchmark: `BookTtsSessionCoordinator` is constructed with the reader's own
+     * `TtsPlaybackManager`, so audiobook Listen has no engine of its own — it resolves content
+     * and hands one chapter's chunks to the shared engine. This controller is that coordinator:
+     * it owns content, resume policy, per-book progress and the sleep timer, and delegates all
+     * synthesis to [localEngine].
+     */
+    private val localEngine: com.aryan.reader.shared.ui.SharedMobileEpubLocalTts,
+) {
     var state by mutableStateOf(SharedBookTtsListenState())
         private set
 
@@ -198,19 +212,11 @@ internal class IosBookTtsListeningController {
     private val progressStore = IosTtsListeningProgressStore()
     private val contentCache = mutableMapOf<String, IosTtsListenBook>()
 
-    private val synthesizer = AVSpeechSynthesizer()
-    private val delegate = IosBookTtsSpeechDelegate(
-        onStarted = ::utteranceStarted,
-        onFinished = ::utteranceFinished,
-        onCancelled = ::utteranceCancelled,
-        onWillSpeakRange = ::utteranceWillSpeakRange,
-    )
 
     private var generation = 0L
     // Start-session stopwatch for ReaderTtsStart diagnostics: set at start(),
     // consumed at the first delegate audio callback, cleared at stop().
     private var ttsStartMark: TimeMark? = null
-    private var activeUtterance: AVSpeechUtterance? = null
     private var currentBookId: String? = null
     private var currentBookTitle = ""
     private var currentBookAuthor: String? = null
@@ -230,7 +236,7 @@ internal class IosBookTtsListeningController {
     private val interruptionMonitor = IosTtsAudioInterruptionMonitor(::handleAudioInterruption)
 
     init {
-        synthesizer.delegate = delegate
+        observeSharedEngine()
         progressStore.load().forEach { (bookId, progress) ->
             progressByBook[bookId] = progress
         }
@@ -434,7 +440,7 @@ internal class IosBookTtsListeningController {
             installBookTtsRemoteCommands()
             generation += 1
             iosTtsListenLog("start() speaking chapter=$readableChapter chunk=$startChunk of ${currentChunks.size} chunks")
-            speakChunkAt(startChunk, fromOffset = 0, wantsPlayback = true)
+            startEngineAt(startChunk, playWhenReady = true)
             updateBookTtsNowPlaying()
         }
     }
@@ -453,8 +459,7 @@ internal class IosBookTtsListeningController {
         iosTtsListenLog("pause() chunk=$currentChunkIndex")
         wantsPlayback = false
         generation += 1
-        invalidateActiveUtterance()
-        synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+        localEngine.pause()
         state = state.copy(isPlaying = false, isLoading = false)
         persistNow(progressFor(state.chapterIndex, currentChunkIndex.coerceAtLeast(0), completed = false))
         updateBookTtsNowPlaying()
@@ -466,7 +471,8 @@ internal class IosBookTtsListeningController {
         if (state.isPlaying || state.isLoading) return
         iosTtsListenLog("resume() chunk=$currentChunkIndex wordOffset=$latestWordOffset")
         wantsPlayback = true
-        speakChunkAt(currentChunkIndex, latestWordOffset, wantsPlayback = true)
+        // The shared engine owns the position now; Listen resumes by restarting the chunk.
+        startEngineAt(currentChunkIndex, playWhenReady = true)
         updateBookTtsNowPlaying()
     }
 
@@ -478,10 +484,10 @@ internal class IosBookTtsListeningController {
         sleepTimerJob = null
         persistNow(progressFor(state.chapterIndex, currentChunkIndex.coerceAtLeast(0), completed = false))
         generation += 1
-        invalidateActiveUtterance()
-        synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+        localEngine.stop()
         currentChunks = emptyList()
         currentChunkIndex = -1
+        currentBookId = null
         wantsPlayback = false
         state = SharedBookTtsListenState(sessionEndedByStop = true)
         deactivateAudioSession()
@@ -491,9 +497,6 @@ internal class IosBookTtsListeningController {
     fun release() {
         stop()
         interruptionMonitor.close()
-        // AVSpeechSynthesizer keeps a weak reference to its delegate; clear it so a
-        // late callback can never message a released controller.
-        synthesizer.delegate = null
         scope.cancel()
     }
 
@@ -534,7 +537,7 @@ internal class IosBookTtsListeningController {
         if (target == currentChunkIndex && (state.isPlaying || state.isLoading)) return
         iosTtsListenLog("seekToChunk target=$target (from $currentChunkIndex)")
         wantsPlayback = true
-        speakChunkAt(target, fromOffset = 0, wantsPlayback = true)
+        startEngineAt(target, playWhenReady = true)
     }
 
     fun previousChapter() = moveChapterBy(-1)
@@ -551,15 +554,18 @@ internal class IosBookTtsListeningController {
         previewSynthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
     }
 
+    /** Word-level position within the current chunk, for word-accurate resume. */
+    val currentSpokenOffset: Int get() = latestWordOffset
+
     fun setParameters(rate: Float, pitch: Float) {
         val safeRate = rate.coerceIn(0.5f, 3f)
         val safePitch = pitch.coerceIn(0.5f, 2f)
         state = state.copy(speechRate = safeRate, pitch = safePitch)
         persistNow(progressFor(state.chapterIndex, state.chunkIndex.coerceAtLeast(0), completed = false))
         val chunk = currentChunks.getOrNull(currentChunkIndex) ?: return
+        localEngine.setSpeechParameters(safeRate, safePitch)
         if ((state.isPlaying || state.isLoading) && currentChunkIndex >= 0) {
-            val offset = latestWordOffset.coerceIn(0, chunk.spokenText.length)
-            speakChunkAt(currentChunkIndex, offset, wantsPlayback = true)
+            startEngineAt(currentChunkIndex, playWhenReady = true)
         }
     }
 
@@ -595,7 +601,7 @@ internal class IosBookTtsListeningController {
         val target = currentChunkIndex + delta
         if (target !in 0..currentChunks.lastIndex) return
         wantsPlayback = true
-        speakChunkAt(target, fromOffset = 0, wantsPlayback = true)
+        startEngineAt(target, playWhenReady = true)
     }
 
     private fun moveChapterBy(direction: Int) {
@@ -634,33 +640,42 @@ internal class IosBookTtsListeningController {
             transcriptChunks = emptyList(),
         )
         wantsPlayback = true
-        speakChunkAt(safeChunk, fromOffset = 0, wantsPlayback = true)
+        startEngineAt(safeChunk, playWhenReady = true)
     }
 
-    private fun speakChunkAt(chunkIndex: Int, fromOffset: Int, wantsPlayback: Boolean) {
-        val chunk = currentChunks.getOrNull(chunkIndex) ?: return
-        val chunkSpoken = chunk.spokenText
-        val safeOffset = fromOffset.coerceIn(0, chunkSpoken.length)
-        val utteranceText = chunkSpoken.substring(safeOffset)
-        if (utteranceText.isBlank()) return
-        iosTtsListenLog("speakChunkAt chunk=$chunkIndex offset=$safeOffset textLen=${utteranceText.length}")
-        val hadActiveUtterance = activeUtterance != null
-        invalidateActiveUtterance()
-        // Only interrupt the synthesizer when it actually has our utterance queued:
-        // stopSpeakingAtBoundary on an idle synthesizer (or from inside its own
-        // didFinish callback) is what froze/crashed listening sessions.
-        if (hadActiveUtterance) {
-            synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+    /**
+     * Hands the current chapter's chunks to the shared engine.
+     *
+     * Android benchmark: `BookTtsSessionCoordinator` calls
+     * `TtsPlaybackManager.startBookListeningChapter(content, ...)`, which hands
+     * `handleStartTts` the chapter's chunks and lets the engine own synthesis. Listen keeps the
+     * chapter-by-chapter orchestration (Android does too — the coordinator loads one chapter at
+     * a time) and no longer speaks anything itself.
+     */
+    private fun startEngineAt(chunkIndex: Int, playWhenReady: Boolean) {
+        val chunks = currentChunks
+        if (chunks.isEmpty()) return
+        val safeChunk = chunkIndex.coerceIn(0, chunks.lastIndex)
+        val engineChunks = chunks.map { chunk ->
+            com.aryan.reader.shared.ReaderTtsChunk(
+                index = 0,
+                pageIndex = 0,
+                chapterIndex = currentChapterIndex,
+                chapterTitle = currentChapterTitle().orEmpty(),
+                text = chunk.text,
+                startOffset = chunk.startOffsetInSource,
+                endOffset = chunk.startOffsetInSource + chunk.text.length,
+                sourceCfi = chunk.sourceCfi,
+                spokenText = chunk.spokenText,
+            )
         }
-        speechBaseOffset = safeOffset
-        latestWordOffset = safeOffset
-        currentChunkIndex = chunkIndex
-        this.wantsPlayback = wantsPlayback
+        wantsPlayback = playWhenReady
+        currentChunkIndex = safeChunk
         state = state.copy(
             chapterIndex = currentChapterIndex,
             chapterCount = chapterCount,
             chunkIndex = -1,
-            chunkCount = currentChunks.size,
+            chunkCount = chunks.size,
             chapterTitle = currentChapterTitle(),
             isLoading = true,
             isPlaying = false,
@@ -668,21 +683,22 @@ internal class IosBookTtsListeningController {
             transcriptStartIndex = 0,
             transcriptChunks = emptyList(),
         )
-        val utterance = AVSpeechUtterance(string = utteranceText).apply {
-            rate = (0.5f * state.speechRate).coerceIn(0.1f, 1f)
-            pitchMultiplier = state.pitch
-            // Android benchmark: Listen honours the voice chosen in its voice settings. Before
-            // this the utterance carried no voice at all, so Listen always used the system
-            // default and the persisted `voiceId` was dead state.
-            selectedVoiceIdentifier?.let { identifier ->
-                AVSpeechSynthesisVoice.voiceWithIdentifier(identifier)?.let { voice -> this.voice = voice }
-            }
-        }
-        activeUtterance = utterance
-        ttsStartMark?.let { mark ->
-            iosTtsStartLog("listen.speak", "chunk=$chunkIndex chars=${utteranceText.length}", mark)
-        }
-        synthesizer.speakUtterance(utterance)
+        iosTtsListenLog(
+            "startEngineAt chapter=$currentChapterIndex chunk=$safeChunk of ${chunks.size} " +
+                "playWhenReady=$playWhenReady"
+        )
+        // Listen's own voice/rate choices, applied to the shared engine for this session.
+        localEngine.setSpeechParameters(state.speechRate, state.pitch)
+        selectedVoiceIdentifier?.let { localEngine.setVoice(it) }
+        localEngine.start(
+            chunks = engineChunks,
+            bookTitle = currentBookTitle,
+            bookId = currentBookId,
+            startChunkIndex = safeChunk,
+            playWhenReady = playWhenReady,
+            playbackSource = com.aryan.reader.shared.SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK,
+            totalChapters = chapterCount,
+        )
     }
 
     private fun currentChapterTitle(): String? {
@@ -690,69 +706,64 @@ internal class IosBookTtsListeningController {
         return content.chapters.getOrNull(currentChapterIndex)?.title
     }
 
-    private fun invalidateActiveUtterance() {
-        activeUtterance = null
-    }
-
-    private fun isActive(utterance: AVSpeechUtterance): Boolean =
-        activeUtterance?.isEqual(utterance) == true
-
-    private fun utteranceStarted(utterance: AVSpeechUtterance) {
-        iosTtsListenLog("delegate didStart chunk=$currentChunkIndex active=${isActive(utterance)}")
-        if (!isActive(utterance)) return
-        ttsStartMark?.let { mark ->
-            iosTtsStartLog("listen.firstAudio", "chunk=$currentChunkIndex", mark)
-            ttsStartMark = null
-        }
-        val chunkIndex = currentChunkIndex
-        state = state.copy(
-            chunkIndex = chunkIndex,
-            chunkCount = currentChunks.size,
-            progressPercent = chunkProgress(chunkIndex),
-            isLoading = false,
-            isPlaying = true,
-        )
-        publishTranscript(chunkIndex)
-        schedulePersist(chunkIndex)
-        updateBookTtsNowPlaying()
-    }
-
-    private fun utteranceFinished(utterance: AVSpeechUtterance) {
-        iosTtsListenLog("delegate didFinish chunk=$currentChunkIndex active=${isActive(utterance)}")
-        if (!isActive(utterance)) return
-        activeUtterance = null
-        val expectedGeneration = generation
-        // AVSpeechSynthesizer still owns the utterance while it runs didFinish,
-        // so the next speak must happen on the next main-loop turn; doing it
-        // inline re-enters the synthesizer and locks up the app.
+    /**
+     * Mirrors the shared engine's state into the Listen state.
+     *
+     * Replaces the controller's own `AVSpeechSynthesizerDelegate` callbacks: the engine now
+     * owns synthesis and chunk advance, so Listen observes instead of driving. Chapter end is
+     * still the controller's job (Android's coordinator does the same) and is detected from the
+     * engine reporting the chapter's chunk list exhausted.
+     */
+    private fun observeSharedEngine() {
         scope.launch {
-            if (expectedGeneration != generation) return@launch
-            if (currentChunkIndex >= currentChunks.lastIndex) {
-                advancePastChapterEnd()
-            } else {
-                speakChunkAt(currentChunkIndex + 1, fromOffset = 0, wantsPlayback = true)
+            var lastCompletionCount = localEngine.completionCount
+            var lastChunkIndex = -1
+            while (true) {
+                val observation = EngineObservation(
+                    state = localEngine.state,
+                    chunkIndex = localEngine.progress.currentChunkIndex,
+                    chunkCount = localEngine.progress.chunks.size,
+                    completionCount = localEngine.completionCount,
+                    spokenOffset = localEngine.currentSpokenOffset,
+                )
+                if (currentBookId != null) {
+                    val chapterExhausted = observation.completionCount > lastCompletionCount
+                    lastCompletionCount = observation.completionCount
+                    val engineChunkIndex = observation.chunkIndex
+                    if (chapterExhausted) {
+                        advancePastChapterEnd()
+                    } else if (engineChunkIndex >= 0) {
+                        currentChunkIndex = engineChunkIndex
+                        latestWordOffset = observation.spokenOffset
+                        val speaking = observation.state == SharedMobileEpubLocalTtsState.SPEAKING
+                        if (engineChunkIndex != lastChunkIndex) {
+                            lastChunkIndex = engineChunkIndex
+                            state = state.copy(
+                                chunkIndex = engineChunkIndex,
+                                chunkCount = observation.chunkCount,
+                                isLoading = false,
+                                isPlaying = speaking,
+                            )
+                            publishTranscript(engineChunkIndex)
+                            schedulePersist(engineChunkIndex)
+                            updateBookTtsNowPlaying()
+                        } else if (speaking != state.isPlaying) {
+                            state = state.copy(isLoading = false, isPlaying = speaking)
+                        }
+                    }
+                }
+                delay(ENGINE_OBSERVATION_INTERVAL_MS)
             }
         }
     }
 
-    private fun utteranceCancelled(utterance: AVSpeechUtterance) {
-        // Stale utterances are invalidated before stopSpeakingAtBoundary, so
-        // cancellation only matters when the whole session was torn down.
-        if (currentChunks.isEmpty() || !state.isPlaying) {
-            iosTtsListenLog("delegate didCancel chunk=$currentChunkIndex (session torn down)")
-            state = state.copy(isLoading = false, isPlaying = false)
-        } else {
-            iosTtsListenLog("delegate didCancel chunk=$currentChunkIndex (stale utterance)")
-        }
-    }
-
-    private fun utteranceWillSpeakRange(utterance: AVSpeechUtterance, range: CValue<NSRange>) {
-        if (!isActive(utterance)) return
-        val location = range.useContents { location.toInt() }
-        iosTtsListenLog("delegate willSpeakRange chunk=$currentChunkIndex wordChar=$location")
-        latestWordOffset = (speechBaseOffset + location)
-            .coerceIn(0, currentChunks.getOrNull(currentChunkIndex)?.spokenText?.length ?: Int.MAX_VALUE)
-    }
+    private data class EngineObservation(
+        val state: SharedMobileEpubLocalTtsState,
+        val chunkIndex: Int,
+        val chunkCount: Int,
+        val completionCount: Long,
+        val spokenOffset: Int,
+    )
 
     private fun advancePastChapterEnd() {
         val bookId = currentBookId ?: return
@@ -762,8 +773,7 @@ internal class IosBookTtsListeningController {
             iosTtsListenLog("BOOK COMPLETED bookId=$bookId")
             persistNow(progressFor(currentChapterIndex, currentChunks.lastIndex, completed = true))
             generation += 1
-            invalidateActiveUtterance()
-            synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+            localEngine.stop()
             state = state.copy(
                 isLoading = false,
                 isPlaying = false,
@@ -785,8 +795,7 @@ internal class IosBookTtsListeningController {
         iosTtsListenLog("stopForSleepTimer chapter=$currentChapterIndex chunk=$currentChunkIndex")
         persistNow(progressFor(state.chapterIndex, state.chunkIndex.coerceAtLeast(0), completed = false))
         generation += 1
-        invalidateActiveUtterance()
-        synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+        localEngine.stop()
         currentChunks = emptyList()
         currentChunkIndex = -1
         currentBookId = null

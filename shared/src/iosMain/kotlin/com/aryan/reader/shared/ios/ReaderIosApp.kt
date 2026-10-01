@@ -3390,7 +3390,11 @@ private fun ReaderIosApp(
             bridge.setAudiobookPositionPersistenceHandler(null)
         }
     }
-    val ttsListenController = remember { IosBookTtsListeningController() }
+    // One shared engine for both the in-book reader and audiobook Listen, exactly as
+    // Android's BookTtsSessionCoordinator shares the reader's TtsPlaybackManager.
+    val readerTtsEngine = rememberSharedMobileEpubLocalTts()
+    val ttsListenController = remember { IosBookTtsListeningController(localEngine = readerTtsEngine) }
+
     DisposableEffect(ttsListenController) { onDispose(ttsListenController::release) }
     // Android parity (sharedListeningHandoff): cloud read-aloud wins the audio
     // output — stop competing playback when it starts producing audio.
@@ -3622,7 +3626,6 @@ private fun ReaderIosApp(
     // App-level read-aloud engine + mini-bar state (Android `MainViewModel.ttsController`
     // + `ReaderTtsMiniBar` parity). Hoisted above the reader branch so speech
     // continues when the user leaves the reader; the global bar reopens the book.
-    val readerTtsEngine = rememberSharedMobileEpubLocalTts()
     var readerTtsMiniBarState by remember { mutableStateOf<SharedReaderTtsMiniBarState?>(null) }
     var pdfSplitPickerTarget by remember { mutableStateOf<IosPdfSplitPickerTarget?>(null) }
     LaunchedEffect(state.rawLibraryBooks, pendingPdfSplitWorkspaceRestore) {
