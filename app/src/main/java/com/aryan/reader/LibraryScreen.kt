@@ -183,6 +183,12 @@ private fun getBookCountString(count: Int): String {
     return pluralStringResource(id = R.plurals.book_count, count, count)
 }
 
+/**
+ * Retired: Library Beta replaced this screen and the bottom navigation bar was removed.
+ * Kept on disk, unreferenced, as the reference implementation for the shelf detail and
+ * add-books screens that Library Beta now owns.
+ */
+@Suppress("unused")
 @UnstableApi
 @SuppressLint("LocalContextGetResourceValueCall")
 @Composable
@@ -565,6 +571,12 @@ fun LibraryScreen(
     }
 }
 
+/**
+ * Retired: shelf detail now lives inside Library Beta's Shelves section. Kept on disk,
+ * unreferenced, as the reference implementation for shelf search, sort, and breadcrumb
+ * navigation.
+ */
+@Suppress("unused")
 @UnstableApi
 @Composable
 fun ShelfScreen(

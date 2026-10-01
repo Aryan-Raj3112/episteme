@@ -3531,13 +3531,8 @@ private fun ReaderIosApp(
             )
         }
     }
-    var selectedPage by remember {
-        mutableStateOf(
-            SharedMobileMainDestination.entries.getOrElse(state.mainScreenStartPage) {
-                SharedMobileMainDestination.HOME
-            }
-        )
-    }
+    // Library Beta is the only main destination; the bottom navigation bar was removed.
+    var selectedPage by remember { mutableStateOf(SharedMobileMainDestination.current) }
     var selectedLibraryTab by remember {
         mutableStateOf(
             SharedMobileLibraryTab.entries.getOrElse(state.libraryScreenStartPage) {
@@ -3705,9 +3700,13 @@ private fun ReaderIosApp(
         }
     }
 
+    /**
+     * Retained so the retired Home and Library screens keep compiling. Library Beta is the
+     * only destination, so switching pages is a no-op.
+     */
     fun selectMainPage(page: SharedMobileMainDestination) {
-        selectedPage = page
-        state = state.copy(mainScreenStartPage = page.ordinal)
+        selectedPage = SharedMobileMainDestination.current
+        state = state.copy(mainScreenStartPage = SharedMobileMainDestination.current.ordinal)
     }
 
     fun selectLibraryTab(tab: SharedMobileLibraryTab) {
@@ -6893,15 +6892,7 @@ private fun ReaderIosApp(
 
             @Composable
             fun MainScaffoldContent() {
-                SharedMobileMainScaffold(
-                    selectedDestination = selectedPage,
-                    onDestinationSelected = { page ->
-                        if (selectedPage != page) {
-                            state = state.copy(selectedBookIds = emptySet())
-                        }
-                        selectMainPage(page)
-                    },
-                ) { innerPadding ->
+                SharedMobileMainScaffold { innerPadding ->
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -7408,6 +7399,14 @@ private fun ReaderIosApp(
                                 onTogglePinned = { book -> state = state.toggleLibraryPinned(book.id) },
                                 onUpdateBook = { book -> updateIosBookMetadata(book) },
                                 selectionCapabilities = iosUnifiedLibrarySelectionCapabilities(),
+                                onRefreshLibrary = {
+                                    refreshFolders()
+                                    if (state.isSyncEnabled) {
+                                        requestCloudSyncIfEligible()
+                                    } else {
+                                        showMessage("Refreshing local folders")
+                                    }
+                                },
                                 selectionActions = object : SharedMobileUnifiedLibraryActions {
                                     override fun clearSelection() {
                                         state = state.copy(selectedBookIds = emptySet())
@@ -7757,22 +7756,17 @@ private fun ReaderIosApp(
                 }
             }
 
-            if (selectedPage == SharedMobileMainDestination.LIBRARY) {
-                // Android's Library screen has no navigation drawer; its tab
-                // pager owns horizontal gestures so edge swipes page the tabs.
-                MainScaffoldContent()
-            } else {
-                ModalNavigationDrawer(
-                    drawerState = drawerState,
-                    drawerContent = {
-                        IosAppDrawerContent(
-                            capabilities = appDrawerCapabilities,
-                            closeDrawer = { scope.launch { drawerState.close() } },
-                        )
-                    }
-                ) {
-                    MainScaffoldContent()
+            // Library Beta is the only destination, so the app drawer always wraps it.
+            ModalNavigationDrawer(
+                drawerState = drawerState,
+                drawerContent = {
+                    IosAppDrawerContent(
+                        capabilities = appDrawerCapabilities,
+                        closeDrawer = { scope.launch { drawerState.close() } },
+                    )
                 }
+            ) {
+                MainScaffoldContent()
             }
         }
         // Global read-aloud mini bar (Android `AppNavigation` overlay parity).
@@ -7784,10 +7778,7 @@ private fun ReaderIosApp(
         )
         if (showReaderTtsMiniBar && readerTtsMiniBarState != null) {
             val miniBarState = readerTtsMiniBarState!!
-            val isOnMainRoute = activeReaderBook == null &&
-                (selectedPage == SharedMobileMainDestination.HOME ||
-                    selectedPage == SharedMobileMainDestination.LIBRARY ||
-                    selectedPage == SharedMobileMainDestination.UNIFIED_LIBRARY)
+            val isOnMainRoute = activeReaderBook == null
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.BottomCenter

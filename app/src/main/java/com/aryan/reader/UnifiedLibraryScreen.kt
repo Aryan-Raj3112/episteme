@@ -1,5 +1,6 @@
 package com.aryan.reader
 
+import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.net.Uri
 import android.view.View
@@ -52,6 +53,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -133,6 +135,7 @@ import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import timber.log.Timber
 
 internal typealias UnifiedLibrarySection = com.aryan.reader.shared.ui.MobileUnifiedLibrarySection
 internal typealias UnifiedLibraryFilter = com.aryan.reader.shared.ui.MobileUnifiedLibraryFilter
@@ -209,7 +212,19 @@ fun UnifiedLibraryScreen(
         mutableStateOf(false)
     }
     var audiobookPlayerItem by remember { mutableStateOf<AudiobookUiItem?>(null) }
+    // Shelf CRUD moved here from the retired Library screen: rename, delete, add books,
+    // and remove-from-shelf are driven off the ViewModel's shelf dialogs so both the
+    // section and its dialogs share one source of truth.
+    var shelfIdPendingRename by remember { mutableStateOf<String?>(null) }
+    var shelfIdPendingDelete by remember { mutableStateOf<String?>(null) }
+    var showRemoveSelectedFromShelfConfirmation by remember { mutableStateOf(false) }
+    var shelfIdAddingBooks by remember { mutableStateOf<String?>(null) }
+    var showCloseAllTabsDialog by remember { mutableStateOf(false) }
     val canUseCloudFolderSync = uiState.canUseCloudFolderSync()
+    val canPullToSync = com.aryan.reader.shared.ui.canPullToSyncLibrary(
+        cloudSyncEnabled = uiState.isSyncEnabled,
+        foldersWithLocalSyncEnabled = uiState.syncedFolders.map { it.localSyncEnabled },
+    )
     var cloudFolderSelection by remember(uiState.currentUser?.uid) {
         mutableStateOf(viewModel.cloudFolderSyncSelection())
     }
@@ -220,6 +235,24 @@ fun UnifiedLibraryScreen(
     LaunchedEffect(Unit) {
         CloudFolderSyncEvents.stateChanged.collect {
             cloudFolderSelection = viewModel.cloudFolderSyncSelection()
+        }
+    }
+
+    // Drive consent is requested by the ViewModel but the intent must be launched by
+    // whichever host screen is mounted, so this observer follows Home into Library Beta.
+    val drivePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            viewModel.onDrivePermissionResult(result.data)
+        } else {
+            Timber.w("Google Sign In for Drive failed with result code: ${result.resultCode}")
+            viewModel.onDrivePermissionFlowCancelled()
+        }
+    }
+    LaunchedEffect(uiState.isRequestingDrivePermission) {
+        if (uiState.isRequestingDrivePermission) {
+            drivePermissionLauncher.launch(viewModel.getDriveSignInIntent(context))
         }
     }
 
@@ -461,6 +494,9 @@ fun UnifiedLibraryScreen(
             onImport = { launchDocumentPicker { filePicker.launch(if (uiState.useStrictFileFilter) MainViewModel.SUPPORTED_MIME_TYPES else arrayOf("*/*")) } },
             onAddAudiobook = { showAudiobookAddSheet = true },
             onNewShelf = viewModel::showCreateShelfDialog,
+            canPullToSync = canPullToSync,
+            isRefreshing = uiState.isRefreshing,
+            onRefresh = viewModel::refreshLibrary,
             bottomBar = {
                 val activeTtsBook = ttsPlayback.bookId
                     ?.takeIf { ttsPlayback.playbackSource == "AUDIOBOOK_TTS" }
@@ -517,6 +553,9 @@ fun UnifiedLibraryScreen(
                 }
             },
             topBar = {
+                // Selection actions are shelf-scoped while a shelf is open in the Shelves
+                // section: delete removes from that shelf instead of deleting the book.
+                val isViewingShelf = section == UnifiedLibrarySection.SHELVES && selectedShelfId != null
                 if (selectedItems.isNotEmpty()) {
                     ContextualTopAppBar(
                         selectedItemCount = selectedItems.size,
@@ -546,7 +585,13 @@ fun UnifiedLibraryScreen(
                             ?.let { item -> { shareOriginal(item) } },
                         onExportAnnotationsClick = selectedItems.singleOrNull()
                             ?.let { item -> { showAnnotationExportFormatDialogFor = item } },
-                        onDeleteClick = { showPermanentDeleteConfirmation = true },
+                        // Inside a shelf, "delete" means remove from that shelf; on the
+                        // library surface it stays a destructive permanent delete.
+                        onDeleteClick = if (isViewingShelf) {
+                            { showRemoveSelectedFromShelfConfirmation = true }
+                        } else {
+                            { showPermanentDeleteConfirmation = true }
+                        },
                         compactSelectionActions = true,
                         overflowDeleteLabelRes = R.string.action_delete,
                         onClearSelectionClick = viewModel::clearContextualAction
@@ -589,7 +634,11 @@ fun UnifiedLibraryScreen(
                             importedAudiobooks.firstOrNull { it.bookId == item.bookId }?.let { audiobookPlayerItem = it.toUiItem() }
                         } else viewModel.onRecentFileClicked(item)
                     },
-                    onBookLongClick = viewModel::onRecentItemLongPress
+                    onBookLongClick = viewModel::onRecentItemLongPress,
+                    openTabs = uiState.openTabs,
+                    tabsEnabled = uiState.isTabsEnabled,
+                    onCloseTab = { viewModel.closeTab(it.bookId) },
+                    onCloseAllTabs = { showCloseAllTabsDialog = true },
                 )
                 UnifiedLibrarySection.AUDIOBOOKS -> AudiobooksLibrarySection(
                     modifier = Modifier.padding(padding),
@@ -633,19 +682,43 @@ fun UnifiedLibraryScreen(
                         showAudiobookAddSheet = true
                     }
                 )
-                UnifiedLibrarySection.SHELVES -> UnifiedShelvesSection(
-                    modifier = Modifier.padding(padding),
-                    shelves = uiState.shelves,
-                    selectedShelfId = selectedShelfId,
-                    selectedBookIds = uiState.contextualActionItems.mapTo(mutableSetOf()) { it.bookId },
-                    downloadingBookIds = uiState.downloadingBookIds,
-                    usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
-                    widthSizeClass = widthSizeClass,
-                    onShelfSelected = { selectedShelfId = it.id },
-                    onBreadcrumbNavigate = { shelfId -> selectedShelfId = shelfId },
-                    onBookClick = viewModel::onRecentFileClicked,
-                    onBookLongClick = viewModel::onRecentItemLongPress
-                )
+                UnifiedLibrarySection.SHELVES -> {
+                    val shelfBeingAddedTo = shelfIdAddingBooks?.let { id -> uiState.shelves.find { it.id == id } }
+                    if (shelfBeingAddedTo != null) {
+                        UnifiedAddBooksSection(
+                            modifier = Modifier.padding(padding),
+                            shelf = shelfBeingAddedTo,
+                            availableBooks = uiState.booksAvailableForAdding,
+                            selectedBookIds = uiState.booksSelectedForAdding,
+                            addBooksSource = uiState.addBooksSource,
+                            sortOrder = uiState.sortOrder,
+                            downloadingBookIds = uiState.downloadingBookIds,
+                            usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
+                            onSortOrderChange = viewModel::setSortOrder,
+                            onSourceChange = viewModel::setAddBooksSource,
+                            onBookClick = { viewModel.toggleBookSelectionForAdding(it.bookId) },
+                            onAddSelectedBooks = { viewModel.addBooksToShelf(shelfBeingAddedTo.id) },
+                            onBack = { shelfIdAddingBooks = null }
+                        )
+                    } else {
+                        UnifiedShelvesSection(
+                            modifier = Modifier.padding(padding),
+                            shelves = uiState.shelves,
+                            selectedShelfId = selectedShelfId,
+                            selectedBookIds = uiState.contextualActionItems.mapTo(mutableSetOf()) { it.bookId },
+                            downloadingBookIds = uiState.downloadingBookIds,
+                            usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
+                            widthSizeClass = widthSizeClass,
+                            onShelfSelected = { selectedShelfId = it.id },
+                            onBreadcrumbNavigate = { shelfId -> selectedShelfId = shelfId },
+                            onRenameShelf = { shelfId -> shelfIdPendingRename = shelfId },
+                            onDeleteShelf = { shelfId -> shelfIdPendingDelete = shelfId },
+                            onAddBooks = { shelfId -> shelfIdAddingBooks = shelfId },
+                            onBookClick = viewModel::onRecentFileClicked,
+                            onBookLongClick = viewModel::onRecentItemLongPress,
+                            )
+                    }
+                }
                 UnifiedLibrarySection.FOLDERS -> UnifiedFoldersSection(
                     modifier = Modifier.padding(padding),
                     folders = uiState.syncedFolders,
@@ -841,6 +914,51 @@ fun UnifiedLibraryScreen(
             containsFolderItems = selectedItems.any { it.sourceFolderUri != null }
         )
     }
+    shelfIdPendingRename?.let { shelfId ->
+        val shelf = uiState.shelves.find { it.id == shelfId }
+        if (shelf != null) {
+            ShelfRenameDialog(
+                initialName = shelf.name,
+                onConfirm = { newName ->
+                    viewModel.renameShelf(shelfId, newName)
+                    shelfIdPendingRename = null
+                },
+                onDismiss = { shelfIdPendingRename = null }
+            )
+        }
+    }
+    shelfIdPendingDelete?.let { shelfId ->
+        ShelfDeleteDialog(
+            shelfName = uiState.shelves.find { it.id == shelfId }?.name ?: "",
+            onConfirm = {
+                viewModel.deleteShelf(shelfId)
+                shelfIdPendingDelete = null
+                if (selectedShelfId == shelfId) selectedShelfId = null
+            },
+            onDismiss = { shelfIdPendingDelete = null }
+        )
+    }
+    if (showCloseAllTabsDialog) {
+        LibraryCloseAllTabsDialog(
+            onConfirm = {
+                viewModel.closeAllTabs()
+                showCloseAllTabsDialog = false
+            },
+            onDismiss = { showCloseAllTabsDialog = false }
+        )
+    }
+    if (showRemoveSelectedFromShelfConfirmation) {
+        val shelf = selectedShelfId?.let { id -> uiState.shelves.find { it.id == id } }
+        ShelfRemoveSelectedDialog(
+            count = selectedItems.size,
+            shelfName = shelf?.name ?: "",
+            onConfirm = {
+                viewModel.removeContextualItemsFromShelf()
+                showRemoveSelectedFromShelfConfirmation = false
+            },
+            onDismiss = { showRemoveSelectedFromShelfConfirmation = false }
+        )
+    }
     showAnnotationExportFormatDialogFor?.let { item ->
         SharedAnnotationExportFormatDialog(
             title = stringResource(R.string.dialog_export_annotations_title),
@@ -1013,377 +1131,9 @@ private fun UnifiedLibraryDestination(
     )
 }
 
-@Composable
-private fun UnifiedLibraryTopBar(
-    section: UnifiedLibrarySection,
-    selectedShelf: Shelf?,
-    onMenuClick: () -> Unit,
-    onBackFromShelf: () -> Unit,
-    uiState: ReaderScreenState,
-    onAccountClick: () -> Unit,
-    searchQuery: String?,
-    onSearchQueryChange: (String) -> Unit,
-) {
-    val title = selectedShelf?.name ?: when (section) {
-        UnifiedLibrarySection.HOME -> null
-        UnifiedLibrarySection.AUDIOBOOKS -> stringResource(R.string.listen_title)
-        UnifiedLibrarySection.SHELVES -> stringResource(R.string.tab_shelves)
-        UnifiedLibrarySection.FOLDERS -> stringResource(R.string.tab_folders)
-        UnifiedLibrarySection.CATALOGS -> stringResource(R.string.tab_catalogs)
-    }
-    com.aryan.reader.shared.ui.SharedAndroidUnifiedTopBar(
-        title = title,
-        showingShelf = selectedShelf != null,
-        drawerDescription = stringResource(R.string.unified_library_drawer_title),
-        backToShelvesDescription = if (selectedShelf?.parentShelfId != null) {
-            stringResource(R.string.action_back)
-        } else {
-            stringResource(R.string.unified_library_back_to_shelves)
-        },
-        onMenu = onMenuClick,
-        onBackFromShelf = onBackFromShelf,
-        onAccount = onAccountClick,
-        accountAvatar = { UnifiedProfileAvatar(uiState) },
-        searchQuery = searchQuery,
-        searchPlaceholder = stringResource(R.string.unified_library_search_books),
-        clearSearchDescription = stringResource(R.string.content_desc_clear_query),
-        onSearchQueryChange = onSearchQueryChange,
-    )
-}
 
-@Composable
-private fun UnifiedProfileAvatar(uiState: ReaderScreenState) {
-    val user = uiState.currentUser
-    when {
-        BuildConfig.FLAVOR != "pro" -> AsyncImage(model = R.mipmap.ic_launcher, contentDescription = stringResource(R.string.content_desc_app_icon), modifier = Modifier.size(32.dp).clip(CircleShape))
-        user != null -> AndroidAccountAvatar(
-            user = user,
-            modifier = Modifier.size(32.dp),
-            contentDescription = stringResource(R.string.content_desc_profile_picture),
-        )
-        else -> Icon(
-            Icons.Outlined.AccountCircle,
-            contentDescription = stringResource(R.string.content_desc_profile),
-            modifier = Modifier.size(32.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
 
-@Composable
-private fun UnifiedLibraryHome(
-    modifier: Modifier,
-    books: List<RecentFileItem>,
-    continueReading: RecentFileItem?,
-    filter: UnifiedLibraryFilter,
-    query: String,
-    sortOrder: SortOrder,
-    advancedFilterCount: Int,
-    useListView: Boolean,
-    selectedBookIds: Set<String>,
-    pinnedBookIds: Set<String>,
-    downloadingBookIds: Set<String>,
-    usePdfFileNameAsDisplayName: Boolean,
-    onFilterChange: (UnifiedLibraryFilter) -> Unit,
-    onControlsClick: () -> Unit,
-    onAdvancedFiltersClick: () -> Unit,
-    onListViewChange: (Boolean) -> Unit,
-    onBookClick: (RecentFileItem) -> Unit,
-    onBookLongClick: (RecentFileItem) -> Unit,
-    widthSizeClass: WindowWidthSizeClass,
-) {
-    com.aryan.reader.shared.ui.SharedAndroidUnifiedLibraryHome(
-        books = books,
-        continueReading = continueReading.takeIf { filter == UnifiedLibraryFilter.ALL && query.isBlank() },
-        filter = filter,
-        sortLabel = stringResource(sortOrder.labelRes),
-        advancedFilterCount = advancedFilterCount,
-        useListView = useListView,
-        strings = com.aryan.reader.shared.ui.SharedAndroidUnifiedHomeStrings(
-            noBooks = stringResource(R.string.unified_library_no_books),
-            filterBooks = stringResource(R.string.content_desc_filter),
-            gridView = stringResource(R.string.unified_library_grid_view),
-            listView = stringResource(R.string.unified_library_list_view),
-            filterLabels = UnifiedLibraryFilter.entries.associateWith { stringResource(it.labelRes) },
-        ),
-        itemKey = { it.bookId },
-        onFilterChange = onFilterChange,
-        onControls = onControlsClick,
-        onAdvancedFilters = onAdvancedFiltersClick,
-        onListViewChange = onListViewChange,
-        continueCard = { item, cardModifier -> UnifiedContinueReadingCard(item, { onBookClick(item) }, cardModifier) },
-        bookCard = { item ->
-            RecentFileCard(
-                item = item,
-                isSelected = item.bookId in selectedBookIds,
-                modifier = Modifier.fillMaxWidth(),
-                onClick = { onBookClick(item) },
-                onLongClick = { onBookLongClick(item) },
-                isDownloading = item.bookId in downloadingBookIds,
-                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
-            )
-        },
-        bookListItem = { item ->
-            LibraryListItem(
-                item = item,
-                isSelected = item.bookId in selectedBookIds,
-                isPinned = item.bookId in pinnedBookIds,
-                onItemClick = { onBookClick(item) },
-                onItemLongClick = { onBookLongClick(item) },
-                isDownloading = item.bookId in downloadingBookIds,
-                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
-            )
-        },
-        widthClass = when (widthSizeClass) {
-            WindowWidthSizeClass.Compact -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.COMPACT
-            WindowWidthSizeClass.Medium -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.MEDIUM
-            else -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.EXPANDED
-        },
-        modifier = modifier,
-    )
-}
-
-@Composable
-private fun UnifiedLibrarySearchResults(
-    modifier: Modifier,
-    books: List<RecentFileItem>,
-    query: String,
-    selectedBookIds: Set<String>,
-    downloadingBookIds: Set<String>,
-    usePdfFileNameAsDisplayName: Boolean,
-    widthSizeClass: WindowWidthSizeClass,
-    onQueryChange: (String) -> Unit,
-    onClose: () -> Unit,
-    onBookClick: (RecentFileItem) -> Unit,
-    onBookLongClick: (RecentFileItem) -> Unit,
-) {
-    com.aryan.reader.shared.ui.SharedAndroidUnifiedLibrarySearch(
-        books = books,
-        query = query,
-        searchPlaceholder = stringResource(R.string.unified_library_search_books),
-        clearDescription = stringResource(R.string.action_clear),
-        closeDescription = stringResource(R.string.action_close),
-        resultLabel = if (query.isBlank()) stringResource(R.string.unified_library_your_books) else "${books.size} ${if (books.size == 1) "result" else "results"}",
-        noResultsLabel = stringResource(R.string.no_results_found, query),
-        itemKey = { it.bookId },
-        onQueryChange = onQueryChange,
-        onClose = onClose,
-        modifier = modifier,
-        widthClass = when (widthSizeClass) {
-            WindowWidthSizeClass.Compact -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.COMPACT
-            WindowWidthSizeClass.Medium -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.MEDIUM
-            else -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.EXPANDED
-        },
-        bookCard = { item ->
-            RecentFileCard(
-                item = item,
-                isSelected = item.bookId in selectedBookIds,
-                modifier = Modifier.fillMaxWidth(),
-                onClick = { onBookClick(item) },
-                onLongClick = { onBookLongClick(item) },
-                isDownloading = item.bookId in downloadingBookIds,
-                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
-            )
-        },
-    )
-}
-
-@Composable
-private fun UnifiedShelvesSection(
-    modifier: Modifier,
-    shelves: List<Shelf>,
-    selectedShelfId: String?,
-    selectedBookIds: Set<String>,
-    downloadingBookIds: Set<String>,
-    usePdfFileNameAsDisplayName: Boolean,
-    widthSizeClass: WindowWidthSizeClass,
-    onShelfSelected: (Shelf) -> Unit,
-    onBreadcrumbNavigate: (String?) -> Unit,
-    onBookClick: (RecentFileItem) -> Unit,
-    onBookLongClick: (RecentFileItem) -> Unit,
-) {
-    val selectedShelf = shelves.find { it.id == selectedShelfId }
-    val visibleShelves = remember(shelves) { shelves.filter { it.type != ShelfType.TAG && it.parentShelfId == null } }
-    val childShelves = remember(shelves, selectedShelf) {
-        selectedShelf?.childShelfIds?.mapNotNull { childId -> shelves.find { it.id == childId } } ?: emptyList()
-    }
-    val breadcrumbEntries = remember(shelves, selectedShelfId) {
-        com.aryan.reader.shared.ui.genericShelfBreadcrumbPath(
-            currentShelfId = selectedShelfId,
-            lookup = { id -> shelves.find { it.id == id } },
-            idOf = { it.id },
-            nameOf = { it.name },
-            parentIdOf = { it.parentShelfId },
-        )
-    }
-    com.aryan.reader.shared.ui.SharedAndroidUnifiedShelves(
-        visibleShelves = visibleShelves,
-        selectedShelf = selectedShelf,
-        selectedBooks = selectedShelf?.directBooks.orEmpty(),
-        noShelvesLabel = stringResource(R.string.unified_library_no_shelves),
-        shelfKey = { it.id },
-        shelfName = { it.name },
-        shelfBookCountLabel = { unifiedShelfCountLabel(it) },
-        bookKey = { it.bookId },
-        onShelfSelected = onShelfSelected,
-        widthClass = when (widthSizeClass) {
-            WindowWidthSizeClass.Compact -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.COMPACT
-            WindowWidthSizeClass.Medium -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.MEDIUM
-            else -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.EXPANDED
-        },
-        modifier = modifier,
-        childShelves = childShelves,
-        onChildShelfSelected = onShelfSelected,
-        foldersSectionLabel = stringResource(R.string.section_folders),
-        filesSectionLabel = stringResource(R.string.section_files),
-        emptyShelfLabel = stringResource(R.string.shelf_empty),
-        breadcrumbContent = {
-            if (selectedShelf != null) {
-                com.aryan.reader.shared.ui.SharedMobileShelfBreadcrumb(
-                    entries = breadcrumbEntries,
-                    onNavigate = { entry -> onBreadcrumbNavigate(entry.id) },
-                    homeContentDescription = stringResource(R.string.tab_shelves),
-                    modifier = Modifier.padding(horizontal = 20.dp).padding(top = 12.dp),
-                )
-            }
-        },
-        bookCard = { item ->
-            RecentFileCard(
-                item = item,
-                isSelected = item.bookId in selectedBookIds,
-                modifier = Modifier.fillMaxWidth(),
-                onClick = { onBookClick(item) },
-                onLongClick = { onBookLongClick(item) },
-                isDownloading = item.bookId in downloadingBookIds,
-                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
-            )
-        },
-    )
-}
-
-@Composable
-private fun unifiedShelfCountLabel(shelf: Shelf): String {
-    val isFolder = shelf.type == ShelfType.FOLDER
-    val folderCount = pluralStringResource(R.plurals.folder_count, shelf.childShelfCount, shelf.childShelfCount)
-    val directCount = pluralStringResource(R.plurals.book_count, shelf.directBookCount, shelf.directBookCount)
-    return when {
-        isFolder && shelf.childShelfCount > 0 && shelf.directBookCount > 0 -> "$folderCount · $directCount"
-        isFolder && shelf.childShelfCount > 0 -> folderCount
-        isFolder -> directCount
-        else -> pluralStringResource(R.plurals.book_count, shelf.bookCount, shelf.bookCount)
-    }
-}
-
-@Composable
-private fun UnifiedFoldersSection(
-    modifier: Modifier,
-    folders: List<SyncedFolder>,
-    allRecentFiles: List<RecentFileItem>,
-    isLoading: Boolean,
-    onAddFolder: () -> Unit,
-    onScan: () -> Unit,
-    onSyncMetadata: () -> Unit,
-    onToggleLocalSync: (SyncedFolder, Boolean, Boolean) -> Unit,
-    onEditFolderFilters: (SyncedFolder, Set<FileType>) -> Unit,
-    onRemove: (SyncedFolder) -> Unit,
-    cloudFolderSelection: CloudFolderSyncSelection? = null,
-    cloudSyncEnabled: Boolean = false,
-    isProUser: Boolean = false,
-    onCloudFolderSettings: (() -> Unit)? = null,
-    onIncomingCloudFolder: ((String) -> Unit)? = null,
-) {
-    Box(modifier = modifier.fillMaxSize()) {
-        FolderSyncScreen(
-            syncedFolders = folders,
-            allRecentFiles = allRecentFiles,
-            onAddFolderClick = onAddFolder,
-            onRemoveFolderClick = onRemove,
-            onFolderLocalSyncChange = onToggleLocalSync,
-            onEditFolderFiltersClick = onEditFolderFilters,
-            onScanNowClick = onScan,
-            onSyncMetadataClick = onSyncMetadata,
-            isLoading = isLoading,
-            cloudFolderSelection = cloudFolderSelection,
-            cloudSyncEnabled = cloudSyncEnabled,
-            isProUser = isProUser,
-            onCloudFolderSettingsClick = onCloudFolderSettings,
-            onIncomingCloudFolderClick = onIncomingCloudFolder,
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun UnifiedLibraryControlsSheet(currentFilter: UnifiedLibraryFilter, currentSortOrder: SortOrder, onFilterChanged: (UnifiedLibraryFilter) -> Unit, onSortChanged: (SortOrder) -> Unit, onAdvancedFiltersClick: () -> Unit, onDismiss: () -> Unit) {
-    com.aryan.reader.shared.ui.SharedAndroidUnifiedLibraryControlsSheet(
-        currentFilter = currentFilter,
-        currentSortOrder = currentSortOrder,
-        strings = com.aryan.reader.shared.ui.SharedAndroidUnifiedControlsStrings(
-            title = stringResource(R.string.unified_library_sort_filter),
-            readStatus = stringResource(R.string.filter_read_status),
-            sort = stringResource(R.string.content_desc_sort),
-            advancedFilters = stringResource(R.string.filter_library),
-            filterLabels = UnifiedLibraryFilter.entries.associateWith { stringResource(it.labelRes) },
-            sortLabels = SortOrder.entries.associateWith { stringResource(it.labelRes) },
-        ),
-        onFilterChanged = onFilterChanged,
-        onSortChanged = onSortChanged,
-        onAdvancedFilters = onAdvancedFiltersClick,
-        onDismiss = onDismiss,
-    )
-}
-
-@Composable
-private fun UnifiedCreateShelfDialog(onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
-    com.aryan.reader.shared.ui.SharedAndroidUnifiedCreateShelfDialog(
-        title = stringResource(R.string.create_new_shelf),
-        nameLabel = stringResource(R.string.shelf_name_hint),
-        createLabel = stringResource(R.string.action_create),
-        cancelLabel = stringResource(R.string.action_cancel),
-        onConfirm = onConfirm,
-        onDismiss = onDismiss,
-    )
-}
-
-// Hoisted: shape allocation + clip without the offscreen shadow pass the
-// scrolling continue card used to pay per recomposition.
-private val ContinueReadingCoverShape = RoundedCornerShape(18.dp)
-
-@Composable
-private fun UnifiedContinueReadingCard(item: RecentFileItem, onClick: () -> Unit, modifier: Modifier = Modifier) {    val progress = (item.progressPercentage ?: 0f).coerceIn(0f, 100f)
-    val appLayoutDirection = if (LocalConfiguration.current.layoutDirection == View.LAYOUT_DIRECTION_RTL) {
-        LayoutDirection.Rtl
-    } else {
-        LayoutDirection.Ltr
-    }
-    com.aryan.reader.shared.ui.SharedAndroidUnifiedContinueCard(
-        sectionLabel = stringResource(R.string.unified_library_continue_reading),
-        title = item.cardTitle(),
-        author = item.cardAuthor(),
-        progressPercent = progress,
-        progressLabel = stringResource(R.string.progress_complete, progress.toInt()),
-        sourceLabel = if (item.sourceFolderUri != null) "· Local folder" else null,
-        coverTone = generatedBookCoverColor(item),
-        cardLayoutDirection = appLayoutDirection,
-        onClick = onClick,
-        modifier = modifier,
-        cover = { coverModifier ->
-                    ThemedBookCover(
-                        item = item,
-                modifier = coverModifier
-                            .size(94.dp, 146.dp)
-                            .clip(ContinueReadingCoverShape),
-                        contentDescription = item.displayName,
-                contentScale = ContentScale.Crop,
-                    )
-        },
-        fileTypeBadge = {
-                        FileTypeBadge(type = item.type, overlay = true, compact = true)
-        },
-    )
-}
-
-private val UnifiedLibraryFilter.labelRes: Int
+internal val UnifiedLibraryFilter.labelRes: Int
     get() = when (this) {
         UnifiedLibraryFilter.ALL -> R.string.unified_library_all
         UnifiedLibraryFilter.READING -> R.string.unified_library_reading

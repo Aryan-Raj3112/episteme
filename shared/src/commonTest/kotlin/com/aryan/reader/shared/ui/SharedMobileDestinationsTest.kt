@@ -26,10 +26,13 @@ class SharedMobileDestinationsTest {
     }
 
     @Test
-    fun mainPageOrderAndFallbackRemainStable() {
-        assertEquals(SharedMobileMainDestination.HOME, SharedMobileMainDestination.fromPageIndex(0))
-        assertEquals(SharedMobileMainDestination.LIBRARY, SharedMobileMainDestination.fromPageIndex(1))
+    fun mainPageAlwaysResolvesToLibraryBeta() {
+        // Library Beta is the only main destination; a page index persisted before the
+        // bottom bar was removed must still resolve rather than read out of bounds.
+        assertEquals(SharedMobileMainDestination.UNIFIED_LIBRARY, SharedMobileMainDestination.fromPageIndex(0))
+        assertEquals(SharedMobileMainDestination.UNIFIED_LIBRARY, SharedMobileMainDestination.fromPageIndex(1))
         assertEquals(SharedMobileMainDestination.UNIFIED_LIBRARY, SharedMobileMainDestination.fromPageIndex(2))
-        assertEquals(SharedMobileMainDestination.HOME, SharedMobileMainDestination.fromPageIndex(99))
+        assertEquals(SharedMobileMainDestination.UNIFIED_LIBRARY, SharedMobileMainDestination.fromPageIndex(99))
+        assertEquals(SharedMobileMainDestination.UNIFIED_LIBRARY, SharedMobileMainDestination.current)
     }
 }

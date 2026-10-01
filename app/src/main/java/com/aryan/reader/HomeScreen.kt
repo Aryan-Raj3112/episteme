@@ -161,6 +161,12 @@ internal fun Context.findActivity(): Activity? = when (this) {
     else -> null
 }
 
+/**
+ * Retired: Library Beta replaced this screen and the bottom navigation bar was removed.
+ * Kept on disk, unreferenced, so the Home-only surfaces it owns (Drive consent launcher,
+ * recent-files grid, the 16-action overflow menu) remain recoverable.
+ */
+@Suppress("unused")
 @UnstableApi
 @androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(ExperimentalMaterial3Api::class)

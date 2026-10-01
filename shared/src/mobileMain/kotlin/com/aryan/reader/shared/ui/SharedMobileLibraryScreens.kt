@@ -242,6 +242,8 @@ fun SharedMobileUnifiedLibraryScreen(
     selectionCapabilities: SharedMobileUnifiedLibrarySelectionCapabilities =
         SharedMobileUnifiedLibrarySelectionCapabilities(),
     selectionActions: SharedMobileUnifiedLibraryActions? = null,
+    /** Pull-to-sync trigger; hosts own the sync pipeline. */
+    onRefreshLibrary: () -> Unit = {},
     // Android benchmark: readable file types differ per platform (FileCapabilities.kt).
     // Defaults to IOS to preserve current iOS callers; Android must pass ANDROID on adoption.
     platform: ReaderPlatform = ReaderPlatform.IOS,
@@ -401,6 +403,12 @@ fun SharedMobileUnifiedLibraryScreen(
         onAddAudiobook = { showAudiobookAddSheet = true },
         onNewShelf = { showCreateShelf = true },
         showFloatingActionButton = !isContextualMode,
+        canPullToSync = canPullToSyncLibrary(
+            cloudSyncEnabled = state.isSyncEnabled,
+            foldersWithLocalSyncEnabled = state.syncedFolders.map { it.localSyncEnabled },
+        ),
+        isRefreshing = state.isRefreshing,
+        onRefresh = onRefreshLibrary,
         topBar = {
             if (isContextualMode) {
                 val actions = requireNotNull(contextualActions)

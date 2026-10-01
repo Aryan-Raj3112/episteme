@@ -681,7 +681,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 recentLimit = prefs.getInt(KEY_RECENT_FILES_LIMIT, 0),
             ),
             shelfState = AppShelfState(
-                viewingShelfId = prefs.getString(KEY_LAST_VIEWING_SHELF_ID, null),
+                // Library Beta navigates shelves inside its own section, so a shelf id
+                // persisted by a release that still had the standalone Library screen
+                // must not be restored — there is no longer a screen to restore it into.
+                viewingShelfId = null,
                 isAddingBooks = prefs.getBoolean(KEY_LAST_ADDING_BOOKS_TO_SHELF, false),
                 addBooksSource = try {
                     val savedSourceName = prefs.getString(
@@ -8537,6 +8540,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    /**
+     * Library Beta is the only main destination, so the persisted page index no longer
+     * selects anything. It is still written so older installs migrating through this
+     * release land on Library Beta rather than on a retired Home or Library screen.
+     */
     fun setMainScreenPage(page: Int) {
         val sanitizedPage = page.coerceIn(0, 2)
         if (_internalState.value.mainScreenStartPage == sanitizedPage) return
@@ -8575,12 +8583,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         persistLibraryLandingState()
     }
 
+    /**
+     * Opens a shelf. Library Beta owns its own shelf navigation state, so this no longer
+     * forces the retired Library page index.
+     */
     fun navigateToShelf(id: String) {
         _internalState.update {
             it.copy(
                 shelfState = it.shelfState.reduce(AppShelfAction.ShelfOpened(id)),
-                mainScreenStartPage = 1,
-                libraryState = it.libraryState.reduce(SharedLibraryAction.LibraryPageChanged(1)),
             )
         }
         persistLibraryLandingState()
@@ -8994,9 +9004,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    /** Library Beta's Folders section is index 2, so this only needs to switch sections. */
     fun navigateToFolderSync() {
-        setMainScreenPage(1)
-        setLibraryScreenPage(2)
+        setUnifiedLibrarySection(
+            com.aryan.reader.shared.ui.MobileUnifiedLibrarySection.FOLDERS.persistedValue
+        )
     }
 
     override fun onCleared() {

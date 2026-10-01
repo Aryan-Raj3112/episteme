@@ -663,30 +663,34 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `setMainScreenPage clears contextual selection when switching home and library`() = runTest(testDispatcher) {
+    fun `navigateToFolderSync opens Library Beta folders section without a retired page index`() =
+        runTest(testDispatcher) {
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+                viewModel.uiState.collect {}
+            }
+
+            viewModel.navigateToFolderSync()
+
+            val state = viewModel.uiState.first {
+                it.unifiedLibrarySection ==
+                    com.aryan.reader.shared.ui.MobileUnifiedLibrarySection.FOLDERS.persistedValue
+            }
+            assertEquals(0, state.libraryScreenStartPage)
+        }
+
+    @Test
+    fun `opening a shelf no longer forces the retired library page index`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
-        val homeBook = recentFile("home")
-        val libraryBook = recentFile("library")
-        recentFilesFlow.value = listOf(homeBook, libraryBook)
-        viewModel.uiState.first { it.recentFiles.size == 2 }
+        shelvesFlow.value = listOf(shelfEntity("manual", "Manual"))
+        viewModel.uiState.first { it.shelves.any { shelf -> shelf.id == "manual" } }
 
-        viewModel.onRecentItemLongPress(homeBook)
-        viewModel.uiState.first { it.contextualActionItems.map { item -> item.bookId }.toSet() == setOf("home") }
-        viewModel.setMainScreenPage(1)
-        val libraryState = viewModel.uiState.first {
-            it.mainScreenStartPage == 1 && it.contextualActionItems.isEmpty()
-        }
-        assertTrue(libraryState.contextualActionItems.isEmpty())
+        viewModel.navigateToShelf("manual")
 
-        viewModel.onRecentItemLongPress(libraryBook)
-        viewModel.uiState.first { it.contextualActionItems.map { item -> item.bookId }.toSet() == setOf("library") }
-        viewModel.setMainScreenPage(0)
-        val homeState = viewModel.uiState.first {
-            it.mainScreenStartPage == 0 && it.contextualActionItems.isEmpty()
-        }
-        assertTrue(homeState.contextualActionItems.isEmpty())
+        val state = viewModel.uiState.first { it.viewingShelfId == "manual" }
+        assertEquals(0, state.mainScreenStartPage)
+        assertEquals(0, state.libraryScreenStartPage)
     }
 
     @Test
@@ -1181,9 +1185,7 @@ class MainViewModelTest {
             .shelves.first { it.id == "manual" }
 
         viewModel.onShelfClick(manualShelf)
-        val state = viewModel.uiState.first {
-            it.viewingShelfId == "manual" && it.mainScreenStartPage == 1 && it.libraryScreenStartPage == 1
-        }
+        val state = viewModel.uiState.first { it.viewingShelfId == "manual" }
 
         assertEquals("manual", state.viewingShelfId)
     }
@@ -1197,9 +1199,7 @@ class MainViewModelTest {
         viewModel.uiState.first { it.shelves.any { shelf -> shelf.id == "manual" } }
 
         viewModel.navigateToShelf("manual")
-        val shelfState = viewModel.uiState.first {
-            it.viewingShelfId == "manual" && it.mainScreenStartPage == 1 && it.libraryScreenStartPage == 1
-        }
+        val shelfState = viewModel.uiState.first { it.viewingShelfId == "manual" }
         assertEquals("manual", shelfState.viewingShelfId)
 
         viewModel.unselectShelf()

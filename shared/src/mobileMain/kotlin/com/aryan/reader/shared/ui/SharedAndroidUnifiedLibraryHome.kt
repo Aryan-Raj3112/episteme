@@ -65,10 +65,13 @@ fun <T> SharedAndroidUnifiedLibraryHome(
     bookCard: @Composable (T) -> Unit,
     bookListItem: @Composable (T) -> Unit,
     widthClass: SharedAndroidHomeWidthClass = SharedAndroidHomeWidthClass.COMPACT,
+    /** Rendered above the continue-reading card; empty when multi-tab reading is idle. */
+    openTabsContent: @Composable () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val gridCells = widthClass.bookGridCells()
     Column(modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+        openTabsContent()
         continueReading?.let { continueCard(it, Modifier.padding(top = 16.dp)) }
         LazyRow(
             modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
