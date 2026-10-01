@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -470,6 +471,10 @@ fun SharedMobileUnifiedLibraryScreen(
         bottomBar = {
             val activeAudiobook = audiobooks.firstOrNull { it.bookId == audiobookPlayback.bookId }
             val activeTts = ttsItems.firstOrNull { it.book.id == ttsListenState.bookId && ttsListenState.connected }
+            // iOS: the app's tab strip is drawn beneath this Scaffold's bottomBar, so the
+            // compact player needs the navigation-bar inset to avoid sitting under the bottom
+            // navigation / home indicator.
+            Column(Modifier.navigationBarsPadding()) {
             when {
                 activeAudiobook != null -> SharedMobileAudiobookMiniPlayer(
                     audiobook = activeAudiobook,
@@ -487,6 +492,7 @@ fun SharedMobileUnifiedLibraryScreen(
                     onStopPlayback = onStopTtsPlayback,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
                 )
+            }
             }
         },
         sectionContent = { displayedSection, padding ->

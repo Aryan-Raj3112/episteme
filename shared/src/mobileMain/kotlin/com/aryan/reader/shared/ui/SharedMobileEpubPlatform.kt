@@ -242,6 +242,16 @@ interface SharedMobileEpubLocalTts {
     val favoriteVoiceIdentifiers: Set<String>
     /** Non-null when the last playback attempt was interrupted or failed unexpectedly. */
     val errorMessage: String?
+    /**
+     * Whether voice selection must be blocked in the TTS settings panels.
+     *
+     * Defaults to [isSessionActive] — the reader's stricter rule, where any live session freezes
+     * the voice list. Surfaces where reaching a stopped state is impractical override this: on
+     * audiobook Listen the player sheet closes as soon as playback stops, so demanding a full stop
+     * makes the voice unreachable. Those surfaces allow changes whenever nothing is actively
+     * being spoken, so pausing is enough of a safe point.
+     */
+    val isVoiceSelectionLocked: Boolean get() = isSessionActive
     /** Increments only when every chunk finishes naturally; explicit stop does not increment it. */
     val completionCount: Long
     /** Starts platform audio preparation while document text is still being extracted. */

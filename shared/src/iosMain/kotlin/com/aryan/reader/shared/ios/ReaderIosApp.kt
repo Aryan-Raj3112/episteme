@@ -3586,8 +3586,12 @@ private fun ReaderIosApp(
     var showDeleteAccountConfirmation by remember { mutableStateOf(false) }
     var showDeleteAccountFinalConfirmation by remember { mutableStateOf(false) }
     var showTtsSettings by remember { mutableStateOf(false) }
+    // Android benchmark (AudiobooksUi): the audiobook player sheet exposes "TTS Voice Settings",
+    // which opens the same voice settings as the reader but with Listen's own voice choice.
+    var showListenTtsVoiceSettings by remember { mutableStateOf(false) }
     var showIosTtsBookPicker by remember { mutableStateOf(false) }
     val settingsTts = rememberSharedMobileEpubLocalTts()
+    val listenTtsAdapter = remember(ttsListenController) { IosListenLocalTtsAdapter(ttsListenController) }
     var showDictionarySettingsSheet by remember { mutableStateOf(false) }
     // Android parity (PdfViewerScreen.showDictionaryUpsellDialog /
     // EpubReaderScreen.showDictionaryUpsellDialog): multi-word smart
@@ -5862,6 +5866,16 @@ private fun ReaderIosApp(
                     onDismiss = { showTtsSettings = false },
                 )
             }
+            if (showListenTtsVoiceSettings) {
+                SharedMobileReaderTtsSettingsSheet(
+                    tts = listenTtsAdapter,
+                    onDismiss = { showListenTtsVoiceSettings = false },
+                    // Streams into the same device log as the Listen controller so the TTS
+                    // settings can be diagnosed with a single tag. `ttsSettings.` prefixed
+                    // lines come from the shared panels.
+                    trace = { iosTtsListenLog("ttsSettings. $it") },
+                )
+            }
             if (showIosTtsBookPicker) {
                 SharedMobileTtsBookPickerSheet(
                     books = state.rawLibraryBooks,
@@ -7753,6 +7767,7 @@ private fun ReaderIosApp(
                                     }
                                 },
                                 onStopTtsPlayback = ttsListenController::stop,
+                                onOpenTtsVoiceSettings = { showListenTtsVoiceSettings = true },
                                 modifier = Modifier.fillMaxSize(),
                             )
                                         }

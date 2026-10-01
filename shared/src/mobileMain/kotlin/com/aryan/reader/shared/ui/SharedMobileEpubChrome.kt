@@ -1883,6 +1883,14 @@ private data class SharedCloudVoiceRow(
     val sampleAudioUrl: String? = null,
 )
 
+/**
+ * Optional diagnostic sink for the TTS settings panels.
+ *
+ * The panels are shared, but "where do these lines go" is a host concern: iOS streams them into
+ * its device log, Android has Timber. Defaults to dropping them.
+ */
+typealias SharedTtsSettingsTrace = (String) -> Unit
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun SharedMobileReaderTtsSettingsSheet(
@@ -1906,6 +1914,7 @@ internal fun SharedMobileReaderTtsSettingsSheet(
     cloudVoiceLanguage: String? = null,
     onCloudVoiceLanguageChange: (String) -> Unit = {},
     onClearCloudVoiceSamples: () -> Unit = {},
+    trace: SharedTtsSettingsTrace = {},
 ) {
     // Android benchmark (TtsSettingsSheet): the engine pill drives the tab —
     // Cloud AI opens Cloud Voices, Device Native opens Device Voices.
@@ -1914,7 +1923,7 @@ internal fun SharedMobileReaderTtsSettingsSheet(
     }
     // Android benchmark (AndroidTtsSettings.kt:153/239/317/372/409/415): voice
     // selection and previews freeze while a session is active.
-    val ttsVoiceLocked = tts.isSessionActive ||
+    val ttsVoiceLocked = tts.isVoiceSelectionLocked ||
         cloudTts?.state?.isLoading == true ||
         cloudTts?.state?.isPlaying == true
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -1963,7 +1972,8 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                 SharedTtsDeviceVoicesPanel(
                     tts = tts,
                     deviceModeActive = true,
-                    locked = tts.isSessionActive,
+                    locked = tts.isVoiceSelectionLocked,
+                    trace = trace,
                 )
             } else {
                 Text(
@@ -2037,6 +2047,7 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                 Spacer(Modifier.height(8.dp))
                 when (selectedTtsTab) {
                     0 -> SharedTtsCloudVoicesPanel(
+                        trace = trace,
                         cloud = cloud,
                         cloudTtsVoiceId = cloudTtsVoiceId,
                         onCloudTtsVoiceChange = onCloudTtsVoiceChange,
@@ -2056,6 +2067,7 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                         tts = tts,
                         deviceModeActive = !cloudTtsModeEnabled,
                         locked = ttsVoiceLocked,
+                        trace = trace,
                     )
                     else -> SharedTtsCloudCachePanel(
                         cloud = cloud,
@@ -2178,8 +2190,7 @@ private fun SharedTtsCloudCachePanel(
                     trailingIcon = {
                         Icon(Icons.Default.ArrowDropDown, contentDescription = null)
                     },
-                    interactionSource = filterInteraction,
-                    modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth(),
                 )
                 DropdownMenu(
                     expanded = filterMenuExpanded,
@@ -2291,6 +2302,7 @@ private fun SharedTtsCloudCachePanel(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SharedTtsCloudVoicesPanel(
+    trace: SharedTtsSettingsTrace = {},
     cloud: SharedMobileEpubCloudTts,
     cloudTtsVoiceId: String,
     onCloudTtsVoiceChange: (String) -> Unit,
@@ -2366,15 +2378,22 @@ private fun SharedTtsCloudVoicesPanel(
                 }
             }
         }
-        Box(modifier = Modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier.fillMaxWidth()
+                // Open the menu from a real click on the wrapper rather than by collecting
+                // PressInteraction from a readOnly field: a disabled field emits none at all, and
+                // the collection was unreliable inside the settings sheet on iOS.
+                .clickable(enabled = !locked) {
+                    trace(
+                        "cloud.languageFilter.tap expandedBefore=$languageMenuExpanded " +
+                            "locked=$locked options=${cloudLanguageOptions.size} " +
+                            "selected=$effectiveCloudLanguage"
+                    )
+                    languageMenuExpanded = true
+                }
+        ) {
             // Android benchmark: the whole field opens the menu — a press
             // interaction beats an arrow-only target for small trailing icons.
-            val filterInteraction = remember { MutableInteractionSource() }
-            LaunchedEffect(filterInteraction, locked) {
-                filterInteraction.interactions.collect {
-                    if (it is PressInteraction.Release && !locked) languageMenuExpanded = true
-                }
-            }
             OutlinedTextField(
                 value = effectiveCloudLanguage,
                 onValueChange = {},
@@ -2384,13 +2403,16 @@ private fun SharedTtsCloudVoicesPanel(
                     Icon(Icons.Default.ArrowDropDown, contentDescription = null)
                 },
                 enabled = !locked,
-                interactionSource = filterInteraction,
                 modifier = Modifier.fillMaxWidth(),
             )
             DropdownMenu(
                 expanded = languageMenuExpanded,
                 onDismissRequest = { languageMenuExpanded = false },
             ) {
+                // Composed only when the popup actually renders. A tap with no matching
+                // "menuComposed" line means the Popup is not being presented at all
+                // (DropdownMenu inside a ModalBottomSheet is unreliable on iOS/CMP).
+                trace("cloud.languageFilter.menuComposed options=${cloudLanguageOptions.size}")
                 cloudLanguageOptions.forEach { option ->
                     DropdownMenuItem(
                         text = { Text(option) },
@@ -2576,6 +2598,7 @@ private fun SharedTtsDeviceVoicesPanel(
     tts: SharedMobileEpubLocalTts,
     deviceModeActive: Boolean,
     locked: Boolean,
+    trace: SharedTtsSettingsTrace = {},
     modifier: Modifier = Modifier,
 ) {
     val allLanguagesLabel = readerString("filter_all", "All")
@@ -2663,13 +2686,20 @@ private fun SharedTtsDeviceVoicesPanel(
             maxLines = 3,
             modifier = Modifier.fillMaxWidth(),
         )
-        Box(modifier = Modifier.fillMaxWidth()) {
-            val filterInteraction = remember { MutableInteractionSource() }
-            LaunchedEffect(filterInteraction, locked) {
-                filterInteraction.interactions.collect {
-                    if (it is PressInteraction.Release && !locked) languageMenuExpanded = true
+        Box(
+            modifier = Modifier.fillMaxWidth()
+                // Open the menu from a real click on the wrapper rather than by collecting
+                // PressInteraction from a readOnly field: a disabled field emits none at all, and
+                // the collection was unreliable inside the settings sheet on iOS.
+                .clickable(enabled = !locked) {
+                    trace(
+                        "device.languageFilter.tap expandedBefore=$languageMenuExpanded " +
+                            "locked=$locked options=${voiceLanguages.size} " +
+                            "selected=$effectiveLanguage"
+                    )
+                    languageMenuExpanded = true
                 }
-            }
+        ) {
             OutlinedTextField(
                 value = effectiveLanguage,
                 onValueChange = {},
@@ -2679,13 +2709,16 @@ private fun SharedTtsDeviceVoicesPanel(
                     Icon(Icons.Default.ArrowDropDown, contentDescription = null)
                 },
                 enabled = !locked,
-                interactionSource = filterInteraction,
                 modifier = Modifier.fillMaxWidth(),
             )
             DropdownMenu(
                 expanded = languageMenuExpanded,
                 onDismissRequest = { languageMenuExpanded = false },
             ) {
+                // Composed only when the popup actually renders. A tap with no matching
+                // "menuComposed" line means the Popup is not being presented at all
+                // (DropdownMenu inside a ModalBottomSheet is unreliable on iOS/CMP).
+                trace("device.languageFilter.menuComposed options=${voiceLanguages.size}")
                 voiceLanguages.forEach { language ->
                     DropdownMenuItem(
                         text = { Text(language) },

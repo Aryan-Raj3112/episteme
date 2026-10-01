@@ -80,6 +80,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
@@ -106,6 +107,15 @@ import com.aryan.reader.shared.reader.readerTocParentIndices
 import com.aryan.reader.shared.reader.readerTocToggleExpansion
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.ui.text.style.TextAlign
+import kotlinx.coroutines.delay
 
 @Composable
 internal fun SharedMobileEpubSlider(
@@ -243,72 +253,107 @@ internal fun SharedMobileEpubScrubBubble(
     }
 }
 
+/**
+ * EPUB table of contents.
+ *
+ * Android benchmark (`EpubReaderDrawer.ChaptersList`): the search field with a clear button, a
+ * "no chapters matching" empty state, expand/collapse/locate over `rememberSaveable` state, a
+ * `VerticalScrollbar` slot, and rows rendered by the shared tree item. The projection logic lives
+ * in the generic, unit-tested helpers in `SharedEpubTocProjection.kt`.
+ *
+ * Generic over the host's TOC entry type because Android persists `EpubTocEntry` (absolute paths)
+ * while the shared reader uses `SharedEpubTocEntry` (hrefs); neither can be widened to the other
+ * without changing navigation. The host keeps owning its entries and maps by `originalIndex`.
+ */
 @Composable
-internal fun SharedMobileEpubToc(
-    epub: SharedEpubBook?,
-    selectedIndex: Int,
-    onEntryClick: (Int, SharedEpubTocEntry) -> Unit,
+fun <T> SharedMobileEpubToc(
+    entries: List<T>,
+    activeIndex: Int?,
+    onEntryClick: (Int, T) -> Unit,
+    labelOf: (T) -> String,
+    depthOf: (T) -> Int,
+    keyOf: (Int, T) -> String,
+    collapseDescription: String,
+    expandDescription: String,
+    scrollbar: @Composable BoxScope.(LazyListState) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val entries = epub?.effectiveReaderTocEntries().orEmpty()
     if (entries.isEmpty()) {
         Box(modifier, contentAlignment = Alignment.Center) {
             Text(readerString("desktop_no_table_of_contents", "No table of contents"))
         }
         return
     }
-    var query by remember(epub?.id) { mutableStateOf("") }
-    // iOS (CMP): composing the drawer sheet can hand first-responder focus to this
-    // field, raising the keyboard before the user touches anything. Keep it
-    // unfocusable until an explicit tap enables (and focuses) it.
-    var searchFieldFocusable by remember(epub?.id) { mutableStateOf(false) }
-    val searchFocusRequester = remember { FocusRequester() }
-    var expandedEntryIndices by remember(epub?.id, entries) {
-        mutableStateOf(readerTocParentIndices(entries) { it.depth })
+    var query by rememberSaveable { mutableStateOf("") }
+    var searchFieldCanFocus by remember { mutableStateOf(false) }
+    // Android benchmark: expanding *every* index (not just structural parents) is what
+    // "Expand All" means in the Android drawer.
+    var expandedEntryIndices by rememberSaveable(entries) {
+        mutableStateOf(readerTocParentIndices(entries, depthOf))
     }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    val visibleEntries = remember(entries, query, expandedEntryIndices, selectedIndex) {
+    val activeOriginalIndex = activeIndex?.takeIf { it in entries.indices }
+    val visibleEntries = remember(entries, query, expandedEntryIndices, activeOriginalIndex) {
         projectReaderTocEntries(
             entries = entries,
             expandedEntryIndices = expandedEntryIndices,
             query = query,
-            activeOriginalIndex = selectedIndex.takeIf { it in entries.indices },
-            labelOf = { it.label },
-            depthOf = { it.depth }
+            activeOriginalIndex = activeOriginalIndex,
+            labelOf = labelOf,
+            depthOf = depthOf
         )
     }
-    Column(modifier) {
+    val isSearching = query.isNotBlank()
+
+    Column(modifier = Modifier.fillMaxSize()) {
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
-            placeholder = { Text(readerString("search_chapters_placeholder", "Search chapters")) },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
             singleLine = true,
+            leadingIcon = {
+                Icon(
+                    Icons.Default.Search,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+            },
+            trailingIcon = if (query.isNotEmpty()) {
+                {
+                    IconButton(
+                        onClick = { query = "" },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = readerString("tooltip_clear_search", "Clear search"),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            } else null,
+            placeholder = { Text(readerString("search_chapters_placeholder", "Search chapters")) },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp)
-                .focusProperties { canFocus = searchFieldFocusable }
-                .focusRequester(searchFocusRequester)
-                .pointerInput(Unit) {
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .pointerInput(entries) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
-                        if (!searchFieldFocusable) {
-                            searchFieldFocusable = true
-                            // Let the recomposition make the field focusable, then focus it.
-                            scope.launch {
-                                withFrameNanos { }
-                                runCatching { searchFocusRequester.requestFocus() }
-                            }
-                        }
+                        searchFieldCanFocus = true
                     }
+                }
+                .focusProperties { canFocus = searchFieldCanFocus }
+                .onFocusChanged { state ->
+                    if (!state.isFocused) searchFieldCanFocus = false
                 }
         )
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            TextButton(onClick = { expandedEntryIndices = readerTocParentIndices(entries) { it.depth } }) {
+            TextButton(onClick = { expandedEntryIndices = entries.indices.toSet() }) {
                 Text(readerString("action_expand_all", "Expand All"))
             }
             TextButton(onClick = { expandedEntryIndices = emptySet() }) {
@@ -320,75 +365,97 @@ internal fun SharedMobileEpubToc(
                     val plan = readerTocLocatePlan(
                         entries = entries,
                         expandedEntryIndices = expandedEntryIndices,
-                        activeOriginalIndex = selectedIndex.takeIf { it in entries.indices },
-                        depthOf = { it.depth }
+                        activeOriginalIndex = activeOriginalIndex,
+                        depthOf = depthOf
                     )
                     expandedEntryIndices = plan.expandedEntryIndices
                     scope.launch {
-                        // Let the LazyColumn consume the new expansion projection before
-                        // asking it to scroll. The plan's index is in that projection, not
-                        // the filtered/collapsed source list.
+                        // The plan's index is in the post-expansion projection, not the
+                        // current filtered/collapsed one. Let the LazyColumn consume the
+                        // new state before scrolling to it.
                         kotlinx.coroutines.yield()
-                        plan.visibleIndex?.let { listState.animateScrollToItem(it) }
+                        plan.visibleIndex?.let { target ->
+                            // Android benchmark: the expanded row may not be measured yet.
+                            var attempts = 0
+                            while (listState.layoutInfo.totalItemsCount <= target && attempts < 10) {
+                                delay(30)
+                                attempts++
+                            }
+                            listState.animateScrollToItem(target)
+                        }
                     }
                 }
             ) { Text(readerString("action_locate", "Locate")) }
         }
         HorizontalDivider()
-        LazyColumn(Modifier.fillMaxSize(), state = listState) {
-            items(visibleEntries, key = { it.originalIndex }) { projected ->
-                val entry = projected.entry
-                NavigationDrawerItem(
-                    label = {
-                        Text(
-                            entry.label,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            fontWeight = if (entry.depth == 0) FontWeight.SemiBold else FontWeight.Normal
-                        )
-                    },
-                    icon = if (projected.hasChildren) {
-                        {
-                            val isExpanded = projected.originalIndex in expandedEntryIndices
-                            IconButton(
-                                onClick = {
-                                    expandedEntryIndices = readerTocToggleExpansion(
-                                        entries = entries,
-                                        expandedEntryIndices = expandedEntryIndices,
-                                        originalIndex = projected.originalIndex,
-                                        depthOf = { it.depth }
-                                    )
-                                },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    imageVector = if (isExpanded) {
-                                        Icons.Default.KeyboardArrowDown
-                                    } else {
-                                        Icons.AutoMirrored.Filled.KeyboardArrowRight
-                                    },
-                                    contentDescription = if (isExpanded) {
-                                        "Collapse ${entry.label}"
-                                    } else {
-                                        "Expand ${entry.label}"
-                                    }
+        Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            if (visibleEntries.isEmpty() && isSearching) {
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = readerString(
+                            "no_chapters_matching",
+                            "No chapters matching \"%1\$s\"",
+                            query.trim()
+                        ),
+                        style = MaterialTheme.typography.bodyLarge,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .padding(end = 12.dp)
+                ) {
+                    items(
+                        items = visibleEntries,
+                        key = { projected -> keyOf(projected.originalIndex, projected.entry) }
+                    ) { projected ->
+                        val entry = projected.entry
+                        SharedAndroidEpubTocTreeItem(
+                            label = labelOf(entry),
+                            depth = depthOf(entry),
+                            isExpanded = projected.originalIndex in expandedEntryIndices,
+                            hasChildren = projected.hasChildren,
+                            isCurrent = projected.isActive,
+                            collapseDescription = collapseDescription,
+                            expandDescription = expandDescription,
+                            onToggleExpand = {
+                                expandedEntryIndices = readerTocToggleExpansion(
+                                    entries = entries,
+                                    expandedEntryIndices = expandedEntryIndices,
+                                    originalIndex = projected.originalIndex,
+                                    depthOf = depthOf
                                 )
-                            }
-                        }
-                    } else null,
-                    selected = projected.isActive,
-                    onClick = { onEntryClick(projected.originalIndex, entry) },
-                    modifier = Modifier.padding(start = (entry.depth * 18).dp, end = 8.dp)
-                )
+                            },
+                            onClick = { onEntryClick(projected.originalIndex, entry) }
+                        )
+                    }
+                }
             }
+            scrollbar(listState)
         }
     }
 }
 
+/**
+ * EPUB highlight/annotation list.
+ *
+ * Android benchmark (`EpubReaderDrawer.HighlightsList`): `ListItem` + `HorizontalDivider` rows with
+ * a color dot, chapter title and a tinted note card. The previous shared version rendered a
+ * translucent color `Surface` card with a 10dp dot and plain note text, which is a different
+ * component, not a platform difference.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun SharedMobileEpubHighlights(
+fun SharedMobileEpubHighlights(
     highlights: List<UserHighlight>,
-    chapters: List<com.aryan.reader.shared.reader.SharedEpubChapter>,
+    chapterTitleOf: (Int) -> String,
     palette: ReaderHighlightPalette,
     onHighlightClick: (UserHighlight) -> Unit,
     onHighlightEdit: (UserHighlight) -> Unit,
@@ -396,180 +463,181 @@ internal fun SharedMobileEpubHighlights(
     onDeleteHighlight: (UserHighlight) -> Unit,
     onOpenPaletteManager: (() -> Unit)? = null,
     onExportAnnotations: (() -> Unit)? = null,
+    scrollbar: @Composable BoxScope.(LazyListState) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    var notesOnly by remember { mutableStateOf(false) }
-    var menuHighlight by remember { mutableStateOf<UserHighlight?>(null) }
-    var deleteHighlight by remember { mutableStateOf<UserHighlight?>(null) }
     if (highlights.isEmpty()) {
-        Box(modifier, contentAlignment = Alignment.Center) {
-            Text(readerString("desktop_no_annotations_yet", "No annotations yet"))
+        Box(
+            modifier = Modifier.fillMaxSize().padding(16.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = readerString("no_highlights_yet", "No highlights yet"),
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center
+            )
         }
         return
     }
-    val filteredHighlights = if (notesOnly) highlights.filter { !it.note.isNullOrBlank() } else highlights
-    Column(modifier) {
+    var notesOnly by remember { mutableStateOf(false) }
+    var menuHighlight by remember { mutableStateOf<UserHighlight?>(null) }
+    var deleteHighlight by remember { mutableStateOf<UserHighlight?>(null) }
+    val listState = rememberLazyListState()
+    val filteredHighlights = remember(highlights, notesOnly) {
+        if (notesOnly) highlights.filter { !it.note.isNullOrBlank() } else highlights
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             FilterChip(
                 selected = !notesOnly,
                 onClick = { notesOnly = false },
-                label = { Text(readerString("filter_all", "All")) },
+                label = { Text(readerString("filter_all", "All")) }
             )
             FilterChip(
                 selected = notesOnly,
                 onClick = { notesOnly = true },
-                label = { Text(readerString("filter_with_notes", "With Notes")) },
+                label = { Text(readerString("filter_with_notes", "With Notes")) }
             )
             if (onExportAnnotations != null) {
-                Spacer(Modifier.weight(1f))
+                Spacer(modifier = Modifier.weight(1f))
                 TextButton(onClick = onExportAnnotations) {
                     Text(readerString("action_export_annotations", "Export annotations"))
                 }
             }
         }
-        if (filteredHighlights.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(readerString("desktop_no_annotations_with_notes", "No annotations with notes"))
-            }
-        } else {
-            LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
-                items(filteredHighlights.sortedBy { it.chapterIndex }, key = { it.id }) { highlight ->
-                    Surface(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { onHighlightClick(highlight) },
-                        shape = RoundedCornerShape(12.dp),
-                        color = highlight.effectiveColor.copy(alpha = 0.16f)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(start = 12.dp, top = 8.dp, end = 4.dp, bottom = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    text = highlight.text.ifBlank { readerString("desktop_highlight", "Highlight") },
-                                    maxLines = 3,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Row(
-                                    modifier = Modifier.padding(top = 5.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize().padding(end = 4.dp)
+            ) {
+                items(
+                    items = filteredHighlights.sortedBy { it.chapterIndex },
+                    key = { it.id }
+                ) { highlight ->
+                    ListItem(
+                        headlineContent = {
+                            Text(
+                                text = highlight.text,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        },
+                        supportingContent = {
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     Box(
-                                        Modifier
-                                            .size(10.dp)
+                                        modifier = Modifier
+                                            .size(12.dp)
                                             .background(highlight.effectiveColor, CircleShape)
                                     )
-                                    Spacer(Modifier.width(7.dp))
+                                    Spacer(Modifier.width(8.dp))
                                     Text(
-                                        chapters.getOrNull(highlight.chapterIndex)
-                                            ?.title
-                                            ?.takeIf(String::isNotBlank)
-                                            ?: "Chapter ${highlight.chapterIndex + 1}",
+                                        text = chapterTitleOf(highlight.chapterIndex),
                                         style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                                 highlight.note?.takeIf { it.isNotBlank() }?.let { note ->
-                                    Text(note, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
+                                    Spacer(Modifier.height(8.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = note,
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                fontStyle = FontStyle.Italic
+                                            ),
+                                            modifier = Modifier.padding(12.dp),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
                             }
+                        },
+                        trailingContent = {
                             Box {
                                 IconButton(onClick = { menuHighlight = highlight }) {
                                     Icon(
-                                        Icons.Default.MoreVert,
+                                        imageVector = Icons.Default.MoreVert,
                                         contentDescription = readerString(
-                                            "desktop_annotation_options",
-                                            "Annotation options",
-                                        ),
+                                            "content_desc_options",
+                                            "Options"
+                                        )
                                     )
                                 }
                                 DropdownMenu(
                                     expanded = menuHighlight?.id == highlight.id,
                                     onDismissRequest = { menuHighlight = null }
                                 ) {
-                                    val actions = readerHighlightListActions(onOpenPaletteManager != null)
-                                    actions.forEach { action ->
-                                        when (action) {
-                                            ReaderHighlightListAction.CHANGE_COLOR -> {
-                                                SharedMobileEpubHighlightColorRow(
-                                                    palette = palette,
-                                                    selectedHighlight = highlight,
-                                                    onOpenPaletteManager = if (ReaderHighlightListAction.MANAGE_PALETTE in actions) {
-                                                        {
-                                                            onOpenPaletteManager?.invoke()
-                                                            menuHighlight = null
-                                                        }
-                                                    } else {
-                                                        null
-                                                    },
-                                                    onColorSelect = { color ->
-                                                        onHighlightColorChange(highlight, color)
-                                                        menuHighlight = null
-                                                    },
-                                                )
+                                    SharedMobileEpubHighlightColorRow(
+                                        palette = palette,
+                                        selectedHighlight = highlight,
+                                        onOpenPaletteManager = if (onOpenPaletteManager != null) {
+                                            {
+                                                onOpenPaletteManager()
+                                                menuHighlight = null
                                             }
-                                            ReaderHighlightListAction.MANAGE_PALETTE -> {
-                                                HorizontalDivider()
-                                            }
-                                            ReaderHighlightListAction.EDIT_NOTE -> {
-                                                DropdownMenuItem(
-                                                    text = {
-                                                        Text(
-                                                            if (highlight.note.isNullOrBlank()) {
-                                                                readerString("menu_add_note", "Add note")
-                                                            } else {
-                                                                readerString("menu_edit_note", "Edit note")
-                                                            }
-                                                        )
-                                                    },
-                                                    onClick = {
-                                                        onHighlightEdit(highlight)
-                                                        menuHighlight = null
-                                                    }
-                                                )
-                                            }
-                                            ReaderHighlightListAction.DELETE -> {
-                                                DropdownMenuItem(
-                                                    text = { Text(readerString("action_delete", "Delete")) },
-                                                    onClick = {
-                                                        deleteHighlight = highlight
-                                                        menuHighlight = null
-                                                    }
-                                                )
-                                            }
+                                        } else {
+                                            null
+                                        },
+                                        onColorSelect = { color ->
+                                            onHighlightColorChange(highlight, color)
+                                            menuHighlight = null
                                         }
-                                    }
+                                    )
+                                    HorizontalDivider()
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                if (highlight.note.isNullOrBlank()) {
+                                                    readerString("menu_add_note", "Add note")
+                                                } else {
+                                                    readerString("menu_edit_note", "Edit note")
+                                                }
+                                            )
+                                        },
+                                        onClick = {
+                                            onHighlightEdit(highlight)
+                                            menuHighlight = null
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(readerString("action_delete", "Delete")) },
+                                        onClick = {
+                                            deleteHighlight = highlight
+                                            menuHighlight = null
+                                        }
+                                    )
                                 }
                             }
-                        }
-                    }
+                        },
+                        modifier = Modifier.clickable { onHighlightClick(highlight) }
+                    )
+                    HorizontalDivider()
                 }
             }
+            scrollbar(listState)
         }
     }
     deleteHighlight?.let { highlight ->
         AlertDialog(
             onDismissRequest = { deleteHighlight = null },
-            title = { Text(readerString("desktop_delete_annotation_title", "Delete annotation?")) },
-            text = {
-                Text(
-                    readerString(
-                        "desktop_delete_annotation_message",
-                        "This removes the highlight and its comment.",
-                    )
-                )
-            },
+            title = { Text(readerString("dialog_delete_highlight", "Delete highlight?")) },
+            text = { Text(readerString("dialog_delete_highlight_desc", "This removes the highlight.")) },
             confirmButton = {
                 TextButton(onClick = {
                     onDeleteHighlight(highlight)
                     deleteHighlight = null
                 }) {
-                    Text(readerString("action_delete", "Delete"), color = MaterialTheme.colorScheme.error)
+                    Text(readerString("action_delete", "Delete"))
                 }
             },
             dismissButton = {
@@ -581,6 +649,8 @@ internal fun SharedMobileEpubHighlights(
     }
 }
 
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SharedMobileEpubHighlightColorRow(
     palette: ReaderHighlightPalette,

@@ -691,6 +691,10 @@ private fun BookTtsPlayerSheet(
     // changes at the next session start), so switching then resuming would
     // keep playing the previous voice.
     val listenTtsActive = playback.connected && !playback.sessionFinished
+    // Only freeze the voice/engine controls while something is actually being spoken. The
+    // Listen player sheet closes on stop, so requiring a full stop would make the voice
+    // settings unreachable; pausing is a safe point to change it.
+    val listenTtsVoiceLocked = playback.isPlaying
     var adapterRate by remember { mutableFloatStateOf(prepared.savedProgress?.speechRate ?: loadTtsSpeechRate(context)) }
     var adapterPitch by remember { mutableFloatStateOf(prepared.savedProgress?.pitch ?: loadTtsPitch(context)) }
     val sharedItem = remember(sourceBook, prepared.savedProgress) {
@@ -785,6 +789,7 @@ private fun BookTtsPlayerSheet(
                 listenSpeaker = loadListenTtsSpeaker(context)
             },
             isTtsActive = listenTtsActive,
+            isVoiceChangeLocked = listenTtsVoiceLocked,
             getAuthToken = getAuthToken,
             // Canonical cache title so the Cache tab lists the same files the
             // service reads/writes (shared with Reader for identical chunks).

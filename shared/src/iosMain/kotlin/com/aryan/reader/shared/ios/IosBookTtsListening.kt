@@ -71,9 +71,19 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.serializer
+import com.aryan.reader.shared.ReaderTtsVoiceOverride
+import com.aryan.reader.shared.ui.SharedMobileEpubVoice
+import com.aryan.reader.shared.ui.iosTtsLanguageDisplayName
+import com.aryan.reader.shared.ui.iosTtsVoiceQuality
+import com.aryan.reader.shared.ui.sortedForTtsDisplay
+import com.aryan.reader.shared.ui.SHARED_MOBILE_TTS_SAMPLE_DEFAULT
+import com.aryan.reader.shared.ui.effectiveSharedMobileTtsSampleText
+import com.aryan.reader.shared.ui.sanitizeSharedMobileTtsSampleText
+import com.aryan.reader.shared.ui.toggleSharedMobileTtsVoiceFavorite
 import platform.AVFAudio.AVSpeechBoundary
 import platform.AVFAudio.AVSpeechSynthesizer
 import platform.AVFAudio.AVSpeechSynthesizerDelegateProtocol
+import platform.AVFAudio.AVSpeechSynthesisVoice
 import platform.AVFAudio.AVSpeechUtterance
 import platform.Foundation.NSFileManager
 import platform.MediaPlayer.MPMediaItemPropertyArtist
@@ -90,6 +100,19 @@ import platform.Foundation.NSURL
 import platform.Foundation.NSUserDefaults
 
 internal const val IOS_TTS_LISTEN_TAG = "ReaderBookTtsIOS"
+
+/**
+ * Listen's own device-voice override. Absent key inherits the reader's voice
+ * (`reader.tts.voiceIdentifier`) until the user picks here; blank is an explicit
+ * "system default". Android benchmark: `ListenTtsVoicePreferences`, resolved by the
+ * shared [ReaderTtsVoiceOverride] so both platforms behave identically.
+ */
+private const val IOS_LISTEN_TTS_VOICE_OVERRIDE_KEY = "reader.bookTtsListening.voiceOverride"
+private const val IOS_READER_TTS_VOICE_KEY = "reader.tts.voiceIdentifier"
+private const val IOS_LISTEN_TTS_FAVORITES_KEY = "reader.bookTtsListening.favoriteVoices"
+private const val IOS_LISTEN_TTS_SAMPLE_TEXT_KEY = "reader.bookTtsListening.previewSampleText"
+private const val IOS_READER_TTS_RATE_KEY = "reader.tts.speechRate"
+private const val IOS_READER_TTS_PITCH_KEY = "reader.tts.pitch"
 
 internal fun iosTtsListenLog(message: String) {
     IosDiagnosticLogStore.record(IOS_TTS_LISTEN_TAG, message)
@@ -147,6 +170,30 @@ internal class IosBookTtsListeningController {
     val progressByBook: MutableMap<String, SharedBookTtsListeningProgress> = mutableStateMapOf()
     val chapterTitlesByBook: MutableMap<String, List<String>> = mutableStateMapOf()
 
+    /** Device voices offered in the Listen voice settings. */
+    var availableVoices by mutableStateOf(emptyList<SharedMobileEpubVoice>())
+        private set
+
+    /**
+     * Voice the next utterance will use. Null = the platform system default, which is also what
+     * an explicit "system default" pick resolves to.
+     */
+    var selectedVoiceIdentifier by mutableStateOf<String?>(null)
+        private set
+
+    /** Starred voice ids for the Listen voice list. */
+    var favoriteVoiceIdentifiers by mutableStateOf(emptySet<String>())
+        private set
+
+    /** Text spoken by the voice preview; never blank. */
+    var previewSampleText by mutableStateOf(SHARED_MOBILE_TTS_SAMPLE_DEFAULT)
+        private set
+
+    /** Separate synthesizer so previewing never interrupts the book being read. */
+    private val previewSynthesizer = AVSpeechSynthesizer()
+
+    private val listenDefaults: NSUserDefaults get() = NSUserDefaults.standardUserDefaults
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val progressStore = IosTtsListeningProgressStore()
     private val contentCache = mutableMapOf<String, IosTtsListenBook>()
@@ -187,8 +234,100 @@ internal class IosBookTtsListeningController {
         progressStore.load().forEach { (bookId, progress) ->
             progressByBook[bookId] = progress
         }
-        iosTtsListenLog("Controller initialized; restored progress for ${progressByBook.size} book(s)")
+        availableVoices = enumerateListenVoices()
+        selectedVoiceIdentifier = resolveListenVoiceIdentifier()
+        favoriteVoiceIdentifiers = loadListenFavorites()
+        previewSampleText = effectiveSharedMobileTtsSampleText(
+            listenDefaults.stringForKey(IOS_LISTEN_TTS_SAMPLE_TEXT_KEY)
+        )
+        iosTtsListenLog(
+            "Controller initialized; restored progress for ${progressByBook.size} book(s); " +
+                "voices=${availableVoices.size} selected=${selectedVoiceIdentifier ?: "<system>"}"
+        )
     }
+
+    /**
+     * Picks the Listen voice, persisting it as an explicit choice so it stops following the
+     * reader. Passing null stores the system-default sentinel rather than clearing the key.
+     */
+    fun setVoice(identifier: String?) {
+        val resolved = identifier?.takeIf { candidate ->
+            availableVoices.any { it.identifier == candidate }
+        }
+        selectedVoiceIdentifier = resolved
+        listenDefaults.setObject(
+            ReaderTtsVoiceOverride.encodeVoiceOverride(resolved),
+            forKey = IOS_LISTEN_TTS_VOICE_OVERRIDE_KEY
+        )
+        iosTtsListenLog("setVoice voice=${resolved ?: "<system>"}")
+    }
+
+    private fun resolveListenVoiceIdentifier(): String? {
+        val stored = listenDefaults.stringForKey(IOS_LISTEN_TTS_VOICE_OVERRIDE_KEY)
+        val resolved = ReaderTtsVoiceOverride.resolveVoiceIdentifier(
+            isOverrideStored = listenDefaults.objectForKey(IOS_LISTEN_TTS_VOICE_OVERRIDE_KEY) != null,
+            storedOverride = stored,
+            inheritedVoiceIdentifier = listenDefaults.stringForKey(IOS_READER_TTS_VOICE_KEY)
+        )
+        // A stored voice that iOS no longer has (OS upgrade, deleted download) falls back to the
+        // system default instead of speaking with a missing identifier.
+        return resolved?.takeIf { candidate -> availableVoices.any { it.identifier == candidate } }
+    }
+
+    /** Stars/unstars a voice. Independent of the reader's own favorites. */
+    fun toggleFavoriteVoice(identifier: String) {
+        if (identifier.isBlank()) return
+        favoriteVoiceIdentifiers = toggleSharedMobileTtsVoiceFavorite(favoriteVoiceIdentifiers, identifier)
+        listenDefaults.setObject(favoriteVoiceIdentifiers.toList(), forKey = IOS_LISTEN_TTS_FAVORITES_KEY)
+    }
+
+    /** Persists custom preview text; blank clears it back to the shared default. */
+    fun setPreviewSampleText(text: String) {
+        val sanitized = sanitizeSharedMobileTtsSampleText(text)
+        listenDefaults.setObject(sanitized, forKey = IOS_LISTEN_TTS_SAMPLE_TEXT_KEY)
+        previewSampleText = effectiveSharedMobileTtsSampleText(sanitized)
+    }
+
+    /** Speaks [identifier] (or the selected voice when null) without touching playback. */
+    fun previewVoice(identifier: String? = selectedVoiceIdentifier) {
+        previewSynthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+        val utterance = AVSpeechUtterance(string = previewSampleText).apply {
+            rate = (0.5f * state.speechRate).coerceIn(0.1f, 1f)
+            pitchMultiplier = state.pitch
+            identifier
+                ?.let(AVSpeechSynthesisVoice::voiceWithIdentifier)
+                ?.let { voice = it }
+        }
+        previewSynthesizer.speakUtterance(utterance)
+    }
+
+    private fun loadListenFavorites(): Set<String> =
+        runCatching { listenDefaults.stringArrayForKey(IOS_LISTEN_TTS_FAVORITES_KEY) as? List<*> }
+            .getOrNull()
+            .orEmpty()
+            .mapNotNull { it as? String }
+            .filter { it.isNotBlank() }
+            .toSet()
+
+    /** Listen inherits the reader's rate/pitch until it saves its own via [setSpeechRate]. */
+    fun inheritReaderSpeechParameters(): Pair<Float, Float> =
+        (listenDefaults.objectForKey(IOS_READER_TTS_RATE_KEY)?.let { listenDefaults.doubleForKey(IOS_READER_TTS_RATE_KEY).toFloat() } ?: 1f) to
+            (listenDefaults.objectForKey(IOS_READER_TTS_PITCH_KEY)?.let { listenDefaults.doubleForKey(IOS_READER_TTS_PITCH_KEY).toFloat() } ?: 1f)
+
+    private fun enumerateListenVoices(): List<SharedMobileEpubVoice> =
+        AVSpeechSynthesisVoice.speechVoices()
+            .mapNotNull { it as? AVSpeechSynthesisVoice }
+            .map { voice ->
+                val languageTag = voice.language.orEmpty()
+                SharedMobileEpubVoice(
+                    identifier = voice.identifier,
+                    name = voice.name,
+                    language = iosTtsLanguageDisplayName(languageTag).ifBlank { languageTag },
+                    languageTag = languageTag,
+                    quality = iosTtsVoiceQuality(voice),
+                )
+            }
+            .sortedForTtsDisplay()
 
     /** Loads chapter titles for a book without starting playback. */
     fun ensureContent(book: BookItem, replacements: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences()) {
@@ -218,7 +357,7 @@ internal class IosBookTtsListeningController {
         iosTtsListenLog(
             "start() bookId=$bookId name=${book.displayName} type=${book.type} policy=$policy " +
                 "chapterIndex=$chapterIndex path=${book.path ?: "<null>"} pathExists=" +
-                (book.path?.let { NSFileManager.defaultManager.fileExistsAtPath(it) } == true)
+                book.path.isIosReadableBookPath()
         )
         sleepTimerJob?.cancel()
         sleepTimerJob = null
@@ -252,8 +391,20 @@ internal class IosBookTtsListeningController {
                 .takeIf { it >= 0 }
                 ?: content.chapters.indexOfFirst { it.chunks.isNotEmpty() }
             if (readableChapter < 0) {
-                iosTtsListenLog("start() NO READABLE CHAPTER bookId=$bookId")
-                state = SharedBookTtsListenState(error = "This book contains no readable text")
+                val chapterCount = content.chapters.size
+                val emptyCount = content.chapters.count { it.chunks.isEmpty() }
+                iosTtsListenLog(
+                    "start() NO READABLE CHAPTER bookId=$bookId type=${book.type} " +
+                        "chapters=$chapterCount emptyChapters=$emptyCount"
+                )
+                state = SharedBookTtsListenState(
+                    error = if (book.type == FileType.PDF) {
+                        "This PDF has no extractable text. Scanned documents need OCR before " +
+                            "text-to-speech can read them."
+                    } else {
+                        "This book contains no readable text"
+                    }
+                )
                 return@launch
             }
             currentBookId = bookId
@@ -395,6 +546,11 @@ internal class IosBookTtsListeningController {
         playChapterInternal(index.coerceIn(0, content.chapters.lastIndex), 0)
     }
 
+    /** Stops only the voice-preview utterance, leaving book playback untouched. */
+    fun stopVoicePreview() {
+        previewSynthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+    }
+
     fun setParameters(rate: Float, pitch: Float) {
         val safeRate = rate.coerceIn(0.5f, 3f)
         val safePitch = pitch.coerceIn(0.5f, 2f)
@@ -515,6 +671,12 @@ internal class IosBookTtsListeningController {
         val utterance = AVSpeechUtterance(string = utteranceText).apply {
             rate = (0.5f * state.speechRate).coerceIn(0.1f, 1f)
             pitchMultiplier = state.pitch
+            // Android benchmark: Listen honours the voice chosen in its voice settings. Before
+            // this the utterance carried no voice at all, so Listen always used the system
+            // default and the persisted `voiceId` was dead state.
+            selectedVoiceIdentifier?.let { identifier ->
+                AVSpeechSynthesisVoice.voiceWithIdentifier(identifier)?.let { voice -> this.voice = voice }
+            }
         }
         activeUtterance = utterance
         ttsStartMark?.let { mark ->
@@ -824,8 +986,27 @@ internal class IosBookTtsListeningController {
         replacements: ReaderTtsReplacementPreferences,
     ): List<IosTtsListenChapter> {
         val path = book.path ?: error("PDF path is unavailable")
+        val resolvedPath = path.resolveIosReadablePath()
+        iosTtsListenLog("buildIosPdfListenChapters ref=$path resolved=$resolvedPath")
         val pages = extractIosPdfPageTexts(path)
-        iosTtsListenLog("buildIosPdfListenChapters pages=${pages.size} path=$path")
+        // Distinguishes "scanned PDF with no text layer" from "extraction is broken": a scan
+        // yields pages but zero characters, while a bug yields characters in the wrong places or
+        // a page count of 0. Without this the user only sees "no readable text".
+        val pagesWithText = pages.count { it.isNotBlank() }
+        val totalChars = pages.sumOf { it.length }
+        iosTtsListenLog(
+            "buildIosPdfListenChapters pages=${pages.size} pagesWithText=$pagesWithText " +
+                "totalChars=$totalChars emptyPages=${pages.size - pagesWithText} path=$path"
+        )
+        if (pages.isEmpty()) {
+            error("This PDF could not be opened for text-to-speech (0 pages)")
+        }
+        if (pagesWithText == 0) {
+            error(
+                "No text layer found on any of ${pages.size} pages. This looks like a scanned " +
+                    "PDF, which has no extractable text. Run OCR on it first."
+            )
+        }
         return pages.mapIndexed { pageIndex, rawText ->
             val normalized = rawText
                 .replace("\r\n", "\n")
@@ -856,17 +1037,18 @@ internal class IosBookTtsListeningController {
     }
 
     private suspend fun extractIosPdfPageTexts(path: String): List<String> {
-        val resolved = path
-            .trim()
-            .takeIf { it.isNotBlank() }
-            ?.let { value ->
-                if (value.startsWith("file://")) {
-                    NSURL.URLWithString(value)?.path ?: value.removePrefix("file://")
-                } else {
-                    value
-                }
-            }
-            ?: return emptyList()
+        // `resolveIosReadablePath` is the single resolver for the three shapes a book path can
+        // take. This used to be a local file://-only copy, so a folder-book ref
+        // (`ios-folder-book://...`) was handed to PDFium verbatim and every PDF failed with
+        // "0 pages" even when it was a perfectly good text PDF.
+        val resolved = path.resolveIosReadablePath()
+        if (resolved == null) {
+            error("This PDF's file reference could not be resolved (${path.take(120)}). " +
+                "Re-add the book from its folder so the app can access it again.")
+        }
+        if (!NSFileManager.defaultManager.fileExistsAtPath(resolved)) {
+            error("This PDF's file is missing ($resolved). It may have been moved or deleted.")
+        }
         // PDFium is not thread-safe: serialize against rendering, search, and outline work
         // exactly like the shared reader pipeline does.
         return IosPdfiumRuntime.withPdfium {

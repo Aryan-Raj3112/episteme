@@ -1637,8 +1637,8 @@ fun SharedMobileEpubReaderScreen(
                 HorizontalPager(state = drawerPagerState, modifier = Modifier.fillMaxWidth().weight(1f)) { page ->
                     when (page) {
                         0 -> SharedMobileEpubToc(
-                            epub = loadedBook,
-                            selectedIndex = selectedTocIndex,
+                            entries = loadedBook?.effectiveReaderTocEntries().orEmpty(),
+                            activeIndex = selectedTocIndex,
                             onEntryClick = { index, entry ->
                                 selectedTocIndex = index
                                 loadedBook?.locatorForTocEntry(entry, pages)?.let { locator ->
@@ -1646,6 +1646,11 @@ fun SharedMobileEpubReaderScreen(
                                     scope.launch { drawerState.close() }
                                 }
                             },
+                            labelOf = { it.label },
+                            depthOf = { it.depth },
+                            keyOf = { index, entry -> "${entry.href}_${entry.fragmentId}_$index" },
+                            collapseDescription = readerString("content_desc_collapse", "Collapse"),
+                            expandDescription = readerString("content_desc_expand", "Expand"),
                             modifier = Modifier.fillMaxSize()
                         )
                         1 -> SharedEpubBookmarksList(
@@ -1672,7 +1677,11 @@ fun SharedMobileEpubReaderScreen(
                         )
                         2 -> SharedMobileEpubHighlights(
                             highlights = highlights,
-                            chapters = loadedBook?.chapters.orEmpty(),
+                            chapterTitleOf = { chapterIndex ->
+                                loadedBook?.chapters?.getOrNull(chapterIndex)?.title
+                                    ?.takeIf(String::isNotBlank)
+                                    ?: "Chapter ${chapterIndex + 1}"
+                            },
                             palette = readerHighlightPalette,
                             onHighlightClick = { highlight ->
                                 recordJumpAndNavigate(highlight.locator)

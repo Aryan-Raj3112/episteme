@@ -461,7 +461,7 @@ private fun NSUserDefaults.readerTtsFloat(key: String, fallback: Float): Float {
  * Android benchmark parity: the shared sheet groups by localized display
  * name (e.g. "English (United States)"), not the raw BCP-47 tag ("en-US").
  */
-private fun iosTtsLanguageDisplayName(languageTag: String): String {
+internal fun iosTtsLanguageDisplayName(languageTag: String): String {
     val trimmed = languageTag.trim()
     if (trimmed.isBlank()) return ""
     val localeIdentifier = trimmed.replace('-', '_')
@@ -484,7 +484,7 @@ private fun iosTtsFavoriteVoices(preferences: NSUserDefaults): Set<String> =
         .filter { it.isNotBlank() }
         .toSet()
 
-private fun iosTtsVoiceQuality(voice: AVSpeechSynthesisVoice): SharedMobileEpubVoiceQuality {
+internal fun iosTtsVoiceQuality(voice: AVSpeechSynthesisVoice): SharedMobileEpubVoiceQuality {
     val quality = runCatching { voice.quality }.getOrNull()
     if (quality == AVSpeechSynthesisVoiceQualityPremium) return SharedMobileEpubVoiceQuality.PREMIUM
     if (quality == AVSpeechSynthesisVoiceQualityEnhanced) return SharedMobileEpubVoiceQuality.ENHANCED
