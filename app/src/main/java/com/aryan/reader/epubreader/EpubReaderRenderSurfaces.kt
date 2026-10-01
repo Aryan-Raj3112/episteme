@@ -227,6 +227,7 @@ import com.aryan.reader.shared.ui.SharedMobileReaderDrawer
 import com.aryan.reader.shared.ui.SharedMobileReaderRecoveryGate
 import com.aryan.reader.shared.ui.SharedMobileReaderScaffold
 import com.aryan.reader.shared.ui.rememberReaderMotionPolicy
+import com.aryan.reader.shared.ui.SharedMobileEpubChapterChangeIndicator
 import com.aryan.reader.shouldRenderReaderSlider
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsController
@@ -1696,10 +1697,10 @@ internal fun EpubReaderRenderSurfaces(
                                 }
 
                                 if (prefs.pullToTurnEnabled && currentChapterIndex > 0) {
-                                    ChapterChangeIndicator(
-                                        text = stringResource(R.string.release_for_previous_chapter),
+                                    SharedMobileEpubChapterChangeIndicator(
+                                        direction = "previous",
                                         progress = pullToPrevProgress,
-                                        isPullingDown = true,
+                                        releaseLabel = stringResource(R.string.release_for_previous_chapter),
                                         modifier = Modifier
                                             .align(Alignment.TopCenter)
                                             .padding(top = 8.dp)
@@ -1707,10 +1708,10 @@ internal fun EpubReaderRenderSurfaces(
                                 }
 
                                 if (prefs.pullToTurnEnabled && currentChapterIndex < chapters.size - 1) {
-                                    ChapterChangeIndicator(
-                                        text = stringResource(R.string.release_for_next_chapter),
+                                    SharedMobileEpubChapterChangeIndicator(
+                                        direction = "next",
                                         progress = pullToNextProgress,
-                                        isPullingDown = false,
+                                        releaseLabel = stringResource(R.string.release_for_next_chapter),
                                         modifier = Modifier
                                             .align(Alignment.BottomCenter)
                                             .padding(bottom = 8.dp)

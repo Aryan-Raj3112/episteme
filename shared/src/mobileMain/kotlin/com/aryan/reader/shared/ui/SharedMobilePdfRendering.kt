@@ -20,6 +20,7 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.togetherWith
@@ -1842,12 +1843,23 @@ internal fun SharedMobilePdfTtsHighlightOverlay(
     }
 }
 
+/**
+ * Jump-history bar: back / clear / forward, each weighted equally. Android
+ * benchmark (`pdf/PdfToolbars.kt`).
+ *
+ * Visibility animation is the caller's responsibility so each host can keep its
+ * own enter/exit spec.
+ *
+ * @param labels localized captions and content descriptions.
+ */
 @Composable
-internal fun SharedMobilePdfJumpHistoryBar(
-    history: SharedPdfJumpHistory,
+fun SharedMobilePdfJumpHistoryBar(
+    backPage: Int?,
+    forwardPage: Int?,
     onBack: () -> Unit,
     onForward: () -> Unit,
     onClear: () -> Unit,
+    labels: SharedPdfJumpHistoryBarLabels,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -1860,24 +1872,53 @@ internal fun SharedMobilePdfJumpHistoryBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            TextButton(onClick = onBack, enabled = history.backPage != null, modifier = Modifier.weight(1f)) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous jump", modifier = Modifier.size(16.dp))
+            TextButton(onClick = onBack, enabled = backPage != null, modifier = Modifier.weight(1f)) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = labels.jumpBack,
+                    modifier = Modifier.size(16.dp)
+                )
                 Spacer(Modifier.width(4.dp))
-                Text(history.backPage?.let { "Page ${it + 1}" }.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    text = backPage?.let { labels.page(it + 1) }.orEmpty(),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
             TextButton(onClick = onClear, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Default.Close, contentDescription = "Clear page history", modifier = Modifier.size(16.dp))
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = labels.clear,
+                    modifier = Modifier.size(16.dp)
+                )
                 Spacer(Modifier.width(4.dp))
-                Text("Clear", maxLines = 1)
+                Text(labels.clear, maxLines = 1)
             }
-            TextButton(onClick = onForward, enabled = history.forwardPage != null, modifier = Modifier.weight(1f)) {
-                Text(history.forwardPage?.let { "Page ${it + 1}" }.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            TextButton(onClick = onForward, enabled = forwardPage != null, modifier = Modifier.weight(1f)) {
+                Text(
+                    text = forwardPage?.let { labels.page(it + 1) }.orEmpty(),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Spacer(Modifier.width(4.dp))
-                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next jump", modifier = Modifier.size(16.dp))
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = labels.jumpForward,
+                    modifier = Modifier.size(16.dp)
+                )
             }
         }
     }
 }
+
+/** Localized strings for [SharedMobilePdfJumpHistoryBar]. */
+data class SharedPdfJumpHistoryBarLabels(
+    val jumpBack: String,
+    val jumpForward: String,
+    val clear: String,
+    /** 1-based page caption, e.g. `"Page 7"`. */
+    val page: (Int) -> String
+)
 
 enum class SharedPdfTtsOverlaySize { LARGE, MEDIUM, SMALL }
 
@@ -2167,13 +2208,22 @@ internal fun SharedMobilePdfPageSlider(
     }
 }
 
+/**
+ * Full-bleed tap-swallowing overlay shown while page-scrubbing, with a centred
+ * page-range card. Android benchmark (`pdf/PdfNavigationUI.kt:156`).
+ */
 @Composable
-internal fun SharedMobilePdfPageScrubbingOverlay(
+fun SharedMobilePdfPageScrubbingOverlay(
     label: String,
     modifier: Modifier = Modifier
 ) {
     Box(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() }
+            ) {},
         contentAlignment = Alignment.Center
     ) {
         Column(

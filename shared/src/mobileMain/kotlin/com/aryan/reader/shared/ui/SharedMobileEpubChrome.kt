@@ -143,12 +143,28 @@ internal object SharedMobileEpubAxTags {
     const val PAGE_INFO = "EpubPageInfo"
 }
 
+/**
+ * Blocking busy overlay: dims the reader background, swallows taps, and shows a
+ * spinner with a caption. Android benchmark
+ * (`epubreader/EpubReaderOverlayLayers.kt:60`).
+ */
 @Composable
-internal fun SharedMobileEpubLoading(label: String) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+fun SharedMobileEpubLoading(label: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.6f))
+            .clickable(enabled = true) {},
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
             CircularProgressIndicator()
-            Text(label)
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground
+            )
         }
     }
 }

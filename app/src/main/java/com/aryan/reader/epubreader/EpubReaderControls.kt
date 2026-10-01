@@ -1,5 +1,6 @@
 package com.aryan.reader.epubreader
 
+import com.aryan.reader.shared.readerTtsChunkLabel
 import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.annotation.StringRes
@@ -139,7 +140,6 @@ import com.aryan.reader.tts.loadTtsSpeakerName
 import com.aryan.reader.tts.normalizeTtsSpeakerId
 import com.aryan.reader.tts.ReaderTtsOverlaySize
 import com.aryan.reader.tts.TtsPlaybackManager.TtsState
-import com.aryan.reader.tts.formatReaderTtsChunkLabel
 import kotlin.math.roundToInt
 
 typealias ReaderTool = com.aryan.reader.shared.ReaderTool
@@ -1760,7 +1760,7 @@ fun TtsOverlayControls(
         }
     }
     val chunkLabel = remember(ttsState.currentChunkIndex, ttsState.totalChunks) {
-        formatReaderTtsChunkLabel(ttsState.currentChunkIndex, ttsState.totalChunks)
+        readerTtsChunkLabel(ttsState.currentChunkIndex, ttsState.totalChunks)
     }
     val miniBarTitle = ttsState.bookTitle
         ?.takeIf { it.isNotBlank() }

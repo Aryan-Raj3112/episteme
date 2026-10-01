@@ -848,7 +848,7 @@ internal fun SharedMobileEpubThemeGridItem(
  * top of this; the safe-area background extension below covers the iOS home
  * indicator and curved corners instead of growing the content row.
  */
-internal val SharedMobileEpubPageInfoBarContentHeight = 25.dp
+val SharedMobileEpubPageInfoBarContentHeight = 25.dp
 
 /** Common log tag for PageInfo-bar clipping diagnosis on iOS and Android. */
 internal const val ReaderPageInfoBarDiagTag = "ReaderPageInfoBar"
@@ -919,7 +919,7 @@ internal fun SharedMobileEpubPageInfo(
     }
     val foreground = settings.readerTextColor().copy(alpha = 0.8f)
     val texture = sharedMobileEpubTextureBitmap(settings.textureId)
-    val clockTime = rememberReaderClockTime()
+    val clockTime = rememberSharedReaderClockTime()
     val positionText = spreadPositionLabel
         ?: pageInfo?.let { "${it.currentPageInChapter}" }
     val centerLabel = if (pageInfo != null && positionText != null) {
@@ -1064,8 +1064,12 @@ internal fun SharedMobileEpubPageInfo(
     }
 }
 
+/**
+ * Reader page-info clock, re-aligned to the minute. Honours the platform's
+ * 12/24-hour setting via `formatSharedMobileClockTime`.
+ */
 @Composable
-internal fun rememberReaderClockTime(): String {
+fun rememberSharedReaderClockTime(): String {
     var currentTimeMillis by remember { mutableLongStateOf(currentTimestamp()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -1090,13 +1094,25 @@ internal fun Long.hasDarkReaderBackground(): Boolean {
     return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0) < 0.5
 }
 
+/**
+ * Pull-to-turn chapter affordance shown while dragging toward the previous or
+ * next chapter.
+ *
+ * @param releaseLabel localized "release to turn" caption, supplied by the host
+ *   so the string is translated (Android passes `R.string.release_for_*`).
+ */
 @Composable
-internal fun SharedMobileEpubChapterChangeIndicator(direction: String, progress: Float, modifier: Modifier = Modifier) {
+fun SharedMobileEpubChapterChangeIndicator(
+    direction: String,
+    progress: Float,
+    releaseLabel: String,
+    modifier: Modifier = Modifier
+) {
     val alpha = (progress * 1.5f).coerceIn(0f, 1f)
     if (alpha <= 0.1f) return
     Surface(
         modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp).graphicsLayer { this.alpha = alpha },
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.5f),
         contentColor = MaterialTheme.colorScheme.inverseOnSurface,
         tonalElevation = 4.dp
@@ -1110,9 +1126,10 @@ internal fun SharedMobileEpubChapterChangeIndicator(direction: String, progress:
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                if (progress >= 1f) if (direction == "previous") "Release for previous chapter" else "Release for next chapter" else "Pull further... (${(progress * 100).toInt()}%)",
+                if (progress >= 1f) releaseLabel else "Pull further... (${(progress * 100).toInt()}%)",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.inverseOnSurface
+                color = MaterialTheme.colorScheme.inverseOnSurface,
+                textAlign = TextAlign.Center
             )
         }
     }

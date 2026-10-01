@@ -63,9 +63,14 @@ class RecompositionPolicyTest {
 
     @Test
     fun `theme rows have keys and reachable targets`() {
-        val source = readMain("HomeScreen.kt")
-        assertTrue(source.contains("items(presets.size, key = { it })"))
-        assertTrue(source.contains("items(uiState.customAppThemes, key = { it.id })"))
+        // The app-theme sheet renders in shared (`SharedAppThemeBottomSheet`),
+        // so the keyed-lazy-row and hit-target guarantees are asserted there.
+        val source = listOf(
+            File("shared/src/commonMain/kotlin/com/aryan/reader/shared/ui/SharedAppThemeSettings.kt"),
+            File("../shared/src/commonMain/kotlin/com/aryan/reader/shared/ui/SharedAppThemeSettings.kt")
+        ).first { it.isFile }.readText()
+        assertTrue(source.contains("items(AppThemePresets.size, key = { it })"))
+        assertTrue(source.contains("items(customAppThemes.size, key = { customAppThemes[it].id })"))
         assertTrue(source.contains("IconButton(onClick = onDelete, modifier = Modifier.size(48.dp))"))
     }
 

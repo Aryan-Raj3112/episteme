@@ -30,6 +30,8 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
+internal const val READER_TEXTURE_DIR = "reader_textures"
+
 fun readerTextureDisplayName(textureId: String?): String {
     return sharedReaderTextureDisplayName(textureId)
 }

@@ -1,5 +1,6 @@
 package com.aryan.reader
 
+import com.aryan.reader.shared.calculateSharedTtsAudiobookProgress
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
@@ -121,7 +122,6 @@ import com.aryan.reader.data.AudiobookEntity
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.epubreader.loadTtsPitch
 import com.aryan.reader.epubreader.loadTtsSpeechRate
-import com.aryan.reader.tts.formatReaderTtsChunkLabel
 
 internal enum class AudiobookUiStatus { ALL, IN_PROGRESS, NOT_STARTED, COMPLETED }
 
@@ -794,17 +794,6 @@ private fun BookTtsPlayerSheet(
             saveCloudVoiceName = ::saveListenTtsSpeakerName
         )
     }
-}
-
-internal fun calculateTtsAudiobookProgress(
-    chapterIndex: Int,
-    chapterCount: Int,
-    chunkIndex: Int,
-    chunkCount: Int
-): Float {
-    if (chapterCount <= 0) return 0f
-    val chapterFraction = if (chunkCount > 0) (chunkIndex.coerceAtLeast(0) + 1f) / chunkCount else 0f
-    return ((chapterIndex.coerceIn(0, chapterCount - 1) + chapterFraction) / chapterCount).coerceIn(0f, 1f)
 }
 
 @Composable

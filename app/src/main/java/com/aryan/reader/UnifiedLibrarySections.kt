@@ -321,51 +321,6 @@ internal fun UnifiedLibraryHome(
 }
 
 @Composable
-internal fun UnifiedLibrarySearchResults(
-    modifier: Modifier,
-    books: List<RecentFileItem>,
-    query: String,
-    selectedBookIds: Set<String>,
-    downloadingBookIds: Set<String>,
-    usePdfFileNameAsDisplayName: Boolean,
-    widthSizeClass: WindowWidthSizeClass,
-    onQueryChange: (String) -> Unit,
-    onClose: () -> Unit,
-    onBookClick: (RecentFileItem) -> Unit,
-    onBookLongClick: (RecentFileItem) -> Unit,
-) {
-    com.aryan.reader.shared.ui.SharedAndroidUnifiedLibrarySearch(
-        books = books,
-        query = query,
-        searchPlaceholder = stringResource(R.string.unified_library_search_books),
-        clearDescription = stringResource(R.string.action_clear),
-        closeDescription = stringResource(R.string.action_close),
-        resultLabel = if (query.isBlank()) stringResource(R.string.unified_library_your_books) else "${books.size} ${if (books.size == 1) "result" else "results"}",
-        noResultsLabel = stringResource(R.string.no_results_found, query),
-        itemKey = { it.bookId },
-        onQueryChange = onQueryChange,
-        onClose = onClose,
-        modifier = modifier,
-        widthClass = when (widthSizeClass) {
-            WindowWidthSizeClass.Compact -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.COMPACT
-            WindowWidthSizeClass.Medium -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.MEDIUM
-            else -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.EXPANDED
-        },
-        bookCard = { item ->
-            RecentFileCard(
-                item = item,
-                isSelected = item.bookId in selectedBookIds,
-                modifier = Modifier.fillMaxWidth(),
-                onClick = { onBookClick(item) },
-                onLongClick = { onBookLongClick(item) },
-                isDownloading = item.bookId in downloadingBookIds,
-                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
-            )
-        },
-    )
-}
-
-@Composable
 internal fun UnifiedShelvesSection(
     modifier: Modifier,
     shelves: List<Shelf>,

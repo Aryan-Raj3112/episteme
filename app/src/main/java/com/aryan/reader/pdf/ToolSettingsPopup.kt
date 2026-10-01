@@ -1,98 +1,25 @@
-/*
- * Episteme Reader - A native Android document reader.
- * Copyright (C) 2026 Episteme
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- *
- * mail: epistemereader@gmail.com
- */
 package com.aryan.reader.pdf
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import com.aryan.reader.BrightnessSlider
-import com.aryan.reader.ColorComparePill
-import com.aryan.reader.HexInput
-import com.aryan.reader.R
-import com.aryan.reader.RgbInputColumn
-import com.aryan.reader.SpectrumBox
 import com.aryan.reader.readerModalMaxHeightDp
-import com.aryan.reader.shared.ui.sharedPdfSelectionRingRadius
-import kotlin.math.roundToInt
+import com.aryan.reader.shared.pdf.PdfInkTool
+import com.aryan.reader.shared.pdf.PdfToolConfig
+import com.aryan.reader.shared.pdf.SharedPdfInkToolMapping
+import com.aryan.reader.shared.ui.SharedPdfAndroidToolSettingsPopup
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationHighlighterTools
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Pen / highlighter tool-settings popup.
+ *
+ * Rendering lives in the shared panel (`SharedPdfAndroidToolSettingsPopup`),
+ * which is the Android-benchmark copy. This file only adapts Android's [InkType]
+ * and Compose [Color] state to the shared `PdfInkTool` + ARGB contract and back.
+ */
 @Composable
 fun ToolSettingsPopup(
     selectedTool: InkType,
@@ -111,52 +38,33 @@ fun ToolSettingsPopup(
     isHighlighterSnapEnabled: Boolean = false,
     onSnapToggle: (Boolean) -> Unit = {}
 ) {
-    val isHighlighter = selectedTool == InkType.HIGHLIGHTER || selectedTool == InkType.HIGHLIGHTER_ROUND
-    val isEraser = selectedTool == InkType.ERASER
-
-    val activeColor = when (selectedTool) {
-        InkType.FOUNTAIN_PEN -> fountainPenColor
-        InkType.PEN -> markerColor
-        InkType.PENCIL -> pencilColor
-        InkType.HIGHLIGHTER -> highlighterColor
-        InkType.HIGHLIGHTER_ROUND -> highlighterRoundColor
-        InkType.ERASER -> Color.White
-        else -> markerColor
-    }
-
+    val sharedTool = SharedPdfInkToolMapping.toSharedPdfInkTool(selectedTool.name)
+    val isHighlighter = sharedTool in SharedPdfAnnotationHighlighterTools
+    val isEraser = sharedTool == PdfInkTool.ERASER
+    val activeColor = activeColorFor(
+        tool = selectedTool,
+        fountainPenColor = fountainPenColor,
+        markerColor = markerColor,
+        pencilColor = pencilColor,
+        highlighterColor = highlighterColor,
+        highlighterRoundColor = highlighterRoundColor
+    )
     val currentAlpha = activeColor.alpha
 
-    val safeOnColorChanged: (Color) -> Unit = { newColor ->
-        if (isHighlighter) {
-            onColorChanged(newColor.copy(alpha = currentAlpha))
-        } else {
-            onColorChanged(newColor)
-        }
+    val toolColors = mapOf(
+        PdfInkTool.FOUNTAIN_PEN to fountainPenColor,
+        PdfInkTool.PEN to markerColor,
+        PdfInkTool.PENCIL to pencilColor,
+        PdfInkTool.HIGHLIGHTER to highlighterColor,
+        PdfInkTool.HIGHLIGHTER_ROUND to highlighterRoundColor
+    )
+    val toolConfigs = toolColors.mapValues { (_, color) ->
+        PdfToolConfig(colorArgb = color.toArgb(), strokeWidth = activeToolThickness)
     }
+    val activeColorArgb = toolColors[sharedTool]?.toArgb()
+        ?: if (isEraser) Color.White.toArgb()
+        else markerColor.toArgb()
 
-    val thicknessRange = when {
-        isHighlighter -> 0.01f..0.06f
-        isEraser -> 0.002f..0.1f
-        else -> 0.001f..0.015f
-    }
-    @Suppress("UnusedExpression") if (isHighlighter) 0.005f else 0.001f
-
-    var showColorPicker by remember { mutableStateOf(false) }
-    var colorPickerSlotIndex by remember { mutableIntStateOf(-1) }
-
-    val currentOnColorChanged by rememberUpdatedState(safeOnColorChanged)
-
-    val selectedPaletteIndex = remember(activePalette, activeColor, isHighlighter) {
-        activePalette.indexOfFirst { paletteColor ->
-            if (isHighlighter) {
-                paletteColor.copy(alpha = 1f) == activeColor.copy(alpha = 1f)
-            } else {
-                paletteColor == activeColor
-            }
-        }
-    }
-
-    val circleSize = 28.dp
     val configuration = LocalConfiguration.current
     val maxPopupHeight = readerModalMaxHeightDp(
         screenHeightDp = configuration.screenHeightDp,
@@ -165,649 +73,44 @@ fun ToolSettingsPopup(
         preferredMinHeightDp = 240
     ).dp
 
-    Surface(
+    SharedPdfAndroidToolSettingsPopup(
+        selectedTool = sharedTool,
+        selectedColor = activeColorArgb,
+        strokeWidth = activeToolThickness,
+        actualToolConfigs = toolConfigs,
+        penPalette = if (isHighlighter) emptyList() else activePalette.map { it.toArgb() },
+        highlighterPalette = if (isHighlighter) activePalette.map { it.toArgb() } else emptyList(),
+        onToolSelected = { tool ->
+            onToolTypeChanged(InkType.valueOf(SharedPdfInkToolMapping.toAndroidInkTypeName(tool)))
+        },
+        onColorSelected = { argb ->
+            // Highlighters keep their existing opacity: the shared panel drives
+            // RGB through this callback and edits alpha on its own slider.
+            val next = if (isHighlighter) Color(argb).copy(alpha = currentAlpha) else Color(argb)
+            onColorChanged(next)
+        },
+        onStrokeWidthChange = onThicknessChanged,
+        onPaletteChange = { argbPalette -> onPaletteChange(argbPalette.map { Color(it) }) },
+        isHighlighterSnapEnabled = isHighlighterSnapEnabled,
+        onHighlighterSnapChange = onSnapToggle,
+        maxHeight = maxPopupHeight,
         modifier = modifier
-            .width(360.dp)
-            .padding(12.dp)
-            .heightIn(max = maxPopupHeight),
-        shape = RoundedCornerShape(28.dp),
-        color = Color(0xFF1E1E1E),
-        shadowElevation = 12.dp,
-        tonalElevation = 0.dp
-    ) {
-        Column(
-            modifier = Modifier
-                .padding(20.dp)
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            if (isEraser) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(125.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    val diameterDp = (activeToolThickness * 800).coerceIn(4f, 150f).dp
-                    Box(
-                        modifier = Modifier.size(diameterDp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Canvas(modifier = Modifier.fillMaxSize()) {
-                            drawCircle(
-                                color = Color.White.copy(alpha = 0.3f),
-                                radius = size.width / 2
-                            )
-                            drawCircle(
-                                color = Color.White,
-                                radius = sharedPdfSelectionRingRadius(size.width, 2.dp.toPx()),
-                                style = Stroke(width = 2.dp.toPx())
-                            )
-                        }
-                    }
-                }
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(150.dp),
-                    contentAlignment = Alignment.BottomCenter
-                ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(28.dp),
-                        verticalAlignment = Alignment.Bottom
-                    ) {
-                        if (isHighlighter) {
-                            PenItem(
-                                type = PenType.HIGHLIGHTER,
-                                forcedInkType = InkType.HIGHLIGHTER,
-                                color = highlighterColor.copy(alpha = 1f),
-                                inkColor = highlighterColor,
-                                isSelected = selectedTool == InkType.HIGHLIGHTER,
-                                strokeWidth = activeToolThickness,
-                                onClick = { onToolTypeChanged(InkType.HIGHLIGHTER) },
-                                isSnappingEnabled = isHighlighterSnapEnabled
-                            )
-
-                            PenItem(
-                                type = PenType.HIGHLIGHTER_ROUND,
-                                forcedInkType = InkType.HIGHLIGHTER_ROUND,
-                                color = highlighterRoundColor.copy(alpha = 1f),
-                                inkColor = highlighterRoundColor,
-                                isSelected = selectedTool == InkType.HIGHLIGHTER_ROUND,
-                                strokeWidth = activeToolThickness,
-                                onClick = { onToolTypeChanged(InkType.HIGHLIGHTER_ROUND) },
-                                isSnappingEnabled = isHighlighterSnapEnabled
-                            )
-                        } else {
-                            PenItem(
-                                type = PenType.FOUNTAIN_PEN,
-                                forcedInkType = InkType.FOUNTAIN_PEN,
-                                color = fountainPenColor,
-                                isSelected = selectedTool == InkType.FOUNTAIN_PEN,
-                                strokeWidth = activeToolThickness,
-                                onClick = { onToolTypeChanged(InkType.FOUNTAIN_PEN) }
-                            )
-
-                            PenItem(
-                                type = PenType.MARKER,
-                                forcedInkType = InkType.PEN,
-                                color = markerColor,
-                                isSelected = selectedTool == InkType.PEN,
-                                strokeWidth = activeToolThickness,
-                                onClick = { onToolTypeChanged(InkType.PEN) }
-                            )
-
-                            PenItem(
-                                type = PenType.PENCIL,
-                                forcedInkType = InkType.PENCIL,
-                                color = pencilColor,
-                                isSelected = selectedTool == InkType.PENCIL,
-                                strokeWidth = activeToolThickness,
-                                onClick = { onToolTypeChanged(InkType.PENCIL) }
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            if (isHighlighter) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = stringResource(R.string.label_straight_line),
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Switch(
-                        checked = isHighlighterSnapEnabled,
-                        onCheckedChange = onSnapToggle,
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = activeColor.copy(alpha = 1f),
-                            uncheckedThumbColor = Color.Gray,
-                            uncheckedTrackColor = Color(0xFF424242)
-                        ),
-                        modifier = Modifier.scale(0.8f)
-                    )
-                }
-                Spacer(Modifier.height(16.dp))
-            }
-
-            // THICKNESS SLIDER
-            StyledPropertySlider(
-                value = activeToolThickness,
-                onValueChange = onThicknessChanged,
-                valueRange = thicknessRange, isOpacity = false,
-                trackColor = Color(0xFF424242),
-                thumbColor = Color(0xFF757575),
-                activeColor = if (isEraser) Color.White else activeColor
-            )
-
-            // Darkness (Opacity) Slider for Highlighters
-            if (isHighlighter) {
-                Spacer(Modifier.height(16.dp))
-
-                StyledPropertySlider(
-                    value = currentAlpha,
-                    onValueChange = { newAlpha ->
-                        onColorChanged(activeColor.copy(alpha = newAlpha))
-                    },
-                    valueRange = 0.1f..1.0f, isOpacity = true,
-                    trackColor = activeColor.copy(alpha = 1f),
-                    thumbColor = activeColor.copy(alpha = 1f),
-                    activeColor = activeColor
-                )
-            }
-
-            if (!isEraser) {
-                Spacer(Modifier.height(16.dp)) // Reduced spacing
-
-                // --- Color Palette ---
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        activePalette.take(6).forEachIndexed { index, color ->
-                            val isSelected = index == selectedPaletteIndex
-
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier
-                                    .size(circleSize)
-                                    .testTag("Palette_Item_$index")
-                                    .pointerInput(color) {
-                                        detectTapGestures(
-                                            onTap = {
-                                                currentOnColorChanged(color)
-                                            },
-                                            onLongPress = {
-                                                colorPickerSlotIndex = index
-                                                showColorPicker = true
-                                            }
-                                        )
-                                    }
-                            ) {
-                                Canvas(modifier = Modifier.fillMaxSize()) {
-                                    drawCircle(color = color.copy(alpha = 1f))
-                                    if (isSelected) {
-                                        drawCircle(
-                                            color = Color.White,
-                                            radius = sharedPdfSelectionRingRadius(size.minDimension, 2.dp.toPx()),
-                                            style = Stroke(width = 2.dp.toPx())
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(Modifier.width(16.dp))
-
-                    // Divider
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .height(circleSize)
-                            .background(Color.White.copy(alpha = 0.15f))
-                    )
-
-                    Spacer(Modifier.width(16.dp))
-
-                    // Spectrum / Color Wheel Button
-                    val rainbowColors = listOf(
-                        Color.Red, Color.Magenta, Color.Blue, Color.Cyan, Color.Green, Color.Yellow, Color.Red
-                    )
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(circleSize)
-                            .clip(CircleShape)
-                            .background(Brush.sweepGradient(rainbowColors))
-                            .clickable {
-                                if (selectedPaletteIndex != -1) {
-                                    colorPickerSlotIndex = selectedPaletteIndex
-                                    showColorPicker = true
-                                }
-                            }
-                    ) {}
-                }
-            }
-        }
-    }
-
-    if (showColorPicker && colorPickerSlotIndex != -1) {
-        val initialColor = activePalette.getOrElse(colorPickerSlotIndex) { Color.Black }
-        ColorPickerDialog(
-            initialColor = initialColor,
-            onDismiss = { showColorPicker = false },
-            onColorSelected = { newColor ->
-                val mutableList = activePalette.toMutableList()
-                if (colorPickerSlotIndex in mutableList.indices) {
-                    mutableList[colorPickerSlotIndex] = newColor
-                    onPaletteChange(mutableList)
-                    if (isHighlighter) {
-                        onColorChanged(newColor.copy(alpha = currentAlpha))
-                    } else {
-                        onColorChanged(newColor)
-                    }
-                }
-                showColorPicker = false
-            }
-        )
-    }
-}
-
-@Composable
-internal fun ColorPickerDialog(
-    initialColor: Color,
-    onDismiss: () -> Unit,
-    onColorSelected: (Color) -> Unit
-) {
-    val lockedInitialColor = remember { initialColor }
-
-    val initialHsv = remember(initialColor) {
-        val hsv = FloatArray(3)
-        android.graphics.Color.colorToHSV(initialColor.toArgb(), hsv)
-        hsv
-    }
-
-    var hue by remember { mutableFloatStateOf(initialHsv[0]) }
-    var saturation by remember { mutableFloatStateOf(initialHsv[1]) }
-    var value by remember { mutableFloatStateOf(initialHsv[2]) }
-    val alpha = 1.0f
-
-    val currentColor by remember {
-        derivedStateOf {
-            val hsv = floatArrayOf(hue, saturation, value)
-            val argb = android.graphics.Color.HSVToColor((alpha * 255).toInt(), hsv)
-            Color(argb)
-        }
-    }
-
-    fun updateFromColor(color: Color) {
-        val hsv = FloatArray(3)
-        android.graphics.Color.colorToHSV(color.toArgb(), hsv)
-        hue = hsv[0]
-        saturation = hsv[1]
-        value = hsv[2]
-    }
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        val configuration = LocalConfiguration.current
-        val maxDialogHeight = readerModalMaxHeightDp(configuration.screenHeightDp).dp
-
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = Color(0xFF2C2C2C),
-            modifier = Modifier
-                .fillMaxWidth(0.85f)
-                .padding(8.dp)
-                .heightIn(max = maxDialogHeight)
-        ) {
-            Column(
-                modifier = Modifier
-                    .padding(20.dp)
-                    .verticalScroll(rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Box(
-                    modifier = Modifier
-                        .background(Color(0xFF3E3E3E), RoundedCornerShape(16.dp))
-                        .padding(horizontal = 24.dp, vertical = 8.dp)
-                ) {
-                    Text(
-                        text = stringResource(R.string.label_spectrum),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White
-                    )
-                }
-
-                Spacer(Modifier.height(20.dp))
-
-                SpectrumBox(
-                    hue = hue,
-                    saturation = saturation,
-                    currentColor = currentColor,
-                    onHueSatChanged = { h, s ->
-                        hue = h
-                        saturation = s
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(220.dp)
-                )
-
-                Spacer(Modifier.height(20.dp))
-
-                BrightnessSlider(
-                    hue = hue,
-                    saturation = saturation,
-                    value = value,
-                    onValueChanged = { value = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(24.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                )
-
-                Spacer(Modifier.height(24.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    ColorComparePill(
-                        oldColor = lockedInitialColor,
-                        newColor = currentColor,
-                        modifier = Modifier
-                            .width(64.dp)
-                            .height(36.dp)
-                    )
-
-                    Column(
-                        modifier = Modifier.weight(1.6f),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            stringResource(R.string.theme_color_hex),
-                            color = Color.Gray,
-                            fontSize = 12.sp,
-                            maxLines = 1
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        HexInput(
-                            color = currentColor,
-                            onHexChanged = { updateFromColor(it) }
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.weight(2.4f),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        RgbInputColumn(
-                            label = stringResource(R.string.color_red),
-                            value = currentColor.red,
-                            onValueChange = { r -> updateFromColor(currentColor.copy(red = r)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        RgbInputColumn(
-                            label = stringResource(R.string.color_green),
-                            value = currentColor.green,
-                            onValueChange = { g -> updateFromColor(currentColor.copy(green = g)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        RgbInputColumn(
-                            label = stringResource(R.string.color_blue),
-                            value = currentColor.blue,
-                            onValueChange = { b -> updateFromColor(currentColor.copy(blue = b)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(24.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = onDismiss) {
-                        Text(stringResource(R.string.action_cancel), color = Color.Gray)
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Button(
-                        onClick = { onColorSelected(currentColor) },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.White,
-                            contentColor = Color.Black
-                        )
-                    ) {
-                        Text(stringResource(R.string.action_done))
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun PenItem(
-    type: PenType,
-    color: Color,
-    isSelected: Boolean,
-    strokeWidth: Float,
-    onClick: () -> Unit,
-    forcedInkType: InkType? = null,
-    inkColor: Color? = null,
-    isSnappingEnabled: Boolean = false
-) {
-    val scale by animateFloatAsState(
-        targetValue = if (isSelected) 1.15f else 0.9f, label = "scale"
     )
-
-    Box(
-        modifier = Modifier
-            .width(44.dp)
-            .height(150.dp)
-            .scale(scale)
-            .testTag("SettingsItem_${type.name}")
-            .semantics { this.selected = isSelected }
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.BottomCenter
-    ) {
-        PenIcon(
-            color = color,
-            inkColor = inkColor,
-            type = type,
-            isSelected = isSelected,
-            strokeWidth = strokeWidth,
-            forcedInkType = forcedInkType,
-            modifier = Modifier.fillMaxSize(),
-            isSnappingEnabled = isSnappingEnabled
-        )
-    }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-internal fun StyledPropertySlider(
-    value: Float,
-    onValueChange: (Float) -> Unit,
-    valueRange: ClosedFloatingPointRange<Float>, isOpacity: Boolean,
-    trackColor: Color,
-    thumbColor: Color,
-    activeColor: Color
-) {
-    val displayValue = remember(value, valueRange) {
-        val fraction = (value - valueRange.start) / (valueRange.endInclusive - valueRange.start)
-        (fraction * 100).roundToInt().coerceIn(1, 100)
-    }
-    val onePercentDelta = (valueRange.endInclusive - valueRange.start) / 100f
-    val canDecrease = value > valueRange.start + 0.0001f
-    val canIncrease = value < valueRange.endInclusive - 0.0001f
-
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        // Minus Button
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .testTag("Property_Minus")
-                .clickable(enabled = canDecrease) {
-                    val newValue = (value - onePercentDelta).coerceAtLeast(valueRange.start)
-                    onValueChange(newValue)
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "—",
-                color = if (canDecrease) Color.White else Color.White.copy(alpha = 0.3f),
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold
-            )
-        }
-
-        Spacer(modifier = Modifier.width(4.dp))
-
-        // Custom Slider
-        Box(modifier = Modifier.weight(1f)) {
-            Slider(
-                value = value,
-                onValueChange = onValueChange,
-                valueRange = valueRange,
-                colors = SliderDefaults.colors(
-                    thumbColor = Color.Transparent,
-                    activeTrackColor = Color.Transparent,
-                    inactiveTrackColor = Color.Transparent
-                ),
-                modifier = Modifier.height(32.dp),
-                thumb = {
-                    Surface(
-                        shape = CircleShape,
-                        color = thumbColor,
-                        modifier = Modifier
-                            .size(26.dp)
-                            .padding(2.dp),
-                        shadowElevation = 4.dp,
-                        border = if (isOpacity) null else androidx.compose.foundation.BorderStroke(1.dp, Color.Gray)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = displayValue.toString(),
-                                color = Color.White,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                },
-                track = { _ ->
-                    Canvas(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(16.dp)
-                    ) {
-                        val trackHeight = size.height
-                        val cornerRadius = CornerRadius(trackHeight / 2)
-
-                        if (isOpacity) {
-                            drawRoundRect(
-                                color = Color.Gray,
-                                size = size,
-                                cornerRadius = cornerRadius
-                            )
-
-                            val clipPath = androidx.compose.ui.graphics.Path().apply {
-                                addRoundRect(
-                                    androidx.compose.ui.geometry.RoundRect(
-                                        rect = androidx.compose.ui.geometry.Rect(Offset.Zero, size),
-                                        cornerRadius = cornerRadius
-                                    )
-                                )
-                            }
-
-                            clipPath(clipPath) {
-                                val boxSize = 12f
-                                val columns = (size.width / boxSize).toInt() + 1
-                                val rows = (size.height / boxSize).toInt() + 1
-
-                                for (col in 0 until columns) {
-                                    for (row in 0 until rows) {
-                                        val color = if ((col + row) % 2 == 0) Color(0xFF555555) else Color(0xFF333333)
-                                        drawRect(
-                                            color = color,
-                                            topLeft = Offset(col * boxSize, row * boxSize),
-                                            size = androidx.compose.ui.geometry.Size(boxSize, boxSize)
-                                        )
-                                    }
-                                }
-                                drawRect(color = activeColor)
-                            }
-
-                        } else {
-                            drawRoundRect(
-                                color = trackColor.copy(alpha = 0.5f),
-                                size = size,
-                                cornerRadius = cornerRadius
-                            )
-
-                            val dotRadius = 1.5.dp.toPx()
-                            val padding = trackHeight / 2
-                            val availableWidth = size.width - (padding * 2)
-                            val dotCount = 8
-                            val spacing = availableWidth / (dotCount - 1)
-
-                            for (i in 0 until dotCount) {
-                                drawCircle(
-                                    color = Color.White.copy(alpha = 0.2f),
-                                    radius = dotRadius,
-                                    center = Offset(padding + (i * spacing), size.height / 2)
-                                )
-                            }
-                        }
-                    }
-                }
-            )
-        }
-
-        Spacer(modifier = Modifier.width(4.dp))
-
-        // Plus Button
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .testTag("Property_Plus")
-                .clickable(enabled = canIncrease) {
-                    val newValue = (value + onePercentDelta).coerceAtMost(valueRange.endInclusive)
-                    onValueChange(newValue)
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "+",
-                color = if (canIncrease) Color.White else Color.White.copy(alpha = 0.3f),
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Normal
-            )
-        }
-    }
+private fun activeColorFor(
+    tool: InkType,
+    fountainPenColor: Color,
+    markerColor: Color,
+    pencilColor: Color,
+    highlighterColor: Color,
+    highlighterRoundColor: Color
+): Color = when (tool) {
+    InkType.FOUNTAIN_PEN -> fountainPenColor
+    InkType.PEN -> markerColor
+    InkType.PENCIL -> pencilColor
+    InkType.HIGHLIGHTER -> highlighterColor
+    InkType.HIGHLIGHTER_ROUND -> highlighterRoundColor
+    InkType.ERASER -> Color.White
+    else -> markerColor
 }

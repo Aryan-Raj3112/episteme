@@ -345,6 +345,41 @@ data class PdfToolConfig(
     val strokeWidth: Float
 )
 
+/**
+ * Android's `InkType` ↔ [PdfInkTool] mapping.
+ *
+ * `InkType` is Android's persisted tool enum; it stays platform-owned, but the
+ * mapping itself is pure and both hosts need it (Android for the annotation
+ * exporter and the tool-settings panel, iOS for reading Android-authored
+ * sidecars). `SELECT` is a gesture mode that is never stored on an annotation,
+ * so it falls back to `PEN` in both directions.
+ */
+object SharedPdfInkToolMapping {
+    fun toSharedPdfInkTool(inkTypeName: String): PdfInkTool = when (inkTypeName) {
+        "PEN" -> PdfInkTool.PEN
+        "HIGHLIGHTER" -> PdfInkTool.HIGHLIGHTER
+        "HIGHLIGHTER_ROUND" -> PdfInkTool.HIGHLIGHTER_ROUND
+        "ERASER" -> PdfInkTool.ERASER
+        "FOUNTAIN_PEN" -> PdfInkTool.FOUNTAIN_PEN
+        "PENCIL" -> PdfInkTool.PENCIL
+        "TEXT" -> PdfInkTool.TEXT
+        else -> PdfInkTool.PEN
+    }
+
+    /** Android `InkType` name for a shared tool, for writing back to persisted settings. */
+    fun toAndroidInkTypeName(tool: PdfInkTool): String = when (tool) {
+        PdfInkTool.HIGHLIGHTER -> "HIGHLIGHTER"
+        PdfInkTool.HIGHLIGHTER_ROUND -> "HIGHLIGHTER_ROUND"
+        PdfInkTool.FOUNTAIN_PEN -> "FOUNTAIN_PEN"
+        PdfInkTool.PENCIL -> "PENCIL"
+        PdfInkTool.TEXT -> "TEXT"
+        PdfInkTool.ERASER -> "ERASER"
+        PdfInkTool.PEN,
+        PdfInkTool.NONE,
+        PdfInkTool.SELECT -> "PEN"
+    }
+}
+
 object SharedPdfAnnotationDefaults {
     val penPalette: List<Int> = listOf(
         0xFF000000.toInt(),

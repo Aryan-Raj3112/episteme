@@ -181,6 +181,7 @@ import com.aryan.reader.isByokModelReady
 import com.aryan.reader.isByokTtsReady
 import com.aryan.reader.shared.ReaderAiFeature as AiFeature
 import com.aryan.reader.shared.ui.SharedAnnotationExportFormatDialog
+import com.aryan.reader.shared.ui.rememberSharedReaderClockTime
 import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.epub.EpubBook
@@ -268,6 +269,8 @@ import com.aryan.reader.shared.ui.SharedMobileReaderDrawer
 import com.aryan.reader.shared.ui.SharedMobileReaderScaffold
 import com.aryan.reader.shared.ui.SharedMobileReaderRecoveryGate
 import com.aryan.reader.shared.ui.rememberReaderMotionPolicy
+import com.aryan.reader.shared.ui.SharedMobileEpubPageInfoBarContentHeight
+import com.aryan.reader.shared.ui.SharedMobileEpubLoading
 import com.aryan.reader.shared.reader.MobileEpubReaderBackAction
 import com.aryan.reader.shared.reader.selectMobileEpubReaderBackAction
 import org.json.JSONArray
@@ -2600,7 +2603,7 @@ fun EpubReaderHost(
         }
     }
 
-    val pageInfoBarHeight = PAGE_INFO_BAR_HEIGHT + pageInfoCornerBottomPadding
+    val pageInfoBarHeight = SharedMobileEpubPageInfoBarContentHeight + pageInfoCornerBottomPadding
 
     val isPageInfoVisible = shouldShowEpubPageInfoBar(
         pageInfoMode = prefs.pageInfoMode,
@@ -4955,7 +4958,7 @@ fun EpubReaderHost(
                     } else {
                         0.dp
                     }
-                val readerClockTime = rememberReaderClockTime()
+                val readerClockTime = rememberSharedReaderClockTime()
 
                 // Page Info Bar (Vertical)
                 AnimatedVisibility(
@@ -5952,7 +5955,7 @@ fun EpubReaderHost(
                 )
 
                 if (navigation.isNavigatingToPosition && currentRenderMode == RenderMode.PAGINATED) {
-                    EpubReaderBusyScrim(label = stringResource(R.string.navigating_to_position))
+                    SharedMobileEpubLoading(label = stringResource(R.string.navigating_to_position))
                 }
 
                 if (showPermissionRationaleDialog) {

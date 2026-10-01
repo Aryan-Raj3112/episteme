@@ -343,6 +343,79 @@ data class SharedBookTtsListenState(
 
 enum class SharedTtsListenStartPolicy { RESUME, BEGINNING, READING_POSITION, CHAPTER }
 
+/**
+ * Where a listen session should begin, as a pure function of the requested
+ * policy and the available positions. Android benchmark
+ * (`audiobook/BookTtsListening.kt:382`).
+ *
+ * @param savedChapterIndex chapter recorded in the saved listening progress.
+ * @param requestedChapterIndex explicit chapter chosen in the UI, if any.
+ * @param readingChapterIndex chapter the reader was last open at, if known.
+ * @param lastPageIndex page the reader was last open at, used when no chapter
+ *   is recorded (PDF-style books).
+ * @param chapterCount total chapters; used to clamp the result.
+ */
+fun resolveSharedTtsListenChapter(
+    policy: SharedTtsListenStartPolicy,
+    savedChapterIndex: Int,
+    requestedChapterIndex: Int?,
+    readingChapterIndex: Int?,
+    lastPageIndex: Int?,
+    chapterCount: Int
+): Int {
+    if (chapterCount <= 0) return 0
+    val resolved = when (policy) {
+        SharedTtsListenStartPolicy.RESUME -> savedChapterIndex
+        SharedTtsListenStartPolicy.BEGINNING -> 0
+        // Android benchmark: with no recorded reading position this starts at
+        // the first chapter rather than the saved listening chapter.
+        SharedTtsListenStartPolicy.READING_POSITION ->
+            readingChapterIndex ?: lastPageIndex ?: 0
+        SharedTtsListenStartPolicy.CHAPTER -> requestedChapterIndex ?: savedChapterIndex
+    }
+    return resolved.coerceIn(0, chapterCount - 1)
+}
+
+/**
+ * Chunk to resume from. Only a [SharedTtsListenStartPolicy.RESUME] session that
+ * stayed on the saved chapter resumes mid-chapter; every other policy restarts
+ * the chapter.
+ */
+fun resolveSharedTtsListenChunk(
+    policy: SharedTtsListenStartPolicy,
+    resolvedChapterIndex: Int,
+    savedChapterIndex: Int,
+    savedChunkIndex: Int
+): Int =
+    if (policy == SharedTtsListenStartPolicy.RESUME && resolvedChapterIndex == savedChapterIndex) {
+        savedChunkIndex
+    } else {
+        0
+    }
+
+/** Stable wire values for [SharedTtsListenStartPolicy], used in Android intent extras. */
+object SharedTtsListenStartPolicyWire {
+    const val RESUME = "resume"
+    const val BEGINNING = "beginning"
+    const val READING_POSITION = "reading_position"
+    const val CHAPTER = "chapter"
+
+    fun encode(policy: SharedTtsListenStartPolicy): String = when (policy) {
+        SharedTtsListenStartPolicy.RESUME -> RESUME
+        SharedTtsListenStartPolicy.BEGINNING -> BEGINNING
+        SharedTtsListenStartPolicy.READING_POSITION -> READING_POSITION
+        SharedTtsListenStartPolicy.CHAPTER -> CHAPTER
+    }
+
+    /** Unknown or missing values fall back to [RESUME], matching Android's previous `else` branch. */
+    fun decode(wire: String?): SharedTtsListenStartPolicy = when (wire) {
+        BEGINNING -> SharedTtsListenStartPolicy.BEGINNING
+        READING_POSITION -> SharedTtsListenStartPolicy.READING_POSITION
+        CHAPTER -> SharedTtsListenStartPolicy.CHAPTER
+        else -> SharedTtsListenStartPolicy.RESUME
+    }
+}
+
 object SharedTtsListenCapabilities {
     val reflowTypes: Set<FileType> = setOf(
         FileType.EPUB,

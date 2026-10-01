@@ -30,6 +30,8 @@ import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.R
 import com.aryan.reader.shared.ui.sanitizeSharedMobileTtsSampleText
+import com.aryan.reader.shared.patchReaderTtsWavHeader
+import com.aryan.reader.shared.createReaderTtsWavHeaderUnknownLength
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -365,12 +367,7 @@ class TtsCacheManager(private val context: Context) {
 
 fun patchWavHeader(file: File, pcmDataLength: Int) {
     try {
-        RandomAccessFile(file, "rw").use { raf ->
-            raf.seek(4)
-            raf.writeInt(Integer.reverseBytes(36 + pcmDataLength))
-            raf.seek(40)
-            raf.writeInt(Integer.reverseBytes(pcmDataLength))
-        }
+        patchReaderTtsWavHeader(file, pcmDataLength)
     } catch (e: Exception) {
         Timber.tag("TTS_CLOUD_DIAG").e(e, "Failed to patch WAV header for cached file")
     }
@@ -685,28 +682,5 @@ class SpeakerSamplePlayer(
     }
 }
 
-fun createWavHeaderUnknownLength(sampleRate: Int): ByteArray {
-    val numChannels = 1
-    val bitsPerSample = 16
-    val byteRate = sampleRate * numChannels * bitsPerSample / 8
-    val blockAlign = numChannels * bitsPerSample / 8
-
-    val header = java.nio.ByteBuffer.allocate(44)
-    header.order(java.nio.ByteOrder.LITTLE_ENDIAN)
-
-    header.put("RIFF".toByteArray(Charsets.US_ASCII))
-    header.putInt(0x7FFFFFFF)
-    header.put("WAVE".toByteArray(Charsets.US_ASCII))
-    header.put("fmt ".toByteArray(Charsets.US_ASCII))
-    header.putInt(16)
-    header.putShort(1.toShort())
-    header.putShort(numChannels.toShort())
-    header.putInt(sampleRate)
-    header.putInt(byteRate)
-    header.putShort(blockAlign.toShort())
-    header.putShort(bitsPerSample.toShort())
-    header.put("data".toByteArray(Charsets.US_ASCII))
-    header.putInt(0x7FFFFFFF - 36)
-
-    return header.array()
-}
+fun createWavHeaderUnknownLength(sampleRate: Int): ByteArray =
+    createReaderTtsWavHeaderUnknownLength(sampleRate)

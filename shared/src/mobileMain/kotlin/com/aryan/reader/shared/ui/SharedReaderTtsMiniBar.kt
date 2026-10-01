@@ -36,14 +36,19 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.IconButtonDefaults
 import com.aryan.reader.shared.SharedReaderTtsMiniBarState
 import com.aryan.reader.shared.chunkLabel
 import com.aryan.reader.shared.subtitle
 
 /**
  * Global reader TTS mini bar. Layout mirrors Android
- * (`ReaderTtsMiniBar.kt:90-193`): rounded surface, tappable title block that
- * returns to the reader, prev/play/next chunk controls.
+ * (`ReaderTtsMiniBar.kt:90-193`): rounded surface with an outline border, a
+ * tappable title block that returns to the reader, and 40dp prev/play/next chunk
+ * controls.
  */
 @Composable
 fun SharedReaderTtsMiniBar(
@@ -57,30 +62,41 @@ fun SharedReaderTtsMiniBar(
     val canOpenReader = !state.bookId.isNullOrBlank()
     val canSkipPrevious = !state.isLoading && state.chunkIndex > 0 && state.totalChunks > 0
     val canSkipNext = !state.isLoading && state.chunkIndex >= 0 && state.chunkIndex < state.totalChunks - 1
-    val title = state.bookTitle ?: readerString("action_read_aloud", "Read aloud")
+    val title = state.bookTitle?.takeIf { it.isNotBlank() }
+        ?: readerString("action_read_aloud", "Read aloud")
     val subtitle = state.subtitle()
     // Resolved outside the semantics block, which is not a composable scope.
     val playbackToggleContentDescription = if (state.isPlaying) {
-        readerString("tts_pause_reading", "Pause reading")
+        readerString("content_desc_pause_tts", "Pause reading")
     } else {
-        readerString("tts_resume_reading", "Resume reading")
+        readerString("content_desc_resume_tts", "Resume reading")
     }
+    val previousContentDescription = readerString("content_desc_tts_previous_chunk", "Previous chunk")
+    val nextContentDescription = readerString("content_desc_tts_next_chunk", "Next chunk")
     Surface(
         modifier = modifier.testTag("ReaderTtsMiniBar"),
         shape = RoundedCornerShape(24.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        tonalElevation = 8.dp,
-        shadowElevation = 8.dp
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        tonalElevation = 0.dp,
+        shadowElevation = 8.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 64.dp)
+                .padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(
-                modifier = Modifier.weight(1f).clip(RoundedCornerShape(16.dp))
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(16.dp))
                     .clickable(enabled = canOpenReader, onClick = onOpenReader)
                     .semantics(mergeDescendants = true) { contentDescription = "$title $subtitle" }
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.Center
             ) {
                 Text(title, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (subtitle.isNotBlank()) {
@@ -93,10 +109,16 @@ fun SharedReaderTtsMiniBar(
                     )
                 }
             }
-            IconButton(onClick = onPreviousChunk, enabled = canSkipPrevious) {
+            Spacer(Modifier.width(4.dp))
+            IconButton(
+                onClick = onPreviousChunk,
+                enabled = canSkipPrevious,
+                modifier = Modifier.size(40.dp)
+            ) {
                 Icon(
                     Icons.Default.SkipPrevious,
-                    contentDescription = readerString("tts_previous_chunk", "Previous chunk"),
+                    contentDescription = previousContentDescription,
+                    modifier = Modifier.size(24.dp)
                 )
             }
             Box(contentAlignment = Alignment.Center, modifier = Modifier.size(48.dp)) {
@@ -104,24 +126,37 @@ fun SharedReaderTtsMiniBar(
                     onClick = onTogglePlayPause,
                     modifier = Modifier.size(44.dp).semantics {
                         contentDescription = playbackToggleContentDescription
-                    }
+                    },
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
                 ) {
                     Icon(
                         if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = null
+                        contentDescription = null,
+                        modifier = Modifier.size(22.dp)
                     )
                 }
                 if (state.isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.size(48.dp))
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(48.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        strokeWidth = 2.dp
+                    )
                 }
             }
-            IconButton(onClick = onNextChunk, enabled = canSkipNext) {
+            IconButton(
+                onClick = onNextChunk,
+                enabled = canSkipNext,
+                modifier = Modifier.size(40.dp)
+            ) {
                 Icon(
                     Icons.Default.SkipNext,
-                    contentDescription = readerString("tts_next_chunk", "Next chunk"),
+                    contentDescription = nextContentDescription,
+                    modifier = Modifier.size(24.dp)
                 )
             }
-            Spacer(Modifier.size(4.dp))
         }
     }
 }

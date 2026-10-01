@@ -1,5 +1,6 @@
 package com.aryan.reader.pdf
 
+import com.aryan.reader.shared.ui.SharedMobilePdfPageScrubbingOverlay
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -146,46 +147,10 @@ fun VerticalScrollbar(
 }
 
 @Composable
-internal fun PageScrubbingAnimation(currentPage: Int, totalPages: Int) {
-    PageScrubbingAnimation(
-        pageLabel = stringResource(R.string.page_of_format, currentPage, totalPages)
-    )
-}
-
-@Composable
 internal fun PageScrubbingAnimation(
     pageLabel: String
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .clickable(
-                indication = null, interactionSource = remember { MutableInteractionSource() }) {},
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier
-                .background(
-                    color = MaterialTheme.colorScheme.surface.copy(
-                        alpha = 0.9f
-                    ), shape = RoundedCornerShape(16.dp)
-                )
-                .padding(horizontal = 24.dp, vertical = 16.dp)
-        ) {
-            Icon(
-                painter = painterResource(id = R.drawable.slider),
-                contentDescription = null,
-                modifier = Modifier.size(48.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                text = pageLabel,
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-        }
-    }
+    SharedMobilePdfPageScrubbingOverlay(label = pageLabel)
 }
 
 @Composable

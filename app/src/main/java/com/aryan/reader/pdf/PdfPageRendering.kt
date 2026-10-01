@@ -88,6 +88,7 @@ import com.aryan.reader.shared.ui.SharedSelectionMenuSize
 import com.aryan.reader.shared.ui.SharedSelectionMenuViewport
 import com.aryan.reader.shared.ui.SharedPdfRichTextLayer
 import com.aryan.reader.shared.ui.sharedSelectionMenuPlacement
+import com.aryan.reader.shared.ui.SharedMobilePdfOcrProcessingIndicator
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.pdf.PdfReverseColorRect
 import com.aryan.reader.shared.pdf.RichParagraphUiState
@@ -117,32 +118,6 @@ private val pdfReverseTransformMutex = Mutex()
 private const val MAX_REVERSE_TILE_CACHE_ENTRIES = 16
 private const val MAX_REVERSE_TILE_CACHE_BYTES = 32L * 1024L * 1024L
 
-
-@Composable
-internal fun OcrProcessingIndicator(position: Offset) {
-    val infiniteTransition = rememberInfiniteTransition(label = "ocr_indicator_transition")
-    val animatedRadius by infiniteTransition.animateFloat(
-        initialValue = 20f, targetValue = 120f, animationSpec = infiniteRepeatable(
-            animation = tween(1200), repeatMode = RepeatMode.Restart
-        ), label = "ocr_radius"
-    )
-    val animatedAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.8f, targetValue = 0f, animationSpec = infiniteRepeatable(
-            animation = tween(1200), repeatMode = RepeatMode.Restart
-        ), label = "ocr_alpha"
-    )
-
-    val color = MaterialTheme.colorScheme.primary
-
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        drawCircle(
-            color = color.copy(alpha = animatedAlpha),
-            radius = animatedRadius,
-            center = position,
-            style = Stroke(width = (4.dp * animatedAlpha).toPx())
-        )
-    }
-}
 
 internal const val PdfTeardropViewportSize = 960f
 
@@ -1740,7 +1715,7 @@ internal fun PdfPageRenderer(
         )
 
         if (isPerformingOcr && ocrRipplePos != null) {
-            OcrProcessingIndicator(position = ocrRipplePos)
+            SharedMobilePdfOcrProcessingIndicator(position = ocrRipplePos)
         }
 
         if (isBubbleZoomModeActive && isActivePage) {

@@ -27,6 +27,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -428,17 +430,19 @@ fun SharedAppThemeControls(
         }
 
         SettingsLabel(readerString("app_theme_color_scheme", "Color scheme"))
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            ThemeSwatch(
-                color = MaterialTheme.colorScheme.primary,
-                selected = appSeedColor == null,
-                label = readerString("app_theme_dynamic", "Dynamic"),
-                onClick = { onSeedColorChanged(null) }
-            )
-            AppThemePresets.forEach { preset ->
+        // Android benchmark: keyed lazy rows so swatch recomposition stays scoped
+        // to the changed item.
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            item(key = "dynamic") {
+                ThemeSwatch(
+                    color = MaterialTheme.colorScheme.primary,
+                    selected = appSeedColor == null,
+                    label = readerString("app_theme_dynamic", "Dynamic"),
+                    onClick = { onSeedColorChanged(null) }
+                )
+            }
+            items(AppThemePresets.size, key = { it }) { index ->
+                val preset = AppThemePresets[index]
                 ThemeSwatch(
                     color = preset.color,
                     selected = appSeedColor == preset.color,
@@ -456,7 +460,7 @@ fun SharedAppThemeControls(
             verticalAlignment = Alignment.CenterVertically
         ) {
             SettingsLabel(readerString("theme_my_themes", "My themes"))
-            IconButton(onClick = { showCreateDialog = true }, modifier = Modifier.size(32.dp)) {
+            IconButton(onClick = { showCreateDialog = true }) {
                 Icon(Icons.Default.Add, contentDescription = readerString("content_desc_add_custom_theme", "Add custom theme"))
             }
         }
@@ -468,11 +472,9 @@ fun SharedAppThemeControls(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         } else {
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                customAppThemes.forEach { theme ->
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(customAppThemes.size, key = { customAppThemes[it].id }) { index ->
+                    val theme = customAppThemes[index]
                     ThemeSwatch(
                         color = theme.seedColor,
                         selected = appSeedColor == theme.seedColor,
@@ -627,12 +629,16 @@ private fun ThemeSwatch(
                 modifier = Modifier.widthIn(max = 72.dp)
             )
             if (onDelete != null) {
-                Icon(
-                    Icons.Default.Close,
-                    contentDescription = readerString("action_delete", "Delete"),
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(16.dp).clickable(onClick = onDelete)
-                )
+                // Android benchmark: 48dp hit target around a 16dp glyph, so the
+                // delete affordance is actually tappable.
+                IconButton(onClick = onDelete, modifier = Modifier.size(48.dp)) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = readerString("action_delete", "Delete"),
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
             }
         }
     }

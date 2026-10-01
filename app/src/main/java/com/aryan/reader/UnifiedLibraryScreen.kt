@@ -132,6 +132,9 @@ import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerDestination
 import com.aryan.reader.shared.ui.mobileUnifiedLibraryDrawerModel
 import com.aryan.reader.shared.ui.SharedAnnotationExportFormatDialog
 import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
+import com.aryan.reader.shared.ui.activeFilterCount
+import com.aryan.reader.shared.ui.matchesMobileUnifiedLibraryFilter
+import com.aryan.reader.shared.ui.mobileUnifiedContinueReadingBook
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -382,7 +385,7 @@ fun UnifiedLibraryScreen(
     val continueReading = remember(uiState.rawLibraryFiles) {
         findContinueReadingBook(uiState.rawLibraryFiles)
     }
-    val advancedFilterCount = uiState.libraryFilters.selectedFilterCount()
+    val advancedFilterCount = uiState.libraryFilters.activeFilterCount()
     val selectedItems = uiState.contextualActionItems
 
     fun navigateShelfUp() {
@@ -1141,9 +1144,6 @@ internal val UnifiedLibraryFilter.labelRes: Int
         UnifiedLibraryFilter.UNREAD -> R.string.unified_library_unread
     }
 
-private fun LibraryFilters.selectedFilterCount(): Int =
-    fileTypes.size + sourceFolders.size + tagIds.size + if (readStatus == ReadStatusFilter.ALL) 0 else 1
-
 internal fun ReadStatusFilter.toUnifiedLibraryFilter(): UnifiedLibraryFilter = when (this) {
     ReadStatusFilter.ALL -> UnifiedLibraryFilter.ALL
     ReadStatusFilter.UNREAD -> UnifiedLibraryFilter.UNREAD
@@ -1151,13 +1151,19 @@ internal fun ReadStatusFilter.toUnifiedLibraryFilter(): UnifiedLibraryFilter = w
     ReadStatusFilter.COMPLETED -> UnifiedLibraryFilter.FINISHED
 }
 
-internal fun findContinueReadingBook(books: List<RecentFileItem>): RecentFileItem? = books.filter { (it.progressPercentage ?: 0f) in 0.01f..<100f }.maxByOrNull { maxOf(it.readingPositionModifiedTimestamp, it.timestamp) } ?: books.maxByOrNull { it.timestamp }
+internal fun findContinueReadingBook(books: List<RecentFileItem>): RecentFileItem? {
+    if (books.isEmpty()) return null
+    val mapper = SharedProjectionBookItemCache(maxEntries = books.size)
+    val picked = mobileUnifiedContinueReadingBook(mapper.map(books)) ?: return null
+    return books.firstOrNull { it.bookId == picked.id }
+}
 
 internal fun filterUnifiedLibraryBooks(books: List<RecentFileItem>, filter: UnifiedLibraryFilter, query: String): List<RecentFileItem> {
+    if (books.isEmpty()) return emptyList()
     val normalizedQuery = query.trim()
-    return books.filter { book ->
-        val progress = book.progressPercentage ?: 0f
-        val matchesFilter = when (filter) { UnifiedLibraryFilter.ALL -> true; UnifiedLibraryFilter.READING -> progress in 0.01f..<100f; UnifiedLibraryFilter.FINISHED -> progress >= 100f; UnifiedLibraryFilter.UNREAD -> progress <= 0f }
-        matchesFilter && (normalizedQuery.isBlank() || listOf(book.displayName, book.title, book.author).any { it?.contains(normalizedQuery, ignoreCase = true) == true })
-    }
+    val mapper = SharedProjectionBookItemCache(maxEntries = books.size)
+    val byId = books.associateBy { it.bookId }
+    return mapper.map(books)
+        .filter { it.matchesMobileUnifiedLibraryFilter(filter, normalizedQuery) }
+        .mapNotNull { byId[it.id] }
 }

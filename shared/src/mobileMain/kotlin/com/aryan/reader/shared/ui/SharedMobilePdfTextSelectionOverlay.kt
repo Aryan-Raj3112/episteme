@@ -1194,7 +1194,7 @@ private fun SharedMobilePdfSelectionMenuAction(
  * without blocking the gesture.
  */
 @Composable
-internal fun SharedMobilePdfOcrProcessingIndicator(position: Offset) {
+fun SharedMobilePdfOcrProcessingIndicator(position: Offset) {
     val infiniteTransition = rememberInfiniteTransition(label = "ocr_indicator_transition")
     val animatedRadius by infiniteTransition.animateFloat(
         initialValue = 20f,

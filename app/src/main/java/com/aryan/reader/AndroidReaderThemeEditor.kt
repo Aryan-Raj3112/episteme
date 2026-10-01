@@ -79,6 +79,11 @@ import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.ReaderTextureFilePrefix
 import com.aryan.reader.shared.ui.SharedHsvColor
 import com.aryan.reader.shared.ui.toSharedHsvColor
+import com.aryan.reader.shared.ui.SharedSpectrumBox
+import com.aryan.reader.shared.ui.SharedBrightnessSlider
+import com.aryan.reader.shared.ui.SharedRgbInputColumn
+import com.aryan.reader.shared.ui.SharedHexInput
+import com.aryan.reader.shared.ui.SharedColorComparePill
 import kotlinx.coroutines.launch
 import org.commonmark.node.Text
 import kotlin.math.max
@@ -301,111 +306,6 @@ internal fun CustomTexturePickerSection(
 }
 
 @Composable
-internal fun TexturePickerSection(
-    selectedTextureId: String?,
-    selectedTextureAlpha: Float,
-    onTextureSelected: (String?) -> Unit,
-    onTextureAlphaChange: (Float) -> Unit,
-    onImportTexture: () -> Unit
-) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text(stringResource(R.string.theme_texture), style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(bottom = 8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            TextureChoice(
-                label = stringResource(R.string.theme_texture_none),
-                textureId = null,
-                selectedTextureId = selectedTextureId,
-                onTextureSelected = onTextureSelected,
-                modifier = Modifier.weight(1f)
-            )
-            TextureChoice(
-                label = stringResource(R.string.theme_texture_upload),
-                textureId = selectedTextureId?.takeIf { it.startsWith(ReaderTextureFilePrefix) },
-                selectedTextureId = selectedTextureId,
-                onTextureSelected = { onImportTexture() },
-                isUpload = true,
-                modifier = Modifier.weight(1f)
-            )
-        }
-        Spacer(Modifier.height(8.dp))
-        ReaderTexture.entries.filter { it.androidTextureResourceId() == null }.chunked(2).forEach { rowTextures ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-                rowTextures.forEach { texture ->
-                    TextureChoice(
-                        label = texture.displayName,
-                        textureId = texture.id,
-                        selectedTextureId = selectedTextureId,
-                        onTextureSelected = onTextureSelected,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                if (rowTextures.size == 1) Spacer(Modifier.weight(1f))
-            }
-        }
-        AnimatedVisibility(visible = selectedTextureId != null) {
-            Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(stringResource(R.string.theme_texture_transparency), style = MaterialTheme.typography.labelMedium)
-                    Text("${((1f - selectedTextureAlpha) * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                }
-                Slider(
-                    value = 1f - selectedTextureAlpha,
-                    onValueChange = { onTextureAlphaChange((1f - it).coerceIn(0f, 1f)) },
-                    valueRange = 0f..1f
-                )
-            }
-        }
-    }
-}
-
-@Composable
-internal fun TextureChoice(
-    label: String,
-    textureId: String?,
-    selectedTextureId: String?,
-    onTextureSelected: (String?) -> Unit,
-    modifier: Modifier = Modifier,
-    isUpload: Boolean = false,
-) {
-    val context = LocalContext.current
-    val textureBitmap = remember(textureId) { loadReaderTextureBitmap(context, textureId) }
-    val selected = if (isUpload) selectedTextureId?.startsWith(ReaderTextureFilePrefix) == true else selectedTextureId == textureId
-    Surface(
-        onClick = { onTextureSelected(textureId) },
-        modifier = modifier.height(52.dp),
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (selected) 0.95f else 0.45f),
-        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .then(textureBitmap?.let { bitmap ->
-                    Modifier.drawBehind {
-                        drawRect(ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.SrcOver, alpha = 0.6f)
-                    }
-                } ?: Modifier)
-                .padding(horizontal = 8.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = if (isUpload && selectedTextureId?.startsWith(ReaderTextureFilePrefix) == true) {
-                    readerTextureDisplayName(selectedTextureId)
-                } else label,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center
-            )
-        }
-    }
-}
-@Composable
 fun ThemeColorPickerDialog(
     initialColor: Color,
     title: String,
@@ -548,7 +448,7 @@ fun HighlightColorPickerDialog(
 
                 Spacer(Modifier.height(20.dp))
 
-                SpectrumBox(
+                SharedSpectrumBox(
                     hue = hue,
                     saturation = saturation,
                     currentColor = currentColor,
@@ -558,7 +458,7 @@ fun HighlightColorPickerDialog(
 
                 Spacer(Modifier.height(20.dp))
 
-                BrightnessSlider(
+                SharedBrightnessSlider(
                     hue = hue,
                     saturation = saturation,
                     value = value,
@@ -573,7 +473,7 @@ fun HighlightColorPickerDialog(
                     verticalAlignment = Alignment.Bottom,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    ColorComparePill(
+                    SharedColorComparePill(
                         oldColor = selectedSlot.color,
                         newColor = currentColor,
                         modifier = Modifier.width(64.dp).height(36.dp)
@@ -585,22 +485,22 @@ fun HighlightColorPickerDialog(
                     ) {
                         Text(stringResource(R.string.theme_color_hex), color = Color.Gray, fontSize = 12.sp, maxLines = 1)
                         Spacer(Modifier.height(4.dp))
-                        HexInput(color = currentColor, onHexChanged = { updateFromColor(it) })
+                        SharedHexInput(color = currentColor, onHexChanged = { updateFromColor(it) })
                     }
 
                     Row(
                         modifier = Modifier.weight(2.4f),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        RgbInputColumn(label = stringResource(R.string.color_r), value = currentColor.red,
+                        SharedRgbInputColumn(label = stringResource(R.string.color_r), value = currentColor.red,
                             onValueChange = { r -> updateFromColor(currentColor.copy(red = r)) },
                             modifier = Modifier.weight(1f)
                         )
-                        RgbInputColumn(label = stringResource(R.string.color_g), value = currentColor.green,
+                        SharedRgbInputColumn(label = stringResource(R.string.color_g), value = currentColor.green,
                             onValueChange = { g -> updateFromColor(currentColor.copy(green = g)) },
                             modifier = Modifier.weight(1f)
                         )
-                        RgbInputColumn(label = stringResource(R.string.color_b), value = currentColor.blue,
+                        SharedRgbInputColumn(label = stringResource(R.string.color_b), value = currentColor.blue,
                             onValueChange = { b -> updateFromColor(currentColor.copy(blue = b)) },
                             modifier = Modifier.weight(1f)
                         )

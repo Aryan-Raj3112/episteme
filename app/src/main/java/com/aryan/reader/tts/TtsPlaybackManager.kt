@@ -19,6 +19,7 @@
  */
 package com.aryan.reader.tts
 
+import com.aryan.reader.shared.readerTtsChunkLabel
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -199,7 +200,7 @@ internal fun buildTtsNotificationContextLabel(
     currentChunkIndex: Int,
     totalChunks: Int
 ): String {
-    val chunkLabel = formatReaderTtsChunkLabel(currentChunkIndex, totalChunks)
+    val chunkLabel = readerTtsChunkLabel(currentChunkIndex, totalChunks)
     return buildString {
         if (chapterIndex != null && totalChapters != null) {
             append("Chapter ${chapterIndex + 1} of $totalChapters")

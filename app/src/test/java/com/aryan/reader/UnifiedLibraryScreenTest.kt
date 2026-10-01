@@ -1,5 +1,6 @@
 package com.aryan.reader
 
+import com.aryan.reader.shared.calculateSharedTtsAudiobookProgress
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.AudiobookImporter
 import com.aryan.reader.audiobook.audiobookResumePosition
@@ -87,7 +88,7 @@ class UnifiedLibraryScreenTest {
 
     @Test
     fun generatedAudiobookProgressIncludesCompletedChapters() {
-        assertEquals(.375f, calculateTtsAudiobookProgress(chapterIndex = 1, chapterCount = 4, chunkIndex = 4, chunkCount = 10))
+        assertEquals(.375f, calculateSharedTtsAudiobookProgress(chapterIndex = 1, chapterCount = 4, chunkIndex = 4, chunkCount = 10))
     }
 
     @Test

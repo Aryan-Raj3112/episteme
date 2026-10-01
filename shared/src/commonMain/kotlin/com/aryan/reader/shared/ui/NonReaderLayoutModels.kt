@@ -601,11 +601,44 @@ private fun SharedReaderScreenState.organizationBooks(): List<BookItem> {
         .distinctBy { it.id }
 }
 
-private fun LibraryFilters.activeFilterCount(): Int {
+/**
+ * Number of advanced-filter facets the user has actively set, for the
+ * "filters (N)" badge. Android parity (`UnifiedLibraryScreen.kt`).
+ */
+fun LibraryFilters.activeFilterCount(): Int {
     return fileTypes.size +
         sourceFolders.size +
         tagIds.size +
         if (readStatus == ReadStatusFilter.ALL) 0 else 1
+}
+
+/**
+ * Matches a single [BookItem] against the unified-library progress filter and a
+ * free-text query, ignoring the advanced-filter facets and sort order.
+ *
+ * Split out of [mobileUnifiedLibraryBooks] so hosts that apply
+ * `applyLibraryFilters` / `sortBooks` themselves reuse one predicate instead of
+ * re-implementing it (Android `UnifiedLibraryScreen.kt`).
+ */
+fun BookItem.matchesMobileUnifiedLibraryFilter(
+    filter: MobileUnifiedLibraryFilter,
+    normalizedQuery: String
+): Boolean {
+    // Deliberately the raw float, not progressPercentValue(): rounding would
+    // move the 0.01f..<100f reading band and the >=100f finished edge.
+    val progress = progressPercentage ?: 0f
+    val matchesFilter = when (filter) {
+        MobileUnifiedLibraryFilter.ALL -> true
+        MobileUnifiedLibraryFilter.READING -> progress in 0.01f..<100f
+        MobileUnifiedLibraryFilter.FINISHED -> progress >= 100f
+        MobileUnifiedLibraryFilter.UNREAD -> progress <= 0f
+    }
+    return matchesFilter && (
+        normalizedQuery.isBlank() ||
+            listOf(displayName, title, author).any {
+                it?.contains(normalizedQuery, ignoreCase = true) == true
+            }
+        )
 }
 enum class MobileUnifiedLibraryFilter {
     ALL,
@@ -636,25 +669,15 @@ internal fun mobileUnifiedLibraryBooks(
 ): List<BookItem> {
     val normalizedQuery = query.trim()
     val filteredBooks = applyLibraryFilters(books, libraryFilters)
-        .filter { book ->
-            val progress = book.progressPercentage ?: 0f
-            val matchesFilter = when (filter) {
-                MobileUnifiedLibraryFilter.ALL -> true
-                MobileUnifiedLibraryFilter.READING -> progress in 0.01f..<100f
-                MobileUnifiedLibraryFilter.FINISHED -> progress >= 100f
-                MobileUnifiedLibraryFilter.UNREAD -> progress <= 0f
-            }
-            matchesFilter && (
-                normalizedQuery.isBlank() ||
-                    listOf(book.displayName, book.title, book.author).any {
-                        it?.contains(normalizedQuery, ignoreCase = true) == true
-                    }
-                )
-                }
+        .filter { it.matchesMobileUnifiedLibraryFilter(filter, normalizedQuery) }
     return sortBooks(filteredBooks, sortOrder)
 }
 
-internal fun mobileUnifiedContinueReadingBook(books: List<BookItem>): BookItem? =
+/**
+ * Picks the "Continue reading" card: the most recently touched book that is
+ * partway through, else the newest book overall.
+ */
+fun mobileUnifiedContinueReadingBook(books: List<BookItem>): BookItem? =
     books.filter { (it.progressPercentage ?: 0f) in 0.01f..<100f }
         .maxByOrNull { maxOf(it.readingPositionModifiedTimestamp, it.timestamp) }
         ?: books.maxByOrNull { it.timestamp }

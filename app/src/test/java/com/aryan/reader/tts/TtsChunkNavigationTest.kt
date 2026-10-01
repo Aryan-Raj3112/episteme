@@ -1,5 +1,6 @@
 package com.aryan.reader.tts
 
+import com.aryan.reader.shared.readerTtsChunkLabel
 import androidx.media3.common.util.UnstableApi
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -250,36 +251,6 @@ class TtsChunkNavigationTest {
         assertEquals(false, shouldPublishTtsTransportButtonsInCustomLayout())
     }
 
-    @androidx.annotation.OptIn(UnstableApi::class)
-    @Test
-    fun `reader tts mini bar is visible only for active reader playback outside reader routes`() {
-        val activeReaderState = TtsPlaybackManager.TtsState(
-            currentText = "Playing text",
-            playbackSource = "READER"
-        )
-
-        assertEquals(true, shouldShowReaderTtsMiniBar(activeReaderState, isOnReaderRoute = false))
-        assertEquals(false, shouldShowReaderTtsMiniBar(activeReaderState, isOnReaderRoute = true))
-        assertEquals(
-            false,
-            shouldShowReaderTtsMiniBar(activeReaderState.copy(playbackSource = "OTHER"), isOnReaderRoute = false)
-        )
-        assertEquals(
-            false,
-            shouldShowReaderTtsMiniBar(activeReaderState.copy(sessionFinished = true), isOnReaderRoute = false)
-        )
-        assertEquals(
-            false,
-            shouldShowReaderTtsMiniBar(activeReaderState.copy(sessionEndedByStop = true), isOnReaderRoute = false)
-        )
-    }
-
-    @Test
-    fun `reader tts mini bar clears main bottom navigation`() {
-        assertEquals(96, readerTtsMiniBarBottomPaddingDp(isOnMainRoute = true))
-        assertEquals(16, readerTtsMiniBarBottomPaddingDp(isOnMainRoute = false))
-    }
-
     @Test
     fun `reader tts overlay size exposes the other two sizes as choices`() {
         assertEquals(
@@ -312,11 +283,11 @@ class TtsChunkNavigationTest {
 
     @Test
     fun `reader tts chunk label uses one based progress`() {
-        assertEquals("Chunk 1/4", formatReaderTtsChunkLabel(currentChunkIndex = 0, totalChunks = 4))
-        assertEquals("Chunk 4/4", formatReaderTtsChunkLabel(currentChunkIndex = 3, totalChunks = 4))
-        assertNull(formatReaderTtsChunkLabel(currentChunkIndex = -1, totalChunks = 4))
-        assertNull(formatReaderTtsChunkLabel(currentChunkIndex = 4, totalChunks = 4))
-        assertNull(formatReaderTtsChunkLabel(currentChunkIndex = 0, totalChunks = 0))
+        assertEquals("Chunk 1/4", readerTtsChunkLabel(currentChunkIndex = 0, totalChunks = 4))
+        assertEquals("Chunk 4/4", readerTtsChunkLabel(currentChunkIndex = 3, totalChunks = 4))
+        assertNull(readerTtsChunkLabel(currentChunkIndex = -1, totalChunks = 4))
+        assertNull(readerTtsChunkLabel(currentChunkIndex = 4, totalChunks = 4))
+        assertNull(readerTtsChunkLabel(currentChunkIndex = 0, totalChunks = 0))
     }
 
     @Test

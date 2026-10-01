@@ -150,6 +150,13 @@ import com.aryan.reader.shared.formatMicrosUsd
 import com.aryan.reader.shared.ui.SharedAnnotationExportFormatDialog
 import com.aryan.reader.shared.ui.SharedMobileAppDestination
 import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
+import com.aryan.reader.shared.ui.SharedSpectrumBox
+import com.aryan.reader.shared.ui.SharedBrightnessSlider
+import com.aryan.reader.shared.ui.SharedRgbInputColumn
+import com.aryan.reader.shared.ui.SharedHexInput
+import com.aryan.reader.shared.ui.SharedColorComparePill
+import com.aryan.reader.shared.ui.SharedMobileLanguageSelectionList
+import com.aryan.reader.shared.ui.SharedAppThemeBottomSheet
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.text.SimpleDateFormat
@@ -1562,7 +1569,14 @@ fun StrictFilterConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit)
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * App theme bottom sheet.
+ *
+ * Rendering lives in shared (`SharedAppThemeBottomSheet`), which owns the mode
+ * / contrast / text-dim / seed-color controls *and* the custom-theme create
+ * dialog. This wrapper only reads Android's [ReaderScreenState] and forwards the
+ * ViewModel mutators.
+ */
 @Composable
 fun AppThemeBottomSheet(
     uiState: ReaderScreenState,
@@ -1575,204 +1589,23 @@ fun AppThemeBottomSheet(
     onCustomThemeDeleted: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var showCreateDialog by remember { mutableStateOf(false) }
-
-    androidx.compose.material3.ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        contentWindowInsets = { WindowInsets.navigationBars }
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 24.dp)
-        ) {
-            Text(
-                text = stringResource(R.string.app_theme_title),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-
-            Text(stringResource(R.string.app_theme_appearance), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)).padding(4.dp)) {
-                AppThemeMode.entries.forEach { mode ->
-                    val isSelected = uiState.appThemeMode == mode
-                    Box(
-                        modifier = Modifier.weight(1f).fillMaxHeight().clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
-                            .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                            .clickable { onThemeModeChanged(mode) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(stringResource(mode.labelRes), color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
-
-            Text(stringResource(R.string.app_theme_contrast), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)).padding(4.dp)) {
-                AppContrastOption.entries.forEach { option ->
-                    val isSelected = uiState.appContrastOption == option
-                    Box(
-                        modifier = Modifier.weight(1f).fillMaxHeight().clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
-                            .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                            .clickable { onContrastOptionChanged(option) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(stringResource(option.labelRes), color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
-
-            if (uiState.appThemeMode == AppThemeMode.SYSTEM) {
-                Text(stringResource(R.string.app_theme_text_brightness_light), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
-                        .padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
-                    androidx.compose.material3.Slider(
-                        value = uiState.appTextDimFactorLight,
-                        onValueChange = onTextDimFactorLightChanged,
-                        valueRange = 0.3f..1.0f,
-                        modifier = Modifier.weight(1f).padding(horizontal = 16.dp)
-                    )
-                    Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 1.0f))
-                }
-
-                Spacer(Modifier.height(16.dp))
-
-                Text(stringResource(R.string.app_theme_text_brightness_dark), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
-                        .padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
-                    androidx.compose.material3.Slider(
-                        value = uiState.appTextDimFactorDark,
-                        onValueChange = onTextDimFactorDarkChanged,
-                        valueRange = 0.3f..1.0f,
-                        modifier = Modifier.weight(1f).padding(horizontal = 16.dp)
-                    )
-                    Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 1.0f))
-                }
-            } else {
-                Text(stringResource(R.string.app_theme_text_brightness), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
-                        .padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
-                    androidx.compose.material3.Slider(
-                        value = if (uiState.appThemeMode == AppThemeMode.DARK) uiState.appTextDimFactorDark else uiState.appTextDimFactorLight,
-                        onValueChange = if (uiState.appThemeMode == AppThemeMode.DARK) onTextDimFactorDarkChanged else onTextDimFactorLightChanged,
-                        valueRange = 0.3f..1.0f,
-                        modifier = Modifier.weight(1f).padding(horizontal = 16.dp)
-                    )
-                    Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 1.0f))
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
-
-            Text(stringResource(R.string.app_theme_color_scheme), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(8.dp))
-            val presets = remember {
-                listOf(
-                    R.string.app_theme_preset_ocean to Color(0xFF00668B),
-                    R.string.app_theme_preset_mint to Color(0xFF006C4C),
-                    R.string.app_theme_preset_rose to Color(0xFF9C4146),
-                    R.string.app_theme_preset_sepia to Color(0xFF705D49),
-                    R.string.app_theme_preset_amethyst to Color(0xFF9B59B6),
-                    R.string.app_theme_preset_amber to Color(0xFFFFC107),
-                    R.string.app_theme_preset_sapphire to Color(0xFF0F52BA)
-                )
-            }
-
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                item {
-                    ThemeSwatch(
-                        color = MaterialTheme.colorScheme.primary,
-                        isSelected = uiState.appSeedColor == null,
-                        label = stringResource(R.string.app_theme_dynamic),
-                        onClick = { onSeedColorChanged(null) }
-                    )
-                }
-                items(presets.size, key = { it }) { i ->
-                    val (labelRes, color) = presets[i]
-                    ThemeSwatch(
-                        color = color,
-                        isSelected = uiState.appSeedColor == color,
-                        label = stringResource(labelRes),
-                        onClick = { onSeedColorChanged(color) }
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.theme_my_themes), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                IconButton(onClick = { showCreateDialog = true }) {
-                    Icon(Icons.Default.Add, contentDescription = stringResource(R.string.content_desc_add_custom_theme), tint = MaterialTheme.colorScheme.primary)
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-
-            if (uiState.customAppThemes.isEmpty()) {
-                Text(stringResource(R.string.theme_no_custom), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(uiState.customAppThemes, key = { it.id }) { theme ->
-                        ThemeSwatch(
-                            color = theme.seedColor,
-                            isSelected = uiState.appSeedColor == theme.seedColor,
-                            label = theme.name,
-                            onClick = { onSeedColorChanged(theme.seedColor) },
-                            onDelete = { onCustomThemeDeleted(theme.id) }
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    if (showCreateDialog) {
-        CreateAppThemeDialog(
-            onDismiss = { showCreateDialog = false },
-            onSave = { name, color ->
-                onCustomThemeAdded(CustomAppTheme(id = System.currentTimeMillis().toString(), name = name, seedColor = color))
-                showCreateDialog = false
-            }
-        )
-    }
-}
-
-@Composable
+    SharedAppThemeBottomSheet(
+        appThemeMode = uiState.appThemeMode,
+        appContrastOption = uiState.appContrastOption,
+        appTextDimFactorLight = uiState.appTextDimFactorLight,
+        appTextDimFactorDark = uiState.appTextDimFactorDark,
+        appSeedColor = uiState.appSeedColor,
+        customAppThemes = uiState.customAppThemes,
+        onThemeModeChanged = onThemeModeChanged,
+        onContrastOptionChanged = onContrastOptionChanged,
+        onTextDimFactorLightChanged = onTextDimFactorLightChanged,
+        onTextDimFactorDarkChanged = onTextDimFactorDarkChanged,
+        onSeedColorChanged = onSeedColorChanged,
+        onCustomThemeAdded = onCustomThemeAdded,
+        onCustomThemeDeleted = onCustomThemeDeleted,
+        onDismiss = onDismiss
+    )
+}@Composable
 fun ThemeSwatch(
     color: Color,
     isSelected: Boolean,
@@ -1885,7 +1718,7 @@ fun CreateAppThemeDialog(
 
                 Spacer(Modifier.height(20.dp))
 
-                SpectrumBox(
+                SharedSpectrumBox(
                     hue = hue,
                     saturation = saturation,
                     currentColor = currentColor,
@@ -1895,7 +1728,7 @@ fun CreateAppThemeDialog(
 
                 Spacer(Modifier.height(20.dp))
 
-                BrightnessSlider(
+                SharedBrightnessSlider(
                     hue = hue,
                     saturation = saturation,
                     value = value,
@@ -1910,7 +1743,7 @@ fun CreateAppThemeDialog(
                     verticalAlignment = Alignment.Bottom,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    ColorComparePill(
+                    SharedColorComparePill(
                         oldColor = initialColor,
                         newColor = currentColor,
                         modifier = Modifier.width(64.dp).height(36.dp)
@@ -1922,22 +1755,22 @@ fun CreateAppThemeDialog(
                     ) {
                         Text(stringResource(R.string.theme_color_hex), color = Color.Gray, fontSize = 12.sp, maxLines = 1)
                         Spacer(Modifier.height(4.dp))
-                        HexInput(color = currentColor, onHexChanged = { updateFromColor(it) })
+                        SharedHexInput(color = currentColor, onHexChanged = { updateFromColor(it) })
                     }
 
                     Row(
                         modifier = Modifier.weight(2.4f),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        RgbInputColumn(label = stringResource(R.string.color_r), value = currentColor.red,
+                        SharedRgbInputColumn(label = stringResource(R.string.color_r), value = currentColor.red,
                             onValueChange = { r -> updateFromColor(currentColor.copy(red = r)) },
                             modifier = Modifier.weight(1f)
                         )
-                        RgbInputColumn(label = stringResource(R.string.color_g), value = currentColor.green,
+                        SharedRgbInputColumn(label = stringResource(R.string.color_g), value = currentColor.green,
                             onValueChange = { g -> updateFromColor(currentColor.copy(green = g)) },
                             modifier = Modifier.weight(1f)
                         )
-                        RgbInputColumn(label = stringResource(R.string.color_b), value = currentColor.blue,
+                        SharedRgbInputColumn(label = stringResource(R.string.color_b), value = currentColor.blue,
                             onValueChange = { b -> updateFromColor(currentColor.copy(blue = b)) },
                             modifier = Modifier.weight(1f)
                         )
@@ -1972,78 +1805,22 @@ fun LanguageSelectionDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val currentLocales = AppCompatDelegate.getApplicationLocales()
     val currentTag = if (!currentLocales.isEmpty) currentLocales.get(0)?.toLanguageTag() else null
-    var languageSearchQuery by remember { mutableStateOf("") }
-    val languageRows = appLanguageSelectionOptions
-        .map { language -> language to stringResource(language.labelRes) }
-        .filter { (language, label) ->
-            language.matchesLanguageSearch(label = label, query = languageSearchQuery)
-        }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.options_language)) },
         text = {
-            Column {
-                androidx.compose.material3.OutlinedTextField(
-                    value = languageSearchQuery,
-                    onValueChange = { languageSearchQuery = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text(stringResource(R.string.action_search)) },
-                    leadingIcon = {
-                        Icon(Icons.Default.Search, contentDescription = null)
-                    },
-                    trailingIcon = {
-                        if (languageSearchQuery.isNotBlank()) {
-                            IconButton(onClick = { languageSearchQuery = "" }) {
-                                Icon(
-                                    Icons.Default.Close,
-                                    contentDescription = stringResource(R.string.action_clear)
-                                )
-                            }
-                        }
-                    }
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                if (languageRows.isEmpty()) {
-                    Text(
-                        text = stringResource(R.string.search_no_results_simple),
-                        modifier = Modifier.padding(vertical = 12.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 360.dp)
-                    ) {
-                        items(
-                            items = languageRows,
-                            key = { (language, _) -> language.tag ?: "system" }
-                        ) { (language, label) ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        val locales = language.tag?.let { tag ->
-                                            LocaleListCompat.forLanguageTags(tag)
-                                        } ?: LocaleListCompat.getEmptyLocaleList()
-                                        AppCompatDelegate.setApplicationLocales(locales)
-                                        onDismiss()
-                                        context.findActivity()?.recreate()
-                                    }
-                                    .padding(vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(selected = currentTag == language.tag, onClick = null)
-                                Spacer(modifier = Modifier.width(16.dp))
-                                Text(label)
-                            }
-                        }
-                    }
-                }
-            }
+            SharedMobileLanguageSelectionList(
+                selectedTag = currentTag,
+                onSelect = { tag ->
+                    val locales = tag?.let { LocaleListCompat.forLanguageTags(it) }
+                        ?: LocaleListCompat.getEmptyLocaleList()
+                    AppCompatDelegate.setApplicationLocales(locales)
+                    onDismiss()
+                    context.findActivity()?.recreate()
+                },
+                maxListHeight = 360.dp
+            )
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }

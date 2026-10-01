@@ -3130,8 +3130,17 @@ fun SharedMobilePdfReaderHost(
                     exit = slideOutVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeOut(tween(PdfChromeMotionDurationMillis)),
                     modifier = Modifier.align(Alignment.BottomCenter)
                 ) {
+                    val jumpBarPageTemplate = readerString("pdf_page_short", "Page %1\$d")
+                    val jumpBarLabels = SharedPdfJumpHistoryBarLabels(
+                        jumpBack = readerString("content_desc_jump_back", "Previous jump"),
+                        jumpForward = readerString("content_desc_jump_forward", "Next jump"),
+                        clear = readerString("action_clear", "Clear"),
+                        page = { jumpBarPageTemplate.format(it) }
+                    )
                     SharedMobilePdfJumpHistoryBar(
-                        history = jumpHistory,
+                        backPage = jumpHistory.backPage,
+                        forwardPage = jumpHistory.forwardPage,
+                        labels = jumpBarLabels,
                         onBack = {
                             val refreshedHistory = jumpHistory.updateCurrentLocation(
                                 currentPageIndex = currentPdfHistoryPage(),
@@ -5994,10 +6003,12 @@ private fun SharedMobilePdfToolbarCustomizationSheet(
     }
 }
 
+/**
+ * Non-blocking top strip shown while a PDF text-view reflow is generated.
+ * Android benchmark (`pdf/PdfToolbars.kt`).
+ */
 @Composable
-private fun SharedMobilePdfReflowProgressOverlay(progress: Float) {
-    // Android parity (PdfToolbars.ReflowProgressOverlay): a top strip card
-    // with title, percent and linear progress — non-blocking.
+fun SharedMobilePdfReflowProgressOverlay(progress: Float) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         modifier = Modifier.fillMaxWidth(),

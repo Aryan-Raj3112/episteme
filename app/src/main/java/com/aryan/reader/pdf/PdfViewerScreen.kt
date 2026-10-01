@@ -368,6 +368,8 @@ import com.aryan.reader.shared.ui.SharedMobileSingleChoiceOption
 import com.aryan.reader.shared.ui.SharedMobileInfoConfirmationDialog
 import com.aryan.reader.shared.ui.SharedMobileExternalLinkDialog
 import com.aryan.reader.shared.ui.SharedMobileDocumentFormatDialog
+import com.aryan.reader.shared.ui.SharedPdfAndroidAnnotationDock
+import com.aryan.reader.shared.pdf.SharedPdfInkToolMapping
 import com.aryan.reader.shouldRenderReaderSlider
 import com.aryan.reader.summarizationUrl
 import com.aryan.reader.tts.ReaderTtsOverlaySize
@@ -9990,18 +9992,21 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 )
                             }
                         }) {
-                    AnnotationDock(
-                        selectedTool = selectedTool,
+                    SharedPdfAndroidAnnotationDock(
+                        selectedTool = SharedPdfInkToolMapping.toSharedPdfInkTool(selectedTool.name),
                         activePenColor = dockPenColor,
                         activeHighlighterColor = dockHighlighterColor,
-                        lastPenTool = lastPenTool,
-                        lastHighlighterTool = lastHighlighterTool,
+                        lastPenTool = SharedPdfInkToolMapping.toSharedPdfInkTool(lastPenTool.name),
+                        lastHighlighterTool = SharedPdfInkToolMapping.toSharedPdfInkTool(lastHighlighterTool.name),
                         isStylusOnlyMode = isStylusOnlyMode,
                         onToggleStylusOnlyMode = {
                             isStylusOnlyMode = !isStylusOnlyMode
                             saveStylusOnlyMode(context, isStylusOnlyMode)
                         },
-                        onToolClick = { clickedTool ->
+                        onToolClick = { clickedSharedTool ->
+                            val clickedTool = InkType.valueOf(
+                                SharedPdfInkToolMapping.toAndroidInkTypeName(clickedSharedTool)
+                            )
                             if (clickedTool == InkType.TEXT) {
                                 annotationSettingsRepo.updateSelectedTool(
                                     clickedTool

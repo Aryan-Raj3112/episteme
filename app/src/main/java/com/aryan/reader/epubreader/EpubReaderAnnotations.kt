@@ -83,16 +83,16 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.edit
 import androidx.core.text.HtmlCompat
 import androidx.core.net.toUri
-import com.aryan.reader.BrightnessSlider
-import com.aryan.reader.ColorComparePill
-import com.aryan.reader.HexInput
 import com.aryan.reader.R
-import com.aryan.reader.RgbInputColumn
-import com.aryan.reader.SpectrumBox
 import com.aryan.reader.copyPlainTextToClipboard
 import com.aryan.reader.readerModalMaxHeightDp
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.shared.EpubAnnotationSerializer
+import com.aryan.reader.shared.ui.SharedSpectrumBox
+import com.aryan.reader.shared.ui.SharedBrightnessSlider
+import com.aryan.reader.shared.ui.SharedRgbInputColumn
+import com.aryan.reader.shared.ui.SharedHexInput
+import com.aryan.reader.shared.ui.SharedColorComparePill
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.DefaultEpubHighlightPaletteArgb
 import com.aryan.reader.shared.sanitizeEpubHighlightPalette
@@ -429,7 +429,7 @@ fun PaletteManagerDialog(
 
                 Spacer(Modifier.height(20.dp))
 
-                SpectrumBox(
+                SharedSpectrumBox(
                     hue = hue,
                     saturation = saturation,
                     currentColor = currentColor,
@@ -439,7 +439,7 @@ fun PaletteManagerDialog(
 
                 Spacer(Modifier.height(20.dp))
 
-                BrightnessSlider(
+                SharedBrightnessSlider(
                     hue = hue,
                     saturation = saturation,
                     value = value,
@@ -454,7 +454,7 @@ fun PaletteManagerDialog(
                     verticalAlignment = Alignment.Bottom,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    ColorComparePill(
+                    SharedColorComparePill(
                         oldColor = Color(currentPalette.getOrNull(selectedSlot) ?: DefaultHighlightPaletteArgb[selectedSlot]),
                         newColor = currentColor,
                         modifier = Modifier.width(64.dp).height(36.dp)
@@ -466,22 +466,22 @@ fun PaletteManagerDialog(
                     ) {
                         Text(stringResource(R.string.theme_color_hex), color = Color.Gray, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                         Spacer(Modifier.height(4.dp))
-                        HexInput(color = currentColor, onHexChanged = { updateFromColor(it) })
+                        SharedHexInput(color = currentColor, onHexChanged = { updateFromColor(it) })
                     }
 
                     Row(
                         modifier = Modifier.weight(2.4f),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        RgbInputColumn(label = stringResource(R.string.color_r), value = currentColor.red,
+                        SharedRgbInputColumn(label = stringResource(R.string.color_r), value = currentColor.red,
                             onValueChange = { r -> updateFromColor(currentColor.copy(red = r)) },
                             modifier = Modifier.weight(1f)
                         )
-                        RgbInputColumn(label = stringResource(R.string.color_g), value = currentColor.green,
+                        SharedRgbInputColumn(label = stringResource(R.string.color_g), value = currentColor.green,
                             onValueChange = { g -> updateFromColor(currentColor.copy(green = g)) },
                             modifier = Modifier.weight(1f)
                         )
-                        RgbInputColumn(label = stringResource(R.string.color_b), value = currentColor.blue,
+                        SharedRgbInputColumn(label = stringResource(R.string.color_b), value = currentColor.blue,
                             onValueChange = { b -> updateFromColor(currentColor.copy(blue = b)) },
                             modifier = Modifier.weight(1f)
                         )

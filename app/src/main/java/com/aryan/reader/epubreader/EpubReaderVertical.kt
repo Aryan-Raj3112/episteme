@@ -21,70 +21,10 @@ package com.aryan.reader.epubreader
 
 import timber.log.Timber
 import android.webkit.JavascriptInterface
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
-import kotlin.math.min
 
 val DRAG_TO_CHANGE_CHAPTER_THRESHOLD_DP = 100.dp
-val PAGE_INFO_BAR_HEIGHT = 25.dp
-
-@Composable
-fun ChapterChangeIndicator(
-    text: String,
-    progress: Float,
-    isPullingDown: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val alpha = min(1f, progress * 1.5f)
-    if (alpha > 0.1f) {
-        Surface(
-            modifier = modifier
-                .fillMaxWidth()
-                .alpha(alpha)
-                .padding(horizontal = 16.dp),
-            shape = MaterialTheme.shapes.medium,
-            color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.5f),
-            tonalElevation = 4.dp
-        ) {
-            Column(
-                modifier = Modifier.padding(vertical = 8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Icon(
-                    imageVector = if (isPullingDown) Icons.AutoMirrored.Filled.ArrowBack else Icons.AutoMirrored.Filled.ArrowForward,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.inverseOnSurface,
-                    modifier = Modifier.size(20.dp * min(1f, progress + 0.2f))
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = if (progress >= 1.0f) text else "Pull further... (${(progress * 100).toInt()}%)",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.inverseOnSurface,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
-    }
-}
 
 enum class ChapterScrollPosition {
     START, END

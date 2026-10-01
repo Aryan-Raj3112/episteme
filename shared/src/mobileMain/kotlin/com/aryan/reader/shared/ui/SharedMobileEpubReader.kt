@@ -3129,9 +3129,15 @@ fun SharedMobileEpubReaderScreen(
                         } else {
                             0.dp
                         })
+                    val pullReleaseLabel = if (pullIsPrevious) {
+                        readerString("release_for_previous_chapter", "Release for Previous Chapter")
+                    } else {
+                        readerString("release_for_next_chapter", "Release for Next Chapter")
+                    }
                     SharedMobileEpubChapterChangeIndicator(
                         direction = pullDirection.orEmpty(),
                         progress = pullProgress,
+                        releaseLabel = pullReleaseLabel,
                         modifier = Modifier
                             .align(if (pullIsPrevious) Alignment.TopCenter else Alignment.BottomCenter)
                             .then(

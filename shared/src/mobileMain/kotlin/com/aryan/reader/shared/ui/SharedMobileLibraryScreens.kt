@@ -896,63 +896,6 @@ fun SharedMobileUnifiedLibraryScreen(
     }
 }
 
-@Composable
-private fun SharedMobileUnifiedShelvesSection(
-    shelves: List<Shelf>,
-    selectedShelfId: String?,
-    selectedBookIds: Set<String>,
-    pinnedBookIds: Set<String>,
-    downloadingBookIds: Set<String>,
-    onShelfSelected: (Shelf) -> Unit,
-    onOpenBook: (BookItem) -> Unit,
-    onLongPressBook: (BookItem) -> Unit,
-    onTogglePinned: (BookItem) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val selectedShelf = shelves.firstOrNull { it.id == selectedShelfId }
-    if (selectedShelf == null) {
-        val visibleShelves = remember(shelves) {
-            shelves.filter { it.type != ShelfType.TAG && it.parentShelfId == null }
-        }
-        if (visibleShelves.isEmpty()) {
-            Box(modifier, contentAlignment = Alignment.Center) {
-                Text(readerString("unified_library_no_shelves", "No shelves yet"), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        } else {
-            LazyColumn(modifier, contentPadding = PaddingValues(20.dp, 16.dp, 20.dp, 96.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(visibleShelves, key = { it.id }) { shelf ->
-                    ElevatedCard(modifier = Modifier.fillMaxWidth().clickable { onShelfSelected(shelf) }) {
-                        Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(28.dp), tint = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(16.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(shelf.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                                Text(readerQuantityString("book_count", shelf.bookCount, "%1\$d book", "%1\$d books", shelf.bookCount), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        LazyColumn(modifier, contentPadding = PaddingValues(20.dp, 16.dp, 20.dp, 96.dp)) {
-            item {
-                SharedMobileBookGridSection(
-                    title = "",
-                    books = selectedShelf.directBooks,
-                    selectedBookIds = selectedBookIds,
-                    pinnedBookIds = pinnedBookIds,
-                    downloadingBookIds = downloadingBookIds,
-                    onOpenBook = { book -> if (selectedBookIds.isEmpty()) onOpenBook(book) else onLongPressBook(book) },
-                    onLongPressBook = onLongPressBook,
-                    onTogglePinned = onTogglePinned,
-                )
-            }
-        }
-    }
-}
-
 private val MobileUnifiedLibraryFilter.stringKey: String
     get() = when (this) {
         MobileUnifiedLibraryFilter.ALL -> "unified_library_all"
