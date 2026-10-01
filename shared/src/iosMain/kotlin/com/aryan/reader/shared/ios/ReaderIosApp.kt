@@ -320,7 +320,7 @@ import com.aryan.reader.shared.ui.SharedSettingsHub
 import com.aryan.reader.shared.ui.LocalSharedStringResolver
 import com.aryan.reader.shared.ui.SharedStringResolver
 import com.aryan.reader.shared.ui.formatSharedMobileDateTime
-import com.aryan.reader.shared.ui.SharedSupportProjectScreen
+
 import com.aryan.reader.shared.ui.mobileRecentBooks
 import com.aryan.reader.shared.ui.readerBannerMessage
 import com.aryan.reader.shared.ui.readerLiteral
@@ -1987,7 +1987,6 @@ private enum class IosUtilityScreen {
     LANGUAGE,
     FONTS,
     FEEDBACK,
-    SUPPORT,
     ABOUT,
     FOLDER_SYNC,
 }
@@ -4770,7 +4769,6 @@ private fun ReaderIosApp(
             onSettingsClick = { runAction { utilityScreen = IosUtilityScreen.SETTINGS } },
             onAppThemeClick = { runAction { showAppThemePanel = true } },
             onAboutClick = { runAction { utilityScreen = IosUtilityScreen.ABOUT } },
-            onSupportProjectClick = { runAction { utilityScreen = IosUtilityScreen.SUPPORT } },
             onFeedbackClick = { runAction { utilityScreen = IosUtilityScreen.FEEDBACK } },
             onPrivacyPolicyClick = {
                 runAction { openSharedMobileExternalUrl(IosLegalLinks.privacyPolicyUrl) }
@@ -6395,7 +6393,11 @@ private fun ReaderIosApp(
                                 includeAccountDeletion = true,
                                 includeDiagnosticLogExport = true,
                                 includeHideReaderAi = true,
-                                supportProjectAvailable = true,
+                                // App Review 3.1.1: the Support project screen linked out to
+                                // GitHub Sponsors and Patreon for donations. Apple permits
+                                // external tip links, but this surface is withdrawn to keep
+                                // review unambiguous. Set to true to restore it.
+                                supportProjectAvailable = false,
                                 isTabsEnabled = state.isTabsEnabled,
                                 isSyncEnabled = state.isSyncEnabled,
                                 isFolderSyncEnabled = state.isFolderSyncEnabled,
@@ -6540,7 +6542,7 @@ private fun ReaderIosApp(
                                         }
                                     }
                                     SharedSettingsAction.HELP_FEEDBACK -> utilityScreen = IosUtilityScreen.FEEDBACK
-                                    SharedSettingsAction.SUPPORT -> utilityScreen = IosUtilityScreen.SUPPORT
+                                    SharedSettingsAction.SUPPORT -> Unit // Removed for App Review 3.1.1; donations must use IAP.
                                     SharedSettingsAction.ABOUT -> utilityScreen = IosUtilityScreen.ABOUT
                                     SharedSettingsAction.AI_SETTINGS -> utilityScreen = IosUtilityScreen.AI_SETTINGS
                                     SharedSettingsAction.DEVICE_MANAGEMENT -> utilityScreen = IosUtilityScreen.DEVICES
@@ -6828,17 +6830,6 @@ private fun ReaderIosApp(
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
-                    IosUtilityScreen.SUPPORT -> IosUtilityPage(title = readerString("support_project", "Support the project"), onBack = { utilityScreen = null }) {
-                        SharedSupportProjectScreen(
-                            onOpenGitHubSponsors = {
-                                openSharedMobileExternalUrl("https://github.com/sponsors/Aryan-Raj3112")
-                            },
-                            onOpenPatreon = {
-                                openSharedMobileExternalUrl("https://www.patreon.com/c/epistemereader")
-                            },
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
                     IosUtilityScreen.ABOUT -> IosUtilityPage(title = readerString("about_title", "About"), onBack = { utilityScreen = null }) {
                         SharedAboutScreen(
                             versionName = iosAppVersionName(),
@@ -6898,7 +6889,7 @@ private fun ReaderIosApp(
             }
 
             // Android benchmark parity: Home drawer exposes AI keys and models.
-            val appDrawerCapabilities = MobileAppDrawerCapabilities.GLOBAL
+            val appDrawerCapabilities = iosGlobalDrawerCapabilities
 
             @Composable
             fun MainScaffoldContent() {
@@ -7403,7 +7394,7 @@ private fun ReaderIosApp(
                                         drawerContent = {
                                             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                                                 IosAppDrawerContent(
-                                                    capabilities = MobileAppDrawerCapabilities.UNIFIED_LIBRARY_ACCOUNT,
+                                                    capabilities = iosUnifiedAccountDrawerCapabilities,
                                                     closeDrawer = { scope.launch { accountDrawerState.close() } },
                                                 )
                                             }
