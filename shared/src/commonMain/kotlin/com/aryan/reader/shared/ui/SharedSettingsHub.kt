@@ -740,6 +740,7 @@ private fun SharedSettingsAction.iconForSettings(): ImageVector {
         SharedSettingsAction.ABOUT -> Icons.Default.Info
         SharedSettingsAction.EXPORT_LOGS,
         SharedSettingsAction.DEBUG_ACTIONS,
+        SharedSettingsAction.FPS_OVERLAY,
         SharedSettingsAction.TEST_PANEL_DETECTION,
         SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
         SharedSettingsAction.DEVICE_MANAGEMENT,

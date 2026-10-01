@@ -1565,6 +1565,9 @@ fun SharedMobileAudiobookMiniPlayerFrame(
     var menuExpanded by remember { mutableStateOf(false) }
     Surface(
         modifier = modifier
+            // Rendered as the scaffold bottom bar, so it must cover the system
+            // navigation bar itself rather than tucking underneath it.
+            .navigationBarsPadding()
             .pointerInput(onExpand) {
                 detectVerticalDragGestures(
                     onDragStart = { verticalDrag = 0f },

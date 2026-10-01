@@ -8,7 +8,10 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -45,7 +48,11 @@ fun SharedAndroidUnifiedScaffold(
 ) {
     Scaffold(
         modifier = modifier,
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        // The top bar draws its own status-bar padding, so only the top inset is zeroed.
+        // The bottom inset must stay live: Material3 offsets the FAB by it solely when no
+        // bottom bar is present, which is what keeps the FAB clear of the system navigation
+        // bar while the optional audiobook mini-player is hidden.
+        contentWindowInsets = WindowInsets.systemBars.only(WindowInsetsSides.Bottom),
         bottomBar = bottomBar,
         topBar = topBar,
         floatingActionButton = if (showFloatingActionButton) {

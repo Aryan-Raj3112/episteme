@@ -29,7 +29,9 @@ class RecompositionPolicyTest {
     @Test
     fun `settings model build is remembered`() {
         val source = readMain("SettingsScreen.kt")
-        assertTrue(source.contains("val settingsModel = remember(uiState, hideReaderAi)"))
+        // Every value the model reads must be a remembered key: dropping one silently
+        // freezes that section, e.g. the FPS toggle would stop updating its check state.
+        assertTrue(source.contains("val settingsModel = remember(uiState, hideReaderAi, fpsOverlayEnabled)"))
     }
 
     @Test

@@ -6391,6 +6391,8 @@ private fun ReaderIosApp(
                                 // use their own backend flags.
                                 includeAccountDeletion = true,
                                 includeDiagnosticLogExport = true,
+                                includeFpsOverlayToggle = bridge.isDebugBuild,
+                                fpsOverlayEnabled = fpsOverlayEnabled,
                                 includeHideReaderAi = true,
                                 // App Review 3.1.1: the Support project screen linked out to
                                 // GitHub Sponsors and Patreon for donations. Apple permits
@@ -6582,6 +6584,11 @@ private fun ReaderIosApp(
                                         if (!bridge.exportDiagnosticLogs()) {
                                             showMessage("Unable to export diagnostic logs")
                                         }
+                                    }
+                                    SharedSettingsAction.FPS_OVERLAY -> {
+                                        val next = !fpsOverlayEnabled
+                                        fpsOverlayEnabled = next
+                                        IosDebugFpsStore.setEnabled(next)
                                     }
                                 }
                             },

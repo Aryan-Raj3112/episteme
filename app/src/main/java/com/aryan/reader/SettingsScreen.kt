@@ -246,6 +246,9 @@ fun SettingsScreen(
     var showRecentLimitDialog by remember { mutableStateOf(false) }
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
     var hideReaderAi by remember { mutableStateOf(loadHideReaderAiFeatures(context)) }
+    // Home > More owned the FPS toggle before that screen was retired; the store is
+    // process-wide so Settings reads it to render the same switch state.
+    val fpsOverlayEnabled = rememberDebugFpsEnabled()
     var epubReaderDefaults by remember(context, uiState.renderMode) {
         mutableStateOf(loadAndroidEpubReaderDefaultSettings(context, uiState.renderMode))
     }
@@ -283,11 +286,12 @@ fun SettingsScreen(
 
     // Model build allocates section/item lists; remember on its real inputs
     // so unrelated uiState emissions (progress, sync ticks) skip it.
-    val settingsModel = remember(uiState, hideReaderAi) {
+    val settingsModel = remember(uiState, hideReaderAi, fpsOverlayEnabled) {
         sharedSettingsHubModel(
             androidSettingsHubInput(
                 uiState = uiState,
-                hideReaderAi = hideReaderAi
+                hideReaderAi = hideReaderAi,
+                fpsOverlayEnabled = fpsOverlayEnabled,
             )
         )
     }
@@ -462,6 +466,8 @@ fun SettingsScreen(
                     SharedSettingsAction.TEST_PANEL_DETECTION -> viewModel.testPanelDetection(context)
                     SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION -> viewModel.testSpeechBubbleDetection(context)
                     SharedSettingsAction.EXPORT_LOGS -> viewModel.exportLogsToFile(context)
+                    SharedSettingsAction.FPS_OVERLAY ->
+                        DebugFpsStore.setEnabled(context, !fpsOverlayEnabled)
                     SharedSettingsAction.DEBUG_ACTIONS -> viewModel.showBanner(context.getString(R.string.debug_actions_existing_menus))
                     SharedSettingsAction.HELP_FEEDBACK -> navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FEEDBACK)
                     SharedSettingsAction.SUPPORT -> navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.SUPPORT_PROJECT)

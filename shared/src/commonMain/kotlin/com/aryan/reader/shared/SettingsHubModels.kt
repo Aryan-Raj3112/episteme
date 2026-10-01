@@ -169,6 +169,7 @@ enum class SharedSettingsAction {
     TEST_PANEL_DETECTION,
     TEST_SPEECH_BUBBLE_DETECTION,
     EXPORT_LOGS,
+    FPS_OVERLAY,
     DEBUG_ACTIONS,
     HELP_FEEDBACK,
     SUPPORT,
@@ -617,6 +618,8 @@ data class SharedSettingsHubModel(
             SharedSettingsAction.TEST_PANEL_DETECTION,
             SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
             SharedSettingsAction.EXPORT_LOGS,
+            SharedSettingsAction.FPS_OVERLAY,
+            SharedSettingsAction.DEVICE_MANAGEMENT,
             SharedSettingsAction.HELP_FEEDBACK,
             SharedSettingsAction.SUPPORT,
             SharedSettingsAction.ABOUT
@@ -705,6 +708,9 @@ data class SharedSettingsHubInput(
     val includeAccountDeletion: Boolean = false,
     /** Exposes the platform's safe, app-owned recent-log export. */
     val includeDiagnosticLogExport: Boolean = false,
+    /** Exposes the debug FPS meter toggle. Both hosts ship a global overlay. */
+    val includeFpsOverlayToggle: Boolean = false,
+    val fpsOverlayEnabled: Boolean = false,
     val supportProjectAvailable: Boolean = true,
     val languageTitle: String = "Language",
     val languageSummary: String = "Choose the app language",
@@ -971,6 +977,17 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
                             kind = SharedSettingsItemKind.NAVIGATION
                         )
                     )
+                    if (input.includeFpsOverlayToggle) {
+                        add(
+                            SharedSettingsItemModel(
+                                action = SharedSettingsAction.FPS_OVERLAY,
+                                title = "Show FPS overlay",
+                                summary = "Draw a frame-rate meter over the app",
+                                kind = SharedSettingsItemKind.CONTROL,
+                                checked = input.fpsOverlayEnabled
+                            )
+                        )
+                    }
                     if (input.includeCloudLocalDataClear && input.featurePolicy.aiAndCloud) {
                         add(
                             SharedSettingsItemModel(

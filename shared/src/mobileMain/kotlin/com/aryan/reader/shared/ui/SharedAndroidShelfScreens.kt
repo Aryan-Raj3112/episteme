@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -257,6 +258,10 @@ fun <BookItem> SharedAndroidAddBooksModeScreen(
     var showSortMenu by remember { mutableStateOf(false) }
     Scaffold(
         modifier = modifier,
+        // Nested inside the Library Beta scaffold, which already applies the bottom system
+        // inset to its content. Re-applying it here would lift this screen's FAB by twice
+        // the navigation bar height.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             Column {
                 SharedMobileTopAppBar(
