@@ -10,6 +10,8 @@ import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.Base64
+import com.aryan.reader.shared.reader.SharedEpubDrawerImage
+import com.aryan.reader.shared.reader.isSharedEpubSvgSource
 
 data class EpubReaderImageReference(
     val id: String,
@@ -243,3 +245,22 @@ private fun String.sanitizedReaderImageFileBase(): String {
         .trim('.')
         .take(80)
 }
+
+/**
+ * Adapts the paginated reader's image model to the shared EPUB drawer row.
+ *
+ * The shared row is deliberately narrow (see `SharedEpubDrawerImage`): it carries only what the
+ * list and thumbnail render, so the paginated reader does not have to fabricate the
+ * `ReaderLocator` that `ReaderImageReference` requires but cannot supply for an image.
+ */
+internal fun EpubReaderImageReference.toDrawerImage() = SharedEpubDrawerImage(
+    id = id,
+    ordinal = index + 1,
+    displayTitle = displayTitle,
+    chapterTitle = chapterTitle,
+    dimensionLabel = dimensionLabel,
+    sourceName = sourceName(),
+    source = sourcePath,
+    isSvg = sourcePath.isSharedEpubSvgSource() || originalSource.isSharedEpubSvgSource(),
+    loadBytes = { readDownloadBytes() }
+)

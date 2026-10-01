@@ -15,6 +15,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -78,6 +79,7 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Fonts
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
@@ -151,6 +153,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -3631,8 +3634,22 @@ fun SharedMobilePdfReaderHost(
                     modifier = Modifier.align(Alignment.BottomCenter)
                 ) {
                     SharedMobilePdfSearchNavigationPill(
-                        activeIndex = readerState.activeSearchResultIndex,
-                        resultCount = searchResults.size,
+                        text = if (readerState.activeSearchResultIndex in searchResults.indices) {
+                            readerString(
+                                "pdf_search_result_position",
+                                "Result %1\$d / %2\$d",
+                                readerState.activeSearchResultIndex + 1,
+                                searchResults.size
+                            )
+                        } else {
+                            readerQuantityString(
+                                "search_results_count",
+                                searchResults.size,
+                                "%d result",
+                                "%d results",
+                                searchResults.size
+                            )
+                        },
                         highlightMode = readerState.searchHighlightMode,
                         onToggleHighlightMode = {
                             dispatch(SharedPdfReaderAction.SearchHighlightModeToggled)
@@ -3640,6 +3657,8 @@ fun SharedMobilePdfReaderHost(
                         onPrevious = { navigateToSearchResult(readerState.activeSearchResultIndex - 1) },
                         onNext = { navigateToSearchResult(readerState.activeSearchResultIndex + 1) },
                         onShowResults = { dispatch(SharedPdfReaderAction.SearchResultsPanelToggled) },
+                        isPrevEnabled = readerState.activeSearchResultIndex > 0,
+                        isNextEnabled = readerState.activeSearchResultIndex < searchResults.size - 1,
                         modifier = Modifier
                             .padding(bottom = 24.dp)
                     )
@@ -6902,52 +6921,75 @@ private fun SharedMobilePdfSearchResultsPanel(
 }
 
 @Composable
-private fun SharedMobilePdfSearchNavigationPill(
-    activeIndex: Int,
-    resultCount: Int,
+fun SharedMobilePdfSearchNavigationPill(
+    text: String,
     highlightMode: SearchHighlightMode,
     onToggleHighlightMode: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onShowResults: () -> Unit,
+    isPrevEnabled: Boolean,
+    isNextEnabled: Boolean,
     modifier: Modifier = Modifier
 ) {
     Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        tonalElevation = 4.dp,
-        shadowElevation = 4.dp
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        modifier = modifier
+            .shadow(6.dp, RoundedCornerShape(50))
+            .height(56.dp)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.padding(horizontal = 8.dp)
         ) {
             IconButton(onClick = onToggleHighlightMode) {
                 Icon(
-                    if (highlightMode == SearchHighlightMode.ALL) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                    imageVector = if (highlightMode == SearchHighlightMode.ALL) Icons.Default.Visibility
+                    else Icons.Default.VisibilityOff,
                     contentDescription = readerString("content_desc_toggle_search_highlights", "Toggle search highlights"),
                     tint = if (highlightMode == SearchHighlightMode.ALL) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Box(
-                Modifier
+                modifier = Modifier
                     .width(1.dp)
                     .height(24.dp)
                     .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
             )
-            IconButton(onClick = onPrevious, enabled = activeIndex > 0) {
-                Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = readerString("tooltip_prev_result", "Previous result"))
-            }
-            TextButton(onClick = onShowResults) {
-                Text(
-                    if (activeIndex in 0 until resultCount) "${activeIndex + 1} of $resultCount"
-                    else "$resultCount results"
+            IconButton(onClick = onPrevious, enabled = isPrevEnabled) {
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowUp,
+                    contentDescription = readerString("tooltip_prev_result", "Previous result"),
+                    tint = if (isPrevEnabled) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                 )
             }
-            IconButton(onClick = onNext, enabled = activeIndex < resultCount - 1) {
-                Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = readerString("tooltip_next_result", "Next result"))
+            Box(
+                modifier = Modifier
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onShowResults
+                    )
+                    .padding(horizontal = 8.dp)
+            ) {
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            IconButton(onClick = onNext, enabled = isNextEnabled) {
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowDown,
+                    contentDescription = readerString("tooltip_next_result", "Next result"),
+                    tint = if (isNextEnabled) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                )
             }
         }
     }

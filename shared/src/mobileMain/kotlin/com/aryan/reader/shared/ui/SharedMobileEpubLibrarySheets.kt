@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,6 +59,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material3.ListItem
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -90,7 +93,7 @@ import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.deduplicatedReaderBookmarks
 import com.aryan.reader.shared.readerHighlightListActions
 import com.aryan.reader.shared.reader.ReaderBookmark
-import com.aryan.reader.shared.reader.ReaderImageReference
+import com.aryan.reader.shared.reader.SharedEpubDrawerImage
 import com.aryan.reader.shared.reader.isSharedEpubSvgSource
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSpreadLayout
@@ -895,63 +898,86 @@ internal fun SharedMobileEpubHighlightSheet(
 }
 
 @Composable
-internal fun SharedMobileEpubImages(
-    images: List<ReaderImageReference>,
-    onImageClick: (ReaderImageReference) -> Unit,
+fun <T> SharedMobileEpubImages(
+    images: List<T>,
+    rowOf: (T) -> SharedEpubDrawerImage,
+    onImageClick: (T) -> Unit,
+    // Android benchmark (EpubReaderDrawer.ImagesList): the trailing action is a host
+    // callback, not a built-in share sheet. Android saves the file; iOS shares it.
+    onDownloadImage: (T) -> Unit,
     modifier: Modifier = Modifier
 ) {
     if (images.isEmpty()) {
         Box(modifier, contentAlignment = Alignment.Center) {
-            Text(readerString("desktop_no_images", "No images in this book"))
+            Text(readerString("no_images_found", "No images found"))
         }
         return
     }
-    LazyColumn(modifier) {
-        items(images, key = { it.id }) { image ->
-            val downloadableBytes = remember(image.source) { image.downloadBytes() }
-            NavigationDrawerItem(
-                label = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // Android benchmark: EpubReaderDrawer.kt:689-693 leading 72x56 thumbnail.
+    // Row projection is derived once per image list; the host keeps owning the
+    // original model so click handlers can still navigate with it.
+    val rows = remember(images) { images.map(rowOf) }
+    val listState = rememberLazyListState()
+    Box(modifier) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(end = 4.dp),
+            contentPadding = PaddingValues(vertical = 4.dp)
+        ) {
+            itemsIndexed(rows, key = { _, row -> row.id }) { index, image ->
+                val host = images[index]
+                ListItem(
+                    leadingContent = {
                         SharedMobileEpubImageThumbnail(
                             image = image,
                             modifier = Modifier.size(width = 72.dp, height = 56.dp)
                         )
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                        Text(image.displayTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    },
+                    headlineContent = {
                         Text(
-                            image.chapterTitle,
-                            style = MaterialTheme.typography.labelSmall,
+                            text = image.displayTitle,
+                            fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                            listOfNotNull(image.dimensionLabel, image.sourceName()).joinToString(" · ").takeIf { it.isNotBlank() }?.let { metadata ->
-                                Text(metadata, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    },
+                    supportingContent = {
+                        Column {
+                            Text(
+                                text = image.chapterTitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            val metadata = image.metadataLabel()
+                            if (metadata.isNotBlank()) {
+                                Text(
+                                    text = metadata,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                         }
-                        IconButton(
-                            onClick = {
-                                downloadableBytes?.let { bytes ->
-                                    shareSharedMobileEpubImage(bytes, image.suggestedDownloadFileName())
-                                }
-                            },
-                            enabled = downloadableBytes != null
-                        ) {
+                    },
+                    trailingContent = {
+                        IconButton(onClick = { onDownloadImage(host) }) {
                             Icon(
-                                Icons.Default.Download,
+                                imageVector = Icons.Default.Download,
                                 contentDescription = readerString(
-                                    "content_desc_save_or_share_image",
-                                    "Save or share image",
-                                ),
+                                    "content_desc_download_image",
+                                    "Download image"
+                                )
                             )
                         }
-                    }
-                },
-                selected = false,
-                onClick = { onImageClick(image) },
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-            )
+                    },
+                    modifier = Modifier.clickable { onImageClick(host) }
+                )
+                HorizontalDivider()
+            }
         }
     }
 }
@@ -963,14 +989,14 @@ internal fun SharedMobileEpubImages(
  */
 @Composable
 private fun SharedMobileEpubImageThumbnail(
-    image: ReaderImageReference,
+    image: SharedEpubDrawerImage,
     modifier: Modifier = Modifier
 ) {
     var bitmap by remember(image.source) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(image.source) {
         bitmap = withContext(Dispatchers.Default) {
-            val bytes = image.downloadBytes() ?: return@withContext null
-            decodeSharedMobileEpubImage(bytes, image.source.isSharedEpubSvgSource())
+            val bytes = image.loadBytes() ?: return@withContext null
+            decodeSharedMobileEpubImage(bytes, image.isSvg)
         }
     }
     Surface(
@@ -989,7 +1015,7 @@ private fun SharedMobileEpubImageThumbnail(
         } else {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    text = (image.index + 1).toString(),
+                    text = image.ordinal.toString(),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

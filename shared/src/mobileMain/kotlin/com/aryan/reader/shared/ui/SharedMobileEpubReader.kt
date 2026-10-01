@@ -157,6 +157,7 @@ import com.aryan.reader.shared.reader.findPageIndexForLocator
 import com.aryan.reader.shared.reader.layoutSignature
 import com.aryan.reader.shared.reader.withUncappedPageWidth
 import com.aryan.reader.shared.reader.readerImageReferences
+import com.aryan.reader.shared.reader.toDrawerImage
 import com.aryan.reader.shared.reader.readerTocActiveIndex
 import com.aryan.reader.shared.reader.pullToTurnEnabled
 import com.aryan.reader.shared.reader.seamlessChapterTransitionEnabled
@@ -1661,20 +1662,34 @@ fun SharedMobileEpubReaderScreen(
                             },
                             modifier = Modifier.fillMaxSize()
                         )
-                        else -> SharedMobileEpubImages(
-                            images = if (settings.hideImages) {
+                        else -> {
+                            val imageRefs = if (settings.hideImages) {
                                 emptyList()
                             } else {
                                 loadedBook?.readerImageReferences(pages).orEmpty()
-                            },
-                            onImageClick = { image ->
-                                loadedBook?.chapters?.getOrNull(image.chapterIndex)?.let {
-                                    recordJumpAndNavigate(image.locator)
-                                    scope.launch { drawerState.close() }
-                                }
-                            },
-                            modifier = Modifier.fillMaxSize()
-                        )
+                            }
+                            SharedMobileEpubImages(
+                                images = imageRefs,
+                                rowOf = { it.toDrawerImage() },
+                                onImageClick = { image ->
+                                    loadedBook?.chapters?.getOrNull(image.chapterIndex)?.let {
+                                        recordJumpAndNavigate(image.locator)
+                                        scope.launch { drawerState.close() }
+                                    }
+                                },
+                                onDownloadImage = { image ->
+                                    scope.launch {
+                                        image.downloadBytes()?.let { bytes ->
+                                            shareSharedMobileEpubImage(
+                                                bytes,
+                                                image.suggestedDownloadFileName()
+                                            )
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
                     }
                 }
             }
