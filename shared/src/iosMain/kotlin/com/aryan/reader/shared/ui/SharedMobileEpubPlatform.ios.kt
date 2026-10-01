@@ -24,6 +24,7 @@ import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderExternalLookupService
+import com.aryan.reader.shared.ReaderDefaultDictionaryLookupService
 import com.aryan.reader.shared.isReaderExternalHref
 import com.aryan.reader.shared.normalizeReaderHref
 import com.aryan.reader.shared.LocalTtsInterruptionAction
@@ -236,10 +237,11 @@ internal actual val sharedMobileEpubPageInfoMatchesReaderBackground: Boolean = t
 
 internal object IosReaderLookupServices {
     // Startup defaults; the host overrides these from NSUserDefaults in
-    // loadIosReaderLookupServices. Android parity (no-selection default):
-    // dictionary starts on the app chooser until Smart AI is explicitly
-    // picked; translate/search default to in-app Safari, which always works.
-    var dictionary: ReaderExternalLookupService = ReaderExternalLookupService.ANY_APP
+    // loadIosReaderLookupServices. Android benchmark (Smart AI default):
+    // dictionary starts on the in-app AI definition until another engine is
+    // explicitly picked; translate/search default to in-app Safari, which
+    // always works.
+    var dictionary: ReaderExternalLookupService = ReaderDefaultDictionaryLookupService
     var translate: ReaderExternalLookupService = ReaderExternalLookupService.SAFARI
     var search: ReaderExternalLookupService = ReaderExternalLookupService.SAFARI
 }

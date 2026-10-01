@@ -180,6 +180,7 @@ import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.AiDefinitionResult
 import com.aryan.reader.shared.RecapResult
 import com.aryan.reader.shared.ReaderExternalLookupService
+import com.aryan.reader.shared.ReaderDefaultDictionaryLookupService
 import com.aryan.reader.shared.ui.IosReaderLookupServices
 import com.aryan.reader.shared.ui.iosInstalledLookupAppSchemes
 import com.aryan.reader.shared.migrateLegacyIosReaderAutoScrollSpeed
@@ -2423,13 +2424,13 @@ private const val IosLookupSearchServiceKey = "ios_reader_lookup_search_service"
 
 private fun loadIosReaderLookupServices():
     Triple<ReaderExternalLookupService, ReaderExternalLookupService, ReaderExternalLookupService> {
-    // Android parity (use_online_dictionary defaults to false): with nothing
-    // persisted the Dict action opens the app chooser (ANY_APP) instead of
-    // assuming Smart AI — the router (readerLookupUsesAiDictionary) is false
-    // until "ai" is explicitly stored. Translate/search fall back to in-app
-    // Safari when nothing is persisted. Explicit user picks are never migrated.
+    // Android benchmark (use_online_dictionary defaults to true): with nothing
+    // persisted the Dict action opens the in-app AI definition, so the router
+    // (readerLookupUsesAiDictionary) is true until another engine is explicitly
+    // stored. Translate/search fall back to in-app Safari when nothing is
+    // persisted. Explicit user picks are never migrated.
     return Triple(
-        loadIosLookupService(IosLookupDictionaryServiceKey, ReaderExternalLookupService.ANY_APP),
+        loadIosLookupService(IosLookupDictionaryServiceKey, ReaderDefaultDictionaryLookupService),
         loadIosLookupService(IosLookupTranslateServiceKey, ReaderExternalLookupService.SAFARI),
         loadIosLookupService(IosLookupSearchServiceKey, ReaderExternalLookupService.SAFARI),
     )

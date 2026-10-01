@@ -267,7 +267,26 @@ class PdfReaderPreferencesTest {
     private fun contextWithPrefs(prefs: SharedPreferences): Context {
         val context = mockk<Context>()
         every { context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE) } returns prefs
+        // The unified Smart AI flag also consults the EPUB reader's legacy
+        // prefs file when the unified copy has never been written.
+        every { context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE) } returns InMemorySharedPreferences()
         return context
+    }
+
+    @Test
+    fun `smart ai is the default dictionary engine and explicit choices win`() {
+        val prefs = InMemorySharedPreferences()
+        val context = contextWithPrefs(prefs)
+
+        // Android benchmark: nothing persisted routes "Dict" to the in-app AI
+        // definition (which is what surfaces the Pro upsell for free accounts).
+        assertTrue(loadUseOnlineDict(context))
+
+        saveUseOnlineDict(context, false)
+        assertFalse(loadUseOnlineDict(context))
+
+        saveUseOnlineDict(context, true)
+        assertTrue(loadUseOnlineDict(context))
     }
 
     private class InMemorySharedPreferences(vararg initial: Pair<String, Any?>) : SharedPreferences {

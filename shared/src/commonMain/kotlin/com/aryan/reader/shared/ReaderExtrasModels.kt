@@ -524,15 +524,24 @@ enum class ReaderExternalLookupService(val id: String, val title: String) {
     }
 }
 
-// Android parity (no-selection default): with nothing persisted the Dict
-// action opens the app chooser instead of assuming an engine. ANY_APP is the
-// explicit "choose each time" choice and the default; Smart AI stays first so
-// the in-app route is prominent once selected.
+// Android benchmark: the Dict action opens the in-app AI definition by default
+// and falls back to the external app chooser when AI is unavailable. Smart AI is
+// listed first so the in-app route stays prominent; ANY_APP is the explicit
+// "choose each time" choice.
 val ReaderDictionaryServiceOptions = listOf(
     ReaderExternalLookupService.AI,
     ReaderExternalLookupService.ANY_APP,
     ReaderExternalLookupService.SAFARI,
 )
+
+/**
+ * Engine used by the selection-menu "Dict" action when the user has never
+ * opened the lookup settings. Smart AI is the default on both mobile platforms:
+ * it is the product's headline feature and the Pro upsell rides on it, while
+ * unavailability (offline, AI hidden) still falls back to the app chooser.
+ * Hosts that persist an explicit choice must keep honoring it.
+ */
+val ReaderDefaultDictionaryLookupService = ReaderExternalLookupService.AI
 
 /**
  * Whether the selection-menu "Dict" action routes to the in-app AI definition

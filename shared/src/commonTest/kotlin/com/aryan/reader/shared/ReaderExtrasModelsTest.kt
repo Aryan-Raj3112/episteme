@@ -852,7 +852,7 @@ class ReaderExtrasModelsTest {
 
     @Test
     fun `dictionary service options exclude system for translate and search`() {
-        // Android parity (no-selection default): the dictionary offers Smart
+        // Android benchmark (Smart AI default): the dictionary offers Smart
         // AI first, then the explicit "choose each time" entry, then browser.
         assertEquals(3, ReaderDictionaryServiceOptions.size)
         assertEquals(1, ReaderTranslateServiceOptions.size)
@@ -864,6 +864,14 @@ class ReaderExtrasModelsTest {
         assertEquals(ReaderExternalLookupService.SAFARI, ReaderSearchServiceOptions.first())
         assertTrue(ReaderDictionaryServiceOptions.contains(ReaderExternalLookupService.ANY_APP))
         assertTrue(ReaderDictionaryServiceOptions.contains(ReaderExternalLookupService.SAFARI))
+    }
+
+    @Test
+    fun `smart ai is the default dictionary engine`() {
+        // Android benchmark (PdfPreferences/EpubReaderPreferences.loadUseOnlineDict):
+        // with nothing persisted the Dict action routes to the in-app AI
+        // definition, which is also what drives the Pro upsell for free accounts.
+        assertEquals(ReaderExternalLookupService.AI, ReaderDefaultDictionaryLookupService)
     }
 
     @Test
