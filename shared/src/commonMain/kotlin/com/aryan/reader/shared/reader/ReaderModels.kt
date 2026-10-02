@@ -341,82 +341,43 @@ data class PaginatedReaderState(
 }
 
 object ReaderSpreadLayout {
-    fun pageStep(settings: ReaderSettings): Int {
-        return if (settings.isTwoPageSpreadEnabled()) 2 else 1
-    }
+    fun pageStep(settings: ReaderSettings): Int =
+        ReaderSpreadMath.pageStep(settings.isTwoPageSpreadEnabled())
 
-    fun normalizePageIndex(pageIndex: Int, pageCount: Int, settings: ReaderSettings): Int {
-        if (pageCount <= 0) return 0
-        val clamped = pageIndex.coerceIn(0, pageCount - 1)
-        return if (settings.isTwoPageSpreadEnabled()) {
-            (clamped - (clamped % 2)).coerceIn(0, pageCount - 1)
-        } else {
-            clamped
-        }
-    }
+    fun normalizePageIndex(pageIndex: Int, pageCount: Int, settings: ReaderSettings): Int =
+        ReaderSpreadMath.normalizePageIndex(pageIndex, pageCount, settings.isTwoPageSpreadEnabled())
 
-    fun canGoNext(pageIndex: Int, pageCount: Int, settings: ReaderSettings): Boolean {
-        if (pageCount <= 1) return false
-        val current = normalizePageIndex(pageIndex, pageCount, settings)
-        return current + pageStep(settings) < pageCount
-    }
+    fun canGoNext(pageIndex: Int, pageCount: Int, settings: ReaderSettings): Boolean =
+        ReaderSpreadMath.canGoNext(pageIndex, pageCount, settings.isTwoPageSpreadEnabled())
 
-    fun nextPageIndex(pageIndex: Int, pageCount: Int, settings: ReaderSettings): Int {
-        return normalizePageIndex(pageIndex + pageStep(settings), pageCount, settings)
-    }
+    fun nextPageIndex(pageIndex: Int, pageCount: Int, settings: ReaderSettings): Int =
+        ReaderSpreadMath.nextPageIndex(pageIndex, pageCount, settings.isTwoPageSpreadEnabled())
 
-    fun previousPageIndex(pageIndex: Int, pageCount: Int, settings: ReaderSettings): Int {
-        return normalizePageIndex(pageIndex - pageStep(settings), pageCount, settings)
-    }
+    fun previousPageIndex(pageIndex: Int, pageCount: Int, settings: ReaderSettings): Int =
+        ReaderSpreadMath.previousPageIndex(pageIndex, pageCount, settings.isTwoPageSpreadEnabled())
 
-    fun visiblePageIndices(pageIndex: Int, pageCount: Int, settings: ReaderSettings): List<Int> {
-        if (pageCount <= 0) return emptyList()
-        val start = normalizePageIndex(pageIndex, pageCount, settings)
-        if (!settings.isTwoPageSpreadEnabled()) return listOf(start)
-        return listOf(start, start + 1).filter { it in 0 until pageCount }
-    }
+    fun visiblePageIndices(pageIndex: Int, pageCount: Int, settings: ReaderSettings): List<Int> =
+        ReaderSpreadMath.visiblePageIndices(pageIndex, pageCount, settings.isTwoPageSpreadEnabled())
 
-    fun visiblePageIndicesForDisplay(pageIndex: Int, pageCount: Int, settings: ReaderSettings): List<Int> {
-        val indices = visiblePageIndices(pageIndex, pageCount, settings)
-        return if (settings.isRightToLeftPaginationEnabled()) indices.asReversed() else indices
-    }
+    fun visiblePageIndicesForDisplay(pageIndex: Int, pageCount: Int, settings: ReaderSettings): List<Int> =
+        ReaderSpreadMath.visiblePageIndicesForDisplay(
+            pageIndex = pageIndex,
+            pageCount = pageCount,
+            isTwoPageSpread = settings.isTwoPageSpreadEnabled(),
+            isRightToLeft = settings.isRightToLeftPaginationEnabled()
+        )
 
-    fun pageRangeLabel(pageIndex: Int, pageCount: Int, settings: ReaderSettings): String {
-        val total = pageCount.coerceAtLeast(1)
-        val pages = visiblePageIndices(pageIndex, total, settings).ifEmpty { listOf(0) }
-        val first = pages.first() + 1
-        val last = pages.last() + 1
-        return if (first == last) "$first" else "$first-$last"
-    }
+    fun pageRangeLabel(pageIndex: Int, pageCount: Int, settings: ReaderSettings): String =
+        ReaderSpreadMath.pageRangeLabel(pageIndex, pageCount, settings.isTwoPageSpreadEnabled())
 
-    fun sliderStepCount(pageCount: Int, settings: ReaderSettings): Int {
-        val total = pageCount.coerceAtLeast(1)
-        return if (settings.isTwoPageSpreadEnabled()) {
-            (total + 1) / 2
-        } else {
-            total
-        }
-    }
+    fun sliderStepCount(pageCount: Int, settings: ReaderSettings): Int =
+        ReaderSpreadMath.sliderStepCount(pageCount, settings.isTwoPageSpreadEnabled())
 
-    fun sliderPositionForPage(pageIndex: Int, pageCount: Int, settings: ReaderSettings): Int {
-        val normalized = normalizePageIndex(pageIndex, pageCount, settings)
-        val position = if (settings.isTwoPageSpreadEnabled()) {
-            (normalized / 2) + 1
-        } else {
-            normalized + 1
-        }
-        return position.coerceIn(1, sliderStepCount(pageCount, settings))
-    }
+    fun sliderPositionForPage(pageIndex: Int, pageCount: Int, settings: ReaderSettings): Int =
+        ReaderSpreadMath.sliderPositionForPage(pageIndex, pageCount, settings.isTwoPageSpreadEnabled())
 
-    fun pageNumberForSliderPosition(position: Int, pageCount: Int, settings: ReaderSettings): Int {
-        val clamped = position.coerceIn(1, sliderStepCount(pageCount, settings))
-        val pageIndex = if (settings.isTwoPageSpreadEnabled()) {
-            (clamped - 1) * 2
-        } else {
-            clamped - 1
-        }
-        return normalizePageIndex(pageIndex, pageCount, settings) + 1
-    }
+    fun pageNumberForSliderPosition(position: Int, pageCount: Int, settings: ReaderSettings): Int =
+        ReaderSpreadMath.pageNumberForSliderPosition(position, pageCount, settings.isTwoPageSpreadEnabled())
 }
 
 fun ReaderSettings.isTwoPageSpreadEnabled(): Boolean {
