@@ -859,11 +859,14 @@ internal fun DrawScope.drawInkRenderData(
 
 // Pen-icon head primitives.
 //
-// Public because Android's `PenIcons.kt` draws the same six shapes and used to keep
-// its own copy of each (parity item B8). The two copies had drifted: shared's nib slit
-// was 1.2f against Android's 2f, and shared's chisel highlighter was missing the
-// slanted top-face highlight entirely. Both are corrected to Android here, and Android
-// now calls these instead of duplicating them.
+// Public because Android's `PenIcons.kt` draws the same shapes and used to keep its own
+// copy of each (parity item B8). The two copies had genuinely drifted: shared's nib slit
+// was `strokeWidth = 1.2f` against Android's `2f`, which is visible -- DrawScope stroke
+// widths are in pixels, so iOS drew a ~1px slit and Android a 2px one. Shared is corrected
+// to Android here and Android now calls these instead of duplicating them.
+//
+// Note: the chisel "face" call below looked like a second visual drift but is not; see the
+// comment on it.
 //
 // These are not unit-testable in this stack: `Path` has no value equality and reports
 // empty bounds off-device, so path geometry cannot be asserted. Keeping one copy is the
@@ -1049,8 +1052,20 @@ fun DrawScope.drawHighlighterChiselParts(color: Color, collarRect: Rect, tipRect
         )
     )
 
-    // Slanted top face of the chisel. Android has always drawn this; shared was
-    // missing it, so iOS chisel highlighters had a flat cap. Parity item B8.
+    // Looks like a slanted top face for the chisel, but it encloses ZERO area on
+    // every platform: the quadratic's control point
+    // (centerX, tipRect.top + slantDrop * 0.5f) lies exactly on the chord joining
+    // the two endpoints, so the curve retraces the straight line and the closed
+    // path fills nothing.
+    //
+    // Verified on the iOS simulator by temporarily filling this with magenta: not a
+    // single magenta pixel is rasterised. Android has the same dead call, so the
+    // chisel cap looks identical on both and there was never an iOS/Android
+    // difference here — an earlier note in the parity doc claimed otherwise and was
+    // wrong.
+    //
+    // Kept verbatim from Android so the two remain a single source. It is safe to
+    // delete from both: rendering is provably unchanged.
     val facePath = Path().apply {
         moveTo(centerX - neckTopHalfWidth, tipRect.top)
         lineTo(centerX + neckTopHalfWidth, tipRect.top + slantDrop)
