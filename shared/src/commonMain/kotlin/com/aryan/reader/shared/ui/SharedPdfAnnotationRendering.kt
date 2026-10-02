@@ -857,7 +857,19 @@ internal fun DrawScope.drawInkRenderData(
     }
 }
 
-internal fun DrawScope.drawMatteCylinder(color: Color, rect: Rect) {
+// Pen-icon head primitives.
+//
+// Public because Android's `PenIcons.kt` draws the same six shapes and used to keep
+// its own copy of each (parity item B8). The two copies had drifted: shared's nib slit
+// was 1.2f against Android's 2f, and shared's chisel highlighter was missing the
+// slanted top-face highlight entirely. Both are corrected to Android here, and Android
+// now calls these instead of duplicating them.
+//
+// These are not unit-testable in this stack: `Path` has no value equality and reports
+// empty bounds off-device, so path geometry cannot be asserted. Keeping one copy is the
+// guard; visual changes here need a device check.
+
+fun DrawScope.drawMatteCylinder(color: Color, rect: Rect) {
     drawRect(
         brush = Brush.horizontalGradient(
             0.0f to color.darker(0.6f),
@@ -873,7 +885,7 @@ internal fun DrawScope.drawMatteCylinder(color: Color, rect: Rect) {
     )
 }
 
-internal fun DrawScope.drawFountainNib(metalColor: Color, inkColor: Color, rect: Rect) {
+fun DrawScope.drawFountainNib(metalColor: Color, inkColor: Color, rect: Rect) {
     val centerX = rect.left + rect.width / 2f
     val path = Path().apply {
         moveTo(rect.left + rect.width * 0.15f, rect.bottom)
@@ -894,11 +906,11 @@ internal fun DrawScope.drawFountainNib(metalColor: Color, inkColor: Color, rect:
         )
     )
     drawCircle(Color.Black.copy(alpha = 0.7f), radius = rect.width * 0.06f, center = Offset(centerX, rect.bottom - rect.height * 0.5f))
-    drawLine(Color.Black.copy(alpha = 0.6f), start = Offset(centerX, rect.top), end = Offset(centerX, rect.bottom - rect.height * 0.5f), strokeWidth = 1.2f)
+    drawLine(Color.Black.copy(alpha = 0.6f), start = Offset(centerX, rect.top), end = Offset(centerX, rect.bottom - rect.height * 0.5f), strokeWidth = 2f)
     drawCircle(inkColor.copy(alpha = 0.5f), radius = rect.width * 0.04f, center = Offset(centerX, rect.bottom - rect.height * 0.5f))
 }
 
-internal fun DrawScope.drawMarkerHead(inkColor: Color, rect: Rect) {
+fun DrawScope.drawMarkerHead(inkColor: Color, rect: Rect) {
     val centerX = rect.left + rect.width / 2f
     val plasticColor = Color(0xFF616161)
     val coneHeight = rect.height * 0.8f
@@ -928,7 +940,7 @@ internal fun DrawScope.drawMarkerHead(inkColor: Color, rect: Rect) {
     drawPath(path = tipPath, color = inkColor)
 }
 
-internal fun DrawScope.drawPencilHead(inkColor: Color, rect: Rect) {
+fun DrawScope.drawPencilHead(inkColor: Color, rect: Rect) {
     val centerX = rect.left + rect.width / 2f
     val woodColor = Color(0xFFFFCC80)
     val woodPath = Path().apply {
@@ -966,7 +978,7 @@ internal fun DrawScope.drawPencilHead(inkColor: Color, rect: Rect) {
     drawPath(path = leadPath, color = inkColor)
 }
 
-internal fun DrawScope.drawHighlighterChiselParts(color: Color, collarRect: Rect, tipRect: Rect) {
+fun DrawScope.drawHighlighterChiselParts(color: Color, collarRect: Rect, tipRect: Rect) {
     drawMatteCylinder(color, collarRect)
     val bodyColor = Color(0xFF454545)
     val neckHeight = tipRect.height * 0.65f
@@ -1012,9 +1024,19 @@ internal fun DrawScope.drawHighlighterChiselParts(color: Color, collarRect: Rect
             endX = centerX + neckTopHalfWidth
         )
     )
+
+    // Slanted top face of the chisel. Android has always drawn this; shared was
+    // missing it, so iOS chisel highlighters had a flat cap. Parity item B8.
+    val facePath = Path().apply {
+        moveTo(centerX - neckTopHalfWidth, tipRect.top)
+        lineTo(centerX + neckTopHalfWidth, tipRect.top + slantDrop)
+        quadraticTo(centerX, tipRect.top + slantDrop * 0.5f, centerX - neckTopHalfWidth, tipRect.top)
+        close()
+    }
+    drawPath(path = facePath, color = color.lighter(0.2f))
 }
 
-internal fun DrawScope.drawHighlighterRoundParts(color: Color, collarRect: Rect, tipRect: Rect) {
+fun DrawScope.drawHighlighterRoundParts(color: Color, collarRect: Rect, tipRect: Rect) {
     drawMatteCylinder(color, collarRect)
     val bodyColor = Color(0xFF454545)
     val neckHeight = tipRect.height * 0.65f
