@@ -38,6 +38,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.roundToIntRect
 import androidx.compose.ui.unit.IntRect
@@ -120,6 +121,18 @@ fun SharedDropdownMenu(
     // window bounds without affecting layout.
     var anchorBounds by remember { mutableStateOf(IntRect.Zero) }
     var menuSize by remember { mutableStateOf(IntSize.Zero) }
+    /**
+     * The popup window's own origin in screen coordinates.
+     *
+     * A `Popup` is its own window, and a *focusable* one on iOS is not flush with the screen: it
+     * begins below the status bar, so its origin is not (0, 0). Placement computed from the
+     * anchor's `boundsInWindow()` is therefore in screen coordinates and lands too low by exactly
+     * that inset — measured at 66pt inside a `ModalBottomSheet`, which put the audiobook player's
+     * overflow menu over the cover art instead of under its button. Subtracting the popup's own
+     * origin converts the offset into the popup's coordinate space. On Android the origin is
+     * (0, 0) and this is a no-op, so both platforms place from the same numbers.
+     */
+    var popupOrigin by remember { mutableStateOf(IntOffset.Zero) }
     val placement = sharedDropdownMenuPlacement(
         anchorBounds = anchorBounds,
         menuSize = menuSize,
@@ -150,7 +163,14 @@ fun SharedDropdownMenu(
         // (hardware back / escape) and would let those reach the surface behind.
         properties = SharedDropdownMenuPopupProperties,
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .onGloballyPositioned { coordinates ->
+                    val bounds = coordinates.boundsInWindow()
+                    popupOrigin = IntOffset(bounds.left.roundToInt(), bounds.top.roundToInt())
+                },
+        ) {
             // Scrim is a *sibling behind* the card, never its parent: a `clickable`
             // ancestor merges its descendants' semantics, which collapsed the entire
             // menu into one screen-sized accessibility node.
@@ -167,7 +187,10 @@ fun SharedDropdownMenu(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .offset {
-                        IntOffset(placement.offset.x, placement.offset.y)
+                        IntOffset(
+                            placement.offset.x - popupOrigin.x,
+                            placement.offset.y - popupOrigin.y,
+                        )
                     }
                     .heightIn(max = with(density) { maxMenuHeight.toDp() })
                     .width(IntrinsicSize.Max)
