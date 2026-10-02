@@ -51,12 +51,15 @@ import com.aryan.reader.shared.ui.SharedPdfInkPreviewCommand
 import com.aryan.reader.shared.ui.SharedPdfPenIconInkHeadroomFraction
 import com.aryan.reader.shared.ui.SharedPdfPenIconInkStartXFraction
 import com.aryan.reader.shared.ui.applySharedPdfInkPreview
+import com.aryan.reader.shared.ui.darker
+import com.aryan.reader.shared.ui.drawBrushHead
 import com.aryan.reader.shared.ui.drawFountainNib
 import com.aryan.reader.shared.ui.drawHighlighterChiselParts
 import com.aryan.reader.shared.ui.drawHighlighterRoundParts
 import com.aryan.reader.shared.ui.drawMarkerHead
 import com.aryan.reader.shared.ui.drawMatteCylinder
 import com.aryan.reader.shared.ui.drawPencilHead
+import com.aryan.reader.shared.ui.lighter
 import com.aryan.reader.shared.ui.sharedPdfInkPreviewCommands
 import android.graphics.Paint as NativePaint
 
@@ -156,23 +159,6 @@ fun PenIcon(
 }
 
 // Helpers
-private fun DrawScope.drawBrushHead(inkColor: Color, rect: Rect) {
-    val cx = rect.left + rect.width / 2
-    val brushPath = Path().apply {
-        moveTo(rect.left + rect.width * 0.15f, rect.bottom)
-        lineTo(rect.right - rect.width * 0.15f, rect.bottom)
-        quadraticTo(rect.right, rect.bottom - rect.height * 0.4f, cx, rect.top)
-        quadraticTo(rect.left, rect.bottom - rect.height * 0.4f, rect.left + rect.width * 0.15f, rect.bottom)
-        close()
-    }
-    val gradient = Brush.radialGradient(
-        colors = listOf(inkColor.lighter(0.4f), inkColor.darker(0.6f)),
-        center = Offset(cx, rect.top + rect.height * 0.3f),
-        radius = rect.height
-    )
-    drawPath(path = brushPath, brush = gradient)
-}
-
 /**
  * Ink-preview flourish commands for the Android tool-settings icon.
  * Highlighters reuse the shared metrics; pens draw the same full-size swirl
@@ -322,20 +308,4 @@ private fun DrawScope.drawInkSquiggle(
 
 enum class PenType {
     FOUNTAIN_PEN, PENCIL, MARKER, BRUSH, HIGHLIGHTER, HIGHLIGHTER_ROUND
-}
-
-fun Color.darker(factor: Float = 0.7f): Color {
-    return Color(
-        red = this.red * factor,
-        green = this.green * factor,
-        blue = this.blue * factor,
-        alpha = this.alpha
-    )
-}
-
-fun Color.lighter(factor: Float = 0.3f): Color {
-    val r = this.red + (1 - this.red) * factor
-    val g = this.green + (1 - this.green) * factor
-    val b = this.blue + (1 - this.blue) * factor
-    return Color(r, g, b, this.alpha)
 }

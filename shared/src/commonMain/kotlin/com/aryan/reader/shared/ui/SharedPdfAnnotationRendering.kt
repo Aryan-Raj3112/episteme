@@ -869,6 +869,30 @@ internal fun DrawScope.drawInkRenderData(
 // empty bounds off-device, so path geometry cannot be asserted. Keeping one copy is the
 // guard; visual changes here need a device check.
 
+/**
+ * Brush head, ported from Android's `PenIcons.kt` (parity item B8).
+ *
+ * There is no `PdfInkTool.BRUSH` — Android has no brush tool either, `PenType.BRUSH` is
+ * a debug-only preview variant (see `PenPlayground`). This primitive lives in shared so
+ * all seven head shapes are single-sourced and a future brush tool has somewhere to draw.
+ */
+fun DrawScope.drawBrushHead(inkColor: Color, rect: Rect) {
+    val centerX = rect.left + rect.width / 2
+    val brushPath = Path().apply {
+        moveTo(rect.left + rect.width * 0.15f, rect.bottom)
+        lineTo(rect.right - rect.width * 0.15f, rect.bottom)
+        quadraticTo(rect.right, rect.bottom - rect.height * 0.4f, centerX, rect.top)
+        quadraticTo(rect.left, rect.bottom - rect.height * 0.4f, rect.left + rect.width * 0.15f, rect.bottom)
+        close()
+    }
+    val gradient = Brush.radialGradient(
+        colors = listOf(inkColor.lighter(0.4f), inkColor.darker(0.6f)),
+        center = Offset(centerX, rect.top + rect.height * 0.3f),
+        radius = rect.height
+    )
+    drawPath(path = brushPath, brush = gradient)
+}
+
 fun DrawScope.drawMatteCylinder(color: Color, rect: Rect) {
     drawRect(
         brush = Brush.horizontalGradient(
@@ -1413,7 +1437,7 @@ internal fun PdfPageBounds.size(canvasSize: IntSize): Size {
     return Size((right - left) * canvasSize.width, (bottom - top) * canvasSize.height)
 }
 
-internal fun Color.darker(factor: Float = 0.7f): Color {
+fun Color.darker(factor: Float = 0.7f): Color {
     return Color(
         red = red * factor,
         green = green * factor,
@@ -1422,7 +1446,7 @@ internal fun Color.darker(factor: Float = 0.7f): Color {
     )
 }
 
-internal fun Color.lighter(factor: Float = 0.3f): Color {
+fun Color.lighter(factor: Float = 0.3f): Color {
     return Color(
         red = red + (1 - red) * factor,
         green = green + (1 - green) * factor,
