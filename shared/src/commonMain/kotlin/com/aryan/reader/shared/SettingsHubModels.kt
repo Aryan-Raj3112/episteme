@@ -61,7 +61,6 @@ enum class SharedSettingsDestination {
     PDF_APPEARANCE_DEFAULTS,
     PDF_READER_TOOLS,
     READER_TOOLBAR_DEFAULTS,
-    EPUB_TTS_REPLACEMENTS,
     GLOBAL_TTS_REPLACEMENTS
 }
 
@@ -80,8 +79,7 @@ fun SharedSettingsDestination.parentDestination(): SharedSettingsDestination? {
         SharedSettingsDestination.EPUB_FORMAT,
         SharedSettingsDestination.EPUB_THEME_TEXTURE,
         SharedSettingsDestination.EPUB_VISUAL_DEFAULTS,
-        SharedSettingsDestination.READER_TOOLBAR_DEFAULTS,
-        SharedSettingsDestination.EPUB_TTS_REPLACEMENTS -> SharedSettingsDestination.EPUB_TEXT
+        SharedSettingsDestination.READER_TOOLBAR_DEFAULTS -> SharedSettingsDestination.EPUB_TEXT
         SharedSettingsDestination.PDF_APPEARANCE_DEFAULTS,
         SharedSettingsDestination.PDF_READER_TOOLS -> SharedSettingsDestination.PDF_COMICS
         SharedSettingsDestination.GLOBAL_TTS_REPLACEMENTS -> SharedSettingsDestination.TTS_AI
@@ -170,7 +168,6 @@ enum class SharedSettingsAction {
     TEST_SPEECH_BUBBLE_DETECTION,
     EXPORT_LOGS,
     FPS_OVERLAY,
-    DEBUG_ACTIONS,
     HELP_FEEDBACK,
     SUPPORT,
     ABOUT
@@ -268,7 +265,7 @@ data class SharedSettingsHubModel(
             SharedSettingsDestination.EXTRA -> categoryPage(
                 destination = destination,
                 title = "Extra",
-                summary = "More-menu options, maintenance actions, diagnostics, and app info",
+                summary = "More-menu options, maintenance actions, and diagnostics",
                 items = extraItems()
             )
             SharedSettingsDestination.HELP_ABOUT -> categoryPage(
@@ -313,12 +310,6 @@ data class SharedSettingsHubModel(
                 summary = "Visible tools, bottom-bar actions, and reader overflow tools",
                 localOverrideNote = localOverrideItem()
             )
-            SharedSettingsDestination.EPUB_TTS_REPLACEMENTS -> detailPage(
-                destination = destination,
-                title = "Global TTS Replacements",
-                summary = "Words and phrases replaced only during speech playback",
-                localOverrideNote = localOverrideItem()
-            )
             SharedSettingsDestination.GLOBAL_TTS_REPLACEMENTS -> detailPage(
                 destination = destination,
                 title = "Global TTS Replacements",
@@ -351,7 +342,8 @@ data class SharedSettingsHubModel(
             SharedSettingsDestination.LIBRARY_SYNC_STORAGE,
             SharedSettingsDestination.SYNC_ACCOUNTS,
             SharedSettingsDestination.ACCOUNTS,
-            SharedSettingsDestination.EXTRA
+            SharedSettingsDestination.EXTRA,
+            SharedSettingsDestination.HELP_ABOUT
         ).flatMap { destination ->
             val page = page(destination)
             page.items
@@ -440,8 +432,14 @@ data class SharedSettingsHubModel(
             rootCategory(
                 destination = SharedSettingsDestination.EXTRA,
                 title = "Extra",
-                summary = "More-menu options, maintenance, diagnostics, and app info",
+                summary = "More-menu options, maintenance, and diagnostics",
                 itemCount = extraItems().size
+            ),
+            rootCategory(
+                destination = SharedSettingsDestination.HELP_ABOUT,
+                title = "Help & About",
+                summary = "Feedback, support, project information, and licenses",
+                itemCount = helpAndAboutItems().size
             )
         ).filter { it.itemCount > 0 }
     }
@@ -619,10 +617,7 @@ data class SharedSettingsHubModel(
             SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
             SharedSettingsAction.EXPORT_LOGS,
             SharedSettingsAction.FPS_OVERLAY,
-            SharedSettingsAction.DEVICE_MANAGEMENT,
-            SharedSettingsAction.HELP_FEEDBACK,
-            SharedSettingsAction.SUPPORT,
-            SharedSettingsAction.ABOUT
+            SharedSettingsAction.DEVICE_MANAGEMENT
         )
     }
 

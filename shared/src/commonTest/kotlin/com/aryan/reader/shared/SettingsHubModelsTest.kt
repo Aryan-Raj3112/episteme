@@ -22,7 +22,8 @@ class SettingsHubModelsTest {
                 SharedSettingsDestination.LIBRARY_SYNC_STORAGE,
                 SharedSettingsDestination.ACCOUNTS,
                 SharedSettingsDestination.SYNC_ACCOUNTS,
-                SharedSettingsDestination.EXTRA
+                SharedSettingsDestination.EXTRA,
+                SharedSettingsDestination.HELP_ABOUT
             ),
             model.rootCategories.map { it.destination }
         )

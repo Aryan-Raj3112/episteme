@@ -6679,8 +6679,7 @@ private fun ReaderIosApp(
                                     // DEBUG_ONLY per IosSettingsParity.kt: hidden unless debug Android,
                                     // so unreachable on iOS — no error toast.
                                     SharedSettingsAction.TEST_PANEL_DETECTION,
-                                    SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
-                                    SharedSettingsAction.DEBUG_ACTIONS -> Unit
+                                    SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION -> Unit
                                     SharedSettingsAction.EXPORT_LOGS -> {
                                         if (!bridge.exportDiagnosticLogs()) {
                                             showMessage("Unable to export diagnostic logs")

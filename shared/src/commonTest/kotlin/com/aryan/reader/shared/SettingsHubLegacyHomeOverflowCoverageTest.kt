@@ -46,17 +46,20 @@ class SettingsHubLegacyHomeOverflowCoverageTest {
     )
 
     @Test
-    fun `extra page lists every action the retired home overflow owned`() {
-        val extraActions = debugHub().page(SharedSettingsDestination.EXTRA)
-            .items
+    fun `every action the retired home overflow owned is still reachable`() {
+        // Deliberately not pinned to the Extra page: Help & About is now its own root category,
+        // so About lives there. What must hold is the original promise — none of these actions
+        // became unreachable when their row moved.
+        val reachable = debugHub().rootCategories
+            .flatMap { debugHub().page(it.destination).items }
             .mapNotNull { it.action }
             .toSet()
 
-        val missing = legacyHomeOverflowToSettingsAction.values.filterNot { it in extraActions }
+        val missing = legacyHomeOverflowToSettingsAction.values.filterNot { it in reachable }
         assertEquals(
             emptyList(),
             missing,
-            "Settings > Extra must still expose every retired Home overflow action",
+            "every retired Home overflow action must remain reachable somewhere in Settings",
         )
     }
 

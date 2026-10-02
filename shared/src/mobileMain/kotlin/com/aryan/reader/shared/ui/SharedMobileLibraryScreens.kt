@@ -792,12 +792,35 @@ fun SharedMobileUnifiedLibraryScreen(
             val containsFolderBooks = state.rawLibraryBooks.any {
                 it.id in selectedIds && it.sourceFolder != null
             }
+            val deleteCount = selectedIds.size
+            val deleteTitle = readerQuantityString(
+                "library_delete_selected_books",
+                deleteCount,
+                "Permanently delete %1\$d selected book?",
+                "Permanently delete %1\$d selected books?",
+                deleteCount,
+            )
+            val folderWarning = readerString(
+                "dialog_warning_folder_sync_delete",
+                "Warning: Some selected items are synced from a local folder. Proceeding will delete the actual files from your device storage.\n\nThis action cannot be undone.",
+            )
+            val notUndoable = readerString(
+                "library_delete_not_undoable",
+                "This action cannot be undone.",
+            )
             SharedMobileDeleteConfirmationDialog(
-                title = "Permanently delete ${selectedIds.size} selected book(s)?",
+                // Localized rather than interpolated, so the count is pluralized per locale
+                // instead of always reading "book(s)".
+                title = deleteTitle,
                 body = if (containsFolderBooks) {
-                    "Warning: Some selected items are synced from a local folder. Proceeding will delete the actual files from your device storage.\n\nThis action cannot be undone."
+                    folderWarning
                 } else {
-                    "Permanently delete ${selectedIds.size} selected book(s)? This action cannot be undone."
+                    readerString(
+                        "library_delete_body_with_count",
+                        "%1\$s %2\$s",
+                        deleteTitle,
+                        notUndoable,
+                    )
                 },
                 confirmLabel = readerString("action_delete", "Delete"),
                 emphasizeConfirm = containsFolderBooks,

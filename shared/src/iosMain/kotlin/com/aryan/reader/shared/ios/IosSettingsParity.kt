@@ -64,8 +64,7 @@ internal fun SharedSettingsAction.iosDisposition(): IosSettingsActionDisposition
     SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA -> IosSettingsActionDisposition.IMPLEMENTED_ON_IOS
 
     SharedSettingsAction.TEST_PANEL_DETECTION,
-    SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
-    SharedSettingsAction.DEBUG_ACTIONS -> IosSettingsActionDisposition.DEBUG_ONLY
+    SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION -> IosSettingsActionDisposition.DEBUG_ONLY
 
     SharedSettingsAction.FPS_OVERLAY -> IosSettingsActionDisposition.DEBUG_ONLY
 }
