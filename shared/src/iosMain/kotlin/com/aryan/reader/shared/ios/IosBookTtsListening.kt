@@ -8,6 +8,7 @@ package com.aryan.reader.shared.ios
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.aryan.reader.shared.BookItem
@@ -38,6 +39,11 @@ import com.aryan.reader.shared.pdfium.c.FPDFText_ClosePage
 import com.aryan.reader.shared.pdfium.c.FPDFText_CountChars
 import com.aryan.reader.shared.pdfium.c.FPDFText_GetText
 import com.aryan.reader.shared.pdfium.c.FPDFText_LoadPage
+import com.aryan.reader.shared.ReaderTtsProgress
+import com.aryan.reader.shared.SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK
+import com.aryan.reader.shared.SharedTtsListenSavedProgress
+import com.aryan.reader.shared.SharedTtsPlaybackSnapshot
+import com.aryan.reader.shared.toSharedBookTtsListenState
 import com.aryan.reader.shared.sharedTtsTranscriptWindow
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ObjCSignatureOverride
@@ -178,8 +184,19 @@ internal class IosBookTtsListeningController(
      */
     private val localEngine: com.aryan.reader.shared.ui.SharedMobileEpubLocalTts,
 ) {
-    var state by mutableStateOf(SharedBookTtsListenState())
-        private set
+    /**
+     * The audiobook Listen state, projected out of the shared engine.
+     *
+     * Android benchmark: `BookTtsAudiobookController.sharedPlaybackState` is
+     * `combine(playbackState, _uiState, _sleepTimerRemainingMs) { ... }.stateIn(...)` — a purely
+     * derived value that nothing ever assigns. This is the same shape in Compose terms: the
+     * engine owns the session, and everything Listen displays is computed from it here.
+     *
+     * Nothing below may assign `state`; a field that the engine reports comes from the engine,
+     * and a field only this coordinator knows (prepared content, saved rate/pitch, the sleep
+     * timer) is a projector input instead.
+     */
+    val state: SharedBookTtsListenState by derivedStateOf { projectListenState() }
 
     val progressByBook: MutableMap<String, SharedBookTtsListeningProgress> = mutableStateMapOf()
     val chapterTitlesByBook: MutableMap<String, List<String>> = mutableStateMapOf()
@@ -220,11 +237,23 @@ internal class IosBookTtsListeningController(
     private var currentBookId: String? = null
     private var currentBookTitle = ""
     private var currentBookAuthor: String? = null
+    // Projector inputs below: observable because `state` reads them. Each changes on a
+    // user action or a chapter boundary, never per word.
+    /** Chapter the current session is on; the projector's fallback when the engine has no chunk yet. */
+    private var currentChapterIndex by mutableStateOf(0)
+    /** Prepared chapter count, used before the engine reports `sessionTotalChapters`. */
+    private var chapterCount by mutableStateOf(0)
+    /** Rate/pitch are projected from the saved progress, but persist needs the live pair. */
+    private var sessionSpeechRate by mutableStateOf(1f)
+    private var sessionPitch by mutableStateOf(1f)
+    /** Prepared-content failure (unreadable book). The engine has no field for it. */
+    private var preparedError by mutableStateOf<String?>(null)
+    private var sessionFinished by mutableStateOf(false)
+    private var sessionEndedByStop by mutableStateOf(false)
+    private var sleepTimerRemainingMs by mutableStateOf(0L)
     private var remoteCommandsInstalled = false
     private var currentChunks: List<IosTtsListenChunk> = emptyList()
     private var currentChunkIndex = -1
-    private var currentChapterIndex = 0
-    private var chapterCount = 0
     private var speechBaseOffset = 0
     private var latestWordOffset = 0
     private var wantsPlayback = false
@@ -373,7 +402,7 @@ internal class IosBookTtsListeningController(
                 ?: run {
                     val message = lastContentError ?: "This book cannot be read with text-to-speech"
                     iosTtsListenLog("start() ABORTED bookId=$bookId error=$message")
-                    state = SharedBookTtsListenState(error = message)
+                    preparedError = message
                     return@launch
                 }
             contentCache[bookId] = content
@@ -403,14 +432,12 @@ internal class IosBookTtsListeningController(
                     "start() NO READABLE CHAPTER bookId=$bookId type=${book.type} " +
                         "chapters=$chapterCount emptyChapters=$emptyCount"
                 )
-                state = SharedBookTtsListenState(
-                    error = if (book.type == FileType.PDF) {
+                preparedError = if (book.type == FileType.PDF) {
                         "This PDF has no extractable text. Scanned documents need OCR before " +
-                            "text-to-speech can read them."
-                    } else {
-                        "This book contains no readable text"
-                    }
-                )
+                        "text-to-speech can read them."
+                } else {
+                    "This book contains no readable text"
+                }
                 return@launch
             }
             currentBookId = bookId
@@ -425,16 +452,12 @@ internal class IosBookTtsListeningController(
                 0
             }
             wantsPlayback = true
-            state = SharedBookTtsListenState(
-                connected = true,
-                bookId = bookId,
-                chapterIndex = readableChapter,
-                chapterCount = chapterCount,
-                chunkCount = currentChunks.size,
-                chapterTitle = content.chapters[readableChapter].title,
-                speechRate = (saved?.speechRate ?: 1f).coerceIn(0.5f, 3f),
-                pitch = (saved?.pitch ?: 1f).coerceIn(0.5f, 2f),
-            )
+            sessionSpeechRate = (saved?.speechRate ?: 1f).coerceIn(0.5f, 3f)
+            sessionPitch = (saved?.pitch ?: 1f).coerceIn(0.5f, 2f)
+            preparedError = null
+            sessionFinished = false
+            sessionEndedByStop = false
+            sleepTimerRemainingMs = 0L
             persistNow(progressFor(readableChapter, startChunk, completed = false))
             configureAudioSession(active = true)
             installBookTtsRemoteCommands()
@@ -460,8 +483,7 @@ internal class IosBookTtsListeningController(
         wantsPlayback = false
         generation += 1
         localEngine.pause()
-        state = state.copy(isPlaying = false, isLoading = false)
-        persistNow(progressFor(state.chapterIndex, currentChunkIndex.coerceAtLeast(0), completed = false))
+        persistNow(progressFor(currentChapterIndex, currentChunkIndex.coerceAtLeast(0), completed = false))
         updateBookTtsNowPlaying()
     }
 
@@ -482,15 +504,39 @@ internal class IosBookTtsListeningController(
         iosTtsListenLog("stop() bookId=$currentBookId chunk=$currentChunkIndex")
         sleepTimerJob?.cancel()
         sleepTimerJob = null
-        persistNow(progressFor(state.chapterIndex, currentChunkIndex.coerceAtLeast(0), completed = false))
+        persistNow(progressFor(currentChapterIndex, currentChunkIndex.coerceAtLeast(0), completed = false))
         generation += 1
         localEngine.stop()
         currentChunks = emptyList()
         currentChunkIndex = -1
         currentBookId = null
         wantsPlayback = false
-        state = SharedBookTtsListenState(sessionEndedByStop = true)
+        sessionEndedByStop = true
         deactivateAudioSession()
+        clearBookTtsNowPlaying()
+    }
+
+    /**
+     * Releases Listen's hold on the shared engine when another surface claims it.
+     *
+     * Android benchmark: `BookTtsSessionCoordinator` never stops TTS to hand off — the reader
+     * and audiobook Listen are the same engine there, so a reader session simply replaces the
+     * audiobook one. Now that iOS Listen drives the same engine, calling [stop] for a handoff
+     * would tear down the *new* session: the reader's start and Listen's teardown land on one
+     * engine, and whichever runs second wins. This drops Listen's own session only.
+     */
+    fun releaseForHandoff() {
+        if (!state.connected) return
+        iosTtsListenLog("releaseForHandoff bookId=$currentBookId chapter=$currentChapterIndex")
+        persistNow(progressFor(currentChapterIndex, currentChunkIndex.coerceAtLeast(0), completed = false))
+        currentChunks = emptyList()
+        currentChunkIndex = -1
+        currentBookId = null
+        wantsPlayback = false
+        sessionFinished = false
+        sessionEndedByStop = true
+        // The engine's audio session is deliberately left alone: the surface that just claimed
+        // it is using it, and Listen never owned it directly.
         clearBookTtsNowPlaying()
     }
 
@@ -557,11 +603,20 @@ internal class IosBookTtsListeningController(
     /** Word-level position within the current chunk, for word-accurate resume. */
     val currentSpokenOffset: Int get() = latestWordOffset
 
+    /**
+     * The engine tag for the current session.
+     *
+     * Listen drives the shared engine directly, so the voice-settings facade reports the real
+     * tag rather than a placeholder.
+     */
+    val enginePlaybackSource: String? get() = localEngine.playbackSource
+
     fun setParameters(rate: Float, pitch: Float) {
         val safeRate = rate.coerceIn(0.5f, 3f)
         val safePitch = pitch.coerceIn(0.5f, 2f)
-        state = state.copy(speechRate = safeRate, pitch = safePitch)
-        persistNow(progressFor(state.chapterIndex, state.chunkIndex.coerceAtLeast(0), completed = false))
+        sessionSpeechRate = safeRate
+        sessionPitch = safePitch
+        persistNow(progressFor(currentChapterIndex, currentChunkIndex.coerceAtLeast(0), completed = false))
         val chunk = currentChunks.getOrNull(currentChunkIndex) ?: return
         localEngine.setSpeechParameters(safeRate, safePitch)
         if ((state.isPlaying || state.isLoading) && currentChunkIndex >= 0) {
@@ -578,13 +633,13 @@ internal class IosBookTtsListeningController(
         sleepTimerJob = scope.launch {
             var remainingSeconds = minutes * 60
             while (remainingSeconds > 0) {
-                state = state.copy(sleepTimerRemainingMs = remainingSeconds * 1_000L)
+                sleepTimerRemainingMs = remainingSeconds * 1_000L
                 delay(1_000)
                 // Keep the timer anchored to actual speech, matching Android's
                 // shared contract. Pausing TTS must pause the countdown too.
                 remainingSeconds = advanceSharedSleepTimer(remainingSeconds, state.isPlaying)
             }
-            state = state.copy(sleepTimerRemainingMs = 0L)
+            sleepTimerRemainingMs = 0L
             sleepTimerJob = null
             stopForSleepTimer()
         }
@@ -593,7 +648,7 @@ internal class IosBookTtsListeningController(
     fun cancelSleepTimer() {
         sleepTimerJob?.cancel()
         sleepTimerJob = null
-        state = state.copy(sleepTimerRemainingMs = 0L)
+        sleepTimerRemainingMs = 0L
     }
 
     private fun moveByChunk(delta: Int) {
@@ -630,15 +685,7 @@ internal class IosBookTtsListeningController(
         currentChunks = chapter.chunks
         val safeChunk = chunkIndex.coerceIn(0, currentChunks.lastIndex)
         persistNow(progressFor(chapter.index, safeChunk, completed = false))
-        state = state.copy(
-            chapterIndex = chapter.index,
-            chapterCount = chapterCount,
-            chunkCount = currentChunks.size,
-            chapterTitle = chapter.title,
-            sessionFinished = false,
-            transcriptStartIndex = 0,
-            transcriptChunks = emptyList(),
-        )
+        sessionFinished = false
         wantsPlayback = true
         startEngineAt(safeChunk, playWhenReady = true)
     }
@@ -671,24 +718,13 @@ internal class IosBookTtsListeningController(
         }
         wantsPlayback = playWhenReady
         currentChunkIndex = safeChunk
-        state = state.copy(
-            chapterIndex = currentChapterIndex,
-            chapterCount = chapterCount,
-            chunkIndex = -1,
-            chunkCount = chunks.size,
-            chapterTitle = currentChapterTitle(),
-            isLoading = true,
-            isPlaying = false,
-            sessionFinished = false,
-            transcriptStartIndex = 0,
-            transcriptChunks = emptyList(),
-        )
+        sessionFinished = false
         iosTtsListenLog(
             "startEngineAt chapter=$currentChapterIndex chunk=$safeChunk of ${chunks.size} " +
                 "playWhenReady=$playWhenReady"
         )
         // Listen's own voice/rate choices, applied to the shared engine for this session.
-        localEngine.setSpeechParameters(state.speechRate, state.pitch)
+        localEngine.setSpeechParameters(sessionSpeechRate, sessionPitch)
         selectedVoiceIdentifier?.let { localEngine.setVoice(it) }
         localEngine.start(
             chunks = engineChunks,
@@ -696,7 +732,7 @@ internal class IosBookTtsListeningController(
             bookId = currentBookId,
             startChunkIndex = safeChunk,
             playWhenReady = playWhenReady,
-            playbackSource = com.aryan.reader.shared.SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK,
+            playbackSource = SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK,
             totalChapters = chapterCount,
         )
     }
@@ -707,48 +743,97 @@ internal class IosBookTtsListeningController(
     }
 
     /**
-     * Mirrors the shared engine's state into the Listen state.
+     * Builds the engine snapshot the shared projector consumes.
      *
-     * Replaces the controller's own `AVSpeechSynthesizerDelegate` callbacks: the engine now
-     * owns synthesis and chunk advance, so Listen observes instead of driving. Chapter end is
-     * still the controller's job (Android's coordinator does the same) and is detected from the
-     * engine reporting the chapter's chunk list exhausted.
+     * Mirrors Android's `TtsState.toSharedTtsPlaybackSnapshot()`: the adapter is a thin
+     * translation of whatever the engine exposes, with no Listen-specific interpretation.
+     * Chapter and transcript both come from the engine's active chunk, which is why Listen
+     * now has no transcript or chapter state of its own to keep in sync.
+     */
+    private fun engineSnapshot(): SharedTtsPlaybackSnapshot {
+        val engineProgress = localEngine.progress
+        val engineChunks = engineProgress.chunks
+        val engineChunkIndex = engineProgress.currentChunkIndex
+        val activeChunk = engineChunks.getOrNull(engineChunkIndex)
+        val window = sharedTtsTranscriptWindow(engineChunkIndex, engineChunks.size)
+        val engineState = localEngine.state
+        return SharedTtsPlaybackSnapshot(
+            playbackSource = localEngine.playbackSource,
+            bookId = localEngine.sessionBookId,
+            isPlaying = engineState == SharedMobileEpubLocalTtsState.SPEAKING,
+            // The engine has no PREPARING state; a live session with nothing spoken yet is loading.
+            isLoading = localEngine.isSessionActive &&
+                engineState == SharedMobileEpubLocalTtsState.IDLE,
+            chapterTitle = activeChunk?.chapterTitle?.takeIf(String::isNotBlank),
+            chapterIndex = activeChunk?.chapterIndex,
+            totalChapters = localEngine.sessionTotalChapters,
+            currentChunkIndex = engineChunkIndex,
+            totalChunks = engineChunks.size,
+            sessionFinished = sessionFinished,
+            sessionEndedByStop = sessionEndedByStop,
+            errorMessage = localEngine.errorMessage,
+            transcriptStartIndex = window.firstOrNull() ?: 0,
+            transcriptChunks = if (window.isEmpty()) {
+                emptyList()
+            } else {
+                window.map { engineChunks[it].text }
+            },
+        )
+    }
+
+    /**
+     * The single place the Listen state is built.
+     *
+     * Android benchmark: `BookTtsAudiobookController.sharedPlaybackState`. Engine session
+     * fields go through the shared projector so both platforms run the same mapping; the
+     * coordinator-only signals the engine has no field for are merged back in afterwards.
+     */
+    private fun projectListenState(): SharedBookTtsListenState {
+        val projected = engineSnapshot().toSharedBookTtsListenState(
+            progress = SharedTtsListenSavedProgress(
+                chapterIndex = currentChapterIndex,
+                speechRate = sessionSpeechRate,
+                pitch = sessionPitch,
+            ),
+            preparedChapterCount = chapterCount,
+            sleepTimerRemainingMs = sleepTimerRemainingMs,
+        )
+        return projected.copy(
+            error = preparedError ?: projected.error,
+            sessionFinished = sessionFinished || projected.sessionFinished,
+            sessionEndedByStop = sessionEndedByStop || projected.sessionEndedByStop,
+        )
+    }
+
+    /**
+     * Watches the shared engine for the two things only the coordinator can act on.
+     *
+     * What Listen *displays* no longer comes from here — that is projected out of the engine by
+     * [projectListenState]. What remains is the coordinator's own job, which Android's
+     * coordinator also keeps: noticing the end of a chapter to load the next one, and recording
+     * position for persistence.
+     *
+     * Replaces the controller's own `AVSpeechSynthesizerDelegate` callbacks. `snapshotFlow` is
+     * unavailable on this target's coroutines build, hence polling.
      */
     private fun observeSharedEngine() {
         scope.launch {
             var lastCompletionCount = localEngine.completionCount
             var lastChunkIndex = -1
             while (true) {
-                val observation = EngineObservation(
-                    state = localEngine.state,
-                    chunkIndex = localEngine.progress.currentChunkIndex,
-                    chunkCount = localEngine.progress.chunks.size,
-                    completionCount = localEngine.completionCount,
-                    spokenOffset = localEngine.currentSpokenOffset,
-                )
+                val engineChunkIndex = localEngine.progress.currentChunkIndex
+                val completionCount = localEngine.completionCount
                 if (currentBookId != null) {
-                    val chapterExhausted = observation.completionCount > lastCompletionCount
-                    lastCompletionCount = observation.completionCount
-                    val engineChunkIndex = observation.chunkIndex
-                    if (chapterExhausted) {
+                    if (completionCount > lastCompletionCount) {
+                        lastCompletionCount = completionCount
                         advancePastChapterEnd()
                     } else if (engineChunkIndex >= 0) {
                         currentChunkIndex = engineChunkIndex
-                        latestWordOffset = observation.spokenOffset
-                        val speaking = observation.state == SharedMobileEpubLocalTtsState.SPEAKING
+                        latestWordOffset = localEngine.currentSpokenOffset
                         if (engineChunkIndex != lastChunkIndex) {
                             lastChunkIndex = engineChunkIndex
-                            state = state.copy(
-                                chunkIndex = engineChunkIndex,
-                                chunkCount = observation.chunkCount,
-                                isLoading = false,
-                                isPlaying = speaking,
-                            )
-                            publishTranscript(engineChunkIndex)
                             schedulePersist(engineChunkIndex)
                             updateBookTtsNowPlaying()
-                        } else if (speaking != state.isPlaying) {
-                            state = state.copy(isLoading = false, isPlaying = speaking)
                         }
                     }
                 }
@@ -756,14 +841,6 @@ internal class IosBookTtsListeningController(
             }
         }
     }
-
-    private data class EngineObservation(
-        val state: SharedMobileEpubLocalTtsState,
-        val chunkIndex: Int,
-        val chunkCount: Int,
-        val completionCount: Long,
-        val spokenOffset: Int,
-    )
 
     private fun advancePastChapterEnd() {
         val bookId = currentBookId ?: return
@@ -774,14 +851,8 @@ internal class IosBookTtsListeningController(
             persistNow(progressFor(currentChapterIndex, currentChunks.lastIndex, completed = true))
             generation += 1
             localEngine.stop()
-            state = state.copy(
-                isLoading = false,
-                isPlaying = false,
-                sessionFinished = true,
-                connected = false,
-                bookId = null,
-                sleepTimerRemainingMs = 0L,
-            )
+            sessionFinished = true
+            sleepTimerRemainingMs = 0L
             sleepTimerJob?.cancel()
             sleepTimerJob = null
             deactivateAudioSession()
@@ -793,36 +864,16 @@ internal class IosBookTtsListeningController(
 
     private fun stopForSleepTimer() {
         iosTtsListenLog("stopForSleepTimer chapter=$currentChapterIndex chunk=$currentChunkIndex")
-        persistNow(progressFor(state.chapterIndex, state.chunkIndex.coerceAtLeast(0), completed = false))
+        persistNow(progressFor(currentChapterIndex, currentChunkIndex.coerceAtLeast(0), completed = false))
         generation += 1
         localEngine.stop()
         currentChunks = emptyList()
         currentChunkIndex = -1
         currentBookId = null
         wantsPlayback = false
-        state = SharedBookTtsListenState(sessionEndedByStop = true)
+        sessionEndedByStop = true
         deactivateAudioSession()
         clearBookTtsNowPlaying()
-    }
-
-    private fun chunkProgress(chunkIndex: Int): Float =
-        calculateSharedTtsAudiobookProgress(
-            chapterIndex = currentChapterIndex,
-            chapterCount = chapterCount,
-            chunkIndex = chunkIndex,
-            chunkCount = currentChunks.size,
-        )
-
-    private fun publishTranscript(chunkIndex: Int) {
-        val window = sharedTtsTranscriptWindow(chunkIndex, currentChunks.size)
-        if (window.isEmpty()) {
-            state = state.copy(transcriptStartIndex = 0, transcriptChunks = emptyList())
-            return
-        }
-        state = state.copy(
-            transcriptStartIndex = window.first,
-            transcriptChunks = window.map { currentChunks[it].text },
-        )
     }
 
     private fun schedulePersist(chunkIndex: Int) {
@@ -848,10 +899,10 @@ internal class IosBookTtsListeningController(
             chapterIndex = chapterIndex,
             chunkIndex = chunkIndex,
             sourceCfi = currentChunks.getOrNull(chunkIndex)?.sourceCfi,
-            sourceOffset = if (chunkIndex == state.chunkIndex) latestWordOffset else 0,
+            sourceOffset = if (chunkIndex == currentChunkIndex) latestWordOffset else 0,
             progressPercent = percent,
-            speechRate = state.speechRate,
-            pitch = state.pitch,
+            speechRate = sessionSpeechRate,
+            pitch = sessionPitch,
             completed = completed,
             updatedAt = currentTimestamp(),
         )

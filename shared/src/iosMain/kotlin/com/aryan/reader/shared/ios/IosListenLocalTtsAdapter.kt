@@ -57,7 +57,7 @@ internal class IosListenLocalTtsAdapter(
     override val errorMessage: String? get() = controller.state.error
     override val completionCount: Long
         get() = controller.progressByBook.values.count { it.completed }.toLong()
-    override val playbackSource: String? get() = null
+    override val playbackSource: String? get() = controller.enginePlaybackSource
     override val sessionBookId: String? get() = controller.state.bookId
     override val sessionTotalChapters: Int get() = controller.state.chapterCount
     override val currentSpokenOffset: Int get() = controller.currentSpokenOffset

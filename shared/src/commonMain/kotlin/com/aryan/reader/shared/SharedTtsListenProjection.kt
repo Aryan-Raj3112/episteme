@@ -93,3 +93,20 @@ fun SharedTtsPlaybackSnapshot.toSharedBookTtsListenState(
         transcriptChunks = transcriptChunks,
     )
 }
+
+/**
+ * Whether a live engine session belongs to the in-book reader rather than audiobook Listen.
+ *
+ * Both surfaces drive the same engine, so "a session is live" cannot tell them apart: without
+ * this, opening a book while Listen is speaking looks to the reader like its own session
+ * starting, which makes the reader tear the audiobook session down. The engine's surface tag is
+ * the only thing that distinguishes them.
+ *
+ * Android benchmark: the reader and Listen share `TtsPlaybackManager`, and `TtsState.playbackSource`
+ * is what separates a reader session from an `AUDIOBOOK_TTS` one.
+ *
+ * An untagged session counts as the reader's, preserving the reader's historical behaviour of
+ * owning any session it started itself.
+ */
+fun isReaderOwnedTtsSession(isSessionActive: Boolean, playbackSource: String?): Boolean =
+    isSessionActive && playbackSource != SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK

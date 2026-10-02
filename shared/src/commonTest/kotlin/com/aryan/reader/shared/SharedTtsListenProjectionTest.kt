@@ -101,3 +101,44 @@ class SharedTtsListenProjectionTest {
         assertEquals(0L, projected.sleepTimerRemainingMs)
     }
 }
+
+class SharedTtsSessionOwnershipTest {
+    @Test
+    fun audiobookSessionIsNotOwnedByReader() {
+        // The regression this guards: both surfaces drive one engine, so a live audiobook
+        // session used to look like the reader's own and got torn down on book open.
+        assertFalse(
+            isReaderOwnedTtsSession(
+                isSessionActive = true,
+                playbackSource = SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK,
+            ),
+        )
+    }
+
+    @Test
+    fun readerSessionIsOwnedByReader() {
+        assertTrue(
+            isReaderOwnedTtsSession(
+                isSessionActive = true,
+                playbackSource = SHARED_TTS_PLAYBACK_SOURCE_READER,
+            ),
+        )
+    }
+
+    @Test
+    fun untaggedLiveSessionStaysWithTheReader() {
+        // The reader's own sessions predate the surface tag; they must not lose ownership.
+        assertTrue(isReaderOwnedTtsSession(isSessionActive = true, playbackSource = null))
+    }
+
+    @Test
+    fun idleEngineIsOwnedByNeither() {
+        assertFalse(isReaderOwnedTtsSession(isSessionActive = false, playbackSource = null))
+        assertFalse(
+            isReaderOwnedTtsSession(
+                isSessionActive = false,
+                playbackSource = SHARED_TTS_PLAYBACK_SOURCE_READER,
+            ),
+        )
+    }
+}

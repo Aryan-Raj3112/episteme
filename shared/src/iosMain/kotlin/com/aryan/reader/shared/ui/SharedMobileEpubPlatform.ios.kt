@@ -561,9 +561,11 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     private var activeUtteranceBaseOffset = 0
     // Session identity, so a surface sharing this engine can tell its own session
     // apart from another surface's. Android benchmark: `TtsState.playbackSource`.
-    private var activePlaybackSource: String? = null
-    private var activeBookId: String? = null
-    private var activeTotalChapters: Int = 0
+    // Observable because audiobook Listen projects its whole UI state out of these:
+    // if they were plain, a projection reading them would go stale.
+    private var activePlaybackSource by mutableStateOf<String?>(null)
+    private var activeBookId by mutableStateOf<String?>(null)
+    private var activeTotalChapters by mutableStateOf(0)
     private var wantsPlayback = true
     private var audioSessionActive = false
     private var audioSessionGeneration = 0

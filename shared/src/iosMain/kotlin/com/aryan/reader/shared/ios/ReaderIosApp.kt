@@ -6158,7 +6158,9 @@ private fun ReaderIosApp(
                                 // competing playback when its session activates.
                                 if (it != null) {
                                     audiobookPlayer.stop()
-                                    ttsListenController.stop()
+                                    // The reader and Listen share one local engine, so a reader
+                                    // session replacing Listen's must not stop the engine.
+                                    ttsListenController.releaseForHandoff()
                                 }
                             },
                             readerBrightness = readerBrightness,

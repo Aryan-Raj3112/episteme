@@ -72,6 +72,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.isReaderOwnedTtsSession
 import com.aryan.reader.shared.Tag
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.ReaderLocator
@@ -334,15 +335,23 @@ fun SharedMobileEpubReaderScreen(
     // Report app-level mini-bar state (iOS global bar; Android uses its own
     // host). While composed, mirror the live session; on dispose the host
     // keeps the last snapshot so the bar survives navigation.
+    // A session tagged for audiobook Listen belongs to that surface, not this reader: both
+    // drive the same engine instance, so "a session is live" alone would make opening a book
+    // during Listen playback look like the reader starting to speak. Android distinguishes the
+    // two with `TtsState.playbackSource`; the same tag gates this.
+    val ownsTtsSession = isReaderOwnedTtsSession(
+        isSessionActive = localTts.isSessionActive,
+        playbackSource = localTts.playbackSource,
+    )
     LaunchedEffect(
-        localTts.isSessionActive,
+        ownsTtsSession,
         localTts.state,
         localTts.progress.currentChunkIndex,
         localTts.progress.chunks.size,
         loadedBook?.id,
         book.id
     ) {
-        if (localTts.isSessionActive) {
+        if (ownsTtsSession) {
             val progress = localTts.progress
             val chunk = progress.currentChunk
             onReaderTtsSessionChange(
