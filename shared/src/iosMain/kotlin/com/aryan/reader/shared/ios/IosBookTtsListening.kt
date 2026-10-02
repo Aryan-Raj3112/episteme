@@ -41,6 +41,7 @@ import com.aryan.reader.shared.pdfium.c.FPDFText_GetText
 import com.aryan.reader.shared.pdfium.c.FPDFText_LoadPage
 import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK
+import com.aryan.reader.shared.SharedTtsEngine
 import com.aryan.reader.shared.SharedTtsListenSavedProgress
 import com.aryan.reader.shared.SharedTtsPlaybackSnapshot
 import com.aryan.reader.shared.toSharedBookTtsListenState
@@ -652,6 +653,20 @@ internal class IosBookTtsListeningController(
      * tag rather than a placeholder.
      */
     val enginePlaybackSource: String? get() = localEngine.playbackSource
+
+    /**
+     * Engine currently holding Listen's session, or null when it has none.
+     *
+     * Read by [IosListeningArbiter] to decide whether a competing surface must *stop* Listen or
+     * merely *release* it: the two are only equivalent when both surfaces share an engine, and
+     * getting that backwards is what previously made a winner stop itself.
+     */
+    val sessionEngine: SharedTtsEngine?
+        get() = when {
+            currentBookId == null -> null
+            sessionIsCloud -> SharedTtsEngine.CLOUD
+            else -> SharedTtsEngine.LOCAL
+        }
 
     /** The host's backing store for Listen's engine choice, kept beside the other Listen keys. */
     val listenTtsDefaults: NSUserDefaults get() = listenDefaults

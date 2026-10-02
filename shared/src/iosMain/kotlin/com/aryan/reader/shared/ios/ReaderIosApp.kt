@@ -171,6 +171,10 @@ import com.aryan.reader.shared.resolveReaderTtsOverlaySize
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderTtsEngineOverride
+import com.aryan.reader.shared.SharedListeningArbiter
+import com.aryan.reader.shared.SharedListeningSurface
+import com.aryan.reader.shared.SharedTtsEngine
+import com.aryan.reader.shared.sharedListeningSurfaceForTag
 import com.aryan.reader.shared.SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK
 import com.aryan.reader.shared.isCloudTtsModelEnabled
 import com.aryan.reader.shared.readerAiModelById
@@ -3426,19 +3430,31 @@ private fun ReaderIosApp(
     }
 
     DisposableEffect(ttsListenController) { onDispose(ttsListenController::release) }
+    // Single arbiter for every "one surface claimed the audio output" decision. Callers below
+    // state intent and never name an engine to stop; the decision itself is
+    // `sharedListeningYield`, which cannot express stopping a surface's own new session.
+    val listeningArbiter = remember(ttsListenController, audiobookPlayer, readerTtsEngine, readerCloudTts) {
+        SharedListeningArbiter(
+            listenEngine = { ttsListenController.sessionEngine },
+            stopAudiobook = { audiobookPlayer.stop() },
+            stopListen = { ttsListenController.stop() },
+            releaseListen = { ttsListenController.releaseForHandoff() },
+            stopReaderLocal = { readerTtsEngine.stop() },
+            stopReaderCloud = { readerCloudTts.stop() },
+        )
+    }
     // Android parity (sharedListeningHandoff): cloud read-aloud wins the audio output — stop
-    // competing playback when it starts producing audio.
-    //
-    // Skipped for audiobook Listen's *own* cloud session: Listen drives this same engine, so
-    // without the ownership check a Listen cloud session stopped itself the instant it began
-    // (cloud worked in the reader, and silently did nothing in Listen). The tag is set inside
-    // `start()` before any audio plays, so it is reliable by the time `isPlaying` flips.
-    val cloudTtsSessionOwnedByListen =
-        readerCloudTts.playbackSource == SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK
-    LaunchedEffect(readerCloudTts.state.isPlaying, cloudTtsSessionOwnedByListen) {
-        if (readerCloudTts.state.isPlaying && !cloudTtsSessionOwnedByListen) {
-            audiobookPlayer.stop()
-            ttsListenController.stop()
+    // competing playback when it starts producing audio. The arbiter skips Listen when Listen's
+    // own cloud session is what started playing, which is the case that used to cancel itself.
+    LaunchedEffect(readerCloudTts.state.isPlaying, readerCloudTts.playbackSource) {
+        if (readerCloudTts.state.isPlaying) {
+            // The owner comes from the engine's surface tag, not from "the cloud engine is
+            // playing": Listen drives this same engine, so a Listen cloud session would otherwise
+            // look like a handoff and release itself.
+            listeningArbiter.onTtsSessionActivated(
+                owner = sharedListeningSurfaceForTag(readerCloudTts.playbackSource),
+                engine = SharedTtsEngine.CLOUD,
+            )
         }
     }
     val audiobookPlaybackSnapshot = bridge.audiobookPlaybackSnapshot
@@ -5948,7 +5964,7 @@ private fun ReaderIosApp(
                     books = state.rawLibraryBooks,
                     onBookSelected = { book ->
                         showIosTtsBookPicker = false
-                        audiobookPlayer.stop()
+                        listeningArbiter.onListenSessionStarting()
                         ttsListenController.start(
                             book = book,
                             policy = SharedTtsListenStartPolicy.RESUME,
@@ -6217,14 +6233,15 @@ private fun ReaderIosApp(
                             externalLocalTts = readerTtsEngine,
                             onReaderTtsSessionChange = {
                                 readerTtsMiniBarState = it
-                                // Android parity (sharedListeningHandoff): reader
-                                // read-aloud wins the audio output — stop any
-                                // competing playback when its session activates.
+                                // Android parity (sharedListeningHandoff): reader read-aloud
+                                // wins the audio output. Releasing Listen rather than stopping
+                                // it matters: they share the local engine, so stopping would
+                                // silence the session that just started.
                                 if (it != null) {
-                                    audiobookPlayer.stop()
-                                    // The reader and Listen share one local engine, so a reader
-                                    // session replacing Listen's must not stop the engine.
-                                    ttsListenController.releaseForHandoff()
+                                    listeningArbiter.onTtsSessionActivated(
+                                        owner = SharedListeningSurface.READER_TTS,
+                                        engine = SharedTtsEngine.LOCAL,
+                                    )
                                 }
                             },
                             readerBrightness = readerBrightness,
@@ -7768,9 +7785,7 @@ private fun ReaderIosApp(
                                 audiobooks = state.audiobooks,
                                 audiobookPlayback = audiobookPlaybackSnapshot,
                                 onPlayAudiobook = { audiobook ->
-                                    ttsListenController.stop()
-                                    readerTtsEngine.stop()
-                                    readerCloudTts.stop()
+                                    listeningArbiter.onAudiobookStarting()
                                     audiobookPlayer.connect(
                                         SharedAudiobookPlaybackRequest(
                                             bookId = audiobook.bookId,
@@ -7787,9 +7802,7 @@ private fun ReaderIosApp(
                                     )
                                 },
                                 onToggleAudiobookPlayback = {
-                                    readerTtsEngine.stop()
-                                    readerCloudTts.stop()
-                                    ttsListenController.stop()
+                                    listeningArbiter.onAudiobookStarting()
                                     audiobookPlayer.togglePlayPause()
                                 },
                                 onSeekAudiobook = audiobookPlayer::seekTo,
@@ -7812,9 +7825,7 @@ private fun ReaderIosApp(
                                             "type=${book.type} policy=$policy chapterIndex=$chapterIndex " +
                                             "path=${book.path ?: "<null>"}"
                                     )
-                                    audiobookPlayer.stop()
-                                    readerTtsEngine.stop()
-                                    readerCloudTts.stop()
+                                    listeningArbiter.onListenSessionStarting()
                                     ttsListenController.start(
                                         book,
                                         policy,
