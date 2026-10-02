@@ -345,7 +345,26 @@ interface SharedMobileEpubCloudTts {
         // the fresh-session default). Defaulted so existing call sites keep
         // compiling; readers pass true when chaining.
         continueSession: Boolean = false,
+        // Which surface owns this session, mirroring
+        // [SharedMobileEpubLocalTts.start]. The reader leaves it null; audiobook Listen passes
+        // [SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK]. Without it a cloud session started by Listen is
+        // indistinguishable from the reader's, which breaks both the Listen projection and the
+        // ownership check that keeps one surface from tearing down the other's session.
+        playbackSource: String? = null,
+        // Total chapters in the book, when the caller knows it. Listen needs this for whole-book
+        // progress; the reader's page-based sessions leave it 0.
+        totalChapters: Int = 0,
     )
+
+    /**
+     * Which surface owns the session, or null when idle. Android benchmark:
+     * `TtsPlaybackManager.TtsState.playbackSource`.
+     */
+    val playbackSource: String?
+    /** Book the current session is reading, or null when idle. */
+    val sessionBookId: String?
+    /** Chapter count for the current session; 0 when the caller did not supply one. */
+    val sessionTotalChapters: Int
 
     fun pause()
     fun resume()

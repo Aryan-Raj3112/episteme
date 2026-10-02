@@ -116,6 +116,12 @@ internal const val IOS_TTS_LISTEN_TAG = "ReaderBookTtsIOS"
  */
 private const val IOS_LISTEN_TTS_VOICE_OVERRIDE_KEY = "reader.bookTtsListening.voiceOverride"
 private const val IOS_READER_TTS_VOICE_KEY = "reader.tts.voiceIdentifier"
+/**
+ * Listen's Cloud/Device engine choice. Absent means "follow the reader", which is why presence is
+ * what matters, not the value. Android benchmark: `LISTEN_TTS_MODE_KEY` in `reader_prefs`.
+ */
+const val IOS_LISTEN_TTS_ENGINE_MODE_KEY: String = "reader.bookTtsListening.engineMode"
+
 private const val ENGINE_OBSERVATION_INTERVAL_MS = 120L
 
 private const val IOS_LISTEN_TTS_FAVORITES_KEY = "reader.bookTtsListening.favoriteVoices"
@@ -183,6 +189,31 @@ internal class IosBookTtsListeningController(
      * synthesis to [localEngine].
      */
     private val localEngine: com.aryan.reader.shared.ui.SharedMobileEpubLocalTts,
+    /**
+     * The app's cloud engine, the same instance the in-book reader drives.
+     *
+     * Android has one TTS engine that branches on a mode parameter
+     * (`startBookListeningChapter` -> `handleStartTts(ttsMode = ...)`); iOS has two engine
+     * objects, so Listen picks which one to drive. Null means this build serves no cloud speech,
+     * and every session falls back to the device engine.
+     */
+    private val cloudTts: com.aryan.reader.shared.ui.SharedMobileEpubCloudTts? = null,
+    /**
+     * Cloud voice id for a Listen session, from the shared cloud settings.
+     *
+     * Listen's own [selectedVoiceIdentifier] is a *device* voice: Android keeps the same split
+     * (`loadListenNativeVoice` for native, a cloud speaker for cloud). In cloud mode the shared
+     * voice sheet owns the choice, so the controller applies whatever it last saw rather than
+     * overriding it.
+     */
+    initialCloudVoiceIdentifier: String? = null,
+    /**
+     * Whether Listen speaks with cloud speech, already resolved from the tri-state rule in
+     * [com.aryan.reader.shared.ReaderTtsEngineOverride] by the host (which owns the store).
+     */
+    initialCloudModeEnabled: Boolean = false,
+    /** Persists a Listen engine-mode change. The host owns the backing store. */
+    private val onCloudModeChanged: (Boolean) -> Unit = {},
 ) {
     /**
      * The audiobook Listen state, projected out of the shared engine.
@@ -251,6 +282,14 @@ internal class IosBookTtsListeningController(
     private var sessionFinished by mutableStateOf(false)
     private var sessionEndedByStop by mutableStateOf(false)
     private var sleepTimerRemainingMs by mutableStateOf(0L)
+    /** Engine for *new* sessions. A running session keeps the engine it started on. */
+    var cloudModeEnabled by mutableStateOf(initialCloudModeEnabled)
+        private set
+    /** Cloud voice last seen from the shared settings; applied at session start. */
+    var cloudVoiceIdentifier by mutableStateOf(initialCloudVoiceIdentifier)
+        private set
+    /** Whether the *running* session is cloud. Set at start, cleared at stop. */
+    private var sessionIsCloud = false
     private var remoteCommandsInstalled = false
     private var currentChunks: List<IosTtsListenChunk> = emptyList()
     private var currentChunkIndex = -1
@@ -446,6 +485,7 @@ internal class IosBookTtsListeningController(
             chapterCount = content.chapters.size
             currentChapterIndex = readableChapter
             currentChunks = content.chapters[readableChapter].chunks
+            chunksWereStartedForThisChapter = false
             val startChunk = if (policy == SharedTtsListenStartPolicy.RESUME && readableChapter == savedChapter) {
                 (saved?.chunkIndex ?: 0).coerceIn(0, currentChunks.lastIndex)
             } else {
@@ -482,7 +522,7 @@ internal class IosBookTtsListeningController(
         iosTtsListenLog("pause() chunk=$currentChunkIndex")
         wantsPlayback = false
         generation += 1
-        localEngine.pause()
+        enginePause()
         persistNow(progressFor(currentChapterIndex, currentChunkIndex.coerceAtLeast(0), completed = false))
         updateBookTtsNowPlaying()
     }
@@ -506,7 +546,7 @@ internal class IosBookTtsListeningController(
         sleepTimerJob = null
         persistNow(progressFor(currentChapterIndex, currentChunkIndex.coerceAtLeast(0), completed = false))
         generation += 1
-        localEngine.stop()
+        engineStop()
         currentChunks = emptyList()
         currentChunkIndex = -1
         currentBookId = null
@@ -611,6 +651,31 @@ internal class IosBookTtsListeningController(
      */
     val enginePlaybackSource: String? get() = localEngine.playbackSource
 
+    /** The host's backing store for Listen's engine choice, kept beside the other Listen keys. */
+    val listenTtsDefaults: NSUserDefaults get() = listenDefaults
+
+    /**
+     * Pins Listen to cloud or device speech.
+     *
+     * Android benchmark: `saveListenTtsMode`. Any explicit pick makes Listen stop following the
+     * reader's engine, which is why the host stores the choice rather than the resolved value.
+     */
+    fun setCloudModeEnabled(enabled: Boolean) {
+        val resolved = enabled && cloudTts != null
+        if (cloudModeEnabled == resolved) return
+        cloudModeEnabled = resolved
+        onCloudModeChanged(resolved)
+        iosTtsListenLog("setCloudModeEnabled cloud=$resolved")
+    }
+
+    /** Tracks the cloud voice chosen in the shared settings sheet. */
+    fun setCloudVoiceIdentifier(identifier: String?) {
+        cloudVoiceIdentifier = identifier
+    }
+
+    /** True when this build can serve cloud speech for Listen. */
+    val isCloudAvailable: Boolean get() = cloudTts != null
+
     fun setParameters(rate: Float, pitch: Float) {
         val safeRate = rate.coerceIn(0.5f, 3f)
         val safePitch = pitch.coerceIn(0.5f, 2f)
@@ -618,7 +683,8 @@ internal class IosBookTtsListeningController(
         sessionPitch = safePitch
         persistNow(progressFor(currentChapterIndex, currentChunkIndex.coerceAtLeast(0), completed = false))
         val chunk = currentChunks.getOrNull(currentChunkIndex) ?: return
-        localEngine.setSpeechParameters(safeRate, safePitch)
+        // Only the device engine has rate/pitch: cloud synthesis takes them server-side.
+        if (!sessionEngineIsCloud) localEngine.setSpeechParameters(safeRate, safePitch)
         if ((state.isPlaying || state.isLoading) && currentChunkIndex >= 0) {
             startEngineAt(currentChunkIndex, playWhenReady = true)
         }
@@ -683,6 +749,7 @@ internal class IosBookTtsListeningController(
         iosTtsListenLog("playChapterInternal chapter=${chapter.index} title=${chapter.title}")
         currentChapterIndex = chapter.index
         currentChunks = chapter.chunks
+        chunksWereStartedForThisChapter = false
         val safeChunk = chunkIndex.coerceIn(0, currentChunks.lastIndex)
         persistNow(progressFor(chapter.index, safeChunk, completed = false))
         sessionFinished = false
@@ -719,6 +786,31 @@ internal class IosBookTtsListeningController(
         wantsPlayback = playWhenReady
         currentChunkIndex = safeChunk
         sessionFinished = false
+        // Chaining into a later chapter keeps one USD session spend alive; a fresh start opens a
+        // new one. Android benchmark: `startBookListeningChapter(continueSession = ...)` fed from
+        // the chapter-advance path.
+        val continueSession = chunksWereStartedForThisChapter
+        chunksWereStartedForThisChapter = true
+        val cloud = cloudTts
+        if (cloudModeEnabled && cloud != null) {
+            sessionIsCloud = true
+            iosTtsListenLog(
+                "startEngineAt CLOUD chapter=$currentChapterIndex chunk=$safeChunk of ${chunks.size} " +
+                    "playWhenReady=$playWhenReady continueSession=$continueSession"
+            )
+            cloud.start(
+                chunks = engineChunks,
+                bookTitle = currentBookTitle,
+                bookId = currentBookId,
+                startChunkIndex = safeChunk,
+                playWhenReady = playWhenReady,
+                continueSession = continueSession,
+                playbackSource = SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK,
+                totalChapters = chapterCount,
+            )
+            return
+        }
+        sessionIsCloud = false
         iosTtsListenLog(
             "startEngineAt chapter=$currentChapterIndex chunk=$safeChunk of ${chunks.size} " +
                 "playWhenReady=$playWhenReady"
@@ -737,6 +829,14 @@ internal class IosBookTtsListeningController(
         )
     }
 
+    /**
+     * Whether this chapter has already handed a session to an engine.
+     *
+     * Reset when a new chapter begins so only the advance *within* a chapter and the chain *into
+     * the next* chapter keep the spend open — a fresh Listen start must open a new one.
+     */
+    private var chunksWereStartedForThisChapter = false
+
     private fun currentChapterTitle(): String? {
         val content = currentBookId?.let { contentCache[it] } ?: return null
         return content.chapters.getOrNull(currentChapterIndex)?.title
@@ -750,28 +850,85 @@ internal class IosBookTtsListeningController(
      * Chapter and transcript both come from the engine's active chunk, which is why Listen
      * now has no transcript or chapter state of its own to keep in sync.
      */
+    private val sessionEngineIsCloud: Boolean get() = sessionIsCloud && cloudTts != null
+
+    /**
+     * Progress for the running session.
+     *
+     * Both engines expose the same [ReaderTtsProgress], which is what makes the projection
+     * engine-agnostic: the Listen state is built from this regardless of which engine speaks.
+     */
+    private fun engineProgress(): ReaderTtsProgress =
+        if (sessionEngineIsCloud) cloudTts!!.state.progress else localEngine.progress
+
+    private fun engineCompletionCount(): Long =
+        if (sessionEngineIsCloud) cloudTts!!.state.completionCount else localEngine.completionCount
+
+    private fun engineIsPlaying(): Boolean = if (sessionEngineIsCloud) {
+        cloudTts!!.state.isPlaying
+    } else {
+        localEngine.state == SharedMobileEpubLocalTtsState.SPEAKING
+    }
+
+    /**
+     * The engine has no PREPARING state, so "a live session with nothing spoken yet" is loading.
+     * Cloud reports its own flag, which covers waiting on the network.
+     */
+    private fun engineIsLoading(): Boolean = if (sessionEngineIsCloud) {
+        cloudTts!!.state.isLoading
+    } else {
+        localEngine.isSessionActive && localEngine.state == SharedMobileEpubLocalTtsState.IDLE
+    }
+
+    private fun engineErrorMessage(): String? =
+        if (sessionEngineIsCloud) cloudTts!!.state.errorMessage else localEngine.errorMessage
+
+    private fun enginePlaybackSource(): String? =
+        if (sessionEngineIsCloud) cloudTts!!.playbackSource else localEngine.playbackSource
+
+    private fun engineSessionBookId(): String? =
+        if (sessionEngineIsCloud) cloudTts!!.sessionBookId else localEngine.sessionBookId
+
+    private fun engineTotalChapters(): Int =
+        if (sessionEngineIsCloud) cloudTts!!.sessionTotalChapters else localEngine.sessionTotalChapters
+
+    /** Word offset is a device-engine detail; cloud has no equivalent. */
+    private fun engineSpokenOffset(): Int =
+        if (sessionEngineIsCloud) 0 else localEngine.currentSpokenOffset
+
+    /** Transport, dispatched to whichever engine owns the session. */
+    private fun enginePause() = if (sessionEngineIsCloud) cloudTts!!.pause() else localEngine.pause()
+
+    /**
+     * Stops the running session's engine.
+     *
+     * Only ever called for a session Listen owns; a handoff uses [releaseForHandoff], which must
+     * not touch the engine the next surface just claimed.
+     */
+    private fun engineStop() {
+        if (sessionEngineIsCloud) cloudTts!!.stop() else localEngine.stop()
+        sessionIsCloud = false
+    }
+
     private fun engineSnapshot(): SharedTtsPlaybackSnapshot {
-        val engineProgress = localEngine.progress
+        val engineProgress = engineProgress()
         val engineChunks = engineProgress.chunks
         val engineChunkIndex = engineProgress.currentChunkIndex
         val activeChunk = engineChunks.getOrNull(engineChunkIndex)
         val window = sharedTtsTranscriptWindow(engineChunkIndex, engineChunks.size)
-        val engineState = localEngine.state
         return SharedTtsPlaybackSnapshot(
-            playbackSource = localEngine.playbackSource,
-            bookId = localEngine.sessionBookId,
-            isPlaying = engineState == SharedMobileEpubLocalTtsState.SPEAKING,
-            // The engine has no PREPARING state; a live session with nothing spoken yet is loading.
-            isLoading = localEngine.isSessionActive &&
-                engineState == SharedMobileEpubLocalTtsState.IDLE,
+            playbackSource = enginePlaybackSource(),
+            bookId = engineSessionBookId(),
+            isPlaying = engineIsPlaying(),
+            isLoading = engineIsLoading(),
             chapterTitle = activeChunk?.chapterTitle?.takeIf(String::isNotBlank),
             chapterIndex = activeChunk?.chapterIndex,
-            totalChapters = localEngine.sessionTotalChapters,
+            totalChapters = engineTotalChapters(),
             currentChunkIndex = engineChunkIndex,
             totalChunks = engineChunks.size,
             sessionFinished = sessionFinished,
             sessionEndedByStop = sessionEndedByStop,
-            errorMessage = localEngine.errorMessage,
+            errorMessage = engineErrorMessage(),
             transcriptStartIndex = window.firstOrNull() ?: 0,
             transcriptChunks = if (window.isEmpty()) {
                 emptyList()
@@ -821,15 +978,15 @@ internal class IosBookTtsListeningController(
             var lastCompletionCount = localEngine.completionCount
             var lastChunkIndex = -1
             while (true) {
-                val engineChunkIndex = localEngine.progress.currentChunkIndex
-                val completionCount = localEngine.completionCount
+                val engineChunkIndex = engineProgress().currentChunkIndex
+                val completionCount = engineCompletionCount()
                 if (currentBookId != null) {
                     if (completionCount > lastCompletionCount) {
                         lastCompletionCount = completionCount
                         advancePastChapterEnd()
                     } else if (engineChunkIndex >= 0) {
                         currentChunkIndex = engineChunkIndex
-                        latestWordOffset = localEngine.currentSpokenOffset
+                        latestWordOffset = engineSpokenOffset()
                         if (engineChunkIndex != lastChunkIndex) {
                             lastChunkIndex = engineChunkIndex
                             schedulePersist(engineChunkIndex)
@@ -850,7 +1007,7 @@ internal class IosBookTtsListeningController(
             iosTtsListenLog("BOOK COMPLETED bookId=$bookId")
             persistNow(progressFor(currentChapterIndex, currentChunks.lastIndex, completed = true))
             generation += 1
-            localEngine.stop()
+            engineStop()
             sessionFinished = true
             sleepTimerRemainingMs = 0L
             sleepTimerJob?.cancel()

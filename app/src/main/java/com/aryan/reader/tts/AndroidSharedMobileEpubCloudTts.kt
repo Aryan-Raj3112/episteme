@@ -113,6 +113,8 @@ internal class AndroidSharedMobileEpubCloudTts(
         startChunkIndex: Int,
         playWhenReady: Boolean,
         continueSession: Boolean,
+        playbackSource: String?,
+        totalChapters: Int,
     ) {
         if (chunks.isEmpty()) return
         activeBookTitle = bookTitle
@@ -130,11 +132,19 @@ internal class AndroidSharedMobileEpubCloudTts(
                 startChunkIndex = startChunkIndex,
                 continueSession = continueSession,
                 ttsMode = TtsPlaybackManager.TtsMode.CLOUD,
-                playbackSource = PLAYBACK_SOURCE_READER,
+                // Null means the in-book reader, matching the shared local engine.
+                playbackSource = playbackSource ?: PLAYBACK_SOURCE_READER,
+                totalChapters = totalChapters,
                 authToken = token
             )
         }
     }
+
+    // Read back from the shared manager, which owns the real session identity. Android benchmark:
+    // `TtsState.playbackSource`.
+    override val playbackSource: String? get() = ttsState.playbackSource
+    override val sessionBookId: String? get() = ttsState.bookId
+    override val sessionTotalChapters: Int get() = ttsState.totalChapters ?: 0
 
     override fun pause() {
         extraState = extraState.copy(isPaused = true)

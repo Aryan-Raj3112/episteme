@@ -170,6 +170,8 @@ import com.aryan.reader.shared.ReaderTtsOverlaySize
 import com.aryan.reader.shared.resolveReaderTtsOverlaySize
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiFeature
+import com.aryan.reader.shared.ReaderTtsEngineOverride
+import com.aryan.reader.shared.SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK
 import com.aryan.reader.shared.isCloudTtsModelEnabled
 import com.aryan.reader.shared.readerAiModelById
 import com.aryan.reader.shared.hasSpendableBalance
@@ -3393,7 +3395,35 @@ private fun ReaderIosApp(
     // One shared engine for both the in-book reader and audiobook Listen, exactly as
     // Android's BookTtsSessionCoordinator shares the reader's TtsPlaybackManager.
     val readerTtsEngine = rememberSharedMobileEpubLocalTts()
-    val ttsListenController = remember { IosBookTtsListeningController(localEngine = readerTtsEngine) }
+    val ttsListenController = remember {
+        IosBookTtsListeningController(
+            localEngine = readerTtsEngine,
+            cloudTts = if (IosFeatureGating.SHOW_CLOUD_TTS) readerCloudTts else null,
+            initialCloudVoiceIdentifier = effectiveReaderAiSettings.ttsSpeakerId,
+            // Tri-state: absent key follows the reader, any stored pick is pinned.
+            // Android benchmark: `loadListenTtsMode`.
+            initialCloudModeEnabled = ReaderTtsEngineOverride.resolveEngineMode(
+                isOverrideStored = NSUserDefaults.standardUserDefaults
+                    .objectForKey(IOS_LISTEN_TTS_ENGINE_MODE_KEY) != null,
+                storedOverride = NSUserDefaults.standardUserDefaults
+                    .stringForKey(IOS_LISTEN_TTS_ENGINE_MODE_KEY),
+                readerCloudModeEnabled = isCloudTtsModelEnabled(effectiveReaderAiSettings.ttsModel),
+                cloudAvailable = IosFeatureGating.SHOW_CLOUD_TTS,
+            ) == ReaderTtsEngineOverride.CLOUD,
+            onCloudModeChanged = { cloudEnabled ->
+                NSUserDefaults.standardUserDefaults.setObject(
+                    ReaderTtsEngineOverride.encodeEngineMode(cloudEnabled),
+                    forKey = IOS_LISTEN_TTS_ENGINE_MODE_KEY,
+                )
+            },
+        )
+    }
+    // The shared cloud sheet owns the cloud voice; the controller applies it to each new session
+    // rather than overriding it, matching Android's split between a native Listen voice and the
+    // shared cloud speaker.
+    LaunchedEffect(effectiveReaderAiSettings.ttsSpeakerId) {
+        ttsListenController.setCloudVoiceIdentifier(effectiveReaderAiSettings.ttsSpeakerId)
+    }
 
     DisposableEffect(ttsListenController) { onDispose(ttsListenController::release) }
     // Android parity (sharedListeningHandoff): cloud read-aloud wins the audio
@@ -5873,6 +5903,33 @@ private fun ReaderIosApp(
                 SharedMobileReaderTtsSettingsSheet(
                     tts = listenTtsAdapter,
                     onDismiss = { showListenTtsVoiceSettings = false },
+                    // Android benchmark (`AudiobooksUi`): the audiobook player sheet's TTS voice
+                    // settings opens the same voice settings as the reader, so Listen gets the
+                    // engine switcher and the Cloud tabs it never had. Null still yields the
+                    // device-only branch, matching Android when the build serves no cloud TTS.
+                    cloudTts = if (IosFeatureGating.SHOW_CLOUD_TTS) readerCloudTts else null,
+                    // Listen's pinned mode, not the reader's: they can differ.
+                    cloudTtsModeEnabled = ttsListenController.cloudModeEnabled,
+                    onCloudTtsModeChange = ttsListenController::setCloudModeEnabled,
+                    cloudTtsVoiceId = effectiveReaderAiSettings.ttsSpeakerId,
+                    onCloudTtsVoiceChange = ::updateCloudTtsVoice,
+                    onClearCloudTtsCache = readerCloudTts::clearCache,
+                    fishVoices = iosReaderFishVoices,
+                    expectFishVoices = iosExpectFishVoices,
+                    fishVoicesLoading = iosReaderFishVoicesLoading,
+                    favoriteCloudVoiceIds = iosFavoriteCloudVoices,
+                    onToggleFavoriteCloudVoice = { referenceId ->
+                        iosFavoriteCloudVoices =
+                            toggleSharedMobileTtsVoiceFavorite(iosFavoriteCloudVoices, referenceId).also {
+                                iosSaveTtsFavoriteVoices(it)
+                            }
+                    },
+                    cloudVoiceLanguage = iosCloudVoiceLanguage,
+                    onCloudVoiceLanguageChange = { language ->
+                        iosCloudVoiceLanguage = language
+                        iosSaveFishLanguageFilter(language)
+                    },
+                    onClearCloudVoiceSamples = readerCloudTts::clearVoiceSamples,
                     // Streams into the same device log as the Listen controller so the TTS
                     // settings can be diagnosed with a single tag. `ttsSettings.` prefixed
                     // lines come from the shared panels.

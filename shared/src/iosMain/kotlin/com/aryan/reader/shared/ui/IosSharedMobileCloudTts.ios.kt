@@ -141,7 +141,13 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     private var workerUrl = ""
     private var chunks: List<ReaderTtsChunk> = emptyList()
     private var bookTitle = ""
-    private var bookId: String? = null
+    // Observable because audiobook Listen projects its whole UI state out of these, and reads
+    // them through a `SharedTtsPlaybackSnapshot`. `currentChunkIndex` is deliberately a plain
+    // var: it changes on the order of once per sentence, and progress (which is observable)
+    // already drives recomposition.
+    private var activePlaybackSource by mutableStateOf<String?>(null)
+    private var bookId by mutableStateOf<String?>(null)
+    private var activeTotalChapters by mutableStateOf(0)
     private var currentChunkIndex = -1
     private var sessionId = 0L
     private var wantsPlayback = true
@@ -222,6 +228,8 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         startChunkIndex: Int,
         playWhenReady: Boolean,
         continueSession: Boolean,
+        playbackSource: String?,
+        totalChapters: Int,
     ) {
         val readable = chunks.filter { it.spokenText.isNotBlank() }
         if (readable.isEmpty()) {
@@ -244,6 +252,8 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         this.chunks = readable
         this.bookTitle = bookTitle
         this.bookId = bookId
+        this.activePlaybackSource = playbackSource
+        this.activeTotalChapters = totalChapters
         this.currentChunkIndex = startChunkIndex.coerceIn(0, readable.lastIndex)
         this.sessionId += 1
         this.wantsPlayback = playWhenReady
@@ -279,6 +289,10 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         )
         playJob = scope.launch { playChunks(requestedSession) }
     }
+
+    override val playbackSource: String? get() = activePlaybackSource
+    override val sessionBookId: String? get() = bookId
+    override val sessionTotalChapters: Int get() = activeTotalChapters
 
     override fun pause() {
         if (!hasActiveSession()) return
@@ -668,6 +682,11 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         chunks = emptyList()
         currentChunkIndex = -1
         wantsPlayback = false
+        // Clearing the surface tag is what lets another surface claim this engine next, and is
+        // what makes the Listen projection report disconnected. Android clears `playbackSource`
+        // in the same place.
+        activePlaybackSource = null
+        activeTotalChapters = 0
         if (clearError) state = state.copy(errorMessage = null)
         state = state.copy(
             isPlaying = false,
