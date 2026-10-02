@@ -24,9 +24,12 @@ data class ReaderImageReference(
     val intrinsicHeight: Float?,
     val locator: ReaderLocator
 ) {
+    /** Resolved first, then the author's `src`; shared has a single source, so both are it. */
+    private val identity = ReaderImageSourceIdentity(resolved = source, declared = source)
+
     val displayTitle: String
         get() = altText?.trim()?.takeIf { it.isNotBlank() }
-            ?: sourceName()?.substringBeforeLast('.')?.takeIf { it.isNotBlank() }
+            ?: identity.sourceName()?.substringBeforeLast('.')?.takeIf { it.isNotBlank() }
             ?: "Image ${index + 1}"
 
     val dimensionLabel: String?
@@ -36,30 +39,16 @@ data class ReaderImageReference(
             return if (width != null && height != null) "${width}x$height" else null
         }
 
-    fun sourceName(): String? {
-        if (source.startsWith("data:", ignoreCase = true)) return null
-        return source
-            .substringBefore('#')
-            .substringBefore('?')
-            .replace('\\', '/')
-            .substringAfterLast('/')
-            .takeIf { it.isNotBlank() }
-    }
-    fun suggestedDownloadFileName(): String {
-        val extension = source.readerImageExtension()
-        val sourceName = sourceName()
-        val base = altText?.trim()?.takeIf { it.isNotBlank() }
-            ?: sourceName?.substringBeforeLast('.')?.takeIf { it.isNotBlank() }
-            ?: "image-${index + 1}"
-        val safeBase = base.sanitizedReaderImageFileBase().ifBlank { "image-${index + 1}" }
-        val safeExtension = extension?.takeIf { it.isNotBlank() } ?: "png"
-        return "$safeBase.$safeExtension"
-    }
+    fun sourceName(): String? = identity.sourceName()
+
+    fun mimeType(): String = identity.mimeType()
+
+    fun suggestedDownloadFileName(): String = identity.suggestedDownloadFileName(altText, index)
 
     @OptIn(ExperimentalEncodingApi::class)
     fun downloadBytes(): ByteArray? {
         resolveSharedEpubResourceBytes(source)?.let { return it }
-        if (!source.startsWith("data:", ignoreCase = true)) return null
+        if (!identity.isInlineDataUri) return null
         val comma = source.indexOf(',')
         if (comma <= 5) return null
         val metadata = source.substring(5, comma)
@@ -236,45 +225,6 @@ private fun SemanticImage.sameReaderImageAs(other: SemanticImage): Boolean {
     if (thisElementId != null && otherElementId != null) return thisElementId == otherElementId
 
     return blockIndex == other.blockIndex && path == other.path
-}
-
-private fun String.readerImageExtension(): String? {
-    parseSharedEpubResourceUrl(this)?.let { reference ->
-        return reference.entryPath
-            .substringBefore('#')
-            .substringBefore('?')
-            .substringAfterLast('.', "")
-            .lowercase()
-            .takeIf { it in setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "avif") }
-    }
-    val dataMime = Regex("""^data:([^;,]+)""", RegexOption.IGNORE_CASE)
-        .find(this)
-        ?.groupValues
-        ?.getOrNull(1)
-        ?.lowercase()
-    val extensionFromMime = when (dataMime) {
-        "image/jpeg" -> "jpg"
-        "image/png" -> "png"
-        "image/gif" -> "gif"
-        "image/webp" -> "webp"
-        "image/bmp" -> "bmp"
-        "image/svg+xml" -> "svg"
-        else -> null
-    }
-    if (extensionFromMime != null) return extensionFromMime
-    return substringBefore('#')
-        .substringBefore('?')
-        .substringAfterLast('.', "")
-        .lowercase()
-        .takeIf { it in setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "svg") }
-}
-
-private fun String.sanitizedReaderImageFileBase(): String {
-    return replace(Regex("""[\\/:*?"<>|]+"""), "_")
-        .replace(Regex("""\s+"""), " ")
-        .trim()
-        .trim('.')
-        .take(80)
 }
 
 /**
