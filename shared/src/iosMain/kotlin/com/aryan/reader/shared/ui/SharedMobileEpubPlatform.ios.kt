@@ -697,6 +697,10 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         restartCurrentUtterance()
     }
 
+    override fun stopVoicePreview() {
+        previewSynthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+    }
+
     override fun previewVoice(identifier: String?) {
         previewSynthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         val utterance = AVSpeechUtterance(

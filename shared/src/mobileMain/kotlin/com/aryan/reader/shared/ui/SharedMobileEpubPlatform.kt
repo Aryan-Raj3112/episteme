@@ -303,6 +303,15 @@ interface SharedMobileEpubLocalTts {
     fun toggleFavoriteVoice(identifier: String)
     fun setVoice(identifier: String?)
     fun previewVoice(identifier: String?)
+    /**
+     * Stops a voice preview without touching playback.
+     *
+     * The voice settings sheet calls this when it leaves composition, so a sample cannot keep
+     * talking after the sheet closes. Distinct from [stop], which ends the reading session — that
+     * is why this is its own operation rather than reusing `stop`. Defaulted to a no-op for
+     * platforms whose preview already stops with the session.
+     */
+    fun stopVoicePreview() = Unit
     fun stop()
     fun release() = Unit
 }

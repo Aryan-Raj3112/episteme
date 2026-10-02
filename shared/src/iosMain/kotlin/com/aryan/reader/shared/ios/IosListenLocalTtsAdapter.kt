@@ -98,6 +98,16 @@ internal class IosListenLocalTtsAdapter(
     override fun setVoice(identifier: String?) = controller.setVoice(identifier)
     override fun previewVoice(identifier: String?) = controller.previewVoice(identifier)
 
-    /** Stops only the preview utterance; playback is the controller's business. */
-    override fun stop() = controller.stopVoicePreview()
+    /**
+     * Stops only the voice preview. The settings sheet calls this when it leaves composition,
+     * so a sample cannot keep talking over the book after the sheet closes. Playback is the
+     * controller's business, so it is deliberately untouched.
+     */
+    override fun stopVoicePreview() = controller.stopVoicePreview()
+
+    /** Stops playback. The preview is stopped with it. */
+    override fun stop() {
+        controller.stopVoicePreview()
+        controller.stop()
+    }
 }

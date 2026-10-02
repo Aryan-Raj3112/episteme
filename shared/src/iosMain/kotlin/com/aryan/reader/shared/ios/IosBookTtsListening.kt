@@ -364,6 +364,7 @@ internal class IosBookTtsListeningController(
 
     /** Speaks [identifier] (or the selected voice when null) without touching playback. */
     fun previewVoice(identifier: String? = selectedVoiceIdentifier) {
+        iosTtsListenLog("previewVoice voice=${identifier ?: "<system>"}")
         previewSynthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         val utterance = AVSpeechUtterance(string = previewSampleText).apply {
             rate = (0.5f * state.speechRate).coerceIn(0.1f, 1f)
@@ -637,6 +638,7 @@ internal class IosBookTtsListeningController(
 
     /** Stops only the voice-preview utterance, leaving book playback untouched. */
     fun stopVoicePreview() {
+        iosTtsListenLog("stopVoicePreview isSpeaking=${previewSynthesizer.isSpeaking()}")
         previewSynthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
     }
 

@@ -3426,10 +3426,17 @@ private fun ReaderIosApp(
     }
 
     DisposableEffect(ttsListenController) { onDispose(ttsListenController::release) }
-    // Android parity (sharedListeningHandoff): cloud read-aloud wins the audio
-    // output — stop competing playback when it starts producing audio.
-    LaunchedEffect(readerCloudTts.state.isPlaying) {
-        if (readerCloudTts.state.isPlaying) {
+    // Android parity (sharedListeningHandoff): cloud read-aloud wins the audio output — stop
+    // competing playback when it starts producing audio.
+    //
+    // Skipped for audiobook Listen's *own* cloud session: Listen drives this same engine, so
+    // without the ownership check a Listen cloud session stopped itself the instant it began
+    // (cloud worked in the reader, and silently did nothing in Listen). The tag is set inside
+    // `start()` before any audio plays, so it is reliable by the time `isPlaying` flips.
+    val cloudTtsSessionOwnedByListen =
+        readerCloudTts.playbackSource == SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK
+    LaunchedEffect(readerCloudTts.state.isPlaying, cloudTtsSessionOwnedByListen) {
+        if (readerCloudTts.state.isPlaying && !cloudTtsSessionOwnedByListen) {
             audiobookPlayer.stop()
             ttsListenController.stop()
         }

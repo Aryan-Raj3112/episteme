@@ -99,6 +99,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -1915,6 +1916,13 @@ internal fun SharedMobileReaderTtsSettingsSheet(
     onClearCloudVoiceSamples: () -> Unit = {},
     trace: SharedTtsSettingsTrace = {},
 ) {
+    // A voice sample must not keep talking once the sheet is gone. Keyed on the engine instance
+    // so a preview stops on close, on dismiss, and on navigation away — otherwise the sample
+    // outlives the UI that started it. Deliberately `stopVoicePreview()` and not `stop()`:
+    // playback is a separate concern that closing this sheet must not end.
+    DisposableEffect(tts) {
+        onDispose { tts.stopVoicePreview() }
+    }
     // Android benchmark (TtsSettingsSheet): the engine pill drives the tab —
     // Cloud AI opens Cloud Voices, Device Native opens Device Voices.
     var selectedTtsTab by remember(cloudTtsModeEnabled) {
