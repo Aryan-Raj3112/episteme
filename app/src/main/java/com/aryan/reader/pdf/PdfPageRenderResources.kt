@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import com.aryan.reader.shared.pdf.PdfPagePoint
+import com.aryan.reader.shared.pdf.SharedPdfInkRenderer
 import com.aryan.reader.shared.pdf.buildPdfInkCubicSegments
 import com.aryan.reader.shared.pdf.canPoolPdfBitmap
 import androidx.core.graphics.createBitmap
@@ -24,10 +25,6 @@ import com.aryan.reader.pdf.data.PdfAnnotation
 import timber.log.Timber
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.IdentityHashMap
-import kotlin.math.PI
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.sin
 import kotlin.math.sqrt
 import android.graphics.Color as AndroidColor
 
@@ -59,86 +56,30 @@ internal fun planPdfHighResTileUpdate(
 /** Drawn tiles are independent of the render pause: cached sharp tiles stay visible while panning. */
 internal fun shouldDrawPdfHighResTiles(needsTiling: Boolean): Boolean = needsTiling
 
+/**
+ * Fountain-pen outline geometry now lives in shared, so the PDF reader derives the
+ * same stroke edges on every platform. Android keeps this object purely because its
+ * [PdfPoint] stroke model is not shared's [PdfPagePoint] — that mapping is the only
+ * Android-specific part left.
+ */
 object PdfInkGeometry {
     fun calculateFountainPenPoints(
         points: List<PdfPoint>, baseWidth: Float, pageWidth: Float, pageHeight: Float
     ): Pair<List<Offset>, List<Offset>> {
-        if (points.size < 2) return Pair(emptyList(), emptyList())
-
-        if (points.size % 50 == 0) {
+        // Kept from the pre-lift implementation for stroke-shape debugging. The
+        // per-point verbose dump it used to interleave is gone: that loop now lives
+        // in shared.
+        if (points.size >= 2 && points.size % 50 == 0) {
             Timber.tag("FountainPenDebug").d(
                 "Calculate Points: PWidth=$pageWidth, PHeight=$pageHeight, BaseW=$baseWidth, Pts=${points.size}"
             )
         }
-
-        val leftSide = mutableListOf<Offset>()
-        val rightSide = mutableListOf<Offset>()
-
-        val computedWidths = FloatArray(points.size)
-        computedWidths[0] = baseWidth
-
-        val velocityFactor = 300f
-
-        for (i in 1 until points.size) {
-            val p1 = points[i - 1]
-            val p2 = points[i]
-
-            val dxNorm = p2.x - p1.x
-            val dyNorm = p2.y - p1.y
-            val aspect = if (pageWidth > 0 && pageHeight > 0) pageHeight / pageWidth else 1f
-            val distNorm = sqrt(dxNorm * dxNorm + (dyNorm * aspect) * (dyNorm * aspect))
-
-            val timeDelta = (p2.timestamp - p1.timestamp).coerceAtLeast(1)
-            val velocityNorm = distNorm / timeDelta
-
-            val targetWidth = (baseWidth * (1f / (1f + velocityNorm * velocityFactor))).coerceIn(
-                baseWidth * 0.2f, baseWidth * 1.4f
-            )
-
-            computedWidths[i] = computedWidths[i - 1] * 0.6f + targetWidth * 0.4f
-
-            if (i < 5) {
-                Timber.tag("FountainPenDebug").v(
-                    "Pt[$i]: dt=$timeDelta, velNorm=$velocityNorm, width=${computedWidths[i]} (base=$baseWidth)"
-                )
-            }
-        }
-
-        for (i in 0 until points.size - 1) {
-            val pCurrent = points[i]
-            val pNext = points[i + 1]
-
-            val curX = pCurrent.x * pageWidth
-            val curY = pCurrent.y * pageHeight
-            val nextX = pNext.x * pageWidth
-            val nextY = pNext.y * pageHeight
-
-            val angle = atan2(nextY - curY, nextX - curX)
-            val normalAngle = angle - (PI / 2f).toFloat()
-
-            val w = computedWidths[i] / 2f
-
-            leftSide.add(Offset((curX + cos(normalAngle) * w), (curY + sin(normalAngle) * w)))
-            rightSide.add(Offset((curX - cos(normalAngle) * w), (curY - sin(normalAngle) * w)))
-        }
-
-        val lastIdx = points.lastIndex
-        val lastP = points[lastIdx]
-        val prevP = points[lastIdx - 1]
-
-        val lastX = lastP.x * pageWidth
-        val lastY = lastP.y * pageHeight
-        val prevX = prevP.x * pageWidth
-        val prevY = prevP.y * pageHeight
-
-        val lastAngle = atan2(lastY - prevY, lastX - prevX)
-        val lastNormal = lastAngle - (PI / 2f).toFloat()
-        val lastW = computedWidths[lastIdx] / 2f
-
-        leftSide.add(Offset((lastX + cos(lastNormal) * lastW), (lastY + sin(lastNormal) * lastW)))
-        rightSide.add(Offset((lastX - cos(lastNormal) * lastW), (lastY - sin(lastNormal) * lastW)))
-
-        return Pair(leftSide, rightSide)
+        return SharedPdfInkRenderer.calculateFountainPenEdges(
+            points = points.map { PdfPagePoint(it.x, it.y, it.timestamp) },
+            baseWidthPx = baseWidth,
+            pageWidthPx = pageWidth,
+            pageHeightPx = pageHeight
+        )
     }
 }
 
