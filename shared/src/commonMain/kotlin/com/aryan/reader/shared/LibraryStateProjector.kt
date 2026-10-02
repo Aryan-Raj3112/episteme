@@ -363,10 +363,14 @@ internal fun BookItem.sharedLibraryIdentity(): String =
         ?.let { "path:$it" }
         ?: "id:$id"
 
-fun applyLibraryFilters(books: List<BookItem>, filters: LibraryFilters): List<BookItem> {
+fun applyLibraryFilters(
+    books: List<BookItem>,
+    filters: LibraryFilters,
+    folderAliases: Map<String, String> = emptyMap(),
+): List<BookItem> {
     return books.filter { book ->
         val matchType = filters.fileTypes.isEmpty() || book.type in filters.fileTypes
-        val matchFolder = book.matchesSourceFolders(filters.sourceFolders)
+        val matchFolder = book.matchesSourceFolders(filters.sourceFolders, folderAliases)
         val progress = book.progressPercentage ?: 0f
         val matchStatus = when (filters.readStatus) {
             ReadStatusFilter.ALL -> true

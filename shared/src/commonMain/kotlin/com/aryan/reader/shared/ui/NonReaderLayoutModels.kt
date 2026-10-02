@@ -85,36 +85,52 @@ internal fun mobileLibraryBooksState(
 }
 
 /**
- * Native iOS folder scans identify books by bookmark name, while the folder
- * configuration retains a stable URI-like identifier. Accept legacy URI
- * selections and normalize them to the identity stored on iOS books.
+ * Canonical folder-filter identity for a synced folder.
+ *
+ * Android is the benchmark: its `SharedMobileLibraryFilterDialog` stores
+ * `folder.uriString`, and Android books carry that same string in
+ * `BookItem.sourceFolder`. So `uriString` is what gets written.
+ *
+ * The alias exists because iOS native folder scans record a book's
+ * `sourceFolder` as the folder *name*, so a selection written by one platform
+ * must still match books produced by the other. Rather than keep two dialogs
+ * with two storage models, matching accepts either spelling (see
+ * `LibraryFilters.matchesFolderSelection`) and legacy name-based selections
+ * are normalized on the way in.
  */
-internal fun LibraryFilters.withIosFolderFilterIdentities(
+internal fun SyncedFolder.filterAliases(): Set<String> =
+    setOf(uriString, name)
+
+/**
+ * Folder-filter selections, with legacy name-based entries rewritten to the
+ * canonical `uriString` so a stored selection survives a platform change.
+ */
+internal fun LibraryFilters.withCanonicalFolderFilterIdentities(
     folders: List<SyncedFolder>,
 ): LibraryFilters {
     if (sourceFolders.isEmpty()) return this
-    val namesByUri = folders.associate { it.uriString to it.name }
-    return copy(sourceFolders = sourceFolders.mapTo(linkedSetOf()) { namesByUri[it] ?: it })
+    val uriByName = folders.associate { it.name to it.uriString }
+    return copy(sourceFolders = sourceFolders.mapTo(linkedSetOf()) { uriByName[it] ?: it })
 }
 
-internal fun LibraryFilters.toggleIosFolderFilter(
+/** Selects [folder] if absent, deselects it if already selected under either spelling. */
+internal fun LibraryFilters.toggleFolderFilter(
     folder: SyncedFolder,
 ): LibraryFilters {
-    val aliases = setOf(folder.uriString, folder.name)
+    val aliases = folder.filterAliases()
     val selected = sourceFolders.any { it in aliases }
     return copy(
         sourceFolders = if (selected) {
             sourceFolders - aliases
         } else {
-            (sourceFolders - aliases) + folder.name
+            (sourceFolders - aliases) + folder.uriString
         }
     )
 }
 
-/** Clears either persisted representation of an iOS folder filter when that folder is removed. */
-internal fun LibraryFilters.withoutIosFolderFilter(folder: SyncedFolder): LibraryFilters {
-    val aliases = setOf(folder.uriString, folder.name)
-    return copy(sourceFolders = sourceFolders - aliases)
+/** Clears either persisted representation of a filter when that folder is removed. */
+internal fun LibraryFilters.withoutFolderFilter(folder: SyncedFolder): LibraryFilters {
+    return copy(sourceFolders = sourceFolders - folder.filterAliases())
 }
 
 /** Android-style source presentation without exposing an iOS app-container path. */
@@ -130,11 +146,15 @@ internal fun mobileBookInfoDisplayLocation(
 
 /** Rebuilds iOS Library results from raw books using Android's projection order. */
 internal fun SharedReaderScreenState.visibleIosLibraryBooks(): List<BookItem> {
-    val effectiveFilters = libraryFilters.withIosFolderFilterIdentities(syncedFolders)
+    // Selections are stored as Android's uriString; iOS books carry the folder
+    // name, so the alias map lets one selection match both. Normalizing on the
+    // way in rewrites any legacy name-based selection to the canonical uriString.
+    val effectiveFilters = libraryFilters.withCanonicalFolderFilterIdentities(syncedFolders)
     val sorted = sortBooks(
         applyLibraryFilters(
-            filterBySearch(rawLibraryBooks, searchQuery),
-            effectiveFilters,
+            books = filterBySearch(rawLibraryBooks, searchQuery),
+            filters = effectiveFilters,
+            folderAliases = syncedFolders.associate { it.name to it.uriString },
         ),
         sortOrder,
     )
@@ -666,9 +686,10 @@ internal fun mobileUnifiedLibraryBooks(
     query: String,
     libraryFilters: LibraryFilters = LibraryFilters(),
     sortOrder: SortOrder = SortOrder.RECENT,
+    folderAliases: Map<String, String> = emptyMap(),
 ): List<BookItem> {
     val normalizedQuery = query.trim()
-    val filteredBooks = applyLibraryFilters(books, libraryFilters)
+    val filteredBooks = applyLibraryFilters(books, libraryFilters, folderAliases)
         .filter { it.matchesMobileUnifiedLibraryFilter(filter, normalizedQuery) }
     return sortBooks(filteredBooks, sortOrder)
 }

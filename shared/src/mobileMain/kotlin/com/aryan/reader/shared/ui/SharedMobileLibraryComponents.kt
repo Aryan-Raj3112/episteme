@@ -667,11 +667,11 @@ fun SharedMobileLibraryFilterDialog(
                 )
                 syncedFolders.forEach { folder ->
                     FilterChip(
-                        selected = folder.uriString in currentFilters.sourceFolders,
+                        // Alias-tolerant: iOS books record the folder name, so a selection
+                        // stored as the canonical uriString must still show as chosen.
+                        selected = currentFilters.sourceFolders.any { it in folder.filterAliases() },
                         onClick = {
-                            currentFilters = currentFilters.copy(
-                                sourceFolders = currentFilters.sourceFolders.toggleMember(folder.uriString),
-                            )
+                            currentFilters = currentFilters.toggleFolderFilter(folder)
                         },
                         label = { Text(folder.name) },
                     )

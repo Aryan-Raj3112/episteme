@@ -47,12 +47,27 @@ fun BookItem.canEditEmbeddedFileMetadata(): Boolean {
     return type == FileType.EPUB && path != null && !isOpdsStream()
 }
 
-fun BookItem.matchesSourceFolders(sourceFolders: Set<String>): Boolean {
+/**
+ * Whether a book belongs to the selected source folders.
+ *
+ * Selections are stored as Android's `uriString`, but a book's `sourceFolder`
+ * is the folder *uri* on Android and the folder *name* on iOS (native scans
+ * record the bookmark name). Both spellings are accepted so one stored filter
+ * matches books produced by either platform.
+ */
+fun BookItem.matchesSourceFolders(
+    sourceFolders: Set<String>,
+    folderAliases: Map<String, String> = emptyMap(),
+): Boolean {
     if (sourceFolders.isEmpty()) return true
     val matchesInAppStorage = IN_APP_STORAGE_SOURCE in sourceFolders &&
         sourceFolder == null &&
         !isOpdsStream()
-    return matchesInAppStorage || sourceFolder in sourceFolders
+    if (matchesInAppStorage) return true
+    val folder = sourceFolder ?: return false
+    if (folder in sourceFolders) return true
+    // Accept the other platform's spelling of the same folder.
+    return folderAliases[folder] in sourceFolders
 }
 
 private fun formatDecimal(value: Double, decimals: Int): String {

@@ -285,8 +285,10 @@ fun SharedMobileUnifiedLibraryScreen(
             books = state.rawLibraryBooks,
             filter = filter,
             query = query,
-            libraryFilters = state.libraryFilters.withIosFolderFilterIdentities(state.syncedFolders),
+            libraryFilters = state.libraryFilters.withCanonicalFolderFilterIdentities(state.syncedFolders),
             sortOrder = state.sortOrder,
+            // iOS books record the folder name while selections store Android's uriString.
+            folderAliases = state.syncedFolders.associate { it.name to it.uriString },
         )
     }
     val continueReading = remember(state.rawLibraryBooks) {
@@ -726,10 +728,15 @@ fun SharedMobileUnifiedLibraryScreen(
     }
     if (showFilters) {
         SharedMobileLibraryFilterDialog(
-            state = state,
+            filters = state.libraryFilters.withCanonicalFolderFilterIdentities(state.syncedFolders),
+            allTags = state.allTags,
+            syncedFolders = state.syncedFolders,
+            readableFileTypes = SharedFileCapabilities.readableTypesFor(platform),
+            fileTypeLabels = FileType.entries.associateWith { SharedFileCapabilities.displayNameFor(it) },
+            readStatusLabels = ReadStatusFilter.entries.associateWith { it.sharedMobileLabel() },
+            labels = sharedMobileLibraryFilterLabels(),
+            onApply = ::applyUnifiedLibraryFilters,
             onDismiss = { showFilters = false },
-            onFiltersChange = ::applyUnifiedLibraryFilters,
-            platform = platform,
         )
     }
 
@@ -1642,10 +1649,15 @@ fun SharedMobileLibraryScreen(
 
     if (showFilters) {
         SharedMobileLibraryFilterDialog(
-            state = state,
+            filters = state.libraryFilters.withCanonicalFolderFilterIdentities(state.syncedFolders),
+            allTags = state.allTags,
+            syncedFolders = state.syncedFolders,
+            readableFileTypes = SharedFileCapabilities.readableTypesFor(platform),
+            fileTypeLabels = FileType.entries.associateWith { SharedFileCapabilities.displayNameFor(it) },
+            readStatusLabels = ReadStatusFilter.entries.associateWith { it.sharedMobileLabel() },
+            labels = sharedMobileLibraryFilterLabels(),
+            onApply = onRemoveFilters,
             onDismiss = { showFilters = false },
-            onFiltersChange = onRemoveFilters,
-            platform = platform,
         )
     }
     if (showCreateShelf) {
@@ -2452,145 +2464,6 @@ private fun SharedMobileTagSelectionSheet(
         )
     }
 }
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SharedMobileLibraryFilterDialog(
-    state: SharedReaderScreenState,
-    onDismiss: () -> Unit,
-    onFiltersChange: (LibraryFilters) -> Unit,
-    platform: ReaderPlatform = ReaderPlatform.IOS,
-) {
-    var currentFilters by remember(state.libraryFilters, state.syncedFolders) {
-        mutableStateOf(state.libraryFilters.withIosFolderFilterIdentities(state.syncedFolders))
-    }
-    val readableTypes = remember(platform) { SharedFileCapabilities.readableTypesFor(platform) }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Text(readerString("filter_library", "Filter library"), style = MaterialTheme.typography.titleLarge)
-
-            Text(readerString("filter_file_type", "File type"), style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                readableTypes.forEach { type ->
-                    FilterChip(
-                        selected = type in currentFilters.fileTypes,
-                        onClick = {
-                            currentFilters = currentFilters.copy(
-                                fileTypes = currentFilters.fileTypes.toggleMember(type)
-                            )
-                        },
-                        label = { Text(SharedFileCapabilities.displayNameFor(type)) },
-                    )
-                }
-            }
-
-            Text(readerString("filter_source_folder", "Source folder"), style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                FilterChip(
-                    selected = IN_APP_STORAGE_SOURCE in currentFilters.sourceFolders,
-                    onClick = {
-                        currentFilters = currentFilters.copy(
-                            sourceFolders = currentFilters.sourceFolders.toggleMember(IN_APP_STORAGE_SOURCE)
-                        )
-                    },
-                    label = { Text(readerString("filter_in_app_storage", "In-app storage")) },
-                )
-                state.syncedFolders.forEach { folder ->
-                    FilterChip(
-                        selected = currentFilters.sourceFolders.any {
-                            it == folder.uriString || it == folder.name
-                        },
-                        onClick = {
-                            currentFilters = currentFilters.toggleIosFolderFilter(folder)
-                        },
-                        label = { Text(folder.name) },
-                    )
-                }
-            }
-
-            Text(readerString("filter_read_status", "Reading status"), style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                ReadStatusFilter.entries.forEach { status ->
-                    FilterChip(
-                        selected = currentFilters.readStatus == status,
-                        onClick = { currentFilters = currentFilters.copy(readStatus = status) },
-                        label = { Text(status.sharedMobileLabel()) },
-                    )
-                }
-            }
-
-            if (state.allTags.isNotEmpty()) {
-                Text(readerString("section_tags", "Tags"), style = MaterialTheme.typography.titleMedium)
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    state.allTags.forEach { tag ->
-                        FilterChip(
-                            selected = tag.id in currentFilters.tagIds,
-                            onClick = {
-                                currentFilters = currentFilters.copy(
-                                    tagIds = currentFilters.tagIds.toggleMember(tag.id)
-                                )
-                            },
-                            label = { Text(tag.name) },
-                            leadingIcon = {
-                                Box(
-                                    modifier = Modifier
-                                        .size(10.dp)
-                                        .background(
-                                            Color(tag.color ?: 0xFF64B5F6.toInt()),
-                                            CircleShape,
-                                        )
-                                )
-                            },
-                        )
-                    }
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                TextButton(onClick = { currentFilters = LibraryFilters() }) {
-                    Text(readerString("clear_all", "Clear all"))
-                }
-                Spacer(Modifier.width(8.dp))
-                Button(
-                    onClick = {
-                        onFiltersChange(currentFilters)
-                        onDismiss()
-                    }
-                ) {
-                    Text(readerString("action_apply", "Apply"))
-                }
-            }
-            Spacer(Modifier.height(32.dp))
-        }
-    }
-}
-
 internal fun <T> Set<T>.toggleMember(value: T): Set<T> = if (value in this) this - value else this + value
 
 @Composable
@@ -2894,5 +2767,20 @@ private fun SharedMobileLibraryTopBar(
                 Icon(Icons.Default.Settings, contentDescription = readerString("settings", "Settings"))
             }
         }
+    )
+}
+
+/** Default English labels for the shared library filter dialog. */
+@Composable
+private fun sharedMobileLibraryFilterLabels(): SharedMobileLibraryFilterLabels {
+    return SharedMobileLibraryFilterLabels(
+        title = readerString("filter_library", "Filter library"),
+        fileType = readerString("filter_file_type", "File type"),
+        sourceFolder = readerString("filter_source_folder", "Source folder"),
+        inAppStorage = readerString("filter_in_app_storage", "In-app storage"),
+        readStatus = readerString("filter_read_status", "Reading status"),
+        tags = readerString("section_tags", "Tags"),
+        clearAll = readerString("clear_all", "Clear all"),
+        apply = readerString("action_apply", "Apply"),
     )
 }

@@ -335,7 +335,7 @@ import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.ui.openSharedMobileExternalUrl
 import com.aryan.reader.shared.ui.rememberSharedMobileEpubLocalTts
 import com.aryan.reader.shared.ui.SharedMobileEpubLocalTtsState
-import com.aryan.reader.shared.ui.withoutIosFolderFilter
+import com.aryan.reader.shared.ui.withoutFolderFilter
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
 import com.aryan.reader.shared.reader.epubPositionSummary
 import com.aryan.reader.shared.reader.logEpubPositionSave
@@ -7302,7 +7302,7 @@ private fun ReaderIosApp(
                                         .mapTo(mutableSetOf()) { it.id }
                                     state = state.copy(
                                         syncedFolders = state.syncedFolders.filterNot { it.uriString == folder.uriString },
-                                        libraryFilters = state.libraryFilters.withoutIosFolderFilter(folder),
+                                        libraryFilters = state.libraryFilters.withoutFolderFilter(folder),
                                     ).removeIosBooks(folderBookIds)
                                 },
                                 onDeleteBooks = { bookIds ->
@@ -7635,7 +7635,7 @@ private fun ReaderIosApp(
                                         .mapTo(mutableSetOf()) { it.id }
                                     state = state.copy(
                                         syncedFolders = state.syncedFolders.filterNot { it.uriString == folder.uriString },
-                                        libraryFilters = state.libraryFilters.withoutIosFolderFilter(folder),
+                                        libraryFilters = state.libraryFilters.withoutFolderFilter(folder),
                                     ).removeIosBooks(folderBookIds)
                                 },
                                 onOpenSettings = { utilityScreen = IosUtilityScreen.SETTINGS },
