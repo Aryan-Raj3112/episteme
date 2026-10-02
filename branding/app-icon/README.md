@@ -14,7 +14,8 @@ A flat white field with the fan/wave artwork centred on it — the same structur
 icon this replaces, which was a solid background plus a separate glyph.
 
 - **Android** is the canonical form: `background` is a solid fill, `foreground` carries
-  only the artwork, `monochrome` the themed glyph. All three are VectorDrawables.
+  only the artwork, `monochrome` the themed glyph. `background` and `monochrome` are
+  VectorDrawables; the foreground is a PNG (see *Rasterisation*).
 - **iOS / desktop / Play** are the same composition flattened into one opaque square. The
   field is full-bleed there because those platforms reject transparency, but the fan keeps
   the same optical size, sized as a fraction of the *visible* area so Android (72 of 108dp
@@ -47,7 +48,7 @@ change shape when the OS changes its mask.
 | `episteme-icon-android-background.svg` | 108vp adaptive background (flat fill) |
 | `episteme-icon-android-foreground.svg` | 108vp adaptive foreground (the fan) |
 | `episteme-icon-monochrome.svg` | 108vp Android 13+ themed icon |
-| `ic_launcher_background.xml`, `ic_launcher_foreground.xml`, `ic_launcher_monochrome.xml` | the same three layers as Android VectorDrawables |
+| `ic_launcher_background.xml`, `ic_launcher_monochrome.xml` | the two flat layers, as Android VectorDrawables |
 | `png/ios/` | 14 AppIcon slots, opaque RGB, no baked rounding |
 | `png/android/mipmap-*/` | legacy `ic_launcher` + `ic_launcher_round`, 48dp x 5 densities |
 | `png/android/adaptive/` | raster foreground layer, 108dp x 5 densities |
@@ -59,7 +60,7 @@ change shape when the OS changes its mask.
 ## Geometry
 
 The fan's bounding box is **measured**, not hardcoded: `fan_bbox` rasterises the wave
-paths at 1:1 and reads back the alpha bounds (`188, 260, 536, 480` in source units —
+paths at 1:1 and reads back the alpha bounds (`188, 260, 534, 470` in source units —
 control points would overshoot and constants would rot on the next artwork change). It
 is placed by a uniform scale, so nothing is ever distorted.
 
@@ -69,38 +70,63 @@ optical size despite very different canvases. `0.75` is the largest value whose 
 half-diagonal (32.2dp) still clears the 33dp safe radius; `verify()` fails the build if
 the artwork change pushes it past that.
 
-A **319x319** window through that centre is what becomes the icon (`BLEED`); the extra 19
-units of card width are discarded. It is placed with a uniform scale, so nothing is ever
-distorted, and the window is re-emitted as a square clip path plus a square cream field.
-The wave paths' original overshoot — 4 units past the left edge, 4 past the right, 10
-past the bottom — is trimmed by that clip rather than drawn as tabs in the corners.
+**`FAN_TRIM` bakes the artwork's own trim into the path data.** The wave paths are
+authored oversized and rely on the mark's `clipPath`: three different baselines are drawn
+(y=480 for the two left paths, y=474 for the lower-right one) and the right-hand paths
+reach x=534 while the field stops at x=530. The clip flattened every baseline onto y=470
+and cut the overhang, which is what made the two pages meet at a single point at the
+bottom centre. The card is gone, so the clip went with it — leaving the left page sitting
+visibly lower than the right and a sliver of gradient past the far right edge. The trim
+is applied once, in `parse_source`, to the group text, so `wave_elements` (which reads the
+group) and `mono_geometry` (which measures rendered pixels) cannot drift apart. A stale
+entry raises rather than silently losing the baseline.
 
-- **iOS / desktop / Play / legacy** — `fill = 1.0`, the window spans the canvas exactly.
-- **Monochrome** — `fill = 66/108`, the glyph's short side spans 66vp of the 108vp
-  viewport. AOSP sets `SAFEZONE_SCALE = 66f/72f` in `AdaptiveIconDrawable`, and both
-  layers are 108dp with the inner 72dp visible, so anything wider gets masked away.
-  `verify()` fails the build if this ever exceeds the safe zone.
+**The themed glyph bleeds past the mask.** The launcher mask is what gives a themed icon
+its outline, so a glyph that stops short of it shows the themed background in a band
+between its own straight edges and the mask's curve — gaps on every side. `mono_geometry`
+therefore maps the field to cover the whole 108dp viewport, and centres the knocked-out
+fan on the *measured* fan bounds rather than the old card's centre (which sat 54 source
+units too high, riding the artwork ~11dp below the middle). The fan itself is sized to
+`MONO_GLYPH_DP = 66`, putting its left and right tips on the 33dp safe radius while
+staying inside the 72dp the mask reveals. `verify()` fails if either drifts.
 
-Monochrome shape (`MONO_STYLE = "wedge"`): the cream field with the two pale wave bands
-knocked out, `fill-rule="evenOdd"`. The field keeps the glyph reading as the icon's square
-silhouette at any size while the knocked-out bands leave enough of the fan visible to say
-"book". All four candidates are in `preview/monochrome-candidates.png`; the others are
-constants (`"arcs"`, `"waves"`, `"field2"`).
+There are exactly two acceptable shapes here, and the broken one in between is what the
+earlier versions shipped. A themed icon has no artwork of its own — the launcher supplies
+the tint and the mask — so the glyph must either:
 
-Android tints this layer with a *single* colour, so the glyph has exactly two tones —
-solid and gap. That rules out four shades, but not four shapes, so `"arcs"` (four
-separated bands, carved gap via `_offset`) is available; it reads as clutter at 40px,
-which is why `"wedge"` won.
+- **bleed past the mask** (`"arcs_field"`, `"fanfield"`, `"wedge"`, `"field2"`), letting
+  the mask alone decide the outline; or
+- **have no field at all** (`"waves"`, `"arcs"`), so the themed background shows through
+  around a free mark.
 
-**The glyph geometry is pre-trimmed to the bleed window** (`mono_band_paths`), because it
-ships as a VectorDrawable and VectorDrawable has no per-path clip — only a whole-group
-`<clip-path>`, whose coordinate space relative to the group's own transform is not worth
-relying on across devices. `_clip_cubic` bisects the subdivision parameter for the exact
-crossing point, and handles both curve directions (the upper-right band's closing curve
-runs right-to-left). Only curve *ends* move, so the shapes are exact rather than
-approximated, and no clip is needed in either format. `CLIP_FREE_MONO_STYLES` lists the
-styles that qualify; `vector_monochrome` refuses the others rather than emit a vector
-whose clip semantics I cannot verify.
+What it must never do is stop short — a field that ends inside the mask shows its own
+straight edges against the themed background, which is the gap this replaces.
+
+Chosen: `MONO_STYLE = "arcs"` — the fan as four discrete arcs, free-standing, with a
+narrow transparent wedge between each upper/lower pair. This is the only part of the mark
+that survives the tint as *structure* rather than tone: a monochrome layer has just two
+tones, so the pale/saturated distinction is gone, but four separated shapes are not.
+
+Two details make the wedges read correctly:
+
+- **Split symmetrically.** The shared boundary between an upper and a lower band is offset
+  `MONO_ARC_GAP / 2` each way, so both arcs keep their weight. Offsetting only the upper
+  band (the earlier behaviour) thins it while the lower one keeps full thickness, which
+  reads as an uneven notch rather than a division.
+- **Tapered, not bowed.** `_taper` offsets a curve by the full amount at its start and
+  nothing at its end, so each wedge is widest at the outer edge and closes to a point at
+  the spine where the pages meet. A constant `_offset` pins both endpoints and bows the gap
+  open in the *middle* — the wrong shape entirely.
+
+The alternatives stay as constants in `preview/monochrome-candidates.png`: `"waves"` (one
+fused silhouette, no internal division), and the field-bearing `"arcs_field"`,
+`"fanfield"`, `"wedge"`, `"field2"` for when the plate should fill instead of float. The
+unit test asserts the no-edge-in-between rule above rather than any one shape.
+
+**No clip anywhere in the glyph.** It ships as a VectorDrawable, which has no per-path
+clip — only a whole-group `<clip-path>`, whose coordinate space relative to the group's own
+transform is not worth relying on across devices. Since the field covers the whole
+viewport, the bands only ever cut *into* it, so nothing needs trimming.
 
 That vector also serves as the TTS notification's small icon (`TtsService`), which is why
 it must stay a vector — a raster would be both wrong semantically and wasteful in the
@@ -131,6 +157,6 @@ could drop the alpha channel the baked-in outline depends on.
 
 `generate_app_icons.py` exits non-zero if any of these stop holding: store icons at
 exactly 1024/512, every `AppIcon.appiconset/Contents.json` slot present, every PNG
-square, alpha present **only** on the monochrome layers, and the themed glyph within the
-66dp safe zone.
+square, alpha present only where it is meant to be, and the themed glyph's field covering
+the viewport with its fan inside the mask.
 

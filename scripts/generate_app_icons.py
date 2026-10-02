@@ -87,15 +87,19 @@ PREVIEW_PX = 512
 FIELD_COLOR = "#FFFFFF"                # the icon's field; the previous icon had a solid bg too
 FAN_WIDTH_FRACTION = 0.75              # fan width as a fraction of the *visible* icon (max that fits the 33dp safe radius)
 ANDROID_VISIBLE_DP = 72                # inner 72 of the 108dp adaptive viewport
-MONO_GLYPH_FILL = 66 / 108             # themed glyph inside the documented 66dp safe zone
-MONO_STYLE = "wedge"                     # "wedge" | "arcs" | "waves" | "field2" | "fanfield"
-# Gap between the themed glyph's arcs, in source units (the bleed window is BLEED wide).
-# ~4% of the icon: still open at 64px, and not so wide that the arcs stop reading as a
-# book at 40px. Compared side by side at 6 / 10 / 14 / 18 in preview/monochrome-arcs.png.
-MONO_ARC_GAP = 14.0
-MONO_STYLES = ("wedge", "fanfield", "arcs", "waves", "field2")   # compare-sheet order
-# styles whose geometry is trimmed to the bleed window, so no clip is needed
-CLIP_FREE_MONO_STYLES = frozenset({"wedge"})
+# Width of the themed glyph's fan, in dp of the 108dp viewport. Deliberately the *same*
+# optical size as the colour foreground (72dp visible x FAN_WIDTH_FRACTION = 54dp), so a
+# themed icon never shows a bigger mark than the full-colour one. Well inside both the
+# 72dp the mask reveals and the 33dp safe radius, so no mask crops it.
+MONO_GLYPH_DP = 54.0
+MONO_STYLE = "arcs"                   # "arcs" | "waves" | "arcs_field" | "fanfield" | "wedge" | "field2"
+# Total width of the wedge opening between each upper and lower arc of the themed glyph,
+# in source units. Split symmetrically, so each arc moves MONO_ARC_GAP / 2. The fan is 346
+# units wide, so 6 is ~1.1dp of the 66dp glyph: a hairline that still reads at 96px and
+# closes to a single silhouette by ~48px. Widen it too far and the arcs stop reading as
+# one fan; the wedge is also what makes the shape recognisable as four bands at all.
+MONO_ARC_GAP = 6.0
+MONO_STYLES = ("arcs_field", "fanfield", "wedge", "arcs", "waves", "field2")  # compare-sheet order
 
 CHROME_CANDIDATES = (
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -130,8 +134,8 @@ def parse_source(path: pathlib.Path) -> dict:
         raise SystemExit(f"{path.name}: missing the mark group")
 
     # Bake the clip's trim into the path data. Applied to the group text rather than to
-    # `waves` so that `wave_elements` (which reads the group) and `mono_band_paths` (which
-    # reads `waves`) cannot drift apart. Every entry must match: if the artwork is
+    # `waves` so that `wave_elements` (which reads the group) and `mono_geometry` (which
+    # reads the rendered pixels) cannot drift apart. Every entry must match: if the artwork is
     # redrawn, a stale table means the fan silently loses its common baseline again, which
     # is a subtle enough regression to ship by accident.
     inner = group.group(1)
@@ -240,69 +244,6 @@ def _split_cubic(c: tuple, t: float) -> tuple[tuple, tuple]:
     return (p0, a, e, mid), (mid, f, d, p3)
 
 
-def _clip_cubic(c: tuple, limit: float, keep: str) -> tuple | None:
-    """The contiguous part of cubic `c` whose x stays on one side of `limit`.
-
-    `keep="min"` keeps x <= limit, `"max"` keeps x >= limit. Each wave curve is monotonic
-    in x -- but not all of them run left to right -- so whether the surviving portion is a
-    prefix or a suffix depends on the curve's direction. Bisecting the subdivision
-    parameter for the crossing is exact to floating point. Returns None if no part of the
-    curve qualifies.
-    """
-    inside = (lambda x: x <= limit) if keep == "min" else (lambda x: x >= limit)
-    if inside(c[0][0]) and inside(c[3][0]):
-        return c
-    if not inside(c[0][0]) and not inside(c[3][0]):
-        return None
-    prefix = (c[3][0] >= c[0][0]) == (keep == "min")
-    lo, hi = 0.0, 1.0
-    for _ in range(64):
-        mid = (lo + hi) / 2
-        # prefix: walk lo up to the last parameter still inside; suffix: walk hi down to
-        # the first one. Comparing against `prefix` keeps the rule single-sourced.
-        if inside(_split_cubic(c, mid)[1][0][0]) == prefix:
-            lo = mid
-        else:
-            hi = mid
-    return _split_cubic(c, hi)[0] if prefix else _split_cubic(c, lo)[1]
-
-
-def mono_band_paths(src: dict) -> tuple[str, str]:
-    """The two pale wave bands, trimmed to the bleed window so no clip is needed.
-
-    The source paths overhang the window by 4-10 units. An SVG hides that behind a
-    `clip-path`; a VectorDrawable cannot, because it has no per-path clip -- only a
-    whole-group one whose coordinate space is not worth relying on across devices.
-    Trimming the geometry instead keeps one path definition valid in both formats.
-
-    Only the curve *ends* move: the straight closing edges are already axis aligned, so
-    these shapes are exact rather than approximated.
-    """
-    x0, _, w = bleed_rect()
-    x1 = x0 + w
-
-    upper_l = path_cubics(src["waves"][WAVE_UPPER_LEFT])
-    upper_r = path_cubics(src["waves"][WAVE_UPPER_RIGHT])
-    if len(upper_l) != 1 or len(upper_r) != 2:
-        raise SystemExit(
-            "expected 1 cubic in the upper-left wave and 2 in the upper-right one, "
-            f"got {len(upper_l)} and {len(upper_r)}"
-        )
-
-    # C1 runs left to right, so trimming it to x >= x0 leaves the tail. C3 runs left to
-    # right and trims to x <= x1 leaving the head. C4 runs *right to left*, so trimming it
-    # to x <= x1 leaves its tail -- which is exactly the segment that closes the band.
-    left = _clip_cubic(upper_l[0], x0, "max")
-    right = _clip_cubic(upper_r[0], x1, "min")
-    closing = _clip_cubic(upper_r[1], x1, "min")
-    if left is None or right is None or closing is None:
-        raise SystemExit("a pale wave falls entirely outside the bleed window")
-
-    return (f"M{_f(left[0][0])} {_f(left[0][1])} {_curve(left)} H{_f(x0)} Z",
-            f"M{_f(right[0][0])} {_f(right[0][1])} {_curve(right)} "
-            f"V{_f(closing[0][1])} {_curve(closing)} Z")
-
-
 def _offset(c: tuple, delta: float, side: int) -> tuple:
     """Shift a cubic's two interior control points along their normals.
 
@@ -323,36 +264,77 @@ def _offset(c: tuple, delta: float, side: int) -> tuple:
             p3)
 
 
+def _taper(c: tuple, delta: float, side: int) -> tuple:
+    """Offset a cubic by ``delta`` at its start, tapering to nothing at its end.
+
+    This is what opens the wedge between two bands. ``_offset`` pins both endpoints and
+    only bows the middle, so the gap it leaves is widest mid-curve and closes at *both*
+    ends -- the wrong shape entirely. The bands meet at the spine, so the gap has to be
+    widest out at the edge and close to a point where the pages turn.
+
+    Each control point is scaled by its own Bezier parameter (0, 1/3, 2/3, 1), which
+    tapers linearly in parameter rather than arc length. Over a few units that is
+    indistinguishable, and it stays exact rather than needing subdivision.
+    """
+    p0, p1, p2, p3 = c
+    normals = []
+    for a, b in ((p0, p1), (p1, p2), (p2, p3)):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        length = math.hypot(dx, dy) or 1.0
+        normals.append((-dy / length * side, dx / length * side))
+    # Offset by the full delta at p0 and nothing at p3, so the wedge is widest at the
+    # outer edge and closes to a point at the spine. Control points 1 and 2 sit at Bezier
+    # parameters 1/3 and 2/3, hence the linear 2/3, 1/3 weights.
+    return (
+        (p0[0] + normals[0][0] * delta, p0[1] + normals[0][1] * delta),
+        (p1[0] + normals[0][0] * delta * 2 / 3, p1[1] + normals[0][1] * delta * 2 / 3),
+        (p2[0] + normals[1][0] * delta / 3, p2[1] + normals[1][1] * delta / 3),
+        p3,
+    )
+
+
 def mono_arc_paths(src: dict, gap: float) -> str:
-    """The four wave bands as four separate closed shapes, separated by a `gap`-wide line.
+    """The four wave bands as four disjoint arcs, separated by a wedge of width `gap`.
 
     Each band is rebuilt from its own boundary curve rather than reusing the artwork's
     paths, because those overlap (the lower-left band is drawn on top of the upper-left
-    one) and a monochrome layer has to be a clean union of disjoint shapes. The gap is
-    carved by offsetting the *shared* curve inside the upper band, so it opens towards
-    the outer edge and pinches shut at the spine -- the way pages do in a real book.
+    one) and a monochrome layer has to be a clean union of disjoint shapes.
+
+    The shared boundary between an upper and a lower band is split *symmetrically*:
+    each arc is pushed `gap / 2` away from it, so both keep their weight instead of one
+    absorbing the whole separation. Combined with `_taper` -- full offset at the outer
+    edge, nothing at the spine -- the result is a wedge that opens outwards and closes to
+    a point where the pages meet.
     """
     upper_l = path_cubics(src["waves"][WAVE_UPPER_LEFT])[0]
     lower_l = path_cubics(src["waves"][WAVE_LOWER_LEFT])[0]
-    upper_r = path_cubics(src["waves"][WAVE_UPPER_RIGHT])[0]
-    lower_r = path_cubics(src["waves"][WAVE_LOWER_RIGHT])[0]
-    left_x, left_y = lower_l[0]
-    right_x, right_y = lower_r[0]
-    # the lower bands are closed along the bleed window's bottom edge
-    floor = bleed_rect()[1] + bleed_rect()[2]
-    return " ".join([
-        # upper-left: out along its own top curve, back along the offset shared curve
-        f"M{_f(upper_l[0][0])} {_f(upper_l[0][1])} {_curve(upper_l)} "
-        f"{_curve_rev(_offset(lower_l, gap, -1))} Z",
-        # lower-left: under the shared curve, closed along the floor
-        f"M{_f(left_x)} {_f(left_y)} {_curve(lower_l)} H{_f(left_x)} V{_f(left_y)} Z",
-        # upper-right: out along its own top curve, drop, back along the offset one
-        f"M{_f(upper_r[0][0])} {_f(upper_r[0][1])} {_curve(upper_r)} "
-        f"V{_f(lower_r[3][1])} {_curve_rev(_offset(lower_r, gap, 1))} Z",
-        # lower-right: under the shared curve, closed along the floor
-        f"M{_f(right_x)} {_f(right_y)} {_curve(lower_r)} H{_f(right_x)} V{_f(floor)} Z",
-    ])
+    upper_r = path_cubics(src["waves"][WAVE_UPPER_RIGHT])
+    lower_r = path_cubics(src["waves"][WAVE_LOWER_RIGHT])
+    if len(upper_r) != 2:
+        raise SystemExit(f"expected 2 cubics in the upper-right wave, got {len(upper_r)}")
 
+    half = gap / 2
+    # the bands are closed along the fan's own baseline, which FAN_TRIM put at y=470
+    floor = bleed_rect()[1] + bleed_rect()[2]
+    # left boundary runs outer -> spine, right boundary spine -> outer; `side` picks which
+    # way is "away from the band above"
+    up_l = _taper(lower_l, half, -1)
+    dn_l = _taper(lower_l, half, 1)
+    up_r = _taper(upper_r[1], half, 1)
+    dn_r = _taper(upper_r[1], half, -1)
+    return " ".join([
+        # upper-left: out along its own top curve, back along the boundary lifted clear
+        f"M{_f(upper_l[0][0])} {_f(upper_l[0][1])} {_curve(upper_l)} {_curve_rev(up_l)} Z",
+        # lower-left: under the boundary dropped clear, closed along the baseline
+        f"M{_f(dn_l[0][0])} {_f(dn_l[0][1])} {_curve(dn_l)} H{_f(dn_l[0][0])} Z",
+        # upper-right: out along its own top curve, down the outer edge, back along the
+        # boundary lifted clear
+        f"M{_f(upper_r[0][0][0])} {_f(upper_r[0][0][1])} {_curve(upper_r[0])} "
+        f"L{_f(up_r[0][0])} {_f(up_r[0][1])} {_curve(up_r)} Z",
+        # lower-right: under the boundary dropped clear, closed along the baseline
+        f"M{_f(dn_r[3][0])} {_f(dn_r[3][1])} {_curve_rev(dn_r)} "
+        f"V{_f(floor)} H{_f(dn_r[3][0])} Z",
+    ])
 
 
 # ================================================================= emission
@@ -445,76 +427,100 @@ def fan_markup(src: dict, geometry: dict) -> str:
             + "\n  </g>")
 
 
-def fit_transform(canvas: float, fill: float = 1.0) -> str:
-    """Place the bleed window exactly on a square ``canvas``.
-
-    A uniform scale -- the artwork is never distorted. ``fill`` shrinks the result about
-    the centre; the themed-icon glyph uses it to stay inside the 66dp safe zone.
-    """
-    s = canvas * fill / BLEED
-    tx = canvas / 2 - MARK_CX * s
-    ty = canvas / 2 - MARK_CY * s
-    return f"translate({tx:.3f} {ty:.3f}) scale({s:.5f})"
-
-
 def svg_doc(size: float, defs: str, body: str) -> str:
     return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{size:g}" height="{size:g}" '
             f'viewBox="0 0 {size:g} {size:g}" fill="none">\n'
             f"<defs>\n{defs}\n</defs>\n{body}\n</svg>\n")
 
 
-def monochrome_body(src: dict, style: str | None = None) -> str:
-    """Cream field with the two pale wave bands knocked out (even-odd).
+def mono_geometry(src: dict, tmp: pathlib.Path, glyph_dp: float) -> dict:
+    """Place the themed glyph: fan centred on the viewport, field bleeding past the mask.
 
-    The chosen shape. A themed icon is one flat colour, so the design loses every
-    internal boundary, and this composition holds up best under that: the field keeps the
-    glyph reading as the icon's square silhouette at any size, while the two knocked-out
-    bands leave enough of the fan visible to say "book" rather than "blank page".
+    Two things the previous version got wrong, both visible on a real themed icon:
+
+    * It centred on the *card's* centre (MARK_CY), but the fan's own centre sits 54 source
+      units lower, so the glyph rode ~11dp below the middle and left a visible gap above
+      the artwork while the bottom looked crowded.
+    * It sized the glyph to 66dp and stopped. The launcher mask reveals 72dp, so a glyph
+      that stops at 66dp shows the themed background in a band between its straight edges
+      and the mask's curve -- the "gaps on top, bottom and sides" in the screenshot. The
+      mask is there to supply the outline, so the field must bleed *past* it and never
+      present an edge of its own inside the visible area.
+
+    The field is therefore a rectangle covering the whole 108dp viewport in source units,
+    while the knocked-out fan stays at ``glyph_dp``. Same transform for both, because a
+    monochrome layer is a single even-odd path and cannot draw two shapes at different
+    scales -- so the field is enlarged in path data instead.
+    """
+    x0, y0, x1, y1 = fan_bbox(src, tmp)
+    width, height = x1 - x0, y1 - y0
+    scale = glyph_dp / width
+    cx, cy = x0 + width / 2, y0 + height / 2
+    half = ANDROID / 2 / scale          # half the viewport, in source units
+    field = (f"M{cx - half:g} {cy - half:g} H{cx + half:g} "
+             f"V{cy + half:g} H{cx - half:g} Z")
+    return {
+        "transform": (f"translate({ANDROID / 2 - cx * scale:.3f} {ANDROID / 2 - cy * scale:.3f}) "
+                      f"scale({scale:.5f})"),
+        "field": field,
+        # the fan's true extremities, for the safe-zone check in verify()
+        "reach_dp": max(width / 2, height / 2) * scale,
+        "placed": (width * scale, height * scale),
+    }
+
+
+def monochrome_body(src: dict, tmp: pathlib.Path, style: str | None = None) -> str:
+    """The themed glyph: a solid field with the fan knocked out (even-odd).
+
+    A themed icon is one flat colour, so the design loses every internal boundary. The
+    composition that survives that best is the colour icon's own: field behind, fan in
+    front, the fan now reading as a hole. Because the field bleeds past the mask, the
+    themed icon fills its plate completely instead of floating inside it.
 
     Alternatives, all kept as constants and shown in ``preview/monochrome-candidates.png``:
 
-    ``"arcs"``   the four bands rebuilt from their own boundary curves and separated by a
-                 carved gap -- four distinct shapes, but the gaps pinch to nothing at the
-                 spine and the result reads as clutter.
-    ``"waves"``  the four bands merged into one solid fan; the book reads, the square
-                 silhouette does not.
+    ``"fanfield"`` the field minus the whole fan as one fused hole. Fills, but it loses the
+                 four-arc reading the colour artwork has.
+    ``"wedge"``  field minus the two *pale* bands only; the solid part keeps reading as a
+                 page, but it depends on the pale/deep distinction the tint has thrown away.
     ``"field2"`` field minus the two *saturated* bands -- bolder at 40px, but a banner.
+    ``"arcs"``   the same four bands without the field, so the mark floats inside the mask
+                 with the themed background showing around it.
+    ``"waves"``  the bands merged into one solid fan; the book reads, but there is no
+                 field, so the same gap problem comes straight back.
 
-    The knock-out paths overhang the bleed window (4 units past the left edge, 4 past the
-    right, 10 past the bottom). A monochrome layer is one path rather than a clipped
-    group, so the clip is what keeps that overhang from showing up as slivers.
+    The band paths come from ``src`` rather than being written out here, so they inherit
+    ``FAN_TRIM`` and cannot drift away from the foreground's geometry again.
     """
-    pale_l = "M188 316c66 0 126 35 159 154V480H188Z"
-    pale_r = "M347 470c3-123 71-210 187-210v104c-89 0-150 36-187 106"
-    deep_l = "M188 383c67 0 124 30 159 87V480H188Z"
-    deep_r = "M347 470c37-70 98-106 187-106v110H347Z"
-    x, y, w = bleed_rect()
-    window = f"M{x:g} {y:g} H{x + w:g} V{y + w:g} H{x:g} Z"
-
     style = style or MONO_STYLE
-    if style == "wedge":
-        left, right = mono_band_paths(src)
-        return _mono_svg(f"{window} {left} {right}", rule="evenodd")
-    if style == "arcs":
-        return _mono_svg(mono_arc_paths(src, MONO_ARC_GAP), rule="nonzero")
-    if style == "waves":
-        return _mono_svg(f"{pale_l} {pale_r} {deep_r}", rule="nonzero")
-    if style == "field2":
-        return _mono_svg(f"{window} {deep_l} {deep_r}", rule="evenodd")
-    if style == "fanfield":
-        # the field with the whole fan knocked out, echoing the colour icon's shape
-        return _mono_svg(f"{window} {deep_l} {deep_r} {pale_l} {pale_r}", rule="evenodd")
-    raise SystemExit(f"unknown MONO_STYLE {style!r}")
+    pale_l = src["waves"][WAVE_UPPER_LEFT]
+    pale_r = src["waves"][WAVE_UPPER_RIGHT]
+    deep_l = src["waves"][WAVE_LOWER_LEFT]
+    deep_r = src["waves"][WAVE_LOWER_RIGHT]
+    geo = mono_geometry(src, tmp, MONO_GLYPH_DP)
 
-
-def _mono_svg(d: str, rule: str) -> str:
-    return (
-        f"{bleed_clip()}\n"
-        f'  <g transform="{fit_transform(ANDROID, MONO_GLYPH_FILL)}">\n'
-        f'    <path d="{d}" fill="#FFFFFFFF" fill-rule="{rule}" clip-rule="evenodd" '
-        f'clip-path="url(#bleed)"/>\n'
-        f"  </g>"
-    )
+    if style == "arcs_field":
+        # the field with the fan knocked out as four separate arcs: fills the mask like
+        # "fanfield", but the bands keep the artwork's four-arc reading that a single
+        # fused hole loses
+        d = f'{geo["field"]} {mono_arc_paths(src, MONO_ARC_GAP)}'
+    elif style == "fanfield":
+        d = f'{geo["field"]} {deep_l} {deep_r} {pale_l} {pale_r}'
+    elif style == "wedge":
+        d = f'{geo["field"]} {pale_l} {pale_r}'
+    elif style == "field2":
+        d = f'{geo["field"]} {deep_l} {deep_r}'
+    elif style == "waves":
+        d = f"{pale_l} {pale_r} {deep_r}"
+    elif style == "arcs":
+        d = mono_arc_paths(src, MONO_ARC_GAP)
+    else:
+        raise SystemExit(f"unknown MONO_STYLE {style!r}")
+    rule = "evenodd" if style in ("arcs_field", "fanfield", "wedge", "field2") else "nonzero"
+    # No clip: the field spans the viewport, so the bands only ever cut into it.
+    return (f'  <g transform="{geo["transform"]}">\n'
+            f'    <path d="{d}" fill="#FFFFFFFF" fill-rule="{rule}" clip-rule="evenodd"/>\n'
+            f"  </g>")
 
 
 def build_svgs(src: dict, tmp: pathlib.Path) -> dict[str, str]:
@@ -537,11 +543,11 @@ def build_svgs(src: dict, tmp: pathlib.Path) -> dict[str, str]:
             f'  <rect width="{ANDROID:g}" height="{ANDROID:g}" fill="{FIELD_COLOR}"/>'),
         "episteme-icon-android-foreground.svg": svg_doc(
             ANDROID, md, fan_markup(src, fg_geo)),
-        "episteme-icon-monochrome.svg": svg_doc(ANDROID, "", monochrome_body(src)),
+        "episteme-icon-monochrome.svg": svg_doc(ANDROID, "", monochrome_body(src, tmp)),
     }
 
 
-def vector_layers(src: dict) -> dict[str, str]:
+def vector_layers(src: dict, tmp: pathlib.Path) -> dict[str, str]:
     """The Android layers that vectorise exactly.
 
     Only the flat ones. The background is a solid fill and the monochrome glyph is a single
@@ -560,15 +566,16 @@ def vector_layers(src: dict) -> dict[str, str]:
             f'  <path android:pathData="M0,0 H108 V108 H0 Z" android:fillColor="{FIELD_COLOR}"/>\n'
             f"</vector>\n"
         ),
-        "ic_launcher_monochrome.xml": _vector_group(_vector_mono(src)),
+        "ic_launcher_monochrome.xml": _vector_group(_vector_mono(src, tmp)),
     }
 
 
 def _vector_group(inner: str) -> str:
     return ('<?xml version="1.0" encoding="utf-8"?>\n'
             "<!-- Generated by scripts/generate_app_icons.py. Flat colour so the launcher can\n"
-            "     tint it; the glyph spans the 66dp safe zone of the 108dp viewport and its\n"
-            "     geometry is pre-trimmed, so it needs no clip. -->\n"
+            "     tint it. The field covers the whole viewport so the launcher's mask supplies\n"
+            "     the outline and no edge of ours shows inside it; the fan is knocked out at the\n"
+            "     66dp safe size. Geometry is pre-trimmed, so no clip is needed. -->\n"
             '<vector xmlns:android="http://schemas.android.com/apk/res/android"\n'
             '    android:width="108dp" android:height="108dp"\n'
             '    android:viewportWidth="108" android:viewportHeight="108">\n'
@@ -576,8 +583,8 @@ def _vector_group(inner: str) -> str:
             + "</vector>\n")
 
 
-def _vector_mono(src: dict) -> str:
-    body = monochrome_body(src)
+def _vector_mono(src: dict, tmp: pathlib.Path) -> str:
+    body = monochrome_body(src, tmp)
     d = re.search(r'<path d="([^"]+)"', body).group(1)
     rule = re.search(r'fill-rule="(\w+)"', body).group(1)
     t = re.search(r'<g transform="translate\(([-\d.]+) ([-\d.]+)\) scale\(([\d.]+)\)"', body)
@@ -932,7 +939,7 @@ def write_previews(docs: dict[str, str], src: dict, tmp: pathlib.Path) -> list[p
     # every MONO_STYLE side by side, so the choice stays reviewable after regeneration
     compare = []
     for style in MONO_STYLES:
-        variant = svg_doc(ANDROID, "", monochrome_body(src, style))
+        variant = svg_doc(ANDROID, "", monochrome_body(src, tmp, style))
         g = rasterise(variant, PREVIEW_PX, tmp / f"mono-{style}.png")
         tiles = [(themed(g, 110, (255, 255, 255), (36, 92, 168)), "blue"),
                  (themed(g, 110, (255, 255, 255), (18, 24, 33)), "dark"),
@@ -960,7 +967,7 @@ def write_previews(docs: dict[str, str], src: dict, tmp: pathlib.Path) -> list[p
 
 
 # ================================================================= self-check
-def verify() -> list[str]:
+def verify(src: dict, tmp: pathlib.Path) -> list[str]:
     """Assert the platform rules the assets depend on, so they cannot silently regress."""
     problems: list[str] = []
 
@@ -991,11 +998,17 @@ def verify() -> list[str]:
         if wants_alpha != has_alpha:
             problems.append(f"{png.name} transparency={has_alpha}, expected {wants_alpha}")
 
-    # the themed glyph and the adaptive foreground must both stay inside the 66dp safe
-    # circle of the 108dp viewport (AOSP SAFEZONE_SCALE = 66f / 72f)
-    safe = 66 / 108
-    if MONO_GLYPH_FILL > safe:
-        problems.append(f"themed glyph at {MONO_GLYPH_FILL:.3f} exceeds the safe zone {safe:.3f}")
+    # the themed glyph's fan must stay inside both the 72dp the mask reveals and the 33dp
+    # safe radius (AOSP SAFEZONE_SCALE = 66f / 72f), or a mask crops the artwork
+    fan_w, fan_h = mono_geometry(src, tmp, MONO_GLYPH_DP)["placed"]
+    if fan_w > ANDROID_VISIBLE_DP or fan_h > ANDROID_VISIBLE_DP:
+        problems.append(
+            f"themed fan at {fan_w:.1f}x{fan_h:.1f}dp exceeds the {ANDROID_VISIBLE_DP}dp "
+            "the mask reveals"
+        )
+    reach = max(fan_w, fan_h) / 2
+    if reach > 33 + 0.01:
+        problems.append(f"themed fan reaches {reach:.1f}dp, past the 33dp safe radius")
     fg = Image.open(ANDROID_RES / "mipmap-xxxhdpi/ic_launcher_foreground.png").convert("RGBA")
     box = fg.getchannel("A").getbbox()
     if box is None:
@@ -1019,7 +1032,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="episteme-icon-") as tmpdir:
         tmp = pathlib.Path(tmpdir)
         docs = build_svgs(src, tmp)
-        for name, text in vector_layers(src).items():
+        for name, text in vector_layers(src, tmp).items():
             docs[name] = text
         for name, text in docs.items():
             (ICON_DIR / name).write_text(text)
@@ -1029,12 +1042,15 @@ def main() -> int:
             for p in write_previews(docs, src, tmp) + write_raster_sets(docs, tmp):
                 print(f"wrote {p.relative_to(ROOT)}")
 
+        # inside the block: verify() re-measures the fan to check the themed glyph, so it
+        # needs the scratch directory
+        problems = verify(src, tmp)
+
     if args.deploy:
         for p in deploy():
             kind = "removed" if not p.exists() else "updated"
             print(f"{kind} {p.relative_to(ROOT)}")
 
-    problems = verify()
     for p in problems:
         print(f"FAIL {p}", file=sys.stderr)
     return 1 if problems else 0

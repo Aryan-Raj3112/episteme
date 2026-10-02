@@ -2,8 +2,7 @@
 <defs>
 
 </defs>
-  <clipPath id="bleed"><rect x="201.5" y="151" width="319" height="319"/></clipPath>
-  <g transform="translate(-20.690 -10.241) scale(0.20690)">
-    <path d="M201.5 151 H520.5 V470 H201.5 Z M201.5 316.51 C262.11 321.2 316.27 359.17 347 470 H201.5 Z M347 470 C349.88 351.85 412.74 266.92 520.5 260.4 V364.28 C438.79 367.79 382.1 403.6 347 470 Z" fill="#FFFFFFFF" fill-rule="evenodd" clip-rule="evenodd" clip-path="url(#bleed)"/>
+  <g transform="translate(-2.341 -2.965) scale(0.15607)">
+    <path d="M188 316 C254 316 314 351 347 470 C312.47 412.12 255 381 188 380 Z M188 386 C255 385 311.53 413.88 347 470 H188 Z M347 470 C350 347 418 260 534 260 L534 361 C445 362 383.49 399.14 347 470 Z M347 470 C384.51 400.86 445 366 534 367 V470 H347 Z" fill="#FFFFFFFF" fill-rule="nonzero" clip-rule="evenodd"/>
   </g>
 </svg>

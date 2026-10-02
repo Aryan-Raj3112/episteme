@@ -2,6 +2,7 @@ package com.aryan.reader
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -120,14 +121,44 @@ class AndroidLauncherIconContractTest {
     }
 
     @Test
-    fun monochromeGlyphStaysInsideThe66dpSafeZone() {
-        // The glyph is scaled to span 66 of the 108 viewport, so the group scale is
-        // 66 / BLEED where BLEED is the square window of source artwork it is cropped from.
-        // Guards against a future art change quietly widening the glyph.
+    fun monochromeGlyphNeverPresentsAnEdgeInsideTheMask() {
+        // The launcher mask supplies a themed icon's outline. That gives exactly two
+        // acceptable designs, and this rules out the broken middle one:
+        //
+        //  * a *field* that bleeds past the mask, so the mask alone decides the shape; or
+        //  * no field at all, so the themed background shows through around a free mark.
+        //
+        // What must never happen is a field that stops short of the mask: its own straight
+        // edges then appear inside the mask and the themed background shows as a band on
+        // every side. That is the gap this replaces.
         val xml = readText("drawable/ic_launcher_monochrome.xml")
-        val scale = Regex("""android:scaleX="([\d.]+)"""").find(xml)?.groupValues?.get(1)?.toDouble()
-        assertTrue("group scale is missing from the monochrome vector", scale != null)
-        assertEquals(SAFE_ZONE_DP / BLEED_DP, scale!!, 1e-4)
+        val d = requireNotNull(
+            Regex("""pathData="([^"]+)"""").find(xml)?.groupValues?.get(1)
+        ) { "the monochrome vector has no path data" }
+        val scale = requireNotNull(
+            Regex("""android:scaleX="([\d.]+)"""").find(xml)?.groupValues?.get(1)?.toDouble()
+        ) { "group scale is missing from the monochrome vector" }
+        val tx = requireNotNull(
+            Regex("""android:translateX="([-\d.]+)"""").find(xml)?.groupValues?.get(1)?.toDouble()
+        ) { "group translate is missing from the monochrome vector" }
+
+        // an axis-aligned M/H/V/H/Z rectangle as the first subpath means "has a field"
+        val field = Regex("""^\s*(M[-\d.]+ [-\d.]+ H[-\d.]+ V[-\d.]+ H[-\d.]+ Z)""").find(d)
+        if (field == null) return   // fieldless by design: the free-mark case
+
+        // M x y  H x  V y  H x  Z  ->  five coordinates: three x, two y
+        val n = Regex("""[-\d.]+""").findAll(field.groupValues[1]).map { it.value.toDouble() }.toList()
+        val width = (listOf(n[0], n[2], n[4]).max() - listOf(n[0], n[2], n[4]).min()) * scale
+        val height = (listOf(n[1], n[3]).max() - listOf(n[1], n[3]).min()) * scale
+        assertTrue(
+            "field spans ${width}dp wide; it must reach the full ${ADAPTIVE_DP}dp viewport " +
+                "or the mask exposes themed background around it",
+            width >= ADAPTIVE_DP - 0.5,
+        )
+        assertTrue(
+            "field spans ${height}dp tall; it must reach the full ${ADAPTIVE_DP}dp viewport",
+            height >= ADAPTIVE_DP - 0.5,
+        )
     }
 
     @Test
@@ -234,8 +265,6 @@ class AndroidLauncherIconContractTest {
         const val ADAPTIVE_DP = 108
         const val SAFE_ZONE_DP = 66
         const val SAFE_RADIUS_DP = 33.0            // half of the 66dp safe zone
-        // square window of source artwork the icon is cropped from; see the generator
-        const val BLEED_DP = 319.0
         val DENSITIES = listOf("mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi")
     }
 }
