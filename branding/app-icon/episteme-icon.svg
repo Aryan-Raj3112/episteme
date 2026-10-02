@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+<defs>
+<linearGradient id="d" x1="247" y1="151" x2="484" y2="470" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fcfbf8"/>
+      <stop offset=".5" stop-color="#f8f7f2"/>
+      <stop offset=".78" stop-color="#f3f2ec"/>
+      <stop offset="1" stop-color="#edece5"/>
+    </linearGradient>
+<radialGradient id="e" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="matrix(0 245 -280 0 356 205)">
+      <stop offset="0" stop-color="#fff" stop-opacity=".16"/>
+      <stop offset=".46" stop-color="#fff" stop-opacity=".055"/>
+      <stop offset=".78" stop-color="#fff" stop-opacity=".016"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+<linearGradient id="g" x1="192" y1="318" x2="350" y2="472" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e7effb"/>
+      <stop offset=".3" stop-color="#d9e5f7"/>
+      <stop offset=".62" stop-color="#c4d6ef"/>
+      <stop offset="1" stop-color="#a9c0e1"/>
+    </linearGradient>
+<linearGradient id="h" x1="192" y1="386" x2="350" y2="472" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7e9cca"/>
+      <stop offset=".32" stop-color="#6b8abd"/>
+      <stop offset=".66" stop-color="#5775aa"/>
+      <stop offset="1" stop-color="#3f5786"/>
+    </linearGradient>
+<linearGradient id="j" x1="347" y1="263" x2="535" y2="447" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f1f7ff"/>
+      <stop offset=".3" stop-color="#a9cbfc"/>
+      <stop offset=".62" stop-color="#7cadf7"/>
+      <stop offset="1" stop-color="#5c9cf1"/>
+    </linearGradient>
+<linearGradient id="k" x1="347" y1="357" x2="535" y2="474" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0d47c9"/>
+      <stop offset=".3" stop-color="#1550d3"/>
+      <stop offset=".62" stop-color="#2358ce"/>
+      <stop offset="1" stop-color="#33479f"/>
+    </linearGradient>
+<radialGradient id="m" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="matrix(-185 0 0 -112 520 455)">
+      <stop offset="0" stop-color="#1332a0" stop-opacity=".17"/>
+      <stop offset=".56" stop-color="#1b4199" stop-opacity=".055"/>
+      <stop offset="1" stop-color="#1b3f92" stop-opacity="0"/>
+    </radialGradient>
+  <clipPath id="bleed"><rect x="201.5" y="151" width="319" height="319"/></clipPath>
+</defs>
+  <rect width="1024" height="1024" fill="#FFFFFF"/>
+  <g transform="translate(-289.2948 -298.1734) scale(2.21965)">
+    <path d="M188 316c66 0 126 35 159 154H188z" fill="url(#g)"/>
+    <path d="M188 383c67 0 124 30 159 87H188z" fill="url(#h)"/>
+    <path d="M347 470c3-123 71-210 187-210v104c-89 0-150 36-187 106" fill="url(#j)"/>
+    <path d="M347 470c37-70 98-106 187-106v106H347Z" fill="url(#k)"/>
+    <path fill="url(#m)" d="M350 352h184v118H350z"/>
+  </g>
+</svg>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108" fill="none">
+<defs>
+
+</defs>
+  <clipPath id="bleed"><rect x="201.5" y="151" width="319" height="319"/></clipPath>
+  <g transform="translate(-20.690 -10.241) scale(0.20690)">
+    <path d="M201.5 151 H520.5 V470 H201.5 Z M201.5 316.51 C262.11 321.2 316.27 359.17 347 470 H201.5 Z M347 470 C349.88 351.85 412.74 266.92 520.5 260.4 V364.28 C438.79 367.79 382.1 403.6 347 470 Z" fill="#FFFFFFFF" fill-rule="evenodd" clip-rule="evenodd" clip-path="url(#bleed)"/>
+  </g>
+</svg>
