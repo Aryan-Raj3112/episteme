@@ -81,6 +81,28 @@ class SharedMarkdownConverterTest {
     }
 
     @Test
+    fun setextHeadingWrappingAcrossLinesIsReadWhole() {
+        // A setext heading can wrap over several source lines, which the renderer joins with
+        // "\n" before wrapping in <hN>. So the heading's inner HTML really can contain a newline,
+        // and the heading regex must span newlines to find the closing </hN> and start the
+        // section. That is what the (?s) flag on HeadingElementRegex is for.
+        val sections = SharedMarkdownConverter.convert(
+            "A title that\nwraps onto a second line\n===\n\nbody text",
+        )
+
+        assertEquals(listOf("A title that\nwraps onto a second line"), sections.map { it.title })
+        assertEquals(listOf(0), sections.map { it.depth })
+    }
+
+    @Test
+    fun headingKeepsInlineFormattingInItsTitle() {
+        // The captured group is inner *HTML*, so tags are stripped and entities decoded.
+        val sections = SharedMarkdownConverter.convert("## A **bold** &amp; *italic* title\n\nbody")
+
+        assertEquals(listOf("A bold & italic title"), sections.map { it.title })
+    }
+
+    @Test
     fun blockquotesNestParagraphs() {
         val html = SharedMarkdownConverter.convert("> quoted line").single().html
         assertTrue("<blockquote>" in html)

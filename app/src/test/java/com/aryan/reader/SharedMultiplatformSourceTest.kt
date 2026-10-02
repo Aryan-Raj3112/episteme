@@ -41,6 +41,32 @@ class SharedMultiplatformSourceTest {
         )
     }
 
+    @Test
+    fun `commonMain avoids regex options missing from the common stdlib`() {
+        // `RegexOption.DOT_MATCHES_ALL` and friends resolve on JVM and Native but are absent from
+        // the common stdlib, so naming one in commonMain breaks `compileIosMainKotlinMetadata` —
+        // the task that builds the shared klib. Every platform target and the Android host tests
+        // stay green, so the failure surfaces only in that one compile.
+        //
+        // Use the inline `(?s)` flag instead; it is equivalent and portable.
+        val jvmOnlyOptions = Regex(
+            """RegexOption\.(DOT_MATCHES_ALL|COMMENTS|UNIX_LINES|CANON_EQ)\b""",
+        )
+        val offenders = mutableListOf<String>()
+        for (file in sharedKotlinFiles("commonMain")) {
+            file.codeLines().forEachIndexed { index, code ->
+                if (jvmOnlyOptions.containsMatchIn(code)) {
+                    offenders += "${file.name}:${index + 1}: ${code.trim()}"
+                }
+            }
+        }
+        assertTrue(
+            "Regex option missing from the common stdlib in commonMain " +
+                "(breaks compileIosMainKotlinMetadata):\n" + offenders.joinToString("\n"),
+            offenders.isEmpty(),
+        )
+    }
+
     /**
      * File lines with comments removed, preserving line numbering. KDoc often *documents* the
      * JVM-only call it replaced, so scanning raw text produces false positives.
