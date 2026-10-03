@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -227,116 +228,123 @@ internal fun SharedNativePaginatedPage(
         shadowElevation = if (showsPageChrome) 1.dp else 0.dp,
         border = if (showsPageChrome) BorderStroke(1.dp, renderPlan.foreground.copy(alpha = 0.14f)) else null
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(
-                    horizontal = settings.resolvedHorizontalMargin.dp,
-                    vertical = settings.resolvedVerticalMargin.dp
-                )
-                .onGloballyPositioned { coordinates ->
-                    val nextFit = SharedNativeContentFit(
-                        rootTopPx = coordinates.positionInRoot().y.roundToInt(),
-                        heightPx = coordinates.size.height
-                    )
-                    if (contentFit != nextFit) {
-                        contentFit = nextFit
-                    }
-                },
-            verticalArrangement = Arrangement.Top
+        // Android reads the image height budget back out of `ImageBlock.expectedHeight`; the
+        // shared render path has no such field, so the page's own height stands in for it. See
+        // `LocalSharedNativePageImageMaxHeightPx`.
+        CompositionLocalProvider(
+            LocalSharedNativePageImageMaxHeightPx provides renderGeometry.pageContentHeightPx.toFloat()
         ) {
-            if (blocks.isEmpty()) {
-                SharedNativeInteractiveText(
-                    text = page.text.toReaderAnnotatedString(
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(
+                        horizontal = settings.resolvedHorizontalMargin.dp,
+                        vertical = settings.resolvedVerticalMargin.dp
+                    )
+                    .onGloballyPositioned { coordinates ->
+                        val nextFit = SharedNativeContentFit(
+                            rootTopPx = coordinates.positionInRoot().y.roundToInt(),
+                            heightPx = coordinates.size.height
+                        )
+                        if (contentFit != nextFit) {
+                            contentFit = nextFit
+                        }
+                    },
+                verticalArrangement = Arrangement.Top
+            ) {
+                if (blocks.isEmpty()) {
+                    SharedNativeInteractiveText(
+                        text = page.text.toReaderAnnotatedString(
+                            searchQuery = renderPlan.searchQuery,
+                            searchHighlight = searchHighlight,
+                            chapterIndex = page.chapterIndex,
+                            pageIndex = page.pageIndex,
+                            absoluteStartOffset = page.startOffset,
+                            highlights = visibleHighlights,
+                            activeSelection = activeSelection,
+                            selectionHighlight = selectionHighlight
+                        ),
+                        page = page,
+                        textBlock = SharedNativeTextBlockDescriptor(
+                            chapterIndex = page.chapterIndex,
+                            pageIndex = page.pageIndex,
+                            blockIndex = -1,
+                            blockCharOffset = page.startOffset,
+                            baseCfi = null,
+                            textStartOffset = page.startOffset,
+                            text = page.text
+                        ),
+                        textStartOffset = page.startOffset,
+                        color = renderPlan.foreground,
+                        textAlign = fallbackTextAlign,
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontSize = settings.fontSize.sp,
+                            lineHeight = (settings.fontSize * settings.lineSpacing).sp,
+                            fontFamily = readerFontFamily,
+                            fontWeight = settings.fontWeight.takeIf { it > 0 }?.let(::FontWeight),
+                            letterSpacing = settings.letterSpacing.em
+                        ).withAndroidPaginationTextMetrics(settings.letterSpacing),
+                        activeSelection = activeSelection,
+                        onReaderTap = onReaderTap,
+                        onReaderHorizontalTap = onReaderHorizontalTap,
+                        immediateDragSelectEnabled = immediateDragSelectEnabled,
+                        onSelectionChange = onSelectionChange,
+                        onSelectionGestureActiveChange = onSelectionGestureActiveChange,
+                        onHighlightSelected = onHighlightSelected,
+                        onLinkClicked = onLinkClicked,
+                        selectionLayouts = selectionLayouts,
+                        onTextLaidOut = { fit ->
+                            if (textLayouts[fit.key] != fit) {
+                                textLayouts[fit.key] = fit
+                                layoutVersion += 1
+                            }
+                        },
+                        fitLabel = SharedNativeTextFitLabel(
+                            page = page,
+                            blockIndex = -1,
+                            kind = "plain",
+                            sourceRange = "${page.startOffset}..${page.endOffset}",
+                            textChars = page.text.length
+                        )
+                    )
+                } else {
+                    SharedSemanticBlockStack(
+                        blocks = blocks,
+                        page = page,
+                        background = renderPlan.background,
+                        foreground = renderPlan.foreground,
                         searchQuery = renderPlan.searchQuery,
                         searchHighlight = searchHighlight,
-                        chapterIndex = page.chapterIndex,
-                        pageIndex = page.pageIndex,
-                        absoluteStartOffset = page.startOffset,
                         highlights = visibleHighlights,
                         activeSelection = activeSelection,
-                        selectionHighlight = selectionHighlight
-                    ),
-                    page = page,
-                    textBlock = SharedNativeTextBlockDescriptor(
-                        chapterIndex = page.chapterIndex,
-                        pageIndex = page.pageIndex,
-                        blockIndex = -1,
-                        blockCharOffset = page.startOffset,
-                        baseCfi = null,
-                        textStartOffset = page.startOffset,
-                        text = page.text
-                    ),
-                    textStartOffset = page.startOffset,
-                    color = renderPlan.foreground,
-                    textAlign = fallbackTextAlign,
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = settings.fontSize.sp,
-                        lineHeight = (settings.fontSize * settings.lineSpacing).sp,
-                        fontFamily = readerFontFamily,
-                        fontWeight = settings.fontWeight.takeIf { it > 0 }?.let(::FontWeight),
-                        letterSpacing = settings.letterSpacing.em
-                    ).withAndroidPaginationTextMetrics(settings.letterSpacing),
-                    activeSelection = activeSelection,
-                    onReaderTap = onReaderTap,
-                    onReaderHorizontalTap = onReaderHorizontalTap,
-                    immediateDragSelectEnabled = immediateDragSelectEnabled,
-                    onSelectionChange = onSelectionChange,
-                    onSelectionGestureActiveChange = onSelectionGestureActiveChange,
-                    onHighlightSelected = onHighlightSelected,
-                    onLinkClicked = onLinkClicked,
-                    selectionLayouts = selectionLayouts,
-                    onTextLaidOut = { fit ->
-                        if (textLayouts[fit.key] != fit) {
-                            textLayouts[fit.key] = fit
-                            layoutVersion += 1
+                        selectionHighlight = selectionHighlight,
+                        fallbackTextAlign = fallbackTextAlign,
+                        fallbackFontFamily = readerFontFamily,
+                        settings = settings,
+                        includeTrailingBottomMargin = false,
+                        onReaderTap = onReaderTap,
+                        onReaderHorizontalTap = onReaderHorizontalTap,
+                        immediateDragSelectEnabled = immediateDragSelectEnabled,
+                        onSelectionChange = onSelectionChange,
+                        onSelectionGestureActiveChange = onSelectionGestureActiveChange,
+                        onHighlightSelected = onHighlightSelected,
+                        onLinkClicked = onLinkClicked,
+                        selectionLayouts = selectionLayouts,
+                        imageContent = imageContent,
+                        onTextLaidOut = { fit ->
+                            if (textLayouts[fit.key] != fit) {
+                                textLayouts[fit.key] = fit
+                                layoutVersion += 1
+                            }
+                        },
+                        onBlockLaidOut = { fit ->
+                            if (blockLayouts[fit.index] != fit) {
+                                blockLayouts[fit.index] = fit
+                                layoutVersion += 1
+                            }
                         }
-                    },
-                    fitLabel = SharedNativeTextFitLabel(
-                        page = page,
-                        blockIndex = -1,
-                        kind = "plain",
-                        sourceRange = "${page.startOffset}..${page.endOffset}",
-                        textChars = page.text.length
                     )
-                )
-            } else {
-                SharedSemanticBlockStack(
-                    blocks = blocks,
-                    page = page,
-                    background = renderPlan.background,
-                    foreground = renderPlan.foreground,
-                    searchQuery = renderPlan.searchQuery,
-                    searchHighlight = searchHighlight,
-                    highlights = visibleHighlights,
-                    activeSelection = activeSelection,
-                    selectionHighlight = selectionHighlight,
-                    fallbackTextAlign = fallbackTextAlign,
-                    fallbackFontFamily = readerFontFamily,
-                    settings = settings,
-                    includeTrailingBottomMargin = false,
-                    onReaderTap = onReaderTap,
-                    onReaderHorizontalTap = onReaderHorizontalTap,
-                    immediateDragSelectEnabled = immediateDragSelectEnabled,
-                    onSelectionChange = onSelectionChange,
-                    onSelectionGestureActiveChange = onSelectionGestureActiveChange,
-                    onHighlightSelected = onHighlightSelected,
-                    onLinkClicked = onLinkClicked,
-                    selectionLayouts = selectionLayouts,
-                    imageContent = imageContent,
-                    onTextLaidOut = { fit ->
-                        if (textLayouts[fit.key] != fit) {
-                            textLayouts[fit.key] = fit
-                            layoutVersion += 1
-                        }
-                    },
-                    onBlockLaidOut = { fit ->
-                        if (blockLayouts[fit.index] != fit) {
-                            blockLayouts[fit.index] = fit
-                            layoutVersion += 1
-                        }
-                    }
-                )
+                }
             }
         }
     }

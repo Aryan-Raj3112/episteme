@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.ui
 
+import com.aryan.reader.paginatedreader.ReaderCfiPoint
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -51,5 +52,27 @@ class SharedNativeCfiOffsetMappingTest {
     fun `the in-block interpretation wins when both could apply`() {
         // offset 5 satisfies `0..40` first, so it must not be rebased by 100.
         assertEquals(5, sharedNativeScopedOffsetToLocalOrNull(5, 100, 40))
+    }
+
+    /**
+     * Android's `CfiUtils.getPath` and `getOffset` are independent: the path is everything before
+     * the first `:`, and the offset is `substringAfter(':', "0").toIntOrNull() ?: 0`. A point whose
+     * suffix is not a number is therefore a usable point at offset 0 on Android. Shared rejected
+     * it, which dropped the whole highlight on iOS. The arithmetic now lives in
+     * `ReaderCfiPaths.kt` and both platforms delegate to it.
+     */
+    @Test
+    fun `a non-numeric offset suffix resolves to zero instead of rejecting the point`() {
+        assertEquals(ReaderCfiPoint("/2/4/6", 0), "/2/4/6:abc".sharedNativeCfiPointOrNull())
+        assertEquals(ReaderCfiPoint("/2/4/6", 0), "/2/4/6:".sharedNativeCfiPointOrNull())
+        assertEquals(ReaderCfiPoint("/2/4/6", 7), "/2/4/6:7".sharedNativeCfiPointOrNull())
+        assertEquals(ReaderCfiPoint("/2/4/6", 0), "/2/4/6".sharedNativeCfiPointOrNull())
+    }
+
+    @Test
+    fun `a point whose path is not a slash-rooted cfi path is still rejected`() {
+        assertNull("2/4/6:abc".sharedNativeCfiPointOrNull())
+        assertNull("headless/0/1:abc".sharedNativeCfiPointOrNull())
+        assertNull(":12".sharedNativeCfiPointOrNull())
     }
 }

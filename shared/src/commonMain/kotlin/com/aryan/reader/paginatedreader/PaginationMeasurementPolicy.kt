@@ -84,3 +84,18 @@ fun intrinsicImageWidthPx(
     if (intrinsicWidth <= 0f || maxWidthPx <= 0f) return 0f
     return with(density) { intrinsicWidth.dp.toPx() }.coerceAtMost(maxWidthPx)
 }
+
+/**
+ * Fraction of the page height an image may occupy.
+ *
+ * Shared by the paginator's measure pass (`measureImageSize`) and the reader's render pass
+ * (`sharedNativeImageRenderSizePx`), which is the whole point: if the two disagree about the
+ * bound, a tall image is measured into one box and rendered into another and overflows the page.
+ * Android gets the same guarantee from `ImageBlock.expectedHeight`, which the paginator fills
+ * with its contain-fit height and the renderer reads back.
+ */
+const val ImagePageHeightFraction = 0.86f
+
+/** The contain-fit height budget for an image on a page of [pageHeightPx]. */
+fun imagePageHeightBudgetPx(pageHeightPx: Int): Float =
+    (pageHeightPx * ImagePageHeightFraction).roundToInt().coerceAtLeast(24).toFloat()

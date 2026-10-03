@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.paginatedreader.ReaderCfiPoint
 import com.aryan.reader.paginatedreader.SemanticBlock
 import com.aryan.reader.paginatedreader.SemanticHeader
 import com.aryan.reader.paginatedreader.SemanticImage
@@ -33,6 +34,8 @@ import com.aryan.reader.paginatedreader.SemanticMath
 import com.aryan.reader.paginatedreader.SemanticParagraph
 import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
+import com.aryan.reader.paginatedreader.readerCfiPathStrictlyBetween
+import com.aryan.reader.paginatedreader.readerCfiPointOrNull
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderLocator
@@ -109,7 +112,7 @@ internal fun ReaderPage.containsNativeSourceCfiLocator(locator: ReaderLocator, f
         ?: return false
     val blocks = semanticBlocks.flattenNativeSemanticBlocks().filterIsInstance<SemanticTextBlock>()
     if (blocks.isEmpty()) return false
-    val parts = cfi.split('|').mapNotNull { it.sharedNativeCfiPointOrNull(allowMissingOffset = true) }
+    val parts = cfi.split('|').mapNotNull { it.sharedNativeCfiPointOrNull() }
     val startPoint = parts.firstOrNull() ?: return false
     val endPoint = parts.lastOrNull() ?: startPoint
     val quoteLength = locator.textQuote?.length ?: 0
@@ -120,7 +123,7 @@ internal fun ReaderPage.containsNativeSourceCfiLocator(locator: ReaderLocator, f
         val isIntermediate = parts.size > 1 &&
             !startMatches &&
             !endMatches &&
-            sharedNativeCfiPathStrictlyBetween(blockPath, startPoint.path, endPoint.path)
+            readerCfiPathStrictlyBetween(blockPath, startPoint.path, endPoint.path)
         if (!startMatches && !endMatches && !isIntermediate) return@any false
         val blockStart = block.startCharOffsetInSource
         val blockEnd = blockStart + block.text.length
@@ -413,7 +416,7 @@ internal fun UserHighlight.sharedNativeSourceCfi(): String {
 internal fun UserHighlight.hasSharedNativeMultipartCfiRange(): Boolean {
     val parts = sharedNativeSourceCfi()
         .split('|')
-        .mapNotNull { it.sharedNativeCfiPointOrNull(allowMissingOffset = true) }
+        .mapNotNull { it.sharedNativeCfiPointOrNull() }
     if (parts.size < 2) return false
     val start = parts.first().path
     return parts.drop(1).any { !sharedNativeCfiPathsEquivalent(start, it.path) }
@@ -423,7 +426,7 @@ internal fun UserHighlight.sharedNativeCfiTouchesBlock(blockCfi: String?): Boole
     val blockPath = blockCfi?.takeIf { it.startsWith("/") } ?: return false
     return sharedNativeSourceCfi()
         .split('|')
-        .mapNotNull { it.sharedNativeCfiPointOrNull(allowMissingOffset = true) }
+        .mapNotNull { it.sharedNativeCfiPointOrNull() }
         .any { sharedNativeCfiPathsEquivalent(it.path, blockPath) }
 }
 
@@ -1012,11 +1015,6 @@ internal fun sharedNativeReaderTrimmedWordRange(
     }
 }
 
-internal data class SharedNativeCfiPoint(
-    val path: String,
-    val offset: Int
-)
-
 internal fun sharedNativeHighlightRangeInBlock(
     highlight: UserHighlight,
     blockCfi: String?,
@@ -1033,7 +1031,7 @@ internal fun sharedNativeHighlightRangeInBlock(
     val endMatches = sharedNativeCfiPathsEquivalent(end.path, blockPath)
     val isIntermediate = !startMatches && !endMatches &&
         parts.size > 1 &&
-        sharedNativeCfiPathStrictlyBetween(blockPath, start.path, end.path)
+        readerCfiPathStrictlyBetween(blockPath, start.path, end.path)
     if (!startMatches && !endMatches && !isIntermediate) return null
 
     // Android benchmark (`cfiOffsetToBlockLocal`): an offset that fits neither
@@ -1079,16 +1077,12 @@ internal fun sharedNativeHighlightRangeInBlock(
     return cfiRange ?: quoteRange
 }
 
-internal fun String.sharedNativeCfiPointOrNull(allowMissingOffset: Boolean = false): SharedNativeCfiPoint? {
-    val separator = lastIndexOf(':')
-    if (separator <= 0 || separator == lastIndex) {
-        if (!allowMissingOffset) return null
-        return SharedNativeCfiPoint(takeIf { it.startsWith("/") } ?: return null, 0)
-    }
-    val path = substring(0, separator).takeIf { it.startsWith("/") } ?: return null
-    val offset = substring(separator + 1).toIntOrNull() ?: return null
-    return SharedNativeCfiPoint(path, offset)
-}
+/**
+ * Split a `path:offset` CFI point. Delegates to the shared CFI arithmetic, which is Android's
+ * `CfiUtils` body moved verbatim — see `ReaderCfiPaths.kt` for why a malformed offset suffix
+ * resolves to 0 rather than rejecting the point.
+ */
+internal fun String.sharedNativeCfiPointOrNull(): ReaderCfiPoint? = readerCfiPointOrNull(this)
 
 internal fun sharedNativeCfiPathsEquivalent(first: String, second: String): Boolean {
     if (first == second || first.startsWith("$second/") || second.startsWith("$first/")) return true
@@ -1098,29 +1092,6 @@ internal fun sharedNativeCfiPathsEquivalent(first: String, second: String): Bool
     return firstParts.size == secondParts.size &&
         firstParts.isNotEmpty() &&
         firstParts.drop(1) == secondParts.drop(1)
-}
-
-internal fun sharedNativeCfiPathStrictlyBetween(candidate: String, start: String, end: String): Boolean {
-    val candidateParts = candidate.sharedNativeCfiNumericPathParts() ?: return false
-    val startParts = start.sharedNativeCfiNumericPathParts() ?: return false
-    val endParts = end.sharedNativeCfiNumericPathParts() ?: return false
-    return sharedNativeCompareCfiPathParts(candidateParts, startParts) > 0 &&
-        sharedNativeCompareCfiPathParts(candidateParts, endParts) < 0
-}
-
-internal fun String.sharedNativeCfiNumericPathParts(): List<Int>? {
-    val parts = split('/').filter { it.isNotEmpty() }
-    if (parts.isEmpty()) return null
-    return parts.map { it.toIntOrNull() ?: return null }
-}
-
-internal fun sharedNativeCompareCfiPathParts(first: List<Int>, second: List<Int>): Int {
-    val length = minOf(first.size, second.size)
-    for (index in 0 until length) {
-        val comparison = first[index].compareTo(second[index])
-        if (comparison != 0) return comparison
-    }
-    return first.size.compareTo(second.size)
 }
 
 internal fun sharedNativeReaderHighlightForSelection(

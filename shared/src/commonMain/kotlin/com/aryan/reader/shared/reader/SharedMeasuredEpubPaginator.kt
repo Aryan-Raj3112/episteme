@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.paginatedreader.CssStyle
+import com.aryan.reader.paginatedreader.imagePageHeightBudgetPx
 import com.aryan.reader.paginatedreader.PaginationStackFragmentationPlan
 import com.aryan.reader.paginatedreader.SemanticBlock
 import com.aryan.reader.paginatedreader.SemanticFlexContainer
@@ -1464,7 +1465,7 @@ internal fun measureImageSize(
             // Contain-fit inside the page box: tall images shrink in width so
             // the aspect ratio survives and the image always fits the screen.
             // Mirrors computeImageRenderSizePx on Android so measure == render.
-            val maxHeight = (geometry.pageHeightPx * 0.86f).roundToInt().coerceAtLeast(24).toFloat()
+            val maxHeight = imagePageHeightBudgetPx(geometry.pageHeightPx)
             val aspect = height / width
             val baseWidth = if (style.width.isSpecified && style.width > 0.dp) {
                 with(density) { style.width.toPx().roundToInt() }.toFloat()
@@ -1500,7 +1501,7 @@ internal fun measureImageSize(
     }
     val coercedHeight = measuredHeight.coerceIn(
         24,
-        (geometry.pageHeightPx * 0.86f).roundToInt().coerceAtLeast(24)
+        imagePageHeightBudgetPx(geometry.pageHeightPx).roundToInt()
     )
     return measuredWidth to coercedHeight
 }

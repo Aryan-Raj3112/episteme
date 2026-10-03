@@ -1252,55 +1252,19 @@ internal class SmartPopupPositionProvider(
     }
 }
 
+/**
+ * Android-side alias for the shared CFI path/offset arithmetic (parity item B1). The bodies live
+ * in `com.aryan.reader.paginatedreader.ReaderCfiPaths.kt` so the iOS reader cannot drift from these.
+ */
 internal object CfiUtils {
-    fun compare(cfi1: String, cfi2: String): Int {
-        val path1 = cfi1.split(':').first()
-        val path2 = cfi2.split(':').first()
+    fun compare(cfi1: String, cfi2: String): Int = readerCompareCfi(cfi1, cfi2)
 
-        val parts1 = path1.split('/').filter { it.isNotEmpty() }.mapNotNull { it.toIntOrNull() }
-        val parts2 = path2.split('/').filter { it.isNotEmpty() }.mapNotNull { it.toIntOrNull() }
+    fun getPath(cfi: String): String = readerCfiPath(cfi)
+    fun getOffset(cfi: String): Int = readerCfiOffset(cfi)
+    fun getOffsetOrNull(cfi: String): Int? = readerCfiOffsetOrNull(cfi)
 
-        val length = minOf(parts1.size, parts2.size)
-        for (i in 0 until length) {
-            val cmp = parts1[i].compareTo(parts2[i])
-            if (cmp != 0) return cmp
-        }
-
-        if (parts1.size != parts2.size) {
-            return parts1.size.compareTo(parts2.size)
-        }
-
-        val offset1 = cfi1.substringAfter(':', "0").toIntOrNull() ?: 0
-        val offset2 = cfi2.substringAfter(':', "0").toIntOrNull() ?: 0
-        return offset1.compareTo(offset2)
-    }
-
-    fun getPath(cfi: String): String = cfi.split(':').first()
-    fun getOffset(cfi: String): Int = cfi.substringAfter(':', "0").toIntOrNull() ?: 0
-    fun getOffsetOrNull(cfi: String): Int? = cfi.substringAfter(':', "").toIntOrNull()
-
-    fun isPathStrictlyBetween(candidate: String, start: String, end: String): Boolean {
-        val candidateParts = pathParts(candidate) ?: return false
-        val startParts = pathParts(start) ?: return false
-        val endParts = pathParts(end) ?: return false
-        return comparePathParts(candidateParts, startParts) > 0 &&
-            comparePathParts(candidateParts, endParts) < 0
-    }
-
-    private fun pathParts(cfi: String): List<Int>? {
-        val segments = getPath(cfi).split('/').filter { it.isNotEmpty() }
-        if (segments.isEmpty()) return null
-        return segments.map { it.toIntOrNull() ?: return null }
-    }
-
-    private fun comparePathParts(first: List<Int>, second: List<Int>): Int {
-        val length = minOf(first.size, second.size)
-        for (index in 0 until length) {
-            val cmp = first[index].compareTo(second[index])
-            if (cmp != 0) return cmp
-        }
-        return first.size.compareTo(second.size)
-    }
+    fun isPathStrictlyBetween(candidate: String, start: String, end: String): Boolean =
+        readerCfiPathStrictlyBetween(candidate, start, end)
 }
 
 internal fun highlightQueryInText(
