@@ -67,6 +67,8 @@ sealed interface ReaderContentRenderPlan {
         override val background: Color,
         override val foreground: Color,
         override val navigationTarget: ReaderContentNavigationTarget,
-        override val highlights: List<UserHighlight>
+        override val highlights: List<UserHighlight>,
+        /** See [NativePaginatedPages.chapterTextIndexes]. */
+        val chapterTextIndexes: Map<Int, EpubChapterTextIndex> = emptyMap()
     ) : ReaderContentRenderPlan
 }

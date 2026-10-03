@@ -1105,7 +1105,10 @@ fun SharedNativeVerticalReader(
 
                         SharedNativeVerticalFlowItemKind.TEXT_PAGE -> {
                             val page = item.page
-                            val visibleHighlights = renderPlan.highlights.visibleInPage(page)
+                            val visibleHighlights = renderPlan.highlights.visibleInPage(
+                                page = page,
+                                chapterTextIndex = renderPlan.chapterTextIndexes[page.chapterIndex]
+                            )
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1158,7 +1161,10 @@ fun SharedNativeVerticalReader(
                             val page = item.page
                             val block = item.block
                             if (block != null) {
-                                val visibleHighlights = renderPlan.highlights.visibleInPage(page)
+                                val visibleHighlights = renderPlan.highlights.visibleInPage(
+                                    page = page,
+                                    chapterTextIndex = renderPlan.chapterTextIndexes[page.chapterIndex]
+                                )
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()

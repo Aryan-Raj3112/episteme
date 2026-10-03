@@ -102,7 +102,10 @@ internal fun SharedNativePaginatedPage(
 ) {
     val settings = renderPlan.settings
     val fallbackTextAlign = settings.textAlign.toComposeTextAlign()
-    val visibleHighlights = renderPlan.highlights.visibleInPage(page)
+    val visibleHighlights = renderPlan.highlights.visibleInPage(
+        page = page,
+        chapterTextIndex = renderPlan.chapterTextIndexes[page.chapterIndex]
+    )
     val chapterTextIndex = renderPlan.chapterTextIndexes[page.chapterIndex]
     val blocks = page.semanticBlocks
     val visibleHighlightSignature = remember(visibleHighlights) {
@@ -264,7 +267,11 @@ internal fun SharedNativePaginatedPage(
                             highlights = visibleHighlights,
                             activeSelection = activeSelection,
                             selectionHighlight = selectionHighlight,
-                            chapterTextIndex = chapterTextIndex
+                            // Deliberately no chapter index. A page the paginator could not split
+                            // into blocks has no block for the resolver to place a highlight in, and
+                            // handing it one makes it decline every highlight. Placement here goes by
+                            // the page's own text, which is all this page has.
+                            chapterTextIndex = null
                         ),
                         page = page,
                         textBlock = SharedNativeTextBlockDescriptor(

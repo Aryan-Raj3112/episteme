@@ -49,15 +49,59 @@ import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-internal fun List<UserHighlight>.visibleInPage(page: ReaderPage): List<UserHighlight> {
+/**
+ * The highlights this page shows, and — when [chapterTextIndex] is given — decided by the same
+ * resolver the painters use.
+ *
+ * Scoping and painting have to agree, or a highlight appears on a page it cannot paint on. When the
+ * index is available the question "does this page show it" becomes "does this page own a block the
+ * highlight resolved to", which is exactly what the painter asks, so the two cannot disagree and a
+ * repeated sentence cannot appear on every page holding a copy of it. Without the index the older
+ * locator rules apply, which is the path desktop still takes.
+ */
+internal fun List<UserHighlight>.visibleInPage(
+    page: ReaderPage,
+    chapterTextIndex: EpubChapterTextIndex? = null
+): List<UserHighlight> {
     return filter { highlight ->
         val locator = highlight.locator.withFallbacks(
             chapterIndex = highlight.chapterIndex,
             cfi = highlight.cfi,
             textQuote = highlight.text
         )
-        (locator.chapterIndex ?: highlight.chapterIndex) == page.chapterIndex &&
+        if ((locator.chapterIndex ?: highlight.chapterIndex) != page.chapterIndex) return@filter false
+        if (chapterTextIndex == null) {
             page.containsNativeHighlightLocator(locator, highlight.cfi)
+        } else {
+            page.ownsResolvedHighlight(highlight, chapterTextIndex, locator, highlight.cfi)
+        }
+    }
+}
+
+/**
+ * Whether a block on this page holds part of [highlight]'s resolved location.
+ *
+ * A page the paginator could not split into blocks has no block to own anything, so it falls back to
+ * the locator rules rather than silently dropping the highlight: those pages paint from their own
+ * text, where a per-block decision cannot apply.
+ */
+private fun ReaderPage.ownsResolvedHighlight(
+    highlight: UserHighlight,
+    chapterTextIndex: EpubChapterTextIndex,
+    locator: ReaderLocator,
+    fallbackCfi: String
+): Boolean {
+    val blocks = semanticBlocks.flattenNativeSemanticBlocks().filterIsInstance<SemanticTextBlock>()
+    if (blocks.isEmpty()) return containsNativeHighlightLocator(locator, fallbackCfi)
+    return blocks.any { block ->
+        val segment = chapterTextIndex.rangeInBlock(
+            highlight = highlight,
+            blockIndex = block.blockIndex,
+            blockCfi = block.cfi
+        ) ?: return@any false
+        val from = segment.localStart.coerceIn(0, block.text.length)
+        val to = segment.localEnd.coerceIn(from, block.text.length)
+        to > from
     }
 }
 

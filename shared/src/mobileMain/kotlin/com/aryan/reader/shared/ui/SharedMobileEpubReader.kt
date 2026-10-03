@@ -2363,7 +2363,10 @@ fun SharedMobileEpubReaderScreen(
                                     ?: activeCloudTtsChunk?.let { chunk ->
                                         highlights + chunk.toHighlight(cloudTtsState.progress.sessionId)
                                     }
-                                    ?: highlights
+                                    ?: highlights,
+                                // Same chapter layout Android places highlights against, so scrolling
+                                // and paginating agree on where a highlight is.
+                                chapterTextIndexes = chapterTextIndexes.value
                             ),
                             readerFontFamily = readerFontFamily,
                             searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
