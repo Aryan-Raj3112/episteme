@@ -123,7 +123,9 @@ fun SharedAiSettingsScreen(
     strings: SharedAiSettingsStrings,
     onBackClick: () -> Unit,
     /** Persists the key and reports what actually happened. */
-    onSaveKey: (provider: String, key: String) -> AiKeySaveResult,    onDeleteKey: (provider: String) -> Unit,    onSettingsChange: (ReaderAiByokSettings) -> Unit,
+    onSaveKey: (provider: String, key: String) -> AiKeySaveResult,
+    onDeleteKey: (provider: String) -> Unit,
+    onSettingsChange: (ReaderAiByokSettings) -> Unit,
     cloudCacheSummary: ReaderTtsCacheSummary? = null,
     onClearCloudTtsCache: () -> Unit = {},
     // BYOK TTS model picker options. Hosts pass a live list when available

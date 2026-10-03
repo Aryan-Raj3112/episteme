@@ -19,6 +19,58 @@ internal data class SharedDropdownMenuPlacement(
 )
 
 /**
+ * The anchor and the drawable area, expressed in the coordinate space the menu is actually
+ * painted in.
+ *
+ * A `Popup` is its own window, and that window is **not** laid out over the whole screen: Android
+ * positions it at `getWindowVisibleDisplayFrame`, so its content starts below the status bar and
+ * ends above the navigation bar. Everything measured in the host window is therefore in
+ * screen/host coordinates, while the card is painted in popup-content coordinates, and the two
+ * differ by exactly those insets. On a 1080x2400 phone with a 74px status bar the reader's
+ * overflow menu landed 74px below its button, which read as a gap between the toolbar and the menu.
+ *
+ * Doing this conversion up front — rather than computing a screen-space placement and subtracting
+ * the popup origin afterwards — also fixes the fit checks: the menu must fit the popup's drawable
+ * area (2400 - 74 - 63 = 2263px tall here), not the full container height, or a tall menu near the
+ * bottom of the screen is allowed to overflow off-screen.
+ *
+ * @param anchorBounds the anchor in host-window coordinates.
+ * @param containerSize the host window's full size, as `LocalWindowInfo.containerSize`.
+ * @param insets how far the popup window's content origin sits inside the host window.
+ */
+internal fun sharedDropdownMenuPopupSpace(
+    anchorBounds: IntRect,
+    containerSize: IntSize,
+    insets: SharedDropdownMenuInsets,
+): PopupSpace {
+    val anchor = IntRect(
+        left = anchorBounds.left - insets.left,
+        top = anchorBounds.top - insets.top,
+        right = anchorBounds.right - insets.left,
+        bottom = anchorBounds.bottom - insets.top,
+    )
+    val drawable = IntSize(
+        width = (containerSize.width - insets.left - insets.right).coerceAtLeast(0),
+        height = (containerSize.height - insets.top - insets.bottom).coerceAtLeast(0),
+    )
+    return PopupSpace(anchor = anchor, drawableSize = drawable)
+}
+
+/** How far a popup window's content origin sits inside its host window, per edge. */
+internal data class SharedDropdownMenuInsets(
+    val left: Int,
+    val top: Int,
+    val right: Int,
+    val bottom: Int,
+)
+
+/** Anchor and drawable area in popup-content coordinates. */
+internal data class PopupSpace(
+    val anchor: IntRect,
+    val drawableSize: IntSize,
+)
+
+/**
  * Android benchmark (`DropdownMenuPositionProvider` in material3's `Menu.kt`).
  *
  * Kept as a pure function so the placement rules are unit-testable on the host JVM

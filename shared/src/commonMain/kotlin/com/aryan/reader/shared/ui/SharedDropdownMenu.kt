@@ -12,8 +12,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -37,8 +39,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.DpOffset
-import androidx.compose.ui.unit.IntOffset
-import kotlin.math.roundToInt
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.roundToIntRect
 import androidx.compose.ui.unit.IntRect
@@ -121,27 +121,39 @@ fun SharedDropdownMenu(
     // window bounds without affecting layout.
     var anchorBounds by remember { mutableStateOf(IntRect.Zero) }
     var menuSize by remember { mutableStateOf(IntSize.Zero) }
+
     /**
-     * The popup window's own origin in screen coordinates.
+     * A `Popup` is its own window, and that window does not start at the host window's origin:
+     * Android places it at `getWindowVisibleDisplayFrame`, so its content begins below the status
+     * bar and ends above the navigation bar. [anchorBounds] is measured in host-window
+     * coordinates while the card is painted in popup-content coordinates, so placement has to
+     * move into the popup's space first or the menu lands one inset below its button — measured at
+     * 74px on a 1080x2400 Android device, which read as a gap between the toolbar and the menu.
      *
-     * A `Popup` is its own window, and a *focusable* one on iOS is not flush with the screen: it
-     * begins below the status bar, so its origin is not (0, 0). Placement computed from the
-     * anchor's `boundsInWindow()` is therefore in screen coordinates and lands too low by exactly
-     * that inset — measured at 66pt inside a `ModalBottomSheet`, which put the audiobook player's
-     * overflow menu over the cover art instead of under its button. Subtracting the popup's own
-     * origin converts the offset into the popup's coordinate space. On Android the origin is
-     * (0, 0) and this is a no-op, so both platforms place from the same numbers.
+     * The inset is read *here*, outside the `Popup`: inside it every inset reports 0 because the
+     * popup window has already consumed them, and no in-popup API exposes the window's position
+     * (`boundsInWindow()` and `boundsInRoot()` are both popup-local). [WindowInsets.safeDrawing]
+     * mirrors the visible display frame that positions the popup, so it is the matching value.
      */
-    var popupOrigin by remember { mutableStateOf(IntOffset.Zero) }
+    val safeInsets = WindowInsets.safeDrawing
+    val popupSpaceInsets = SharedDropdownMenuInsets(
+        left = safeInsets.getLeft(density, layoutDirection),
+        top = safeInsets.getTop(density),
+        right = safeInsets.getRight(density, layoutDirection),
+        bottom = safeInsets.getBottom(density),
+    )
+    // Everything below works in popup-content coordinates, so the card's offset needs no
+    // correction and the fit checks are measured against the area the menu can actually use.
+    val popupSpace = sharedDropdownMenuPopupSpace(anchorBounds, windowSize, popupSpaceInsets)
     val placement = sharedDropdownMenuPlacement(
-        anchorBounds = anchorBounds,
+        anchorBounds = popupSpace.anchor,
         menuSize = menuSize,
-        windowSize = windowSize,
+        windowSize = popupSpace.drawableSize,
         contentOffset = offset,
         density = density,
         layoutDirection = layoutDirection,
     )
-    val maxMenuHeight = sharedDropdownMenuMaxHeight(anchorBounds, windowSize, density)
+    val maxMenuHeight = sharedDropdownMenuMaxHeight(popupSpace.anchor, popupSpace.drawableSize, density)
 
     // Zero-size probe: reports the anchor (this node's parent in the layout) in window
     // coordinates, which is the same box `DropdownMenu` measures itself against.
@@ -164,12 +176,7 @@ fun SharedDropdownMenu(
         properties = SharedDropdownMenuPopupProperties,
     ) {
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .onGloballyPositioned { coordinates ->
-                    val bounds = coordinates.boundsInWindow()
-                    popupOrigin = IntOffset(bounds.left.roundToInt(), bounds.top.roundToInt())
-                },
+            modifier = Modifier.fillMaxSize(),
         ) {
             // Scrim is a *sibling behind* the card, never its parent: a `clickable`
             // ancestor merges its descendants' semantics, which collapsed the entire
@@ -186,12 +193,7 @@ fun SharedDropdownMenu(
             Card(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .offset {
-                        IntOffset(
-                            placement.offset.x - popupOrigin.x,
-                            placement.offset.y - popupOrigin.y,
-                        )
-                    }
+                    .offset { placement.offset }
                     .heightIn(max = with(density) { maxMenuHeight.toDp() })
                     .width(IntrinsicSize.Max)
                     .graphicsLayer {
