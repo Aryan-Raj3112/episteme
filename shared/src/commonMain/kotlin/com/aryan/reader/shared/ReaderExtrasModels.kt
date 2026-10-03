@@ -793,7 +793,7 @@ data class ReaderTtsChunk(
     fun toHighlight(sessionId: Long): UserHighlight {
         val locator = toLocator()
         return UserHighlight(
-            id = "tts_${sessionId}_$index",
+            id = "$TRANSIENT_BAND_ID_PREFIX${sessionId}_$index",
             cfi = locator.cfi.orEmpty(),
             text = text,
             color = HighlightColor.YELLOW,

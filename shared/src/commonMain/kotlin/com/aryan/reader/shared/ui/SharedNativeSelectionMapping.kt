@@ -324,9 +324,16 @@ internal fun AnnotatedString.Builder.applyHighlightsToTextRanges(
     }
     if (resolved.isEmpty()) return
 
+    // Painting and advertising are separate decisions. A read-aloud band is paint-only: it is drawn
+    // like any highlight but never reported as one, because nothing stores it and no highlight list
+    // contains its id. Annotating it meant tapping a spoken sentence opened the selection sheet on an
+    // id that could not be found — not recolourable, not deletable — and, since the band covered
+    // whatever was under it, it could shadow a real highlight there.
     val backgrounds = resolved.filter { it.first.style == HighlightStyle.BACKGROUND }
     for ((highlight, range) in backgrounds) {
-        addStringAnnotation(ReaderNativeAnnotationHighlight, highlight.id, range.start, range.end)
+        if (!highlight.isTransientPlaybackBand) {
+            addStringAnnotation(ReaderNativeAnnotationHighlight, highlight.id, range.start, range.end)
+        }
     }
     for (merged in mergeHighlightRanges(backgrounds.map { it.second })) {
         // One span per distinct colour: the overlap keeps a single alpha instead of compounding.
@@ -342,7 +349,9 @@ internal fun AnnotatedString.Builder.applyHighlightsToTextRanges(
     for ((highlight, range) in resolved) {
         if (highlight.style == HighlightStyle.BACKGROUND) continue
         addStyle(style = highlight.nativeSpanStyle(), start = range.start, end = range.end)
-        addStringAnnotation(ReaderNativeAnnotationHighlight, highlight.id, range.start, range.end)
+        if (!highlight.isTransientPlaybackBand) {
+            addStringAnnotation(ReaderNativeAnnotationHighlight, highlight.id, range.start, range.end)
+        }
     }
 }
 

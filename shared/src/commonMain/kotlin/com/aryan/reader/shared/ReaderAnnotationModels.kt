@@ -270,6 +270,15 @@ data class ReaderHighlightPalette(
     }
 }
 
+/**
+ * Names highlights that show reading position rather than reader intent.
+ *
+ * Both the producer ([ReaderTtsChunk.toHighlight]) and the consumers read this one constant, so
+ * changing the id format cannot quietly leave painters and hit-testing disagreeing about which
+ * highlights are real.
+ */
+const val TRANSIENT_BAND_ID_PREFIX = "tts_"
+
 data class UserHighlight(
     val id: String,
     val cfi: String,
@@ -287,6 +296,17 @@ data class UserHighlight(
 ) {
     val effectiveColor: Color
         get() = colorArgb?.let { Color(it) } ?: color.color
+
+    /**
+     * Whether this is a transient reading-position band rather than something the reader owns.
+     *
+     * Read-aloud paints the current chunk through the highlight pipeline, so it arrives here shaped
+     * exactly like a highlight the reader made. It is not one: it is not stored, it has no id the
+     * reader can look up, and it must not be reported as selected. Painters draw it; hit-testing and
+     * the selection sheet ignore it.
+     */
+    val isTransientPlaybackBand: Boolean
+        get() = id.startsWith(TRANSIENT_BAND_ID_PREFIX)
 
     fun renderColor(legacyAlpha: Float): Color {
         val argb = colorArgb ?: return color.color.copy(alpha = legacyAlpha)
