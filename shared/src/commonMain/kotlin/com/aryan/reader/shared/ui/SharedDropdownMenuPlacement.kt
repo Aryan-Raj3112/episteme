@@ -42,7 +42,7 @@ internal fun sharedDropdownMenuPopupSpace(
     anchorBounds: IntRect,
     containerSize: IntSize,
     insets: SharedDropdownMenuInsets,
-): PopupSpace {
+): SharedDropdownMenuSpace {
     val anchor = IntRect(
         left = anchorBounds.left - insets.left,
         top = anchorBounds.top - insets.top,
@@ -53,7 +53,7 @@ internal fun sharedDropdownMenuPopupSpace(
         width = (containerSize.width - insets.left - insets.right).coerceAtLeast(0),
         height = (containerSize.height - insets.top - insets.bottom).coerceAtLeast(0),
     )
-    return PopupSpace(anchor = anchor, drawableSize = drawable)
+    return SharedDropdownMenuSpace(anchor = anchor, drawableSize = drawable)
 }
 
 /** How far a popup window's content origin sits inside its host window, per edge. */
@@ -65,7 +65,7 @@ internal data class SharedDropdownMenuInsets(
 )
 
 /** Anchor and drawable area in popup-content coordinates. */
-internal data class PopupSpace(
+internal data class SharedDropdownMenuSpace(
     val anchor: IntRect,
     val drawableSize: IntSize,
 )
