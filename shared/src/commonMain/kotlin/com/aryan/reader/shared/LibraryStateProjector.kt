@@ -217,7 +217,7 @@ class SharedLibraryStateProjector(
             .filter { it.sourceFolder != null }
             .groupBy { it.sourceFolder.orEmpty() }
             .flatMap { (folderUri, books) ->
-                val rootName = folderNamesByUri[folderUri] ?: folderUri.folderDisplayName()
+                val rootName = folderNamesByUri[folderUri] ?: folderDisplayName(folderUri)
                 val rootShelfId = "folder_$folderUri"
                 val rootAccumulator = FolderShelfAccumulator(
                     id = rootShelfId,
@@ -323,6 +323,17 @@ fun booksAvailableForShelfAddition(
         .distinctBy { it.sharedLibraryIdentity() }
 }
 
+/**
+ * Display name for a folder identified by a path, URI, or bare name.
+ *
+ * The identifier is whatever the authoring platform recorded: Android stores a tree URI, iOS
+ * stores the folder name. Both reduce to the last path segment here, and a value with no usable
+ * segment keeps the placeholder the UI has always shown.
+ */
+fun folderDisplayName(sourceFolder: String): String {
+    return sourceFolder.replace('\\', '/').trimEnd('/').substringAfterLast('/').ifBlank { "Local Folder" }
+}
+
 private fun List<SyncedFolder>.withSourceFolderFallbacks(books: List<BookItem>): List<SyncedFolder> {
     val knownFolders = flatMapTo(linkedSetOf()) { folder -> listOf(folder.uriString, folder.name) }
     val missingFolders = books
@@ -331,15 +342,11 @@ private fun List<SyncedFolder>.withSourceFolderFallbacks(books: List<BookItem>):
         .map { sourceFolder ->
             SyncedFolder(
                 uriString = sourceFolder,
-                name = sourceFolder.folderDisplayName(),
+                name = folderDisplayName(sourceFolder),
                 lastScanTime = 0L
             )
         }
     return if (missingFolders.isEmpty()) this else this + missingFolders
-}
-
-private fun String.folderDisplayName(): String {
-    return replace('\\', '/').trimEnd('/').substringAfterLast('/').ifBlank { "Local Folder" }
 }
 
 fun filterBySearch(books: List<BookItem>, searchQuery: String): List<BookItem> {

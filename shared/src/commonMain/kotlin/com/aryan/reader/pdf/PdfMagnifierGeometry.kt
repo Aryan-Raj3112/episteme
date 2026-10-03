@@ -1,6 +1,7 @@
 package com.aryan.reader.pdf
 
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.ImageBitmap
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -65,3 +66,39 @@ fun mapContentBoundsToMagnifier(
     (contentSource.sourceX(right) - sample.srcLeft) * sample.outputScaleX,
     (contentSource.sourceY(bottom) - sample.srcTop) * sample.outputScaleY,
 )
+
+/**
+ * A high-res zoom tile paired with the region it covers **in content space** (the page's on-screen
+ * fit size, i.e. the canvas size at scale 1).
+ *
+ * Both hosts build tiles in different spaces — Android's `PdfTile.renderRect` is already in
+ * content space, while `PdfZoomTileRequest.leftPx` is in full-render space and needs dividing by
+ * the render scale — so each host converts on the way in and the magnifier itself only ever sees
+ * content space. See `magnifierTileAt`.
+ */
+data class MagnifierTileSource(
+    val bitmap: ImageBitmap,
+    val contentRect: Rect,
+)
+
+/**
+ * The index of the tile covering the magnifier center, or null when there is none.
+ *
+ * Tiles are only consulted above base scale, matching Android's `currentScale > 1f` gate. Both
+ * edges are half-open (`>= left`, `< right`), which is what `android.graphics.Rect.contains` does,
+ * so a center landing exactly on a seam resolves to the tile that starts there. A degenerate rect
+ * never matches, again matching `Rect.contains`.
+ */
+fun magnifierTileIndexAt(
+    tileContentRects: List<Rect>,
+    centerX: Float,
+    centerY: Float,
+    currentScale: Float,
+): Int? {
+    if (currentScale <= 1f) return null
+    return tileContentRects.indexOfFirst { rect ->
+        rect.right > rect.left && rect.bottom > rect.top &&
+            centerX >= rect.left && centerX < rect.right &&
+            centerY >= rect.top && centerY < rect.bottom
+    }.takeIf { it >= 0 }
+}

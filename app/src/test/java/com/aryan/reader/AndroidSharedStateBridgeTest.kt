@@ -36,7 +36,9 @@ class AndroidLibraryProjectionAdapterTest {
         assertEquals(listOf("book"), context.androidBooksById.keys.toList())
         assertEquals(listOf("book"), context.sharedInput.booksFromStore.map { it.id })
         assertEquals(listOf("tag"), context.sharedInput.booksFromStore.single().tags.map { it.id })
-        assertEquals(listOf(AndroidFolderProjectionKey("content://folder", "Local Folder")), context.folderKeys)
+        // The synthesized fallback folder is named from the folder identifier's last path segment,
+        // not the "Local Folder" placeholder, so distinct unsynced folders stay distinguishable.
+        assertEquals(listOf(AndroidFolderProjectionKey("content://folder", "folder")), context.folderKeys)
     }
 
     @Test

@@ -516,7 +516,7 @@ class LibraryStateProjectorTest {
     }
 
     @Test
-    fun `project names folder shelf local folder when synced folder metadata is missing`() {
+    fun `project names folder shelf from the folder identifier when synced folder metadata is missing`() {
         val book = recentFile("folder_book", sourceFolderUri = "content://external")
 
         val result = LibraryStateProjector().project(
@@ -531,7 +531,9 @@ class LibraryStateProjectorTest {
         )
 
         val folderShelf = result.shelves.first { it.id == "folder_content://external" }
-        assertEquals("Local Folder", folderShelf.name)
+        // Derived from the identifier, so two different unsynced folders no longer collide on one
+        // placeholder name. "Local Folder" remains only for identifiers with no usable segment.
+        assertEquals("external", folderShelf.name)
         assertEquals(listOf("folder_book"), folderShelf.books.ids())
         assertEquals(listOf("folder_book"), folderShelf.directBooks.ids())
     }

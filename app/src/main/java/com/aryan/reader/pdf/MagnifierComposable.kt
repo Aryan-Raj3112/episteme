@@ -19,150 +19,80 @@
  */
 package com.aryan.reader.pdf
 
-import android.graphics.Rect
-import android.graphics.RectF
-import timber.log.Timber
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import kotlin.math.roundToInt
+import com.aryan.reader.pdf.MagnifierTileSource
+import com.aryan.reader.shared.ui.SharedPdfMagnifier
+import timber.log.Timber
 
-internal fun mapContentRectToMagnifier(
-    contentRect: Rect,
-    contentSource: MagnifierContentSource,
-    sample: MagnifierSampleGeometry
-): RectF {
-    val mapped = mapContentBoundsToMagnifier(
-        contentRect.left.toFloat(), contentRect.top.toFloat(),
-        contentRect.right.toFloat(), contentRect.bottom.toFloat(), contentSource, sample,
-    )
-    return RectF(mapped.left, mapped.top, mapped.right, mapped.bottom)
-}
-
+/**
+ * Android's adapter onto the shared magnifier lens. The lens, its sampling geometry and its tile
+ * hit-test all live in `shared` (`SharedPdfMagnifier` / `PdfMagnifierGeometry`); this file only
+ * converts Android's types.
+ *
+ * `PdfTile.renderRect` is already in content space — it is built in `actualBitmapWidthPx` units,
+ * which is the same value handed to the lens as `contentWidthPx` and the same space the magnifier
+ * center is in — so tiles pass through unconverted. Shared's `PdfZoomTileRequest` names regions in
+ * full-render space and is converted at its own call site instead.
+ */
 @Composable
 fun MagnifierComposable(
     sourceBitmap: ImageBitmap,
     tiles: List<PdfTile>,
     currentScale: Float,
-    magnifierCenterOnBitmap: Offset,
+    magnifierCenterOnBitmap: androidx.compose.ui.geometry.Offset,
     contentWidthPx: Int = sourceBitmap.width,
     contentHeightPx: Int = sourceBitmap.height,
     modifier: Modifier = Modifier,
     magnifierWidth: Dp = 120.dp,
     magnifierHeight: Dp = 60.dp,
     zoomFactor: Float = 1.5f,
-    selectionRectsInContentCoords: List<Rect>,
+    selectionRectsInContentCoords: List<android.graphics.Rect>,
     highlightColor: Color,
     colorFilter: ColorFilter? = null
 ) {
-    val stadiumShape = RoundedCornerShape(magnifierHeight / 2)
-
-    Box(
-        modifier = modifier
-            .width(magnifierWidth)
-            .height(magnifierHeight)
-            .shadow(4.dp, stadiumShape)
-            .clip(stadiumShape)
-    ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val magnifierWidthPx = size.width
-            val magnifierHeightPx = size.height
-            if (magnifierWidthPx <= 0f || magnifierHeightPx <= 0f || zoomFactor <= 0f) {
-                return@Canvas
-            }
-
-            Timber.d("Magnifier: START. scale=$currentScale, centerOnBitmap=$magnifierCenterOnBitmap")
-
-            val relevantTile = if (currentScale > 1f) {
-                tiles.find {
-                    it.renderRect.contains(magnifierCenterOnBitmap.x.toInt(), magnifierCenterOnBitmap.y.toInt())
-                }
-            } else null
-
-            val bitmapToUse: ImageBitmap
-            val contentSource: MagnifierContentSource
-            if (relevantTile != null && !relevantTile.bitmap.isRecycled) {
-                Timber.d("Magnifier: Using HIGH-RES TILE path.")
-                Timber.d("Magnifier: Tile.renderRect=${relevantTile.renderRect}, Tile.bitmap.size=${relevantTile.bitmap.width}x${relevantTile.bitmap.height}")
-                bitmapToUse = relevantTile.bitmap.asImageBitmap()
-                contentSource = MagnifierContentSource(
-                    sourceWidth = bitmapToUse.width,
-                    sourceHeight = bitmapToUse.height,
-                    contentLeft = relevantTile.renderRect.left.toFloat(),
-                    contentTop = relevantTile.renderRect.top.toFloat(),
-                    contentWidth = relevantTile.renderRect.width().toFloat(),
-                    contentHeight = relevantTile.renderRect.height().toFloat()
-                )
-            } else {
-                Timber.d("Magnifier: Using LOW-RES (base bitmap) path.")
-                bitmapToUse = sourceBitmap
-                contentSource = MagnifierContentSource(
-                    sourceWidth = sourceBitmap.width,
-                    sourceHeight = sourceBitmap.height,
-                    contentLeft = 0f,
-                    contentTop = 0f,
-                    contentWidth = contentWidthPx.toFloat(),
-                    contentHeight = contentHeightPx.toFloat()
-                )
-            }
-
-            val sample = calculateMagnifierSampleGeometry(
-                centerContentX = magnifierCenterOnBitmap.x,
-                centerContentY = magnifierCenterOnBitmap.y,
-                contentSource = contentSource,
-                magnifierWidthPx = magnifierWidthPx,
-                magnifierHeightPx = magnifierHeightPx,
-                zoomFactor = zoomFactor
-            ) ?: run {
-                Timber.w("Magnifier: Source geometry is invalid, returning.")
-                return@Canvas
-            }
-            Timber.d("Magnifier: Final source rect offset=(${sample.srcLeft}, ${sample.srcTop}), size=${sample.srcWidth}x${sample.srcHeight}")
-
-            drawImage(
-                image = bitmapToUse,
-                srcOffset = IntOffset(sample.srcLeft, sample.srcTop),
-                srcSize = IntSize(sample.srcWidth, sample.srcHeight),
-                dstSize = IntSize(
-                    magnifierWidthPx.roundToInt().coerceAtLeast(1),
-                    magnifierHeightPx.roundToInt().coerceAtLeast(1)
-                ),
-                colorFilter = colorFilter
+    val magnifierTiles = tiles.mapNotNull { tile ->
+        // A recycled bitmap must never be handed to drawImage; the shared lens has no way to know.
+        if (tile.bitmap.isRecycled) return@mapNotNull null
+        MagnifierTileSource(
+            bitmap = tile.bitmap.asImageBitmap(),
+            contentRect = Rect(
+                left = tile.renderRect.left.toFloat(),
+                top = tile.renderRect.top.toFloat(),
+                right = tile.renderRect.right.toFloat(),
+                bottom = tile.renderRect.bottom.toFloat(),
             )
-
-            selectionRectsInContentCoords.forEach { contentRect ->
-                val magnifierRect = mapContentRectToMagnifier(contentRect, contentSource, sample)
-                if (magnifierRect.width() > 0f && magnifierRect.height() > 0f &&
-                    magnifierRect.right > 0f && magnifierRect.left < magnifierWidthPx &&
-                    magnifierRect.bottom > 0f && magnifierRect.top < magnifierHeightPx
-                ) {
-                    drawRect(
-                        color = highlightColor,
-                        topLeft = Offset(magnifierRect.left, magnifierRect.top),
-                        size = Size(
-                            width = magnifierRect.width(),
-                            height = magnifierRect.height()
-                        )
-                    )
-                }
-            }
-        }
+        )
     }
+
+    SharedPdfMagnifier(
+        sourceBitmap = sourceBitmap,
+        tiles = magnifierTiles,
+        currentScale = currentScale,
+        magnifierCenterOnBitmap = magnifierCenterOnBitmap,
+        contentWidthPx = contentWidthPx,
+        contentHeightPx = contentHeightPx,
+        modifier = modifier,
+        magnifierWidth = magnifierWidth,
+        magnifierHeight = magnifierHeight,
+        zoomFactor = zoomFactor,
+        selectionRectsInContentCoords = selectionRectsInContentCoords.map { rect ->
+            Rect(
+                left = rect.left.toFloat(),
+                top = rect.top.toFloat(),
+                right = rect.right.toFloat(),
+                bottom = rect.bottom.toFloat(),
+            )
+        },
+        highlightColor = highlightColor,
+        colorFilter = colorFilter,
+        onDebug = { Timber.d(it) },
+    )
 }

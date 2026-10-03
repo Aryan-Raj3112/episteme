@@ -351,8 +351,17 @@ data class PdfToolConfig(
  * `InkType` is Android's persisted tool enum; it stays platform-owned, but the
  * mapping itself is pure and both hosts need it (Android for the annotation
  * exporter and the tool-settings panel, iOS for reading Android-authored
- * sidecars). `SELECT` is a gesture mode that is never stored on an annotation,
- * so it falls back to `PEN` in both directions.
+ * sidecars).
+ *
+ * `SELECT` has to round-trip even though it is never stored *on an annotation*:
+ * it is a gesture mode, but it is the current value of the *selected tool*
+ * setting, and the annotation dock writes and reads that. Mapping it to `PEN`
+ * made the dock's lasso button resolve to pen, which then hit the
+ * "already-active tool toggles its settings" branch and opened the ink popup
+ * instead of entering selection mode.
+ *
+ * `NONE` is the one lossy case: `InkType` has no counterpart, and it is never
+ * persisted as the selected tool, so it falls back to `PEN`.
  */
 object SharedPdfInkToolMapping {
     fun toSharedPdfInkTool(inkTypeName: String): PdfInkTool = when (inkTypeName) {
@@ -363,6 +372,7 @@ object SharedPdfInkToolMapping {
         "FOUNTAIN_PEN" -> PdfInkTool.FOUNTAIN_PEN
         "PENCIL" -> PdfInkTool.PENCIL
         "TEXT" -> PdfInkTool.TEXT
+        "SELECT" -> PdfInkTool.SELECT
         else -> PdfInkTool.PEN
     }
 
@@ -374,9 +384,9 @@ object SharedPdfInkToolMapping {
         PdfInkTool.PENCIL -> "PENCIL"
         PdfInkTool.TEXT -> "TEXT"
         PdfInkTool.ERASER -> "ERASER"
+        PdfInkTool.SELECT -> "SELECT"
         PdfInkTool.PEN,
-        PdfInkTool.NONE,
-        PdfInkTool.SELECT -> "PEN"
+        PdfInkTool.NONE -> "PEN"
     }
 }
 

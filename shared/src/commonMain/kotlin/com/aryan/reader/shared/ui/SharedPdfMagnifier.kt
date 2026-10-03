@@ -19,134 +19,27 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.aryan.reader.pdf.MagnifierContentSource
+import com.aryan.reader.pdf.MagnifierTileSource
+import com.aryan.reader.pdf.calculateMagnifierSampleGeometry
+import com.aryan.reader.pdf.magnifierTileIndexAt
+import com.aryan.reader.pdf.mapContentBoundsToMagnifier
 import com.aryan.reader.shared.pdf.PdfZoomTileRequest
-import kotlin.math.max
 import kotlin.math.roundToInt
 
-internal data class SharedPdfMagnifierContentSource(
-    val sourceWidth: Int,
-    val sourceHeight: Int,
-    val contentLeft: Float,
-    val contentTop: Float,
-    val contentWidth: Float,
-    val contentHeight: Float
-) {
-    val scaleX: Float
-        get() = if (contentWidth > 0f) sourceWidth.toFloat() / contentWidth else 1f
-
-    val scaleY: Float
-        get() = if (contentHeight > 0f) sourceHeight.toFloat() / contentHeight else 1f
-
-    fun sourceX(contentX: Float): Float = (contentX - contentLeft) * scaleX
-
-    fun sourceY(contentY: Float): Float = (contentY - contentTop) * scaleY
-}
-
-internal data class SharedPdfMagnifierSampleGeometry(
-    val srcLeft: Int,
-    val srcTop: Int,
-    val srcWidth: Int,
-    val srcHeight: Int,
-    val outputScaleX: Float,
-    val outputScaleY: Float
-)
-
-internal fun calculateSharedPdfMagnifierSampleGeometry(
-    centerContentX: Float,
-    centerContentY: Float,
-    contentSource: SharedPdfMagnifierContentSource,
-    magnifierWidthPx: Float,
-    magnifierHeightPx: Float,
-    zoomFactor: Float
-): SharedPdfMagnifierSampleGeometry? {
-    if (
-        contentSource.sourceWidth <= 0 ||
-        contentSource.sourceHeight <= 0 ||
-        contentSource.contentWidth <= 0f ||
-        contentSource.contentHeight <= 0f ||
-        magnifierWidthPx <= 0f ||
-        magnifierHeightPx <= 0f ||
-        zoomFactor <= 0f
-    ) {
-        return null
-    }
-
-    val sourceCenterX = contentSource.sourceX(centerContentX)
-    val sourceCenterY = contentSource.sourceY(centerContentY)
-    val sourceRectWidth = (magnifierWidthPx / zoomFactor * contentSource.scaleX).coerceAtLeast(1f)
-    val sourceRectHeight = (magnifierHeightPx / zoomFactor * contentSource.scaleY).coerceAtLeast(1f)
-
-    val maxSrcLeft = max(0f, contentSource.sourceWidth.toFloat() - sourceRectWidth)
-    val maxSrcTop = max(0f, contentSource.sourceHeight.toFloat() - sourceRectHeight)
-    val srcLeft = (sourceCenterX - sourceRectWidth / 2f).coerceIn(0f, maxSrcLeft)
-    val srcTop = (sourceCenterY - sourceRectHeight / 2f).coerceIn(0f, maxSrcTop)
-
-    val srcLeftInt = srcLeft.roundToInt().coerceIn(0, contentSource.sourceWidth - 1)
-    val srcTopInt = srcTop.roundToInt().coerceIn(0, contentSource.sourceHeight - 1)
-    val srcWidthInt = (contentSource.sourceWidth - srcLeftInt)
-        .coerceAtMost(sourceRectWidth.roundToInt().coerceAtLeast(1))
-        .coerceAtLeast(1)
-    val srcHeightInt = (contentSource.sourceHeight - srcTopInt)
-        .coerceAtMost(sourceRectHeight.roundToInt().coerceAtLeast(1))
-        .coerceAtLeast(1)
-
-    return SharedPdfMagnifierSampleGeometry(
-        srcLeft = srcLeftInt,
-        srcTop = srcTopInt,
-        srcWidth = srcWidthInt,
-        srcHeight = srcHeightInt,
-        outputScaleX = magnifierWidthPx / srcWidthInt,
-        outputScaleY = magnifierHeightPx / srcHeightInt
-    )
-}
-
-internal fun mapSharedPdfContentRectToMagnifier(
-    contentRect: Rect,
-    contentSource: SharedPdfMagnifierContentSource,
-    sample: SharedPdfMagnifierSampleGeometry
-): Rect {
-    val sourceLeft = contentSource.sourceX(contentRect.left)
-    val sourceTop = contentSource.sourceY(contentRect.top)
-    val sourceRight = contentSource.sourceX(contentRect.right)
-    val sourceBottom = contentSource.sourceY(contentRect.bottom)
-
-    return Rect(
-        left = (sourceLeft - sample.srcLeft) * sample.outputScaleX,
-        top = (sourceTop - sample.srcTop) * sample.outputScaleY,
-        right = (sourceRight - sample.srcLeft) * sample.outputScaleX,
-        bottom = (sourceBottom - sample.srcTop) * sample.outputScaleY
-    )
-}
-
-/** Finds the high-res tile containing [centerOnBitmap] at zoomed scale, if any. */
-internal fun sharedPdfMagnifierTileRequest(
-    requests: List<PdfZoomTileRequest>,
-    centerOnBitmap: Offset,
-    currentScale: Float,
-    contentWidthPx: Int,
-    contentHeightPx: Int
-): PdfZoomTileRequest? {
-    if (currentScale <= 1f) return null
-    return requests.firstOrNull { request ->
-        if (request.fullWidthPx <= 0 || request.fullHeightPx <= 0) return@firstOrNull false
-        val scaleX = request.fullWidthPx.toFloat() / contentWidthPx.coerceAtLeast(1)
-        val scaleY = request.fullHeightPx.toFloat() / contentHeightPx.coerceAtLeast(1)
-        val tileX = centerOnBitmap.x * scaleX
-        val tileY = centerOnBitmap.y * scaleY
-        tileX >= request.leftPx && tileX < request.leftPx + request.widthPx &&
-            tileY >= request.topPx && tileY < request.topPx + request.heightPx
-    }
-}
-
 /**
- * The region a tile covers, expressed in the magnifier's content space (the
- * page's on-screen fit size — the canvas size at scale 1). Mirrors Android,
- * where tile `renderRect` coordinates live in the target-width space.
+ * The region a tile covers, expressed in the magnifier's content space (the page's on-screen fit
+ * size — the canvas size at scale 1).
+ *
+ * Shared's tile requests name regions in *full render* space (`PdfZoomTileRequest.leftPx`), so
+ * they are divided down here on the way into the magnifier. Android's `PdfTile.renderRect` is
+ * already in content space and skips this, which is why the conversion lives at the call site
+ * rather than inside the composable.
  */
-internal fun sharedPdfMagnifierTileRectInContentSpace(
+fun pdfMagnifierTileContentRect(
     request: PdfZoomTileRequest,
     contentWidthPx: Int,
-    contentHeightPx: Int
+    contentHeightPx: Int,
 ): Rect {
     val scaleX = contentWidthPx.toFloat() / request.fullWidthPx.coerceAtLeast(1)
     val scaleY = contentHeightPx.toFloat() / request.fullHeightPx.coerceAtLeast(1)
@@ -158,10 +51,20 @@ internal fun sharedPdfMagnifierTileRectInContentSpace(
     )
 }
 
+/**
+ * Bitmap-sampling magnifier lens for PDF text selection, shared by both hosts.
+ *
+ * Android benchmark metrics: 120x60dp lens at zoom 1.5 for the PDF viewer. [tiles] are consulted
+ * only above base scale so a freshly-loaded page samples its full bitmap rather than a single
+ * high-res tile; pass an empty list to always use [sourceBitmap].
+ *
+ * [onDebug] exists because Android's magnifier logs its tile/sample choice per frame. Shared has
+ * no logging dependency, so the host supplies the sink.
+ */
 @Composable
-internal fun SharedPdfMagnifier(
+fun SharedPdfMagnifier(
     sourceBitmap: ImageBitmap,
-    tiles: List<SharedMobilePdfTileRender>,
+    tiles: List<MagnifierTileSource>,
     currentScale: Float,
     magnifierCenterOnBitmap: Offset,
     contentWidthPx: Int = sourceBitmap.width,
@@ -172,7 +75,8 @@ internal fun SharedPdfMagnifier(
     zoomFactor: Float = 2f,
     selectionRectsInContentCoords: List<Rect>,
     highlightColor: Color,
-    colorFilter: ColorFilter? = null
+    colorFilter: ColorFilter? = null,
+    onDebug: ((String) -> Unit)? = null,
 ) {
     val stadiumShape = RoundedCornerShape(magnifierHeight / 2)
 
@@ -190,37 +94,34 @@ internal fun SharedPdfMagnifier(
                 return@Canvas
             }
 
-            val tileRequest = sharedPdfMagnifierTileRequest(
-                requests = tiles.map { it.request },
-                centerOnBitmap = magnifierCenterOnBitmap,
-                currentScale = currentScale,
-                contentWidthPx = contentWidthPx,
-                contentHeightPx = contentHeightPx
+            onDebug?.invoke(
+                "Magnifier: START. scale=$currentScale, centerOnBitmap=$magnifierCenterOnBitmap"
             )
-            val tile = tileRequest?.let { request ->
-                tiles.firstOrNull { it.request.id == request.id }
-            }
+
+            val tile = magnifierTileIndexAt(
+                tileContentRects = tiles.map { it.contentRect },
+                centerX = magnifierCenterOnBitmap.x,
+                centerY = magnifierCenterOnBitmap.y,
+                currentScale = currentScale,
+            )?.let(tiles::get)
+
             val bitmapToUse: ImageBitmap
-            val contentSource: SharedPdfMagnifierContentSource
+            val contentSource: MagnifierContentSource
             if (tile != null) {
-                val request = tile.request
+                onDebug?.invoke("Magnifier: Using HIGH-RES TILE path.")
                 bitmapToUse = tile.bitmap
-                val tileRect = sharedPdfMagnifierTileRectInContentSpace(
-                    request = request,
-                    contentWidthPx = contentWidthPx,
-                    contentHeightPx = contentHeightPx
-                )
-                contentSource = SharedPdfMagnifierContentSource(
+                contentSource = MagnifierContentSource(
                     sourceWidth = bitmapToUse.width,
                     sourceHeight = bitmapToUse.height,
-                    contentLeft = tileRect.left,
-                    contentTop = tileRect.top,
-                    contentWidth = tileRect.width,
-                    contentHeight = tileRect.height
+                    contentLeft = tile.contentRect.left,
+                    contentTop = tile.contentRect.top,
+                    contentWidth = tile.contentRect.width,
+                    contentHeight = tile.contentRect.height
                 )
             } else {
+                onDebug?.invoke("Magnifier: Using LOW-RES (base bitmap) path.")
                 bitmapToUse = sourceBitmap
-                contentSource = SharedPdfMagnifierContentSource(
+                contentSource = MagnifierContentSource(
                     sourceWidth = sourceBitmap.width,
                     sourceHeight = sourceBitmap.height,
                     contentLeft = 0f,
@@ -230,14 +131,21 @@ internal fun SharedPdfMagnifier(
                 )
             }
 
-            val sample = calculateSharedPdfMagnifierSampleGeometry(
+            val sample = calculateMagnifierSampleGeometry(
                 centerContentX = magnifierCenterOnBitmap.x,
                 centerContentY = magnifierCenterOnBitmap.y,
                 contentSource = contentSource,
                 magnifierWidthPx = magnifierWidthPx,
                 magnifierHeightPx = magnifierHeightPx,
                 zoomFactor = zoomFactor
-            ) ?: return@Canvas
+            ) ?: run {
+                onDebug?.invoke("Magnifier: Source geometry is invalid, returning.")
+                return@Canvas
+            }
+            onDebug?.invoke(
+                "Magnifier: Final source rect offset=(${sample.srcLeft}, ${sample.srcTop}), " +
+                    "size=${sample.srcWidth}x${sample.srcHeight}"
+            )
 
             drawImage(
                 image = bitmapToUse,
@@ -251,7 +159,14 @@ internal fun SharedPdfMagnifier(
             )
 
             selectionRectsInContentCoords.forEach { contentRect ->
-                val magnifierRect = mapSharedPdfContentRectToMagnifier(contentRect, contentSource, sample)
+                val magnifierRect = mapContentBoundsToMagnifier(
+                    left = contentRect.left,
+                    top = contentRect.top,
+                    right = contentRect.right,
+                    bottom = contentRect.bottom,
+                    contentSource = contentSource,
+                    sample = sample
+                )
                 if (
                     magnifierRect.width > 0f && magnifierRect.height > 0f &&
                     magnifierRect.right > 0f && magnifierRect.left < magnifierWidthPx &&
