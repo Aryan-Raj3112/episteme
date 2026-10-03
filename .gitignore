@@ -52,3 +52,4 @@ DerivedData/
 *.xcresult
 /docs
 .freebuff/
+.kotlin/

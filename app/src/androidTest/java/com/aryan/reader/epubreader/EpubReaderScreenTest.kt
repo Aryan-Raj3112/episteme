@@ -18,7 +18,6 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
-import androidx.core.content.FileProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -30,6 +29,8 @@ import com.aryan.reader.R
 import com.aryan.reader.RenderMode
 import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.data.RecentFileEntity
+import com.aryan.reader.pdf.copyAssetToShareableCache
+import com.aryan.reader.pdf.shareableCacheUri
 import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.ReaderLocator
 import com.google.common.truth.Truth.assertThat
@@ -40,7 +41,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
-import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class EpubReaderScreenTest {
@@ -657,20 +657,11 @@ class EpubReaderScreenTest {
     }
 
     private fun copyAndroidTestAssetToCache(assetName: String): Uri {
-        val file = File(targetContext.cacheDir, "${UUID.randomUUID()}_reader_test_book.epub")
+        // The fixture lives in src/androidTest/assets, so it is read from the instrumentation APK while
+        // the URI is issued by the app under test's provider.
+        val file = copyAssetToShareableCache(instrumentationContext, targetContext, assetName)
         currentEpubFile = file
-
-        instrumentationContext.assets.open(assetName).use { inputStream ->
-            file.outputStream().use { outputStream ->
-                inputStream.copyTo(outputStream)
-            }
-        }
-
-        return FileProvider.getUriForFile(
-            targetContext,
-            "${targetContext.packageName}.provider",
-            file
-        )
+        return shareableCacheUri(targetContext, file)
     }
 
     private fun navigateToFixtureSearchResult(query: String, expectedChapterIndex: Int) {

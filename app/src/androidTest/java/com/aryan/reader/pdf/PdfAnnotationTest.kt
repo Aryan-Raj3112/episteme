@@ -16,7 +16,6 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
-import androidx.core.content.FileProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -29,7 +28,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
-import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class PdfAnnotationTest {
@@ -74,7 +72,16 @@ class PdfAnnotationTest {
         currentPdfFile?.let { if (it.exists()) it.delete() }
     }
 
+    /**
+     * Reveals the reader chrome and waits for the document to load.
+     *
+     * The top bar owns the `PageNumberIndicator`, and it is behind `showStandardBars`, which is false
+     * until the reader is tapped — so the contents do not exist in the tree until then.
+     */
     private fun waitForDocumentLoad() {
+        runCatching {
+            composeTestRule.onNodeWithTag("PdfVerticalScroll").performTouchInput { click(center) }
+        }
         composeTestRule.waitUntil(timeoutMillis = 15_000) {
             runCatching {
                 composeTestRule.onNodeWithTag("PageNumberIndicator").assertIsDisplayed()
@@ -101,16 +108,9 @@ class PdfAnnotationTest {
 
     @Suppress("SameParameterValue")
     private fun copyAssetToCache(context: Context, assetName: String): Uri {
-        val uniqueName = "${UUID.randomUUID()}_$assetName"
-        val file = File(context.cacheDir, uniqueName)
+        val file = copyAssetToShareableCache(context, context, assetName)
         currentPdfFile = file
-        if (file.exists()) file.delete()
-        context.assets.open(assetName).use { inputStream ->
-            file.outputStream().use { outputStream ->
-                inputStream.copyTo(outputStream)
-            }
-        }
-        return FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
+        return shareableCacheUri(context, file)
     }
 
     // --- BASIC UI TESTS ---
