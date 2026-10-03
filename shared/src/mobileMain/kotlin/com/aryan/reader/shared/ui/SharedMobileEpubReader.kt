@@ -1089,18 +1089,20 @@ fun SharedMobileEpubReaderScreen(
     // it opens, so this runs per chapter as its pages become available rather than over the whole book.
     // Android does the same thing through `onGetChapterTextBlocks`; this is the iOS equivalent, kept
     // here so both platforms repair the same way.
+    val chapterTextIndexes = remember { mutableStateOf(emptyMap<Int, EpubChapterTextIndex>()) }
     LaunchedEffect(highlights, pages) {
         // Every chapter that holds a highlight, not only the ones whose highlights lack offsets: a
         // legacy highlight has offsets and they are wrong, which is exactly what the repair fixes.
         val chaptersWithHighlights = highlights
             .mapNotNull { it.locator.chapterIndex ?: it.chapterIndex }
             .distinct()
-        if (chaptersWithHighlights.isEmpty()) return@LaunchedEffect
         for (chapterIndex in chaptersWithHighlights) {
+            if (chapterTextIndexes.value.containsKey(chapterIndex)) continue
             val blocks = pages
                 .filter { it.chapterIndex == chapterIndex }
                 .flatMap { it.semanticBlocks }
             val index = EpubChapterTextIndex.of(chapterIndex, blocks) ?: continue
+            chapterTextIndexes.value = chapterTextIndexes.value + (chapterIndex to index)
             val repaired = index.repairHighlights(highlights)
             if (repaired.unchanged) continue
             logSharedReaderDiagnostic("HighlightDiag") {
@@ -1847,7 +1849,10 @@ fun SharedMobileEpubReaderScreen(
                                     ?: activeCloudTtsChunk?.let { chunk ->
                                         highlights + chunk.toHighlight(cloudTtsState.progress.sessionId)
                                     }
-                                    ?: highlights
+                                    ?: highlights,
+                                // Highlight placement uses the same chapter layout Android does, so a
+                                // repeated sentence resolves to one block on both platforms.
+                                chapterTextIndexes = chapterTextIndexes.value
                             )
                             // Android-benchmark page turn: single visible-step turns play the realistic
                             // page curl with the same tween(700) the Android pager snap uses; multi-page

@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.paginatedreader.EpubChapterTextIndex
 import com.aryan.reader.paginatedreader.ReaderCfiPoint
 import com.aryan.reader.paginatedreader.SemanticBlock
 import com.aryan.reader.paginatedreader.SemanticHeader
@@ -260,7 +261,8 @@ internal fun AnnotatedString.Builder.applyHighlightsToTextRanges(
     blockCharOffset: Int? = null,
     textStartOffset: Int,
     textLength: Int,
-    text: String? = null
+    text: String? = null,
+    chapterTextIndex: EpubChapterTextIndex? = null
 ) {
     if (highlights.isEmpty()) return
 
@@ -272,7 +274,8 @@ internal fun AnnotatedString.Builder.applyHighlightsToTextRanges(
             textLength = textLength,
             text = text,
             blockIndex = blockIndex,
-            blockCharOffset = blockCharOffset
+            blockCharOffset = blockCharOffset,
+            chapterTextIndex = chapterTextIndex
         )?.let { highlight to it }
     }
     if (resolved.isEmpty()) return
@@ -636,8 +639,24 @@ internal fun sharedNativeHighlightRangeForBlock(
     textLength: Int,
     text: String?,
     blockIndex: Int? = null,
-    blockCharOffset: Int? = null
+    blockCharOffset: Int? = null,
+    chapterTextIndex: EpubChapterTextIndex? = null
 ): SharedNativeReaderTextRange? {
+    // With a chapter index the resolver decides, and the legacy chain below never runs. The chain's
+    // second step intersects a locator's offsets with the block's, and block offsets are
+    // element-relative (§4), so that intersection compares two coordinate spaces; the third step
+    // matches text per block, which paints a repeated sentence on every block holding a copy. Both
+    // are kept only as a fallback for surfaces with no index, such as desktop.
+    if (chapterTextIndex != null) {
+        val segment = chapterTextIndex.rangeInBlock(
+            highlight = highlight,
+            blockIndex = blockIndex,
+            blockCfi = blockCfi
+        ) ?: return null
+        val from = segment.localStart.coerceIn(0, textLength)
+        val to = segment.localEnd.coerceIn(from, textLength)
+        return if (to > from) SharedNativeReaderTextRange(from, to) else null
+    }
     sharedNativeBlockLocatorHighlightRangeInBlock(
         highlight = highlight,
         blockIndex = blockIndex,

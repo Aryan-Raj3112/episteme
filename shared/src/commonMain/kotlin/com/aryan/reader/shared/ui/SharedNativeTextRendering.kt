@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.paginatedreader.EpubChapterTextIndex
 import com.aryan.reader.paginatedreader.CssStyle
 import com.aryan.reader.paginatedreader.MATH_PLACEHOLDER_CHAR
 import com.aryan.reader.paginatedreader.BlockStyle
@@ -88,7 +89,9 @@ internal fun SharedSemanticTextView(
     onHighlightSelected: (String) -> Unit,
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit,
     selectionLayouts: MutableMap<String, SharedNativeTextLayoutInfo>,
-    onTextLaidOut: ((SharedNativeTextFit) -> Unit)? = null
+    onTextLaidOut: ((SharedNativeTextFit) -> Unit)? = null,
+    /** See [toAnnotatedString]. Null keeps the legacy per-block chain. */
+    chapterTextIndex: EpubChapterTextIndex? = null
 ) {
     val textStyle = block.renderedTextStyle(
         settings = settings,
@@ -119,7 +122,8 @@ internal fun SharedSemanticTextView(
             blockCharOffset = block.startCharOffsetInSource,
             background = background,
             foreground = foreground,
-            isDarkTheme = settings.darkMode
+            isDarkTheme = settings.darkMode,
+            chapterTextIndex = chapterTextIndex
         ),
         page = page,
         textBlock = SharedNativeTextBlockDescriptor(
@@ -228,7 +232,14 @@ internal fun SemanticTextBlock.toAnnotatedString(
     blockCharOffset: Int,
     background: Color,
     foreground: Color,
-    isDarkTheme: Boolean
+    isDarkTheme: Boolean,
+    /**
+     * The chapter's text laid out in one coordinate space, when the caller has one.
+     *
+     * Passing it makes highlight placement use the shared resolver, which is the same rule Android
+     * uses. Null keeps the legacy per-block chain, which desktop still depends on.
+     */
+    chapterTextIndex: EpubChapterTextIndex? = null
 ): AnnotatedString {
     val normalized = query.trim()
     val mathSpans = spans.filter { it.isInlineMath }
@@ -301,7 +312,8 @@ internal fun SemanticTextBlock.toAnnotatedString(
             blockCharOffset = blockCharOffset,
             textStartOffset = startCharOffsetInSource,
             textLength = text.length,
-            text = text
+            text = text,
+            chapterTextIndex = chapterTextIndex
         )
         applySelectionToTextRange(
             selection = activeSelection,

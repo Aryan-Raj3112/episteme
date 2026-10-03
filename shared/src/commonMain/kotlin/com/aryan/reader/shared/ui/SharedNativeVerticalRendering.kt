@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.paginatedreader.EpubChapterTextIndex
 import com.aryan.reader.paginatedreader.CssStyle
 import com.aryan.reader.paginatedreader.BlockStyle
 import com.aryan.reader.paginatedreader.SemanticBlock
@@ -322,7 +323,9 @@ internal fun String.toReaderAnnotatedString(
     absoluteStartOffset: Int,
     highlights: List<UserHighlight>,
     activeSelection: SharedNativeReaderTextSelection?,
-    selectionHighlight: Color
+    selectionHighlight: Color,
+    /** See [SemanticTextBlock.toAnnotatedString]. Null keeps the legacy per-block chain. */
+    chapterTextIndex: EpubChapterTextIndex? = null
 ): AnnotatedString {
     val normalized = searchQuery.trim()
     return buildAnnotatedString {
@@ -332,7 +335,8 @@ internal fun String.toReaderAnnotatedString(
             chapterIndex = chapterIndex,
             pageIndex = pageIndex,
             textStartOffset = absoluteStartOffset,
-            textLength = this@toReaderAnnotatedString.length
+            textLength = this@toReaderAnnotatedString.length,
+            chapterTextIndex = chapterTextIndex
         )
         applySelectionToTextRange(
             selection = activeSelection,
@@ -381,7 +385,9 @@ internal fun SharedSemanticBlockStack(
     selectionLayouts: MutableMap<String, SharedNativeTextLayoutInfo>,
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?,
     onTextLaidOut: ((SharedNativeTextFit) -> Unit)? = null,
-    onBlockLaidOut: ((SharedNativeBlockFit) -> Unit)? = null
+    onBlockLaidOut: ((SharedNativeBlockFit) -> Unit)? = null,
+    /** See [toReaderAnnotatedString]. Null keeps the legacy per-block chain. */
+    chapterTextIndex: EpubChapterTextIndex? = null
 ) {
     var previous: SemanticBlock? = null
     blocks.forEachIndexed { index, block ->
@@ -398,6 +404,7 @@ internal fun SharedSemanticBlockStack(
             fallbackTextAlign = fallbackTextAlign,
             fallbackFontFamily = fallbackFontFamily,
             settings = settings,
+            chapterTextIndex = chapterTextIndex,
             marginTop = block.collapsedTopMarginDp(previous, settings),
             marginBottom = if (includeTrailingBottomMargin && index == blocks.lastIndex) {
                 block.effectiveBottomMarginDp(settings)
@@ -448,7 +455,9 @@ internal fun SharedSemanticBlockView(
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?,
     layoutIndex: Int? = null,
     onTextLaidOut: ((SharedNativeTextFit) -> Unit)? = null,
-    onBlockLaidOut: ((SharedNativeBlockFit) -> Unit)? = null
+    onBlockLaidOut: ((SharedNativeBlockFit) -> Unit)? = null,
+    /** See [toReaderAnnotatedString]. Null keeps the legacy per-block chain. */
+    chapterTextIndex: EpubChapterTextIndex? = null
 ) {
     val blockStyle = block.style.blockStyle.sharedNativeThemeBlockStyle(
         isDarkTheme = settings.darkMode,
@@ -517,9 +526,9 @@ internal fun SharedSemanticBlockView(
                 )
             }
 
-            is SemanticParagraph -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onReaderHorizontalTap = onReaderHorizontalTap, immediateDragSelectEnabled = immediateDragSelectEnabled, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut)
-            is SemanticListItem -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onReaderHorizontalTap = onReaderHorizontalTap, immediateDragSelectEnabled = immediateDragSelectEnabled, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut)
-            is SemanticTextBlock -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onReaderHorizontalTap = onReaderHorizontalTap, immediateDragSelectEnabled = immediateDragSelectEnabled, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut)
+            is SemanticParagraph -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onReaderHorizontalTap = onReaderHorizontalTap, immediateDragSelectEnabled = immediateDragSelectEnabled, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut, chapterTextIndex = chapterTextIndex)
+            is SemanticListItem -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onReaderHorizontalTap = onReaderHorizontalTap, immediateDragSelectEnabled = immediateDragSelectEnabled, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut, chapterTextIndex = chapterTextIndex)
+            is SemanticTextBlock -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onReaderHorizontalTap = onReaderHorizontalTap, immediateDragSelectEnabled = immediateDragSelectEnabled, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut, chapterTextIndex = chapterTextIndex)
 
             is SemanticList -> {
                 Column(modifier = contentModifier, verticalArrangement = Arrangement.Top) {
@@ -609,6 +618,7 @@ internal fun SharedSemanticBlockView(
                                 fallbackTextAlign = fallbackTextAlign,
                                 fallbackFontFamily = fallbackFontFamily,
                                 settings = settings,
+                    chapterTextIndex = chapterTextIndex,
                     onReaderTap = onReaderTap,
                     onReaderHorizontalTap = onReaderHorizontalTap,
                     immediateDragSelectEnabled = immediateDragSelectEnabled,

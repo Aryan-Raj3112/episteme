@@ -179,6 +179,90 @@ class EpubChapterTextIndex private constructor(
         return RepairedHighlights(repaired, changed)
     }
 
+    /**
+     * The slice [highlight] occupies in one block, in that block's own coordinates.
+     *
+     * This is what a text renderer needs, and it is the answer for exactly one block: a highlight
+     * spanning three paragraphs yields a segment in each of them, and a highlight whose text appears
+     * in several paragraphs yields a segment in only the one it was resolved to. Returning null for
+     * every other block is what stops a repeated sentence painting on all of them.
+     *
+     * Blocks are matched by index, and by CFI when both sides have one, because a caller can be
+     * holding a re-styled copy of the block rather than the parsed original.
+     */
+    fun rangeInBlock(
+        highlight: UserHighlight,
+        blockIndex: Int?,
+        blockCfi: String?
+    ): HighlightBlockSegment? {
+        val anchor = anchorFor(highlight) ?: return null
+        val segment = anchor.segments.firstOrNull { candidate ->
+            val indexMatches = blockIndex != null && candidate.blockIndex == blockIndex
+            val cfiMatches = blockCfi != null && candidate.blockCfi != null &&
+                candidate.blockCfi == blockCfi
+            indexMatches || cfiMatches
+        } ?: return null
+        return segment
+    }
+
+    /**
+     * The anchor for [highlight], preferring its stored offsets and falling back to its text.
+     *
+     * Order matters and matches Android. A locator that validates against the chapter's own text is
+     * already correct, so it is used as stored. Only a locator that does not validate is relocated by
+     * searching for its text, which is what repairs both anchor-less highlights and ones written in the
+     * broken space.
+     */
+    private fun anchorFor(highlight: UserHighlight): HighlightAnchor? {
+        val quote = highlight.locator.textQuote?.takeIf { it.isNotBlank() } ?: highlight.text
+        if (quote.isBlank()) return null
+        if (storedRangeAgreesWithQuote(highlight.locator, quote)) {
+            return storedAnchor(highlight)
+        }
+        return resolve(quote)?.takeIf { it.confidence == HighlightAnchorConfidence.QuoteMatched }
+    }
+
+    /**
+     * Turns a locator's validated stored offsets into an anchor, using the chapter layout for the
+     * block boundaries. Returns null when the offsets are absent.
+     */
+    private fun storedAnchor(highlight: UserHighlight): HighlightAnchor? {
+        val locator = highlight.locator
+        val start = locator.startOffset ?: return null
+        val end = locator.endOffset ?: return null
+        if (start < 0 || end > buffer.length || end <= start) return null
+        val segments = mutableListOf<HighlightBlockSegment>()
+        var position = start
+        while (position < end) {
+            val block = blockOfPosition[position]
+            if (block < 0) {
+                // A position outside any block: the stored offsets straddle a gap, which cannot be
+                // painted as one run. Report nothing rather than a range that spans missing text.
+                return null
+            }
+            var runEnd = position
+            while (runEnd < end && blockOfPosition[runEnd] == block) runEnd++
+            val blockStart = blockStarts[block]
+            segments += HighlightBlockSegment(
+                blockIndex = textBlocks[block].blockIndex,
+                blockCfi = textBlocks[block].cfi,
+                absoluteStart = blockStart + (position - origin - blockStart),
+                absoluteEnd = blockStart + (runEnd - origin - blockStart),
+                localStart = position - origin - blockStart,
+                localEnd = runEnd - origin - blockStart
+            )
+            position = runEnd
+        }
+        if (segments.isEmpty()) return null
+        return HighlightAnchor(
+            chapterIndex = chapterIndex,
+            absoluteStart = start,
+            absoluteEnd = end,
+            segments = segments,
+            confidence = HighlightAnchorConfidence.Resolved
+        )
+    }
+
     /** Built on first whitespace-insensitive search; a chapter's text does not change while open. */
     private var normalizedView: NormalizedChapterText? = null
 

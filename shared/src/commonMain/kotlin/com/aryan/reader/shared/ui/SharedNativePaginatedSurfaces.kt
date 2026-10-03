@@ -103,6 +103,7 @@ internal fun SharedNativePaginatedPage(
     val settings = renderPlan.settings
     val fallbackTextAlign = settings.textAlign.toComposeTextAlign()
     val visibleHighlights = renderPlan.highlights.visibleInPage(page)
+    val chapterTextIndex = renderPlan.chapterTextIndexes[page.chapterIndex]
     val blocks = page.semanticBlocks
     val visibleHighlightSignature = remember(visibleHighlights) {
         visibleHighlights.joinToString(separator = "|") { highlight -> highlight.id }
@@ -262,7 +263,8 @@ internal fun SharedNativePaginatedPage(
                             absoluteStartOffset = page.startOffset,
                             highlights = visibleHighlights,
                             activeSelection = activeSelection,
-                            selectionHighlight = selectionHighlight
+                            selectionHighlight = selectionHighlight,
+                            chapterTextIndex = chapterTextIndex
                         ),
                         page = page,
                         textBlock = SharedNativeTextBlockDescriptor(
