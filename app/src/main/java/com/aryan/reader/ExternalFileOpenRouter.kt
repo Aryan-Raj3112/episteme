@@ -59,10 +59,17 @@ object ExternalFileOpenRouteDecider {
     }
 
     fun flagsForInternalForward(sourceFlags: Int): Int {
-        // A VIEW intent belongs to the sender's task. Forward only its URI grants,
-        // then explicitly launch/reuse Episteme's normal task. This prevents the
-        // router's excluded task or a sender's EXCLUDE_FROM_RECENTS flag from
-        // becoming the reader task's Recents policy.
+        // Forward only the URI grants. Anything else the sender set describes
+        // the sender's own task (CLEAR_TOP, RESET_TASK_IF_NEEDED,
+        // EXCLUDE_FROM_RECENTS, ...) and would be applied to our activity.
+        // NEW_TASK is re-added explicitly so the reader lands in Episteme's
+        // task by intent rather than relying on MainActivity's singleTask
+        // launch mode implying it.
+        //
+        // This is not what keeps the reader visible in Recents: Recents decides
+        // that from the base intent of the task the activity ends up in, so the
+        // two external-open activities declare their own taskAffinity. See
+        // AndroidManifest.xml.
         return (sourceFlags and URI_GRANT_FLAGS) or Intent.FLAG_ACTIVITY_NEW_TASK
     }
 }
