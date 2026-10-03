@@ -77,6 +77,8 @@ import com.aryan.reader.shared.isReaderOwnedTtsSession
 import com.aryan.reader.shared.Tag
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.ReaderLocator
+import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
+import com.aryan.reader.paginatedreader.EpubChapterTextIndex
 import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderAiResultState
 import com.aryan.reader.shared.ReaderRecapRequest
@@ -1077,6 +1079,36 @@ fun SharedMobileEpubReaderScreen(
             )
         }
         snapshot?.let(onReaderStateChange)
+    }
+
+    // Repair stored highlight locators that point at the wrong place.
+    //
+    // Highlights written before the reader had a usable coordinate space carry offsets that were
+    // computed against block-relative positions, so they resolve to somewhere else in the chapter.
+    // Only the chapter's own text can say where they should point, and a reader only sees the chapters
+    // it opens, so this runs per chapter as its pages become available rather than over the whole book.
+    // Android does the same thing through `onGetChapterTextBlocks`; this is the iOS equivalent, kept
+    // here so both platforms repair the same way.
+    LaunchedEffect(highlights, pages) {
+        // Every chapter that holds a highlight, not only the ones whose highlights lack offsets: a
+        // legacy highlight has offsets and they are wrong, which is exactly what the repair fixes.
+        val chaptersWithHighlights = highlights
+            .mapNotNull { it.locator.chapterIndex ?: it.chapterIndex }
+            .distinct()
+        if (chaptersWithHighlights.isEmpty()) return@LaunchedEffect
+        for (chapterIndex in chaptersWithHighlights) {
+            val blocks = pages
+                .filter { it.chapterIndex == chapterIndex }
+                .flatMap { it.semanticBlocks }
+            val index = EpubChapterTextIndex.of(chapterIndex, blocks) ?: continue
+            val repaired = index.repairHighlights(highlights)
+            if (repaired.unchanged) continue
+            logSharedReaderDiagnostic("HighlightDiag") {
+                "highlight_repair platform=shared chapter=$chapterIndex repaired=${repaired.repaired} " +
+                    "of=${highlights.size}"
+            }
+            highlights = repaired.highlights
+        }
     }
 
     fun closeReader() {

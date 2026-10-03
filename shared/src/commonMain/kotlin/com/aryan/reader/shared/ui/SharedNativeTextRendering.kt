@@ -292,19 +292,17 @@ internal fun SemanticTextBlock.toAnnotatedString(
                 }
             }
         }
-        highlights.forEach { highlight ->
-            applyHighlightToTextRange(
-                highlight = highlight,
-                chapterIndex = chapterIndex,
-                pageIndex = pageIndex,
-                blockCfi = blockCfi,
-                blockIndex = blockIndex,
-                blockCharOffset = blockCharOffset,
-                textStartOffset = startCharOffsetInSource,
-                textLength = text.length,
-                text = text
-            )
-        }
+        applyHighlightsToTextRanges(
+            highlights = highlights,
+            chapterIndex = chapterIndex,
+            pageIndex = pageIndex,
+            blockCfi = blockCfi,
+            blockIndex = blockIndex,
+            blockCharOffset = blockCharOffset,
+            textStartOffset = startCharOffsetInSource,
+            textLength = text.length,
+            text = text
+        )
         applySelectionToTextRange(
             selection = activeSelection,
             pageIndex = pageIndex,

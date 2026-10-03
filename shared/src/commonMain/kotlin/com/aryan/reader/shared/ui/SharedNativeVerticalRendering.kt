@@ -327,15 +327,13 @@ internal fun String.toReaderAnnotatedString(
     val normalized = searchQuery.trim()
     return buildAnnotatedString {
         append(this@toReaderAnnotatedString)
-        highlights.forEach { highlight ->
-            applyHighlightToTextRange(
-                highlight = highlight,
-                chapterIndex = chapterIndex,
-                pageIndex = pageIndex,
-                textStartOffset = absoluteStartOffset,
-                textLength = this@toReaderAnnotatedString.length
-            )
-        }
+        applyHighlightsToTextRanges(
+            highlights = highlights,
+            chapterIndex = chapterIndex,
+            pageIndex = pageIndex,
+            textStartOffset = absoluteStartOffset,
+            textLength = this@toReaderAnnotatedString.length
+        )
         applySelectionToTextRange(
             selection = activeSelection,
             textStartOffset = absoluteStartOffset,

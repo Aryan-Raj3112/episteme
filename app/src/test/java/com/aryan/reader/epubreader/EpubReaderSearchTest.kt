@@ -8,6 +8,7 @@ import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.paginatedreader.IPaginator
 import com.aryan.reader.paginatedreader.Page
+import com.aryan.reader.paginatedreader.TextContentBlock
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.CoroutineScope
@@ -271,6 +272,7 @@ class EpubReaderSearchTest {
         override val generation: Int = 0
         override val pageShiftRequest: Flow<Int> = emptyFlow()
         override fun getPageContent(pageIndex: Int): Page? = null
+        override suspend fun getChapterTextBlocks(chapterIndex: Int): List<TextContentBlock>? = null
         override fun getChapterPathForPage(pageIndex: Int): String? = null
         override fun getPlainTextForChapter(chapterIndex: Int): String? = null
         override fun navigateToHref(currentChapterAbsPath: String, href: String, onNavigationComplete: (pageIndex: Int) -> Unit) = Unit

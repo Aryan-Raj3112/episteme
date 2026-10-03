@@ -187,7 +187,26 @@ internal fun PaginatedReaderContent(
     onStartTtsFromSelection: (String, Int) -> Unit,
     onNoteRequested: (String?) -> Unit,
     onGetChapterInfo: (Int) -> Pair<String, Int?>?,
+    /**
+     * The whole chapter's text blocks, for placing highlights that carry no absolute offsets.
+     *
+     * Every highlight created in a WebView surface stores only its selected text. Resolving that
+     * against a single page's blocks is what duplicated repeated sentences and lost multi-paragraph
+     * selections, so this returns the chapter, and it suspends because the chapter may still need
+     * parsing.
+     */
+    onGetChapterTextBlocks: suspend (Int) -> List<TextContentBlock>?,
     userHighlights: List<UserHighlight>,
+    /**
+     * Called with the full highlight list once some of it has been repaired in place.
+     *
+     * Highlights stored before the reader had a usable coordinate space carry offsets that point
+     * somewhere else, and only the chapter's own text can say where they should have pointed. That
+     * repair happens as each chapter is opened, and the corrected locators have to be written back or
+     * the same search runs again next time. The callback receives the whole list so the caller owns
+     * the single source of truth rather than this surface mutating it in place.
+     */
+    onHighlightsRepaired: (List<UserHighlight>) -> Unit = {},
     onHighlightCreated: (String, String, String, SharedReaderLocator, HighlightStyle) -> Unit,
     onHighlightDeleted: (String) -> Unit,
     activeHighlightPalette: List<Int>,
@@ -310,6 +329,46 @@ internal fun PaginatedReaderContent(
         }
     }
 
+    // Highlights created in a WebView surface store only their selected text, so placing them needs the
+    // whole chapter rather than one page's blocks. The blocks may still need parsing, so this runs
+    // off the composition and the pages read the result.
+    val chapterTextIndexes = remember {
+        mutableStateOf(emptyMap<Int, EpubChapterTextIndex?>())
+    }
+    LaunchedEffect(uiState.generation, userHighlights) {
+        // Every chapter that holds a highlight needs its text indexed, not only the ones whose
+        // highlights look unanchored. A legacy highlight *has* offsets, and they are wrong, which is
+        // precisely the case the repair exists for: gating on "no offsets yet" would skip it and leave
+        // it pointing at the wrong text forever.
+        val chaptersNeedingIndex = userHighlights
+            .mapNotNull { it.locator.chapterIndex ?: it.chapterIndex }
+            .distinct()
+        for (chapterIndex in chaptersNeedingIndex) {
+            if (chapterTextIndexes.value.containsKey(chapterIndex)) continue
+            val blocks = runCatching { onGetChapterTextBlocks(chapterIndex) }.getOrNull()
+            val index = blocks?.let { EpubChapterTextIndex.of(chapterIndex, it.toSemanticTextBlocks()) }
+            // Published as one immutable map so every composed page recomposes when it lands. Pages
+            // composed before this finished read no index and would otherwise keep showing nothing.
+            chapterTextIndexes.value = chapterTextIndexes.value + (chapterIndex to index)
+            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                "chapter_index chapter=$chapterIndex blocks=${blocks?.size} indexed=${index != null}"
+            )
+            if (index == null) continue
+
+            // The chapter's text is available now, so repair what is already stored. Locators written
+            // before the coordinate space was fixed hold offsets pointing somewhere else entirely, and
+            // repairing them here is the only chance to fix them: a reader only ever sees the
+            // chapters it opens, so an eager pass over the whole book is both expensive and wrong.
+            val repaired = index.repairHighlights(userHighlights)
+            if (repaired.unchanged) continue
+            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                "highlight_repair chapter=$chapterIndex repaired=${repaired.repaired} " +
+                    "of=${userHighlights.size}"
+            )
+            onHighlightsRepaired(repaired.highlights)
+        }
+    }
+
     @Composable
     fun SpreadBookPage(
         bookPageIndex: Int,
@@ -331,24 +390,14 @@ internal fun PaginatedReaderContent(
         val pageTextBlocks = remember(pageContent) {
             pageContent?.content?.extractTextBlocks().orEmpty()
         }
-        val pageCharRange = remember(pageTextBlocks) {
-            val starts = pageTextBlocks.map { it.startCharOffsetInSource }
-            val ends = pageTextBlocks.map {
-                it.endCharOffsetInSource.takeIf { end -> end > it.startCharOffsetInSource }
-                    ?: (it.startCharOffsetInSource + it.content.text.length)
-            }
-            if (starts.isEmpty() || ends.isEmpty()) null
-            else starts.min()..ends.max()
-        }
-        val pageUserHighlights = remember(pageChapterIndex, userHighlights, pageCharRange, pageTextBlocks) {
-            highlightsForPaginatedPage(
-                pageChapterIndex = pageChapterIndex,
-                userHighlights = userHighlights,
-                pageStartOffset = pageCharRange?.first,
-                pageEndOffset = pageCharRange?.last,
-                pageBlocks = pageTextBlocks.ifEmpty { null }
-            )
-        }
+        val pageUserHighlights = resolvePaginatedPageHighlights(
+            scope = PaginatedPageScope(
+                chapterIndex = pageChapterIndex,
+                textBlocks = pageTextBlocks
+            ),
+            highlights = userHighlights,
+            chapterTextIndex = pageChapterIndex?.let { chapterTextIndexes.value[it] }
+        )
         val themedPageContent = remember(pageContent, isDarkTheme, effectiveBg, effectiveText) {
             pageContent?.applyReaderThemeForDisplay(
                 isDarkTheme = isDarkTheme,
@@ -364,11 +413,12 @@ internal fun PaginatedReaderContent(
             )
         }
 
-        if (pageUserHighlights.size != userHighlights.size) {
+        if (pageUserHighlights.highlights.size != userHighlights.size) {
             Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
                 "page_scope page=$bookPageIndex pageChapter=$pageChapterIndex " +
                     "inputHighlightCount=${userHighlights.size} " +
-                    "pageHighlightCount=${pageUserHighlights.size} " +
+                    "pageHighlightCount=${pageUserHighlights.highlights.size} " +
+                    "resolved=${pageUserHighlights.rangesByHighlight.keys} " +
                     "inputHighlightChapters=${userHighlights.map { it.chapterIndex }.distinct()}"
             )
         }
@@ -707,7 +757,9 @@ internal fun PaginatedReaderContent(
                                     searchHighlightColor = searchHighlightColor,
                                     ttsHighlightInfo = ttsHighlightInfo,
                                     ttsHighlightColor = ttsHighlightColor,
-                                    pageUserHighlights = pageUserHighlights,
+                                    pageUserHighlights = pageUserHighlights.highlights,
+                                    highlightRangesByBlock = pageUserHighlights.rangesByBlock(),
+                                    highlightById = pageUserHighlights.highlights.associateBy { it.id },
                                     fallbackTextColor = effectiveText,
                                     onLinkClick = onLinkClickCallback,
                                     onGeneralTap = onGeneralTapCallback,
@@ -1084,7 +1136,8 @@ internal fun PaginatedReaderContent(
                                                 onLinkClick = onLinkClickCallback,
                                                 onGeneralTap = onGeneralTapCallback,
                                                 block = block,
-                                                userHighlights = pageUserHighlights,
+                                                userHighlights = pageUserHighlights.highlights,
+                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
                                                 activeSelection = activeSelection,
                                                 onSelectionChange = { sel ->
                                                     activeSelection = sel
@@ -1172,7 +1225,8 @@ internal fun PaginatedReaderContent(
                                                 onLinkClick = onLinkClickCallback,
                                                 onGeneralTap = onGeneralTapCallback,
                                                 block = block,
-                                                userHighlights = pageUserHighlights,
+                                                userHighlights = pageUserHighlights.highlights,
+                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
                                                 activeSelection = activeSelection,
                                                 onSelectionChange = { sel ->
                                                     activeSelection = sel
@@ -1263,7 +1317,8 @@ internal fun PaginatedReaderContent(
                                                 onLinkClick = onLinkClickCallback,
                                                 onGeneralTap = onGeneralTapCallback,
                                                 block = block,
-                                                userHighlights = pageUserHighlights,
+                                                userHighlights = pageUserHighlights.highlights,
+                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
                                                 activeSelection = activeSelection,
                                                 onSelectionChange = { sel ->
                                                     activeSelection = sel
@@ -1385,7 +1440,8 @@ internal fun PaginatedReaderContent(
                                                     onLinkClick = onLinkClickCallback,
                                                     onGeneralTap = onGeneralTapCallback,
                                                     block = block,
-                                                    userHighlights = pageUserHighlights,
+                                                    userHighlights = pageUserHighlights.highlights,
+                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
                                                     activeSelection = activeSelection,
                                                     onSelectionChange = { sel ->
                                                         activeSelection = sel
@@ -1461,7 +1517,8 @@ internal fun PaginatedReaderContent(
                                                             textMeasurer = textMeasurer,
                                                             onLinkClickCallback = onLinkClickCallback,
                                                             onGeneralTapCallback = onGeneralTapCallback,
-                                                            userHighlights = pageUserHighlights,
+                                                            userHighlights = pageUserHighlights.highlights,
+                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
                                                             activeSelection = activeSelection,
                                                             onSelectionChange = { sel ->
                                                                 activeSelection =
@@ -1532,7 +1589,8 @@ internal fun PaginatedReaderContent(
                                                             textMeasurer = textMeasurer,
                                                             onLinkClickCallback = onLinkClickCallback,
                                                             onGeneralTapCallback = onGeneralTapCallback,
-                                                            userHighlights = pageUserHighlights,
+                                                            userHighlights = pageUserHighlights.highlights,
+                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
                                                             activeSelection = activeSelection,
                                                             onSelectionChange = { sel ->
                                                                 activeSelection =
@@ -2864,6 +2922,7 @@ internal fun RenderFlexChildBlock(
     onLinkClickCallback: (String) -> Unit,
     onGeneralTapCallback: (Offset) -> Unit,
     userHighlights: List<UserHighlight>,
+    highlightRanges: Map<String, List<IntRange>>,
     activeSelection: PaginatedSelection?,
     onSelectionChange: (PaginatedSelection?) -> Unit,
     onHighlightClick: (UserHighlight, Rect) -> Unit,
@@ -2926,6 +2985,7 @@ internal fun RenderFlexChildBlock(
             onGeneralTap = onGeneralTapCallback,
             block = block,
             userHighlights = userHighlights,
+            highlightRanges = highlightRanges,
             activeSelection = activeSelection,
             onSelectionChange = onSelectionChange,
             onHighlightClick = onHighlightClick,
@@ -3203,6 +3263,7 @@ internal fun RenderFlexChildBlock(
                         onLinkClickCallback = onLinkClickCallback,
                         onGeneralTapCallback = onGeneralTapCallback,
                         userHighlights = userHighlights,
+                        highlightRanges = highlightRanges,
                         activeSelection = activeSelection,
                         onSelectionChange = onSelectionChange,
                         onHighlightClick = onHighlightClick,

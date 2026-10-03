@@ -32,6 +32,17 @@ interface IPaginator {
 
     fun getPageContent(pageIndex: Int): Page?
     fun getChapterPathForPage(pageIndex: Int): String?
+
+    /**
+     * The whole chapter's text blocks, for placing highlights that carry no absolute offsets.
+     *
+     * A highlight created in a WebView surface stores only its selected text. Locating that text
+     * needs the entire chapter: given only one page's blocks, a sentence repeated across the chapter
+     * matches on every page holding a copy of it, and a selection spanning several paragraphs
+     * matches nowhere because no single block is that long. Suspends because the blocks may still
+     * need parsing; callers should build their index off the main thread.
+     */
+    suspend fun getChapterTextBlocks(chapterIndex: Int): List<TextContentBlock>?
     fun getPlainTextForChapter(chapterIndex: Int): String?
     fun navigateToHref(
         currentChapterAbsPath: String,

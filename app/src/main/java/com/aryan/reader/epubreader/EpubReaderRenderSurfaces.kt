@@ -182,6 +182,7 @@ import com.aryan.reader.paginatedreader.LocatorConverter
 import com.aryan.reader.paginatedreader.NativeVerticalLocation
 import com.aryan.reader.paginatedreader.NativeVerticalReaderScreen
 import com.aryan.reader.paginatedreader.PaginatedReaderScreen
+import com.aryan.reader.paginatedreader.resolveWebViewHighlightAnchor
 import com.aryan.reader.paginatedreader.ParagraphBlock
 import com.aryan.reader.paginatedreader.QuoteBlock
 import com.aryan.reader.paginatedreader.TextContentBlock
@@ -461,6 +462,31 @@ internal fun EpubReaderRenderSurfaces(
     val onUpdateHighlightPalette: (Int, Int) -> Unit = { p0, p1 -> onUpdateHighlightPaletteFn(p0, p1) }
     val runRecap: (Int, Int) -> Unit = { p0, p1 -> runRecapFn(p0, p1) }
 
+    /**
+     * Writes back locators that a paginated surface corrected in place.
+     *
+     * A highlight stored before the reader had a usable coordinate space points at the wrong place,
+     * and only the chapter's own text can say where. The surfaces decide *what* the correction is;
+     * this applies it to the live list, which is what gets persisted, so the correction survives the
+     * book being closed. Entries are replaced by id and only when they actually differ, so a
+     * no-op pass does not mark every highlight dirty.
+     */
+    val onHighlightsRepaired: (List<UserHighlight>) -> Unit = { repaired ->
+        var changed = false
+        repaired.forEach { updated ->
+            val index = userHighlights.indexOfFirst { it.id == updated.id }
+            if (index >= 0 && userHighlights[index] != updated) {
+                userHighlights[index] = updated
+                changed = true
+            }
+        }
+        if (changed) {
+            Timber.tag("HighlightDiag").d(
+                "repair_applied highlights=${userHighlights.size}"
+            )
+        }
+    }
+
                 when (currentRenderMode) {
                     RenderMode.VERTICAL_SCROLL -> {
                         val pageInfoReserve = if (shouldReserveEpubPageInfoBarSpace(prefs.pageInfoMode, showBars, isNativeVerticalMode)) pageInfoBarHeight else 0.dp
@@ -509,6 +535,10 @@ internal fun EpubReaderRenderSurfaces(
                                     bookReplacementFileId = bookId,
                                     activeHighlightPalette = currentHighlightPalette,
                                     onUpdatePalette = onUpdateHighlightPalette,
+                                    onGetChapterTextBlocks = { chapterIndex ->
+                                        paginator?.getChapterTextBlocks(chapterIndex)
+                                    },
+                                    onHighlightsRepaired = onHighlightsRepaired,
                                     ttsHighlightInfo = TtsHighlightInfo(
                                         text = ttsState.currentText ?: "",
                                         cfi = ttsState.sourceCfi ?: "",
@@ -648,7 +678,7 @@ internal fun EpubReaderRenderSurfaces(
                                     },
                                     onHighlightDeleted = { cfi ->
                                         userHighlights.find { it.cfi == cfi }?.let { userHighlights.remove(it) }
-                                    }
+                                    },
                                 )
                             } else {
                                 AnimatedContent(
@@ -900,6 +930,20 @@ internal fun EpubReaderRenderSurfaces(
                                                 if (navigation.pendingNoteForNewHighlight) {
                                                     navigation.pendingNoteForNewHighlight = false
                                                     navigation.highlightToNoteCfi = finalCfi
+                                                }
+                                                // Resolve the stored text into absolute offsets and write them
+                                                // back. Without them the highlight can only be placed by
+                                                // searching text, which loses multi-paragraph selections and
+                                                // duplicates repeated sentences. Persisting the offsets lets the
+                                                // paginated surfaces place it exactly and never re-search.
+                                                scope.launch {
+                                                    val created = userHighlights.lastOrNull { it.cfi == finalCfi }
+                                                    val chapterBlocks =
+                                                        paginator?.getChapterTextBlocks(currentChapterIndex)
+                                                    resolveWebViewHighlightAnchor(created, chapterBlocks)?.let { resolved ->
+                                                        val index = userHighlights.indexOfFirst { it.id == resolved.id }
+                                                        if (index >= 0) userHighlights[index] = resolved
+                                                    }
                                                 }
                                             },
                                             onNoteRequested = { cfi ->
@@ -1965,7 +2009,8 @@ internal fun EpubReaderRenderSurfaces(
                                             "delete_request cfi=$cfi matchedId=null beforeCount=$beforeCount"
                                         )
                                     }
-                                }
+                                },
+                                onHighlightsRepaired = onHighlightsRepaired
                             )
                             if (!isPagerInitialized) {
                                 Box(

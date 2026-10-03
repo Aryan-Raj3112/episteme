@@ -239,12 +239,116 @@ internal fun AnnotatedString.Builder.applyHighlightToTextRange(
     logResult("no_match", null)
 }
 
-internal fun UserHighlight.nativeSpanStyle(): SpanStyle {
-    return when (style) {
-        HighlightStyle.BACKGROUND -> SpanStyle(background = renderColor(legacyAlpha = 0.38f))
-        HighlightStyle.UNDERLINE, HighlightStyle.WAVY_UNDERLINE -> SpanStyle(textDecoration = TextDecoration.Underline)
-        HighlightStyle.STRIKETHROUGH -> SpanStyle(textDecoration = TextDecoration.LineThrough)
+/**
+ * Applies several highlights to one block, resolving each range once.
+ *
+ * Background highlights are merged before painting so that two translucent highlights of the same
+ * colour do not compound where they overlap. Compose resolves span attributes in insertion order, so
+ * applying both separately left the shared stretch darker than the rest of the highlight, which reads
+ * as a rendering fault rather than as two highlights. Line styles are applied per highlight: they
+ * paint a decoration rather than a fill, so overlap is not visible for them.
+ *
+ * Every highlight's identity is still recorded as an annotation, including across a merged region, so
+ * tapping an overlapping stretch still resolves to a highlight.
+ */
+internal fun AnnotatedString.Builder.applyHighlightsToTextRanges(
+    highlights: List<UserHighlight>,
+    chapterIndex: Int? = null,
+    pageIndex: Int? = null,
+    blockCfi: String? = null,
+    blockIndex: Int? = null,
+    blockCharOffset: Int? = null,
+    textStartOffset: Int,
+    textLength: Int,
+    text: String? = null
+) {
+    if (highlights.isEmpty()) return
+
+    val resolved = highlights.mapNotNull { highlight ->
+        sharedNativeHighlightRangeForBlock(
+            highlight = highlight,
+            blockCfi = blockCfi,
+            textStartOffset = textStartOffset,
+            textLength = textLength,
+            text = text,
+            blockIndex = blockIndex,
+            blockCharOffset = blockCharOffset
+        )?.let { highlight to it }
     }
+    if (resolved.isEmpty()) return
+
+    val backgrounds = resolved.filter { it.first.style == HighlightStyle.BACKGROUND }
+    for ((highlight, range) in backgrounds) {
+        addStringAnnotation(ReaderNativeAnnotationHighlight, highlight.id, range.start, range.end)
+    }
+    for (merged in mergeHighlightRanges(backgrounds.map { it.second })) {
+        // One span per distinct colour: the overlap keeps a single alpha instead of compounding.
+        val colors = backgrounds
+            .filter { (_, range) -> range.start < merged.end && range.end > merged.start }
+            .map { it.first.renderColor(legacyAlpha = 0.38f) }
+            .distinct()
+        for (color in colors) {
+            addStyle(style = SpanStyle(background = color), start = merged.start, end = merged.end)
+        }
+    }
+
+    for ((highlight, range) in resolved) {
+        if (highlight.style == HighlightStyle.BACKGROUND) continue
+        addStyle(style = highlight.nativeSpanStyle(), start = range.start, end = range.end)
+        addStringAnnotation(ReaderNativeAnnotationHighlight, highlight.id, range.start, range.end)
+    }
+}
+
+/**
+ * Merges overlapping ranges into the smallest set of disjoint ranges covering the same characters.
+ *
+ * Ranges that merely touch are left alone: two adjacent highlights stay two spans, so editing or
+ * recolouring one never affects the other.
+ */
+internal fun mergeHighlightRanges(ranges: List<SharedNativeReaderTextRange>): List<SharedNativeReaderTextRange> {
+    if (ranges.size < 2) return ranges
+    val sorted = ranges.sortedWith(compareBy({ it.start }, { it.end }))
+    val merged = mutableListOf<SharedNativeReaderTextRange>()
+    for (range in sorted) {
+        val last = merged.lastOrNull()
+        if (last != null && range.start < last.end) {
+            merged[merged.lastIndex] = SharedNativeReaderTextRange(last.start, maxOf(last.end, range.end))
+        } else {
+            merged += range
+        }
+    }
+    return merged
+}
+
+/** Reads the inclusive-start, exclusive-end ranges a renderer's `getPathForRange` expects. */
+
+internal fun UserHighlight.nativeSpanStyle(): SpanStyle = nativeSpanStyle(
+    color = renderColor(legacyAlpha = 0.38f),
+    style = style
+)
+
+/**
+ * Paint-only span for a highlight, given its colour and style.
+ *
+ * Background highlights paint a background, line styles paint a decoration. Line styles must carry
+ * the colour explicitly: without it the text-decoration inherits the text colour, so an underline
+ * highlight silently loses its colour wherever the two differ.
+ *
+ * Layout-affecting metrics are never set. `SpanStyle` carries no line height, and leaving font size,
+ * letter spacing, baseline shift and transform unspecified is what keeps a highlight from shifting
+ * the text around it.
+ */
+internal fun nativeSpanStyle(color: Color, style: HighlightStyle): SpanStyle = when (style) {
+    HighlightStyle.BACKGROUND -> SpanStyle(background = color)
+    HighlightStyle.UNDERLINE, HighlightStyle.WAVY_UNDERLINE -> SpanStyle(
+        textDecoration = TextDecoration.Underline,
+        color = color
+    )
+
+    HighlightStyle.STRIKETHROUGH -> SpanStyle(
+        textDecoration = TextDecoration.LineThrough,
+        color = color
+    )
 }
 
 internal fun logNativeHighlightMapResult(
@@ -990,6 +1094,7 @@ internal fun sharedNativeSelectionRect(ranges: List<SharedNativeSelectedTextRang
     }
 }
 
+/** A half-open character range: [start] inclusive, [end] exclusive. */
 internal data class SharedNativeReaderTextRange(
     val start: Int,
     val end: Int

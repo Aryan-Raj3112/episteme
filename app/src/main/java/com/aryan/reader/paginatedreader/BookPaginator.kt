@@ -1330,6 +1330,12 @@ class BookPaginator(
         }
     }
 
+    override suspend fun getChapterTextBlocks(chapterIndex: Int): List<TextContentBlock>? {
+        if (isDisposed()) return null
+        val chapter = chapters.getOrNull(chapterIndex) ?: return null
+        return getBlocksForChapter(chapter, chapterIndex).filterIsInstance<TextContentBlock>()
+    }
+
     override fun findChapterIndexForPage(pageIndex: Int): Int? {
         if (pageIndex !in 0..<totalPageCount) {
             Timber.w("findChapterIndexForPage: pageIndex $pageIndex is out of bounds (Total: $totalPageCount)."

@@ -3693,24 +3693,29 @@
 
             nodes.forEach((node) => {
                 var parent = node.parentNode;
+                var existingCfiList = parent && parent.tagName === "SPAN" && parent.classList.contains(className)
+                    ? (parent.getAttribute("data-cfi") || "").split(";;")
+                    : null;
 
-                if (parent && parent.tagName === "SPAN" && parent.classList.contains(className)) {
-                    var currentCfi = parent.getAttribute("data-cfi") || "";
-                    var cfiList = currentCfi.split(";;");
-
-                    if (!cfiList.includes(newCfi)) {
-                        parent.setAttribute("data-cfi", currentCfi ? (currentCfi + ";;" + newCfi) : newCfi);
-                    }
+                if (existingCfiList && existingCfiList.includes(newCfi)) {
+                    // The same highlight being restored or repainted. Keep it on the existing span so
+                    // the DOM matches the stored list instead of growing a duplicate span per pass.
                     this.applyHighlightVisualStyle(parent, colorCss, highlightStyle);
-                } else {
-                    if (node.nodeValue.trim().length === 0) return;
-                    var span = document.createElement("span");
-                    span.className = className;
-                    span.setAttribute("data-cfi", newCfi);
-                    this.applyHighlightVisualStyle(span, colorCss, highlightStyle);
-                    node.parentNode.insertBefore(span, node);
-                    span.appendChild(node);
+                    return;
                 }
+
+                if (node.nodeValue.trim().length === 0) return;
+
+                // A different highlight lands on text that is already highlighted. Wrap it in its own
+                // span rather than folding it into the existing one: a shared span has a single CSS
+                // class and a single inline colour, so merging made the second highlight overwrite the
+                // first's colour and made deleting one of them hide the other.
+                var span = document.createElement("span");
+                span.className = className;
+                span.setAttribute("data-cfi", newCfi);
+                this.applyHighlightVisualStyle(span, colorCss, highlightStyle);
+                node.parentNode.insertBefore(span, node);
+                span.appendChild(node);
             });
         },
 
@@ -3816,23 +3821,12 @@
                                 }).`);
                         span.setAttribute("data-cfi", newCfiList.join(";;"));
 
-                        if (optionalCssClass) {
-                            console.log(`$ {
-                                    HL_LOG_TAG
-                                }
-
-                                : -> Removing CSS class: $ {
-                                    optionalCssClass
-                                }
-
-                                `);
+                        // The span's styling is deliberately left alone. It is shared by every CFI
+                        // still on it, and removing the CSS class made a surviving highlight go
+                        // invisible while it remained in the stored list. Newly created highlights no
+                        // longer share a span; this path only runs for spans written by an older build.
+                        if (optionalCssClass && newCfiList.length === 0) {
                             span.classList.remove(optionalCssClass);
-                        } else {
-                            console.log(`$ {
-                                    HL_LOG_TAG
-                                }
-
-                                : -> Warning: No CSS class provided to remove. Visual style might persist if classes are mixed.`);
                         }
 
                         updatedCount++;
