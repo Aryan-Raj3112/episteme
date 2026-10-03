@@ -15,80 +15,27 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import io.legere.pdfiumandroid.api.Bookmark
-import io.legere.pdfiumandroid.suspend.PdfDocumentKt
-import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.AndroidShareArtifactManager
-import com.aryan.reader.shared.PdfTocEntry
+import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.ReaderExternalLookupAction
-import com.aryan.reader.shared.ReaderTtsChunk
-import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.externalLookupUrl
 import com.aryan.reader.shared.isReaderExternalHref
 import com.aryan.reader.shared.normalizeReaderHref
-import com.aryan.reader.shared.pdf.PdfTextPageSession
-import com.aryan.reader.shared.pdf.SharedPdfSearchResult
-import com.aryan.reader.shared.pdf.SharedPdfSearchIndex
 import com.aryan.reader.shared.reader.SharedJvmBookLoader
 import com.aryan.reader.shared.reader.sharedEpubOpenTrace
 import com.aryan.reader.shared.reader.sharedEpubOpenTraceElapsedMs
 import com.aryan.reader.shared.reader.sharedEpubOpenTraceMark
 import com.aryan.reader.shared.reader.sharedEpubOpenTraceMs
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
 import org.json.JSONObject
 import java.io.File
-import java.text.DateFormat
-import java.util.Date
-
-private object AndroidSharedMobileContext {
-    var applicationContext: Context? = null
-}
-
-internal fun sharedAndroidMobileApplicationContext(): Context? =
-    AndroidSharedMobileContext.applicationContext
-
-fun registerSharedAndroidMobileApplicationContext(context: Context) {
-    AndroidSharedMobileContext.applicationContext = context.applicationContext
-}
-
-@Composable
-private fun rememberAndroidSharedMobileContext(): Context {
-    val context = LocalContext.current
-    AndroidSharedMobileContext.applicationContext = context.applicationContext
-    return context
-}
-
-internal actual fun formatSharedMobileDateTime(epochMillis: Long): String =
-    DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(epochMillis))
-
-/**
- * Android benchmark parity (`EpubReaderPreferences.kt:96`): use
- * `android.text.format.DateFormat.getTimeFormat`, which honours the user's
- * system 12/24-hour setting, rather than the locale default that
- * `DateFormat.getTimeInstance` would pick. Falls back to the locale default
- * before an application context has been registered.
- */
-internal actual fun formatSharedMobileClockTime(epochMillis: Long): String {
-    val context = AndroidSharedMobileContext.applicationContext
-    return if (context != null) {
-        android.text.format.DateFormat.getTimeFormat(context).format(Date(epochMillis))
-    } else {
-        DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(epochMillis))
-    }
-}
-
-internal actual fun formatSharedMobileBookInfoDateTime(epochMillis: Long): String =
-    DateFormat.getDateTimeInstance(DateFormat.LONG, DateFormat.SHORT).format(Date(epochMillis))
-
 @Composable
 internal actual fun rememberSharedMobileEpubLoadState(book: BookItem): SharedMobileEpubLoadState {
     val context = rememberAndroidSharedMobileContext()
@@ -437,137 +384,3 @@ internal actual fun shareSharedMobileEpubImage(bytes: ByteArray, fileName: Strin
         true
     }.getOrDefault(false)
 }
-
-internal actual fun openSharedMobileExternalUrl(url: String): Boolean = openAndroidUrl(url)
-
-private fun openAndroidUrl(url: String): Boolean {
-    val context = AndroidSharedMobileContext.applicationContext ?: return false
-    val normalized = normalizeReaderHref(url)
-    return runCatching {
-        context.startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse(normalized)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-        )
-        true
-    }.getOrDefault(false)
-}
-
-internal actual suspend fun searchSharedMobilePdf(
-    book: BookItem,
-    query: String,
-    password: String?,
-): List<SharedPdfSearchResult> {
-    val context = AndroidSharedMobileContext.applicationContext ?: return emptyList()
-    if (query.isBlank()) return emptyList()
-    return runCatching {
-        withContext(Dispatchers.IO) {
-            AndroidSharedPdfiumRuntime.mutex.withLock {
-                context.openSharedPdfDescriptor(book).use { pfd ->
-                    AndroidSharedPdfiumRuntime.core.newDocument(pfd, password).use { document ->
-                        val pageCount = document.getPageCount()
-                        val index = SharedPdfSearchIndex(pageCount)
-                        for (pageIndex in 0 until pageCount) {
-                            currentCoroutineContext().ensureActive()
-                            val text = document.openPage(pageIndex)?.use { page ->
-                                page.openTextPage().use { textPage ->
-                                    val count = textPage.textPageCountChars()
-                                    if (count > 0) textPage.textPageGetText(0, count).orEmpty() else ""
-                                }
-                            }.orEmpty()
-                            index.putPage(pageIndex, text.trimEnd('\u0000'))
-                        }
-                        index.search(query)
-                    }
-                }
-            }
-        }
-    }.getOrDefault(emptyList())
-}
-
-internal actual suspend fun loadSharedMobilePdfOutline(
-    book: BookItem,
-    password: String?,
-): List<PdfTocEntry> {
-    val context = AndroidSharedMobileContext.applicationContext ?: return emptyList()
-    return runCatching {
-        withContext(Dispatchers.IO) {
-            AndroidSharedPdfiumRuntime.mutex.withLock {
-                context.openSharedPdfDescriptor(book).use { pfd ->
-                    AndroidSharedPdfiumRuntime.core.newDocument(pfd, password).use { document ->
-                        fun flatten(
-                            bookmarks: List<io.legere.pdfiumandroid.api.Bookmark>,
-                            level: Int,
-                            destination: MutableList<PdfTocEntry>,
-                        ) {
-                            bookmarks.forEach { bookmark ->
-                                destination += PdfTocEntry(
-                                    title = bookmark.title ?: "Untitled Chapter",
-                                    pageIndex = bookmark.pageIdx.toInt(),
-                                    nestLevel = level,
-                                )
-                                flatten(bookmark.children, level + 1, destination)
-                            }
-                        }
-                        buildList { flatten(document.getAndroidCompatiblePdfTableOfContents(), 0, this) }
-                    }
-                }
-            }
-        }
-    }.getOrDefault(emptyList())
-}
-
-/**
- * Mirrors Android's production workaround for pdfiumandroid's depth-state leak,
- * which can truncate bookmark siblings. Reflection is intentionally isolated here
- * and falls back to the library traversal if its internals change.
- */
-suspend fun PdfDocumentKt.getAndroidCompatiblePdfTableOfContents(): List<Bookmark> = runCatching {
-    val documentField = PdfDocumentKt::class.java.getDeclaredField("document").apply { isAccessible = true }
-    val documentWrapper = documentField.get(this) ?: return getTableOfContents()
-    val nativeDocumentField = documentWrapper.javaClass.getDeclaredField("nativeDocument").apply {
-        isAccessible = true
-    }
-    val nativeDocument = nativeDocumentField.get(documentWrapper) ?: return getTableOfContents()
-    val pointerField = documentWrapper.javaClass.getDeclaredField("mNativeDocPtr").apply {
-        isAccessible = true
-    }
-    val documentPointer = pointerField.get(documentWrapper) as Long
-    val longType = Long::class.javaPrimitiveType!!
-    val nativeClass = nativeDocument.javaClass
-    val titleMethod = nativeClass.getMethod("getBookmarkTitle", longType)
-    val destinationMethod = nativeClass.getMethod("getBookmarkDestIndex", longType, longType)
-    val firstChildMethod = nativeClass.getMethod("getFirstChildBookmark", longType, longType)
-    val siblingMethod = nativeClass.getMethod("getSiblingBookmark", longType, longType)
-    val visited = mutableSetOf<Long>()
-
-    fun walk(destination: MutableList<Bookmark>, startPointer: Long, level: Int) {
-        var currentPointer = startPointer
-        while (currentPointer != 0L && visited.add(currentPointer)) {
-            val bookmark = Bookmark().apply {
-                mNativePtr = currentPointer
-                title = titleMethod.invoke(nativeDocument, currentPointer) as? String ?: "Untitled"
-                pageIdx = destinationMethod.invoke(nativeDocument, documentPointer, currentPointer) as Long
-            }
-            destination += bookmark
-            val firstChild = firstChildMethod.invoke(
-                nativeDocument,
-                documentPointer,
-                currentPointer,
-            ) as Long
-            if (firstChild != 0L && level < AndroidSharedPdfMaxOutlineDepth) {
-                walk(bookmark.children, firstChild, level + 1)
-            }
-            currentPointer = siblingMethod.invoke(
-                nativeDocument,
-                documentPointer,
-                currentPointer,
-            ) as Long
-        }
-    }
-
-    val result = mutableListOf<Bookmark>()
-    val firstRoot = firstChildMethod.invoke(nativeDocument, documentPointer, 0L) as Long
-    if (firstRoot != 0L) walk(result, firstRoot, 0)
-    result.ifEmpty { getTableOfContents() }
-}.getOrElse { getTableOfContents() }
-
-private const val AndroidSharedPdfMaxOutlineDepth = 128
