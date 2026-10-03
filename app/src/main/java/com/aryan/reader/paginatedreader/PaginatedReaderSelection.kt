@@ -82,6 +82,7 @@ import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
 import com.aryan.reader.shared.isReaderExternalHref as sharedIsReaderExternalHref
 import com.aryan.reader.shared.normalizeReaderHref
 import com.aryan.reader.shared.reader.paintOnlyColorOverlayText
+import com.aryan.reader.shared.reader.sharedHeadingFontScale
 import com.aryan.reader.shared.reader.withoutForegroundColorSpans
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -271,15 +272,6 @@ internal fun textBlockLayoutKey(
 
 internal fun legacyTextBlockLayoutKey(cfi: String, pageIndex: Int): String = "${cfi}_$pageIndex"
 
-internal fun headerFontScale(level: Int): Float = when (level) {
-    1 -> 1.5f
-    2 -> 1.4f
-    3 -> 1.3f
-    4 -> 1.2f
-    5 -> 1.1f
-    else -> 1.0f
-}
-
 internal const val WEB_VIEW_NORMAL_LINE_HEIGHT_MULTIPLIER = 1.2f
 internal const val ReaderUiCutoffLogTag = "EpistemeEpubCutoff"
 internal const val ReaderUiPageGapDiagLogTag = "EpistemePageGapDiag"
@@ -339,7 +331,7 @@ internal fun createHeaderTextStyle(
     level: Int,
     textAlign: TextAlign?
 ): TextStyle {
-    val scale = headerFontScale(level)
+    val scale = sharedHeadingFontScale(level)
     val scaledFontSize = baseStyle.fontSize * scale
     val scaledLineHeight = if (baseStyle.lineHeight != TextUnit.Unspecified) {
         baseStyle.lineHeight * scale

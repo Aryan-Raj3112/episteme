@@ -58,6 +58,7 @@ import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.sharedHeadingFontScale
 import com.aryan.reader.shared.reader.resolveSharedReaderFontFeatureSettings
 import com.aryan.reader.shared.reader.resolveSharedReaderTextAlign
 import kotlin.math.abs
@@ -172,7 +173,7 @@ internal fun SemanticTextBlock.renderedTextStyle(
         ?: style.spanStyle.fontSize.takeIfSpecified())
         ?.resolveFontSizeSp(settings.fontSize.toFloat())
         ?: when (this) {
-            is SemanticHeader -> (settings.fontSize * headerScale(level)).sp
+            is SemanticHeader -> (settings.fontSize * sharedHeadingFontScale(level)).sp
             else -> settings.fontSize.sp
         }
     val lineHeight = style.paragraphStyle.lineHeight.takeIfSpecified()

@@ -1701,7 +1701,7 @@ private fun SemanticTextBlock.textStyle(baseStyle: TextStyle, settings: ReaderSe
         ?: style.spanStyle.fontSize.takeIfSpecified())
         ?.resolveFontSizeSp(settings.fontSize.toFloat())
         ?: when (this) {
-            is SemanticHeader -> (settings.fontSize * headerScale(level)).sp
+            is SemanticHeader -> (settings.fontSize * sharedHeadingFontScale(level)).sp
             else -> baseStyle.fontSize
         }
     val lineHeight = style.paragraphStyle.lineHeight.takeIfSpecified()
@@ -1770,16 +1770,6 @@ private fun CssStyle.toMeasurementSpanStyle(parentFontSizeSp: Float): SpanStyle 
             fontVariantNumeric = fontVariantNumeric
         )
     )
-}
-
-private fun headerScale(level: Int): Float {
-    return when (level) {
-        1 -> 1.5f
-        2 -> 1.35f
-        3 -> 1.2f
-        4 -> 1.1f
-        else -> 1f
-    }
 }
 
 private fun SemanticTextBlock.sliceText(start: Int, end: Int): SemanticTextBlock {

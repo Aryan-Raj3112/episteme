@@ -1036,13 +1036,17 @@ internal fun sharedNativeHighlightRangeInBlock(
         sharedNativeCfiPathStrictlyBetween(blockPath, start.path, end.path)
     if (!startMatches && !endMatches && !isIntermediate) return null
 
+    // Android benchmark (`cfiOffsetToBlockLocal`): an offset that fits neither
+    // interpretation belongs to a different block, so reject the whole mapping rather
+    // than clamping a raw offset onto this block's tail -- that used to paint ghost
+    // highlights. Shared previously returned the raw offset here and then coerced it.
     var localStart = if (startMatches) {
-        sharedNativeCfiOffsetToLocal(start.offset, textStartOffset, textLength)
+        sharedNativeScopedOffsetToLocalOrNull(start.offset, textStartOffset, textLength) ?: return null
     } else {
         0
     }
     var localEnd = if (endMatches) {
-        sharedNativeCfiOffsetToLocal(end.offset, textStartOffset, textLength)
+        sharedNativeScopedOffsetToLocalOrNull(end.offset, textStartOffset, textLength) ?: return null
     } else {
         textLength
     }
@@ -1073,14 +1077,6 @@ internal fun sharedNativeHighlightRangeInBlock(
         return quoteRange
     }
     return cfiRange ?: quoteRange
-}
-
-internal fun sharedNativeCfiOffsetToLocal(offset: Int, textStartOffset: Int, textLength: Int): Int {
-    return when {
-        offset in 0..textLength -> offset
-        offset in textStartOffset..(textStartOffset + textLength) -> offset - textStartOffset
-        else -> offset
-    }
 }
 
 internal fun String.sharedNativeCfiPointOrNull(allowMissingOffset: Boolean = false): SharedNativeCfiPoint? {
@@ -1156,16 +1152,6 @@ internal fun SharedNativeReaderTextSelection.toReaderLocator(): ReaderLocator {
         textQuote = text,
         cfi = cfi
     )
-}
-
-internal fun headerScale(level: Int): Float {
-    return when (level) {
-        1 -> 1.5f
-        2 -> 1.35f
-        3 -> 1.2f
-        4 -> 1.1f
-        else -> 1f
-    }
 }
 
 internal fun sharedNativeListMarker(index: Int, isOrdered: Boolean, listStyleType: String?): String {

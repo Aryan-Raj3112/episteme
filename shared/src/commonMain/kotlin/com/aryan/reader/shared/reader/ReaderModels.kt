@@ -436,3 +436,31 @@ fun sharedPaginatedSpreadPositionLabel(
 fun ReaderSettings.isRightToLeftPaginationEnabled(): Boolean {
     return readingMode == ReaderReadingMode.PAGINATED && rightToLeftPagination
 }
+
+/**
+ * Heading font scale, single-sourced for both platforms (parity item B1).
+ *
+ * Benchmark: Android's `PaginatedReaderSelection.kt` `headerFontScale`. This table used to
+ * exist three times with two different values -- Android's, and a copy in each of
+ * `SharedNativeSelectionMapping.kt` and `SharedMeasuredEpubPaginator.kt` -- and the shared
+ * copies were wrong at every level below h1:
+ *
+ * | level | Android | shared (was) |
+ * | --- | --- | --- |
+ * | 1 | 1.5 | 1.5 |
+ * | 2 | 1.4 | 1.35 |
+ * | 3 | 1.3 | 1.2 |
+ * | 4 | 1.2 | 1.1 |
+ * | 5 | 1.1 | no case -> 1.0 |
+ *
+ * So iOS rendered h2-h5 headings visibly smaller than Android, and h5 completely unscaled.
+ * Android is the benchmark, so the shared table takes Android's values.
+ */
+fun sharedHeadingFontScale(level: Int): Float = when (level) {
+    1 -> 1.5f
+    2 -> 1.4f
+    3 -> 1.3f
+    4 -> 1.2f
+    5 -> 1.1f
+    else -> 1.0f
+}

@@ -1,0 +1,55 @@
+package com.aryan.reader.shared.ui
+
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+
+/**
+ * Parity item B1. Shared used to carry two twins of Android's `cfiOffsetToBlockLocal`:
+ * `sharedNativeScopedOffsetToLocalOrNull` returned null for an offset that belonged to
+ * another block (correct), while `sharedNativeCfiOffsetToLocal` returned the raw offset,
+ * which the caller then clamped onto this block's tail — the ghost-highlight bug Android
+ * had already fixed. The non-null twin is gone and both call sites now use the nullable one.
+ */
+class SharedNativeCfiOffsetMappingTest {
+
+    @Test
+    fun `offset already inside the block text is used as-is`() {
+        assertEquals(0, sharedNativeScopedOffsetToLocalOrNull(0, 100, 40))
+        assertEquals(40, sharedNativeScopedOffsetToLocalOrNull(40, 100, 40))
+        assertEquals(17, sharedNativeScopedOffsetToLocalOrNull(17, 100, 40))
+    }
+
+    @Test
+    fun `absolute offset is rebased onto the block`() {
+        assertEquals(0, sharedNativeScopedOffsetToLocalOrNull(100, 100, 40))
+        assertEquals(40, sharedNativeScopedOffsetToLocalOrNull(140, 100, 40))
+        assertEquals(20, sharedNativeScopedOffsetToLocalOrNull(120, 100, 40))
+    }
+
+    @Test
+    fun `offset belonging to another block is rejected rather than clamped`() {
+        // The ghost-highlight case: 250 is past this block's 100..140 span and is not a
+        // valid in-block offset either. Android returns null here on purpose.
+        assertNull(sharedNativeScopedOffsetToLocalOrNull(250, 100, 40))
+        assertNull(sharedNativeScopedOffsetToLocalOrNull(99, 100, 40))
+        assertNull(sharedNativeScopedOffsetToLocalOrNull(-1, 100, 40))
+        assertNull(sharedNativeScopedOffsetToLocalOrNull(41, 100, 40))
+    }
+
+    @Test
+    fun `a zero length block only accepts offsets that land on it`() {
+        assertEquals(0, sharedNativeScopedOffsetToLocalOrNull(0, 100, 0))
+        // offset == textStartOffset is the start of an empty block, which is a real
+        // position -- Android's cfiOffsetToBlockLocal rebases it to 0 the same way.
+        assertEquals(0, sharedNativeScopedOffsetToLocalOrNull(100, 100, 0))
+        assertNull(sharedNativeScopedOffsetToLocalOrNull(1, 100, 0))
+        assertNull(sharedNativeScopedOffsetToLocalOrNull(99, 100, 0))
+    }
+
+    @Test
+    fun `the in-block interpretation wins when both could apply`() {
+        // offset 5 satisfies `0..40` first, so it must not be rebased by 100.
+        assertEquals(5, sharedNativeScopedOffsetToLocalOrNull(5, 100, 40))
+    }
+}
