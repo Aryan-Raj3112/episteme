@@ -1506,10 +1506,15 @@ fun EpubReaderHost(
     }
 
     val onHighlightColorChange: (UserHighlight, Int) -> Unit = { targetHighlight, newColorArgb ->
-        val index = userHighlights.indexOfFirst { it.cfi == targetHighlight.cfi }
+        val index = userHighlights.indexOfFirst { it.id == targetHighlight.id }
         if (index != -1) {
             val legacyColor = legacyHighlightColorForArgb(newColorArgb)
-            userHighlights[index] = targetHighlight.copy(color = legacyColor, colorArgb = newColorArgb)
+            // Applied to the entry in the list, not to the snapshot the sheet was opened with: a
+            // locator repaired while the sheet was open would otherwise be reverted by this write.
+            userHighlights[index] = userHighlights[index].copy(
+                color = legacyColor,
+                colorArgb = newColorArgb
+            )
             if (currentRenderMode == RenderMode.VERTICAL_SCROLL && targetHighlight.chapterIndex == currentChapterIndex) {
                 val cssClass = legacyColor.cssClass
                 val colorCss = String.format("#%06X", 0xFFFFFF and newColorArgb)
@@ -1520,7 +1525,7 @@ fun EpubReaderHost(
     }
 
     val onHighlightStyleChange: (UserHighlight, HighlightStyle) -> Unit = { targetHighlight, newStyle ->
-        val index = userHighlights.indexOfFirst { it.cfi == targetHighlight.cfi }
+        val index = userHighlights.indexOfFirst { it.id == targetHighlight.id }
         if (index != -1) {
             val current = userHighlights[index]
             userHighlights[index] = current.copy(style = newStyle)

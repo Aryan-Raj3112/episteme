@@ -127,9 +127,15 @@ internal fun EpubHighlightNoteEditorSheet(
         onOpenPaletteManager = onOpenPaletteManager,
         onDismiss = { navigation.highlightToNoteCfi = null },
         onSave = { noteText ->
-            val index = userHighlights.indexOfFirst { it.cfi == targetHighlight.cfi }
+            // Keyed on id, which never changes. Keyed on cfi this silently dropped the note whenever
+            // the highlight had been re-anchored — repairing a locator rewrites its position, and
+            // re-highlighting the same span rewrites cfi — leaving the edit to land on whatever
+            // highlight now occupies the old position, or on none.
+            val index = userHighlights.indexOfFirst { it.id == targetHighlight.id }
             if (index != -1) {
-                userHighlights[index] = targetHighlight.copy(note = noteText.takeIf { it.isNotBlank() })
+                userHighlights[index] = userHighlights[index].copy(
+                    note = noteText.takeIf { it.isNotBlank() }
+                )
             }
             navigation.highlightToNoteCfi = null
         },

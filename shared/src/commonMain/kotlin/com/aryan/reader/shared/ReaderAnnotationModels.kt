@@ -126,12 +126,26 @@ data class ReaderLocator(
         )
     }
 
+    /**
+     * Whether [other] marks the same stretch of text, and so is the same highlight.
+     *
+     * Extent is part of identity, not just the start. Highlighting "beta" and then "beta gamma" in one
+     * block share a block and a start; treating those as one highlight made the second silently
+     * replace the first, losing its colour and any note on it. Two selections are the same highlight
+     * only when they cover the same characters.
+     *
+     * Each side's extent is read from whichever field it has. Where one side's extent cannot be
+     * determined the answer is false, so a duplicate is created rather than a highlight destroyed —
+     * the cheaper error, and the visible one.
+     */
     fun sameLocation(other: ReaderLocator): Boolean {
         val sameChapter = chapterIndex == null || other.chapterIndex == null || chapterIndex == other.chapterIndex
         if (!sameChapter) return false
 
         if (hasBlockPosition && other.hasBlockPosition) {
-            return blockIndex == other.blockIndex && charOffset == other.charOffset
+            if (blockIndex != other.blockIndex || charOffset != other.charOffset) return false
+            val end = selectedLength ?: return false
+            return other.selectedLength == end
         }
 
         if (hasTextRange && other.hasTextRange) {
@@ -139,11 +153,36 @@ data class ReaderLocator(
         }
 
         if (pageIndex != null && other.pageIndex != null) {
-            return pageIndex == other.pageIndex
+            // Same guard as above: comparing two unknown extents would be null == null, which reads as
+            // "the same stretch" and would make a page number alone enough to overwrite a highlight.
+            val end = selectedLength ?: return false
+            return pageIndex == other.pageIndex && other.selectedLength == end
         }
 
-        return cfi != null && cfi == other.cfi
+        val sameCfi = cfi != null && cfi == other.cfi
+        if (!sameCfi) return false
+        // A CFI that encodes only a position in the document cannot tell two ranges in the same place
+        // apart, so the selected text has to agree too. Otherwise highlighting a longer span over a
+        // shorter one inside one DOM node reads as the same highlight.
+        return when {
+            selectedLength != null && other.selectedLength != null -> selectedLength == other.selectedLength
+            else -> textQuote != null && textQuote == other.textQuote
+        }
     }
+
+    /**
+     * How many characters this locator covers, or null when it cannot say.
+     *
+     * Prefers the stored range's length, because that is measured in the chapter's own coordinates,
+     * and falls back to the length of the selected text. A collapsed range is length zero.
+     */
+    val selectedLength: Int?
+        get() = when {
+            startOffset != null && endOffset != null -> (endOffset!! - startOffset!!).coerceAtLeast(0)
+            charOffset != null && endOffset != null -> (endOffset!! - charOffset!!).coerceAtLeast(0)
+            textQuote != null -> textQuote!!.length
+            else -> null
+        }
 
     companion object {
         fun fromLegacy(
