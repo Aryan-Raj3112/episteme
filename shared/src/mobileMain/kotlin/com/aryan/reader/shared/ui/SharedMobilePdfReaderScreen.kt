@@ -6556,9 +6556,8 @@ private fun SharedMobilePdfPagesDrawerPage(
                     }
                 }
             }
-            SharedMobileLazyListScrollbar(
-                state = listState,
-                itemCount = pageRows.size,
+            SharedDrawerScrollbar(
+                listState = listState,
                 modifier = Modifier.align(Alignment.CenterEnd)
             )
         }
@@ -6668,50 +6667,11 @@ private fun SharedMobilePdfChaptersDrawerPage(
                     )
                 }
             }
-            SharedMobileLazyListScrollbar(
-                state = listState,
-                itemCount = visibleEntries.size,
+            SharedDrawerScrollbar(
+                listState = listState,
                 modifier = Modifier.align(Alignment.CenterEnd)
             )
         }
-    }
-}
-
-@Composable
-private fun SharedMobileLazyListScrollbar(
-    state: androidx.compose.foundation.lazy.LazyListState,
-    itemCount: Int,
-    modifier: Modifier = Modifier
-) {
-    if (itemCount <= 1) return
-    val visibleCount = state.layoutInfo.visibleItemsInfo.size.coerceAtLeast(1)
-    if (visibleCount >= itemCount) return
-    val scope = rememberCoroutineScope()
-    var trackHeightPx by remember { mutableStateOf(1) }
-    val thumbFraction = (visibleCount.toFloat() / itemCount).coerceIn(0.08f, 1f)
-    val maxFirst = (itemCount - visibleCount).coerceAtLeast(1)
-    val progress = (state.firstVisibleItemIndex.toFloat() / maxFirst).coerceIn(0f, 1f)
-    val thumbColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
-    Canvas(
-        modifier = modifier
-            .width(12.dp)
-            .fillMaxHeight()
-            .onSizeChanged { trackHeightPx = it.height.coerceAtLeast(1) }
-            .pointerInput(itemCount, visibleCount) {
-                detectDragGestures { change, _ ->
-                    val target = ((change.position.y / trackHeightPx) * maxFirst).toInt().coerceIn(0, maxFirst)
-                    scope.launch { state.scrollToItem(target) }
-                }
-            }
-    ) {
-        val thumbHeight = size.height * thumbFraction
-        val thumbTop = (size.height - thumbHeight) * progress
-        drawRoundRect(
-            color = thumbColor,
-            topLeft = Offset(size.width - 4.dp.toPx(), thumbTop),
-            size = androidx.compose.ui.geometry.Size(3.dp.toPx(), thumbHeight),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx())
-        )
     }
 }
 

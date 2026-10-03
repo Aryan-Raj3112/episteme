@@ -68,113 +68,10 @@ import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.epub.EpubTocEntry
 import kotlinx.coroutines.launch
 import com.aryan.reader.shared.ui.toBookmarkRow
+import com.aryan.reader.shared.ui.SharedDrawerScrollbar
 import com.aryan.reader.shared.ui.SharedMobileEpubToc
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
-
-@Composable
-fun VerticalScrollbar(
-    listState: LazyListState,
-    modifier: Modifier = Modifier
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isDragged by interactionSource.collectIsDraggedAsState()
-
-    val scrollbarState by remember {
-        derivedStateOf {
-            val layoutInfo = listState.layoutInfo
-            val totalItems = layoutInfo.totalItemsCount
-            val visibleItemsInfo = layoutInfo.visibleItemsInfo
-            val viewportHeight = layoutInfo.viewportSize.height.toFloat()
-
-            if (totalItems == 0 || visibleItemsInfo.isEmpty() || viewportHeight <= 0f) {
-                return@derivedStateOf null
-            }
-
-            val averageItemHeight = visibleItemsInfo.fastSumBy { it.size } / visibleItemsInfo.size.toFloat()
-            val estimatedContentHeight = (averageItemHeight * totalItems).coerceAtLeast(viewportHeight)
-            val viewportRatio = viewportHeight / estimatedContentHeight
-
-            if (viewportRatio >= 1f) return@derivedStateOf null
-
-            val maxThumbHeight = viewportHeight / 2f
-            val minThumbHeight = minOf(80f, maxThumbHeight)
-            val thumbHeight = (viewportHeight * viewportRatio).coerceIn(minThumbHeight, maxThumbHeight)
-
-            val firstItemIndex = listState.firstVisibleItemIndex
-            val firstItemOffset = listState.firstVisibleItemScrollOffset
-            val currentScrollPixels = (firstItemIndex * averageItemHeight) + firstItemOffset
-            val maxScrollPixels = estimatedContentHeight - viewportHeight
-            val scrollProgress = (currentScrollPixels / maxScrollPixels).coerceIn(0f, 1f)
-            val trackHeight = viewportHeight - thumbHeight
-            val thumbOffset = trackHeight * scrollProgress
-
-            ScrollbarCalculations(
-                thumbHeight = thumbHeight,
-                thumbOffset = thumbOffset,
-                contentHeight = estimatedContentHeight,
-                viewportHeight = viewportHeight
-            )
-        }
-    }
-
-    val targetAlpha = if (listState.isScrollInProgress || isDragged) 1f else 0f
-    val alpha by animateFloatAsState(
-        targetValue = targetAlpha,
-        animationSpec = tween(durationMillis = 200),
-        label = "ScrollbarAlpha"
-    )
-
-    if (scrollbarState != null) {
-        val state = scrollbarState!!
-
-        val draggableState = rememberDraggableState { delta ->
-            val trackHeight = state.viewportHeight - state.thumbHeight
-            if (trackHeight > 0) {
-                val scrollRatio = delta / trackHeight
-                val totalScrollableDistance = state.contentHeight - state.viewportHeight
-                val scrollDelta = scrollRatio * totalScrollableDistance
-
-                listState.dispatchRawDelta(scrollDelta)
-            }
-        }
-
-        Box(
-            modifier = modifier
-                .width(30.dp)
-                .fillMaxHeight()
-                .draggable(
-                    state = draggableState,
-                    orientation = Orientation.Vertical,
-                    interactionSource = interactionSource
-                )
-        ) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .graphicsLayer {
-                        translationY = state.thumbOffset
-                    }
-                    .padding(end = 4.dp)
-                    .width(6.dp)
-                    .height(with(androidx.compose.ui.platform.LocalDensity.current) { state.thumbHeight.toDp() })
-                    .alpha(alpha)
-                    .background(
-                        color = if (isDragged) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
-                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                        shape = RoundedCornerShape(100)
-                    )
-            )
-        }
-    }
-}
-
-private data class ScrollbarCalculations(
-    val thumbHeight: Float,
-    val thumbOffset: Float,
-    val contentHeight: Float,
-    val viewportHeight: Float
-)
 
 @Composable
 fun EpubReaderDrawerSheet(
@@ -362,7 +259,7 @@ private fun ChaptersList(
         collapseDescription = stringResource(R.string.content_desc_collapse),
         expandDescription = stringResource(R.string.content_desc_expand),
         scrollbar = { listState ->
-            VerticalScrollbar(
+            SharedDrawerScrollbar(
                 listState = listState,
                 modifier = Modifier.align(Alignment.CenterEnd),
             )
@@ -432,7 +329,7 @@ private fun BookmarksList(
         onRenameBookmark = onRenameBookmark,
         onDeleteBookmark = onDeleteBookmark,
         scrollbar = { listState ->
-            VerticalScrollbar(
+            SharedDrawerScrollbar(
                 listState = listState,
                 modifier = Modifier.align(Alignment.CenterEnd),
             )
@@ -484,7 +381,7 @@ private fun HighlightsList(
         onOpenPaletteManager = onOpenPaletteManager,
         onExportAnnotations = onExportAnnotations,
         scrollbar = { listState ->
-            VerticalScrollbar(
+            SharedDrawerScrollbar(
                 listState = listState,
                 modifier = Modifier.align(Alignment.CenterEnd),
             )

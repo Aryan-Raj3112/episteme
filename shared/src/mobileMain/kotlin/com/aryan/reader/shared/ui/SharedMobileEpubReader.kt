@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.ui
 
+import com.aryan.reader.shared.ui.SharedDrawerScrollbar
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationEndReason
@@ -1660,6 +1661,12 @@ fun SharedMobileEpubReaderScreen(
                             keyOf = { index, entry -> "${entry.href}_${entry.fragmentId}_$index" },
                             collapseDescription = readerString("content_desc_collapse", "Collapse"),
                             expandDescription = readerString("content_desc_expand", "Expand"),
+                            scrollbar = { listState ->
+                                SharedDrawerScrollbar(
+                                    listState = listState,
+                                    modifier = Modifier.align(Alignment.CenterEnd),
+                                )
+                            },
                             modifier = Modifier.fillMaxSize()
                         )
                         1 -> SharedEpubBookmarksList(
@@ -1714,7 +1721,13 @@ fun SharedMobileEpubReaderScreen(
                             onExportAnnotations = onExportAnnotations?.let { export ->
                                 { export(book.copy(readerHighlights = highlights)) }
                             },
-                            modifier = Modifier.fillMaxSize()
+                            scrollbar = { listState ->
+                                    SharedDrawerScrollbar(
+                                        listState = listState,
+                                        modifier = Modifier.align(Alignment.CenterEnd),
+                                    )
+                                },
+                                modifier = Modifier.fillMaxSize()
                         )
                         else -> {
                             val imageRefs = if (settings.hideImages) {

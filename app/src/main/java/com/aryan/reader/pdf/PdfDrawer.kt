@@ -93,6 +93,7 @@ import timber.log.Timber
 import com.aryan.reader.cardTitle
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.pdf.data.VirtualPage
+import com.aryan.reader.shared.ui.SharedDrawerScrollbar
 import com.aryan.reader.shared.filterReaderTocEntries
 import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.pdf.LegacyPdfPageBookmark
@@ -852,7 +853,7 @@ internal fun PdfNavigationDrawerContent(
                                     }
                                 }
 
-                                VerticalScrollbar(
+                                SharedDrawerScrollbar(
                                     listState = listState,
                                     modifier = Modifier.align(Alignment.CenterEnd)
                                 )
@@ -1238,7 +1239,7 @@ internal fun PdfNavigationDrawerContent(
                                     }
                                 }
                             }
-                            VerticalScrollbar(
+                            SharedDrawerScrollbar(
                                 listState = listState,
                                 modifier = Modifier.align(Alignment.CenterEnd)
                             )
