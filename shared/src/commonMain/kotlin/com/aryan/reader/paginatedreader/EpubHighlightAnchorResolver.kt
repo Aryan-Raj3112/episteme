@@ -151,11 +151,52 @@ class EpubChapterTextIndex private constructor(
                 endOffset = anchor.absoluteEnd,
                 blockIndex = firstSegment.blockIndex,
                 charOffset = firstSegment.absoluteStart,
-                // The block's CFI comes from the resolved segment, not from the old locator: the stored
-                // one may name a DOM position from a WebView, which means nothing to a paginated page.
-                cfi = firstSegment.blockCfi ?: highlight.locator.cfi
+                cfi = anchorCfi(anchor) ?: highlight.locator.cfi
             )
         )
+    }
+
+    /**
+     * [anchor] expressed as the document understands a CFI: one `element:offset` part per block the
+     * highlight covers, joined with `|`.
+     *
+     * Every block, not just the first. A CFI is a list of positions, and a reader matches a surface
+     * element against a highlight by checking which of those positions it is. A highlight spanning two
+     * paragraphs therefore has to name both paragraphs: name one and the surface is left holding a single
+     * element to work with, and it places the whole selection relative to that one element, which lands
+     * short by however much text the other block contributed — a highlight painted a few lines back from
+     * where it belongs.
+     *
+     * That is not a hypothetical loss. Repair used to write `firstSegment.blockCfi` alone, so it replaced a
+     * correct two-element CFI with a one-element one on every open: it was destroying the very information
+     * the WebView surface needs, and doing so invisibly, because the offsets and block index it wrote
+     * alongside were right.
+     *
+     * The first and last parts carry the start and end offsets of the range, matching the form a selection
+     * produces, so the document sees the same shape of CFI whichever wrote it.
+     */
+    private fun anchorCfi(anchor: HighlightAnchor): String? {
+        val segments = anchor.segments.filter { !it.blockCfi.isNullOrBlank() }
+        if (segments.isEmpty()) return null
+        // One block needs no list. The element alone says where the highlight is, and a lone part would
+        // have to pick between the block's start and its end to carry an offset, and neither is more
+        // right than the element on its own. Keeping the single-block form unchanged also keeps the
+        // document's host matching reading exactly what it read before.
+        if (segments.size == 1) return segments.first().blockCfi
+        val lastIndex = segments.lastIndex
+        val parts = segments.mapIndexed { index, segment ->
+            // The document takes a range's extent from the first part's offset and the last part's, and
+            // uses the rest only to name the elements in between. So the opening part carries where the
+            // highlight starts and the closing one where it ends; anything in between is named for the
+            // element alone, at the point its contribution begins.
+            val offset = when (index) {
+                0 -> segment.localStart
+                lastIndex -> segment.localEnd
+                else -> segment.localStart
+            }
+            "${segment.blockCfi}:$offset"
+        }
+        return parts.joinToString("|")
     }
 
     /**

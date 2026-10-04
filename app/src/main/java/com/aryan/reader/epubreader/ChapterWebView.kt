@@ -722,7 +722,12 @@ internal fun highlightsJsonForWebView(userHighlights: List<UserHighlight>): Stri
                 "colorId=${highlight.color.id} colorArgb=${highlight.colorArgb?.let { String.format("#%08X", it) }} " +
                 "fill=${highlight.fillCssColor()} quoteChars=${highlight.text.length} " +
                 "offsets=${highlight.locator.startOffset}..${highlight.locator.endOffset} " +
-                "block=${highlight.locator.blockIndex} cfi=${highlight.cfi}"
+                "block=${highlight.locator.blockIndex} " +
+                // locator.cfi is the field the document reads (`locator.cfi || highlight.cfi`), so it is
+                // the one that decides where the highlight lands. Logging only highlight.cfi reported a
+                // value no part of placement consumes, which made a correctly repaired highlight look
+                // like it was still carrying the position it was created with.
+                "locatorCfi=${highlight.locator.cfi} cfi=${highlight.cfi}"
         )
     }
     val jsonArray = org.json.JSONArray()

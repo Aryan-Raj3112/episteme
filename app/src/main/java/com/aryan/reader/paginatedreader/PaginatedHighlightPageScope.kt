@@ -224,7 +224,8 @@ internal fun resolveWebViewHighlightAnchor(
     logHighlightTrace(
         "anchor_in id=${target.id} chapter=${target.chapterIndex} chapterBlocks=${blocks?.size ?: 0} " +
             "incomingOffsets=${target.locator.startOffset}..${target.locator.endOffset} " +
-            "incomingBlock=${target.locator.blockIndex} cfi=${target.cfi} quoteChars=${target.text.length}"
+            "incomingBlock=${target.locator.blockIndex} " +
+            "incomingLocatorCfi=${target.locator.cfi} cfi=${target.cfi} quoteChars=${target.text.length}"
     )
     if (blocks == null) {
         logHighlightTrace(

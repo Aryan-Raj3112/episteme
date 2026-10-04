@@ -159,6 +159,22 @@ private fun repair(
     logHighlightTrace(
         "highlight_repair chapter=$chapterIndex repaired=${repaired.repaired} of=${highlights.size}"
     )
+    /*
+     * Report the CFI before and after, because that field is what a WebView surface places by and a
+     * correction that silently leaves it alone is invisible in every other line: the highlight then looks
+     * repaired — it has an offset and a block — while the surface that reads the CFI is still being handed
+     * the position the highlight was created with, in a coordinate space it does not share.
+     */
+    val before = highlights.associateBy { it.id }
+    repaired.highlights.forEach { after ->
+        val was = before[after.id] ?: return@forEach
+        if (was.locator.cfi != after.locator.cfi) {
+            logHighlightTrace(
+                "repair_cfi id=${after.id} was=${was.locator.cfi} now=${after.locator.cfi} " +
+                    "action=" + if (after.locator.cfi == null) "dropped" else "replaced"
+            )
+        }
+    }
     onHighlightsRepaired(repaired.highlights)
 }
 

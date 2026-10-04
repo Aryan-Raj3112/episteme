@@ -316,6 +316,91 @@ class EpubHighlightRepairTest {
         assertEquals(listOf(before), result.highlights)
     }
 
+    /** The text of blocks [first]..[last], which is how the chapter lays them out: one space between. */
+    private fun spanningQuote(first: Int, last: Int): String =
+        parsedChapter().slice(first..last).joinToString(" ") { it.text }
+
+    /**
+     * Every block a highlight covers must survive into the stored CFI, for any number of blocks.
+     *
+     * A CFI is a list of positions, and a surface element is matched to a highlight by asking which of
+     * those positions it is. Repair used to write the first block's position alone, so a highlight
+     * covering two paragraphs arrived at the WebView naming one element and was placed relative to that
+     * element alone — a few lines back from where it belonged. Covering three or four paragraphs was no
+     * better, and each additional block was another piece of the highlight with no way to be found.
+     *
+     * So the count is the thing being pinned here, and it is pinned across every block count the chapter
+     * can produce rather than for the two-block case that happened to be reported: a fix written against
+     * one number is a fix written against one number.
+     */
+    @Test
+    fun `a repaired cfi names every block the highlight covers`() {
+        for (last in 0 until parsedChapter().size) {
+            val quote = spanningQuote(0, last)
+            val before = legacy(ReaderLocator(chapterIndex = 0, textQuote = quote))
+
+            val after = assertNotNull(
+                index().anchorMissingOffsets(before),
+                "a highlight covering blocks 0..$last was not anchored at all"
+            )
+
+            val cfi = after.locator.cfi.orEmpty()
+            val parts = cfi.split('|')
+            // A single block is named by its element alone; a highlight covering several has to name each
+            // of them, because that list is how a surface element is matched to the highlight.
+            assertEquals(
+                if (last == 0) 1 else last + 1,
+                parts.size,
+                "a highlight covering blocks 0..$last stored ${parts.size} CFI parts"
+            )
+            // Each block named, once, in document order.
+            assertEquals(
+                (0..last).map { "/4/${it * 2}" },
+                parts.map { it.substringBefore(':') },
+                "blocks 0..$last named the wrong elements in $cfi"
+            )
+            // And the offsets agree with the anchor, so the two halves of the locator describe one
+            // position rather than two that merely look related.
+            val anchor = assertNotNull(index().resolve(quote))
+            assertEquals(anchor.absoluteStart, after.locator.startOffset, "blocks 0..$last start")
+            assertEquals(anchor.absoluteEnd, after.locator.endOffset, "blocks 0..$last end")
+
+            if (last == 0) continue // one block: the bare element is the whole position
+            // The range has to open at the start of the first block's contribution and close at the end
+            // of the last one's, because that is what the document reads the range's extent from.
+            assertEquals(
+                anchor.segments.first().localStart.toString(),
+                parts.first().substringAfter(':'),
+                "blocks 0..$last: cfi=$cfi segments=${anchor.segments}"
+            )
+            assertEquals(
+                anchor.segments.last().localEnd.toString(),
+                parts.last().substringAfter(':'),
+                "blocks 0..$last: cfi=$cfi segments=${anchor.segments}"
+            )
+        }
+    }
+
+    /**
+     * A multi-block CFI is stable, so opening a book twice cannot walk the highlight across the chapter.
+     *
+     * Rewriting a CFI that already names every block would be a silent drift each open: each pass would
+     * replace the range with one derived from the previous rewrite rather than from the chapter's text.
+     */
+    @Test
+    fun `repairing a multi block highlight twice leaves its cfi alone`() {
+        val quote = spanningQuote(1, 3)
+        val once = assertNotNull(
+            index().anchorMissingOffsets(legacy(ReaderLocator(chapterIndex = 0, textQuote = quote)))
+        )
+        val cfi = once.locator.cfi
+
+        val twice = index().anchorMissingOffsets(once)
+
+        assertNull(twice)
+        assertEquals(cfi, once.locator.cfi)
+    }
+
     @Test
     fun `repair is idempotent, so opening a book twice writes the same locator`() {
         val stored = legacy(ReaderLocator(chapterIndex = 0, textQuote = filler))

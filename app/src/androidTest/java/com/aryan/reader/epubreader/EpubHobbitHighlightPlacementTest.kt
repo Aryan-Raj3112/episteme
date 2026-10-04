@@ -150,7 +150,8 @@ class EpubHobbitHighlightPlacementTest {
         println(
             "HOBBIT_RESULT id=$id found=${anchored != null} quoteChars=${quote.length} " +
                 "offsets=$start..$end span=${if (start != null && end != null) end - start else null} " +
-                "block=${anchored?.locator?.blockIndex} chapter=${anchored?.chapterIndex}"
+                "block=${anchored?.locator?.blockIndex} chapter=${anchored?.chapterIndex} " +
+                "locatorCfi=${anchored?.locator?.cfi} topLevelCfi=${anchored?.cfi}"
         )
         capture(captureName)
 
