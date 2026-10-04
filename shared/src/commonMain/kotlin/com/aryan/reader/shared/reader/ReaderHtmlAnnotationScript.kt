@@ -401,7 +401,12 @@ internal fun readerHtmlAnnotationScript(): String = """
                 } catch (error) {}
                 return 'reader-hl-' + color + '-' + style + suffix;
               }
-              function readerUserHighlightPaintColor(colorId, colorArgb) {
+              function readerUserHighlightPaintColor(colorId, colorArgb, fillCss) {
+                // Prefer the colour resolved by the native side. It carries the fill alpha, so the
+                // highlight has the same tone here as it does in the paginated and scrolling readers.
+                // Deriving it here instead meant emitting #RRGGBB, which has no alpha and painted the
+                // highlight as an opaque slab.
+                if (typeof fillCss === 'string' && fillCss) return fillCss;
                 try {
                   if (colorArgb !== undefined && colorArgb !== null && Number.isFinite(Number(colorArgb))) {
                     var rgb = (Number(colorArgb) >>> 0) & 0xFFFFFF;
@@ -540,7 +545,7 @@ internal fun readerHtmlAnnotationScript(): String = """
                 }
               }
               function paintParamsForHighlight(highlight, chapterIndex, segStart, segEnd, key, realId, markerFactory, ctx) {
-                var colorCss = readerUserHighlightPaintColor(highlight.colorId || 'yellow', highlight.colorArgb);
+                var colorCss = readerUserHighlightPaintColor(highlight.colorId || 'yellow', highlight.colorArgb, highlight.fillCss);
                 return {
                   paintName: readerUserHighlightPaintName(highlight.colorId || 'yellow', highlight.style || 'background', highlight.colorArgb),
                   key: key, realId: !!realId,
@@ -697,7 +702,7 @@ internal fun readerHtmlAnnotationScript(): String = """
                     range.selectNodeContents(marker);
                     if (highlight && highlight.id && !range.collapsed) {
                       var locator = highlight.locator || {};
-                      var colorCss = readerUserHighlightPaintColor(highlight.colorId || 'yellow', highlight.colorArgb);
+                      var colorCss = readerUserHighlightPaintColor(highlight.colorId || 'yellow', highlight.colorArgb, highlight.fillCss);
                       var paintName = readerUserHighlightPaintName(highlight.colorId || 'yellow', highlight.style || 'background', highlight.colorArgb);
                       readerEnsureUserHighlightPaint(paintName, highlight.style || 'background', colorCss);
                       if (readerUserHighlightPaints[paintName]) {
@@ -925,7 +930,7 @@ internal fun readerHtmlAnnotationScript(): String = """
                     highlight, chapterIndex, segmentStart, segmentEnd, highlight.id || ('cfi:' + (sourceCfi || highlight.cfi || '')),
                     highlight.id,
                     function () {
-                      var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', segmentStart, segmentEnd, highlight.colorArgb, highlight.style || 'background');
+                      var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', segmentStart, segmentEnd, highlight.colorArgb, highlight.style || 'background', highlight.fillCss);
                       marker.setAttribute('data-cfi', sourceCfi || highlight.cfi || ('desktop:' + chapterIndex + ':' + startOffset + ':' + endOffset));
                       return marker;
                     },
@@ -990,7 +995,7 @@ internal fun readerHtmlAnnotationScript(): String = """
                   highlight, chapterIndex, null, null, highlight.id || ('cfi:' + (locator.cfi || highlight.cfi || '')),
                   highlight.id,
                   function () {
-                    var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', null, null, highlight.colorArgb, highlight.style || 'background');
+                    var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', null, null, highlight.colorArgb, highlight.style || 'background', highlight.fillCss);
                     marker.setAttribute('data-cfi', locator.cfi || highlight.cfi || '');
                     return marker;
                   },

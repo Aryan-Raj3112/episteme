@@ -91,6 +91,7 @@ import com.aryan.reader.ReaderFontDiagnosticsTag
 import com.aryan.reader.copyPlainTextToClipboard
 import com.aryan.reader.getReaderTextureDataUri
 import com.aryan.reader.readerFontDiagnosticSummary
+import com.aryan.reader.shared.fillCssColor
 import com.aryan.reader.shared.detectFontVariant
 import com.aryan.reader.shared.familyFilenameSignature
 import com.aryan.reader.shared.fontWeightCssDescriptor
@@ -725,6 +726,11 @@ internal fun highlightsJsonForWebView(userHighlights: List<UserHighlight>): Stri
             obj.put("colorArgb", argb)
             obj.put("colorCss", colorCssForArgb(argb))
         }
+        // The tone the other surfaces fill with, alpha included. Sent for every highlight, palette or
+        // custom, so a highlight looks the same here as it does in pagination and scrolling. Without
+        // it the WebView painted stored colours fully opaque and palette colours tinted, which is how
+        // the same book showed one highlight at two different tones.
+        obj.put("fillCss", highlight.fillCssColor())
         obj.put("chapterIndex", highlight.chapterIndex)
         obj.put(
             "locator",

@@ -1157,17 +1157,20 @@ internal fun readerHtmlSelectionScript(): String = """
                 if (offsets.start === null || offsets.end === null) return false;
                 return Math.abs(offsets.start - startOffset) <= 1 && Math.abs(offsets.end - endOffset) <= 1;
               }
-              function readerHighlightCssColor(colorArgb) {
+              function readerHighlightCssColor(colorArgb, fillCss) {
+                // Resolved by the native side, alpha included, so a marker matches the tone the other
+                // surfaces paint. Falling through to colorArgb yields #RRGGBB, which has no alpha.
+                if (typeof fillCss === 'string' && fillCss) return fillCss;
                 if (colorArgb === undefined || colorArgb === null) return null;
                 var value = Number(colorArgb);
                 if (!Number.isFinite(value)) return null;
                 var rgb = (value >>> 0) & 0xFFFFFF;
                 return '#' + rgb.toString(16).padStart(6, '0').toUpperCase();
               }
-              function createReaderHighlightMarker(highlightId, colorId, startOffset, endOffset, colorArgb, styleId) {
+              function createReaderHighlightMarker(highlightId, colorId, startOffset, endOffset, colorArgb, styleId, fillCss) {
                 var marker = document.createElement('span');
                 marker.className = 'reader-user-highlight user-highlight-' + (colorId || 'yellow');
-                var cssColor = readerHighlightCssColor(colorArgb);
+                var cssColor = readerHighlightCssColor(colorArgb, fillCss);
                 var styleDeclarations = readerHighlightStyleDeclarations(styleId || 'background', cssColor);
                 if (styleDeclarations) marker.style.cssText = styleDeclarations;
                 if (highlightId) marker.setAttribute('data-reader-highlight-id', highlightId);
