@@ -501,9 +501,20 @@ internal fun readerHtmlAnnotationScript(): String = """
                 } catch (error) {}
                 delete readerUserHighlightsPainted[key];
               }
+              function logHighlightWebDecision(highlight, stage, detail) {
+                // Highlight decisions reach logcat through onConsoleMessage, which routes on a prefix.
+                // One helper so every stage is reported the same way.
+                try {
+                  console.log('WEB_HIGHLIGHT ' + stage +
+                    ' id=' + ((highlight && highlight.id) || 'range') + ' ' + (detail || ''));
+                } catch (error) {}
+              }
               function paintRangeWithUserHighlightRegistry(range, p) {
                 try {
                   if (!range || range.collapsed) return false;
+                  logHighlightWebDecision(null, 'paint',
+                    'key=' + p.key + ' colorCss=' + (p.colorCss || 'none') +
+                    ' registryUsable=' + userHighlightRegistryUsable());
                   if (!userHighlightRegistryUsable()) return wrapRangeTextSegments(range, p.markerFactory, p.ctx);
                   readerEnsureUserHighlightPaint(p.paintName, p.styleId, p.colorCss);
                   if (!readerUserHighlightPaints[p.paintName]) {
@@ -838,7 +849,6 @@ internal fun readerHtmlAnnotationScript(): String = """
                     );
                   }
                 }
-                var hasPreciseOffsets = !(chapterIndex === undefined || chapterIndex === null || startOffset === undefined || startOffset === null || endOffset === undefined || endOffset === null || endOffset <= startOffset);
                 if (chapterIndex === undefined || chapterIndex === null || startOffset === undefined || startOffset === null || endOffset === undefined || endOffset === null || endOffset <= startOffset) {
                   readerDesktopHighlightMapLog(
                     'web_apply_fallback_request id=' + (highlight.id || '') +
@@ -856,7 +866,15 @@ internal fun readerHtmlAnnotationScript(): String = """
                     ' reason=no_target_chapters chapter=' + chapterIndex +
                     ' offsets=' + startOffset + '..' + endOffset
                   );
-                  if (hasPreciseOffsets) return;
+                  logHighlightWebDecision(highlight, 'no_target_chapters',
+                    'chapter=' + chapterIndex + ' offsets=' + startOffset + '..' + endOffset);
+                  // Fall back even when the offsets look precise. Those offsets say where the highlight
+                  // was *recorded*; these hosts are what this document happens to be built from, and a
+                  // chapter split differently here has no host covering that range. Giving up left a
+                  // highlight unpainted in this surface and fine everywhere else, because it was placed
+                  // from those same offsets in pagination. The stored text can still place it, and the
+                  // text search is the one the native surfaces use, so it cannot disagree with them
+                  // about which occurrence this is.
                   applyHighlightTextFallback(highlight);
                   return;
                 }
@@ -954,7 +972,12 @@ internal fun readerHtmlAnnotationScript(): String = """
                     ' reason=no_segments_applied chapter=' + chapterIndex +
                     ' offsets=' + startOffset + '..' + endOffset
                   );
-                  if (hasPreciseOffsets) return;
+                  logHighlightWebDecision(highlight, 'no_segments_applied',
+                    'chapter=' + chapterIndex + ' offsets=' + startOffset + '..' + endOffset);
+                  // Same reasoning as the no-target-chapters case: no segment applied means the
+                  // offsets do not address anything in this document, not that the highlight is
+                  // unplaceable. Guarded by `applied`, so this cannot double-paint a highlight that did
+                  // land on the offsets path.
                   applyHighlightTextFallback(highlight);
                 }
               }
@@ -984,6 +1007,8 @@ internal fun readerHtmlAnnotationScript(): String = """
                   ' cfi=' + readerTtsPreview(sourceCfi, 160)
                 );
                 var range = normalizedRangeForText(content, expectedText, false);
+                logHighlightWebDecision(highlight, range ? 'text_fallback_range_found' : 'text_fallback_no_range',
+                  'chapter=' + chapterIndex + ' expectedChars=' + expectedText.length);
                 if (!range || range.collapsed) {
                   readerDesktopHighlightMapLog(
                     'web_text_fallback_result id=' + ((highlight && highlight.id) || '') +

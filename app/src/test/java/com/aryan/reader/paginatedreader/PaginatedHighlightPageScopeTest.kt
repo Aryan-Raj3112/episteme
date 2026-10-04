@@ -233,6 +233,138 @@ class PaginatedHighlightPageScopeTest {
         assertEquals(listOf(10 until 16), resolved.rangesForBlock(0).getValue("b"))
     }
 
+    /**
+     * Stored offsets that describe a different range than the highlight's text must not paint.
+     *
+     * Offsets are written by several surfaces and by older builds, so they can be in a coordinate space
+     * the page's blocks do not use. The bounds arithmetic still produces a well-formed range in that
+     * case, just over the wrong characters — and because it is well formed, nothing downstream objects.
+     * A 118-character selection stored as a 297-character span satisfied the bounds check against every
+     * block on the page and painted most of it. Checking the range against the highlight's own words is
+     * what makes the optimisation safe to trust.
+     */
+    @Test
+    fun offsetsInTheWrongSpaceOnlyPaintBlocksThatReallyContainTheText() {
+        // Distinct paragraphs, so "contains the highlight's text" has exactly one answer. The shared
+        // fixture repeats a sentence, which would make an unrelated copy indistinguishable from the
+        // right one by text alone — that ambiguity is what the chapter index exists to settle.
+        val quote = "the quick brown fox jumps"
+        val texts = listOf("alpha beta gamma", quote, "delta epsilon zeta")
+        var cursor = 0
+        val blocks = texts.mapIndexed { index, text ->
+            paragraph(
+                text = text,
+                cfi = "/4/${index * 2}",
+                startOffset = cursor,
+                blockIndex = index
+            ).also { cursor += text.length + 1 }
+        }
+        val mismatched = UserHighlight(
+            id = "wrong-space",
+            cfi = "0:2:1:5:3",
+            text = quote,
+            color = HighlightColor.GREEN,
+            chapterIndex = 0,
+            locator = ReaderLocator(
+                chapterIndex = 0,
+                startOffset = 3,
+                // Far longer than the quote and spanning past it, as a range in another space would be.
+                endOffset = 300,
+                textQuote = quote,
+                cfi = "0:2:1:5:3"
+            )
+        )
+
+        val resolved = resolvePaginatedPageHighlights(
+            scope = PaginatedPageScope(chapterIndex = 0, textBlocks = blocks),
+            highlights = listOf(mismatched),
+            chapterTextIndex = null
+        )
+
+        // Only the block that really contains the quote. Before the check, the bounds arithmetic put a
+        // range on every block the page had, which is what painted most of a page in the field.
+        val paintedBlocks: List<Int> = resolved.rangesByHighlight["wrong-space"]?.keys?.sorted()
+            ?: emptyList()
+        assertEquals(listOf(1), paintedBlocks)
+    }
+
+    /**
+     * Offsets that fail the check must not end the attempt when the text can still place the highlight.
+     *
+     * Rejecting a bad range and returning is only safe when nothing better is on offer. The chapter index
+     * resolves the same highlight from its stored words in one lookup, so bailing out instead left a
+     * recoverable highlight invisible on every page — with a working resolver sitting right there,
+     * because the offsets path runs first and returned before the quote path could be tried.
+     */
+    @Test
+    fun wrongSpaceOffsetsFallBackToTheTextWhenTheChapterIndexCanPlaceThem() {
+        val blocks = chapterBlocks()
+        val quote = filler
+        val mismatched = UserHighlight(
+            id = "wrong-space-but-placeable",
+            cfi = "0:2:1:5:3",
+            text = quote,
+            color = HighlightColor.GREEN,
+            chapterIndex = 0,
+            locator = ReaderLocator(
+                chapterIndex = 0,
+                // Past the end of every block on the page, so no range survives at all. This is what
+                // makes the case bite: rejection on its own would leave the highlight unpainted.
+                startOffset = 200,
+                endOffset = 260,
+                textQuote = quote,
+                cfi = "0:2:1:5:3"
+            )
+        )
+
+        val resolved = resolvePaginatedPageHighlights(
+            scope = PaginatedPageScope(chapterIndex = 0, textBlocks = blocks),
+            highlights = listOf(mismatched),
+            chapterTextIndex = chapterIndex()
+        )
+
+        val paintedBlocks: List<Int> = resolved.rangesByHighlight["wrong-space-but-placeable"]
+            ?.keys?.sorted() ?: emptyList()
+        // Placed by text on the block the resolver settles on — the first occurrence in document
+        // order, not the repeated copy — so one place, not every block the bad range would have touched.
+        assertEquals(listOf(1), paintedBlocks)
+        // And it lands only where the quote actually is, not on every block the bad range touched.
+        // Placed by text on the block the resolver settles on — the first occurrence in
+        // document order, not the repeated copy — so one place, not every block the bad
+        // range would have touched.
+        assertEquals(listOf(1), paintedBlocks)
+    }
+
+    /** The same offsets are fine when they do describe the highlight, so the guard is not a blanket veto. */
+    @Test
+    fun offsetsThatCoverTheHighlightTextStillPaint() {
+        val blocks = chapterBlocks()
+        val quote = filler
+        val target = blocks[1]
+        val matching = UserHighlight(
+            id = "right-space",
+            cfi = "0:2:1:5:3",
+            text = quote,
+            color = HighlightColor.GREEN,
+            chapterIndex = 0,
+            locator = ReaderLocator(
+                chapterIndex = 0,
+                startOffset = target.startCharOffsetInSource,
+                endOffset = target.startCharOffsetInSource + quote.length,
+                textQuote = quote,
+                cfi = "0:2:1:5:3"
+            )
+        )
+
+        val resolved = resolvePaginatedPageHighlights(
+            scope = PaginatedPageScope(chapterIndex = 0, textBlocks = blocks),
+            highlights = listOf(matching),
+            chapterTextIndex = null
+        )
+
+        assertEquals(listOf("right-space"), resolved.rangesByHighlight.keys.toList())
+    }
+
     private fun paragraph(
         text: String,
         cfi: String?,

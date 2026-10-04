@@ -498,7 +498,6 @@ internal fun EpubReaderRenderSurfaces(
     // everywhere into one that is anchored once and placed everywhere.
     val chapterHighlightIndexes = rememberChapterHighlightIndexes(
         highlights = userHighlights,
-        chapterBlocksKey = paginator,
         chapterBlocks = { chapterIndex -> paginator?.getChapterTextBlocks(chapterIndex) },
         onHighlightsRepaired = onHighlightsRepaired
     )

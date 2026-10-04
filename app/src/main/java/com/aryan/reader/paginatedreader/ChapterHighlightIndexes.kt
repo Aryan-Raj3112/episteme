@@ -1,14 +1,23 @@
 package com.aryan.reader.paginatedreader
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
+import com.aryan.reader.epubreader.logHighlightTrace
 import com.aryan.reader.shared.UserHighlight
-import timber.log.Timber
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /**
  * The chapter text indexes the native surfaces place highlights against, one per chapter that holds a
@@ -56,54 +65,143 @@ class ChapterHighlightIndexes {
 @Composable
 fun rememberChapterHighlightIndexes(
     highlights: List<UserHighlight>,
-    chapterBlocksKey: Any?,
     chapterBlocks: suspend (Int) -> List<TextContentBlock>?,
     onHighlightsRepaired: (List<UserHighlight>) -> Unit,
 ): ChapterHighlightIndexes {
     val indexes = remember { ChapterHighlightIndexes() }
-    LaunchedEffect(highlights, chapterBlocksKey) {
-        for (chapterIndex in highlights.mapNotNull { it.locator.chapterIndex ?: it.chapterIndex }.distinct()) {
-            if (indexes.byChapterIndex.containsKey(chapterIndex)) continue
+    // Read through these so the long-lived reconciliation below always sees the current paginator and
+    // callback without being restarted for them. See the note on why it must not be restarted.
+    val currentBlocks by rememberUpdatedState(chapterBlocks)
+    val currentHighlights by rememberUpdatedState(highlights)
+    val currentOnRepaired by rememberUpdatedState(onHighlightsRepaired)
 
-            // Blocks come from a paginator that may not exist yet in this reading mode, and parsing a
-            // chapter can fail on its own. Neither is a verdict on the chapter, so neither is cached.
-            val blocks = runCatching { chapterBlocks(chapterIndex) }.getOrNull()
-            if (blocks.isNullOrEmpty()) {
-                Timber.tag(TAG_CHAPTER_INDEX_DIAG).d(
-                    "chapter_index_unavailable chapter=$chapterIndex indexed=0 " +
-                        "hint=blocks_not_ready_or_paginator_absent"
-                )
-                continue
+    /*
+     * Watches the chapters that hold highlights and reconciles them, forever, for as long as the reader
+     * is open.
+     *
+     * Three earlier shapes all failed on a real book, and each failure was the same lesson: this work
+     * has to survive the reader's own churn.
+     *
+     * A `LaunchedEffect` keyed on the highlight list was cancelled by every change of identity — a real
+     * book rebuilds its paginator as layout settles — and each cancellation threw away the wait for the
+     * chapter's blocks, so the index silently never arrived. Keying on the highlights' settled shape
+     * instead fixed that but introduced the next problem: the reader hands highlights over from
+     * preferences to the database, and during that handover the list is briefly empty. The pass then ran
+     * with no chapters, finished, and when the highlights came back the key was unchanged so nothing
+     * woke it. The highlight stayed unanchored for the rest of the session.
+     *
+     * Collecting a snapshot flow fixes both. It does not care about identity, it cannot be cancelled by
+     * an unrelated recomposition, and an empty emission simply waits for the next one instead of
+     * finishing the pass.
+     */
+    DisposableEffect(Unit) {
+        onDispose { logHighlightTrace("chapter_index_effect disposed=1") }
+    }
+
+    LaunchedEffect(Unit) {
+        try {
+            snapshotFlow {
+                highlights.mapNotNull { it.locator.chapterIndex ?: it.chapterIndex }.distinct().sorted()
+            }.collect { chapters ->
+                for (chapterIndex in chapters) {
+                    val existing = indexes.byChapterIndex[chapterIndex]
+                    if (existing != null) {
+                        // A chapter that is already indexed still has to repair its highlights. The index is
+                        // built once, but highlights arrive one at a time — including while the reader is
+                        // open — and a highlight added after the build has never been through the resolver.
+                        repair(currentHighlights, existing, chapterIndex, currentOnRepaired)
+                        continue
+                    }
+
+                    // Wait for the blocks rather than deciding they are unavailable. See [awaitChapterBlocks].
+                    val blocks = awaitChapterBlocks(chapterIndex, currentBlocks) ?: continue
+
+                    val index = EpubChapterTextIndex.of(chapterIndex, blocks.toSemanticTextBlocks())
+                    if (index == null) {
+                        logHighlightTrace(
+                            "chapter_index_unusable chapter=$chapterIndex blocks=${blocks.size} indexed=0"
+                        )
+                        continue
+                    }
+                    // Published as one immutable map so every composed page recomposes when it lands. Pages
+                    // composed before this finished read no index and would otherwise keep showing nothing.
+                    indexes.index(chapterIndex, index)
+                    logHighlightTrace("chapter_index chapter=$chapterIndex blocks=${blocks.size} indexed=1")
+                    repair(currentHighlights, index, chapterIndex, currentOnRepaired)
+                }
             }
-
-            val index = EpubChapterTextIndex.of(chapterIndex, blocks.toSemanticTextBlocks())
-            if (index == null) {
-                Timber.tag(TAG_CHAPTER_INDEX_DIAG).d(
-                    "chapter_index_unusable chapter=$chapterIndex blocks=${blocks.size} indexed=0"
-                )
-                continue
-            }
-            // Published as one immutable map so every composed page recomposes when it lands. Pages
-            // composed before this finished read no index and would otherwise keep showing nothing.
-            indexes.index(chapterIndex, index)
-            Timber.tag(TAG_CHAPTER_INDEX_DIAG).d(
-                "chapter_index chapter=$chapterIndex blocks=${blocks.size} indexed=1"
-            )
-
-            // The chapter's text is available now, so repair what is already stored. Locators written
-            // before the coordinate space was fixed hold offsets pointing somewhere else entirely, and
-            // repairing them here is the only chance to fix them: a reader only ever sees the chapters
-            // it opens, and only while they are open. Without a write-back the same search runs again
-            // on every open, and the wrong offsets survive in the database.
-            val repaired = index.repairHighlights(highlights)
-            if (repaired.unchanged) continue
-            Timber.tag(TAG_CHAPTER_INDEX_DIAG).d(
-                "highlight_repair chapter=$chapterIndex repaired=${repaired.repaired} of=${highlights.size}"
-            )
-            onHighlightsRepaired(repaired.highlights)
+        } catch (t: Throwable) {
+            logHighlightTrace("chapter_index_effect ended=${t::class.simpleName}")
+            // Cancellation is how a composition announces it is done, so it is reported and then passed
+            // on rather than swallowed: swallowing it here would hide the one failure a reader of these
+            // logs most needs to see, which is the work being torn down before it finished.
+            if (t is CancellationException) throw t
         }
     }
     return indexes
 }
 
-internal const val TAG_CHAPTER_INDEX_DIAG = "HighlightDiag"
+/**
+ * Rewrites the locators in [highlights] that this chapter can place, and hands the corrected list back.
+ *
+ * Only the chapter's own text can say where a stored locator should have pointed, and this is the only
+ * chance to say it: a reader only ever sees the chapters it opens, and only while they are open. The
+ * correction has to be written back or the same wrong offsets are trusted again on the next open.
+ */
+private fun repair(
+    highlights: List<UserHighlight>,
+    index: EpubChapterTextIndex,
+    chapterIndex: Int,
+    onHighlightsRepaired: (List<UserHighlight>) -> Unit
+) {
+    val repaired = index.repairHighlights(highlights)
+    if (repaired.unchanged) return
+    logHighlightTrace(
+        "highlight_repair chapter=$chapterIndex repaired=${repaired.repaired} of=${highlights.size}"
+    )
+    onHighlightsRepaired(repaired.highlights)
+}
+
+/**
+ * Waits for a chapter's text blocks, or gives up and says so.
+ *
+ * Blocks come from the paginator, which does not exist in WebView mode and is created part-way through
+ * entering a paginated one. Whether they are available is therefore a *readiness* question, and it
+ * changes over the life of a single composition without anything the effect is keyed on changing: the
+ * same paginator object simply starts answering. Asking once and treating "not yet" as "never" is what
+ * left a highlight made in the WebView invisible in every other mode for the rest of the session, so
+ * this waits instead.
+ *
+ * Bounded, because a chapter that genuinely cannot be read — a bad index, a book that has gone away —
+ * would otherwise wait forever and hold the pass open. The wait is also cancelled with the enclosing
+ * effect, so a pass made stale by new highlights or a new paginator stops rather than reviving.
+ */
+private suspend fun awaitChapterBlocks(
+    chapterIndex: Int,
+    chapterBlocks: suspend (Int) -> List<TextContentBlock>?
+): List<TextContentBlock>? {
+    val startedAt = TimeSource.Monotonic.markNow()
+    var attempts = 0
+    while (currentCoroutineContext().isActive) {
+        val blocks = runCatching { chapterBlocks(chapterIndex) }.getOrNull()
+        if (!blocks.isNullOrEmpty()) return blocks
+        attempts++
+        if (startedAt.elapsedNow() < CHAPTER_BLOCKS_TIMEOUT) {
+            logHighlightTrace("chapter_index_wait chapter=$chapterIndex attempt=$attempts not_ready=1")
+            delay(CHAPTER_BLOCKS_RETRY_MS)
+            continue
+        }
+        logHighlightTrace(
+            "chapter_index_gave_up chapter=$chapterIndex attempts=$attempts indexed=0 " +
+                "hint=paginator_absent_or_chapter_unreadable"
+        )
+        return null
+    }
+    logHighlightTrace("chapter_index_wait chapter=$chapterIndex aborted=1 attempts=$attempts")
+    return null
+}
+
+/** How long to keep asking for a chapter's blocks before accepting that this chapter cannot be read. */
+private val CHAPTER_BLOCKS_TIMEOUT = 30.seconds
+
+private const val CHAPTER_BLOCKS_RETRY_MS = 250L

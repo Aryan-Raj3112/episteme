@@ -262,7 +262,16 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("var sourceCfiBases = readerCfiBases(sourceCfi);"))
         assertTrue(html.contains("return readerHostMatchesCfi(host, sourceCfiBases);"))
         assertTrue(html.contains("if (cfiOffsets) {"))
-        assertTrue(html.contains("if (hasPreciseOffsets) return;"))
+        // A highlight whose offsets address nothing in this document is placed from its stored text
+        // instead of being dropped. It used to return early whenever the offsets looked precise, which
+        // left a highlight unpainted in this surface and placed correctly in every other one, because
+        // the same offsets addressed a chapter split differently here.
+        assertFalse(
+            html.contains("if (hasPreciseOffsets) return;"),
+            "precise offsets must not abandon a highlight; they only say where it was recorded"
+        )
+        assertTrue(html.contains("logHighlightWebDecision(highlight, 'no_target_chapters'"))
+        assertTrue(html.contains("logHighlightWebDecision(highlight, 'no_segments_applied'"))
     }
 
     @Test

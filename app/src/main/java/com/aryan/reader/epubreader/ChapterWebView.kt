@@ -714,6 +714,17 @@ private data class CustomMenuState(
 )
 
 internal fun highlightsJsonForWebView(userHighlights: List<UserHighlight>): String {
+    // What the document is about to be told. The fill is the whole question when a highlight paints in
+    // the wrong tone, and "did the alpha survive the trip" is not answerable from either end alone.
+    userHighlights.forEach { highlight ->
+        logHighlightTrace(
+            "payload id=${highlight.id} chapter=${highlight.chapterIndex} style=${highlight.style.id} " +
+                "colorId=${highlight.color.id} colorArgb=${highlight.colorArgb?.let { String.format("#%08X", it) }} " +
+                "fill=${highlight.fillCssColor()} quoteChars=${highlight.text.length} " +
+                "offsets=${highlight.locator.startOffset}..${highlight.locator.endOffset} " +
+                "block=${highlight.locator.blockIndex} cfi=${highlight.cfi}"
+        )
+    }
     val jsonArray = org.json.JSONArray()
     userHighlights.forEach { highlight ->
         val obj = JSONObject()
@@ -1061,6 +1072,21 @@ fun ChapterWebView(
                             consoleMessage?.let {
                                 val message = it.message()
                                 when {
+                                    // The document always console.logs its highlight diagnostics, so this
+                                    // is the delivery path on Android and needs no JS interface. Anything
+                                    // tagged HIGHLIGHT_SHIFT is a highlight decision worth reading.
+                                    message.startsWith("HIGHLIGHT_SHIFT") -> {
+                                        logHighlightTrace(
+                                            "js ${message.substringAfter("HIGHLIGHT_SHIFT").trimStart()}"
+                                        )
+                                    }
+
+                                    message.startsWith("WEB_HIGHLIGHT:") -> {
+                                        logHighlightTrace(
+                                            "js ${message.substringAfter("WEB_HIGHLIGHT:").trimStart()}"
+                                        )
+                                    }
+
                                     message.startsWith("LINK_NAV:") -> {
                                         Timber.tag(TAG_LINK_NAV)
                                             .d("JS -> ${message.substringAfter("LINK_NAV: ")}")

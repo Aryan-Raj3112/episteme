@@ -307,7 +307,7 @@ class EpubChapterTextIndex private constructor(
     }
 
     private fun collectWordSequence(needle: String, into: MutableSet<IntRange>) {
-        val words = needle.split(' ', '\t', '\n', '\r').filter { it.isNotEmpty() }
+        val words = splitOnReaderSpaces(needle)
         if (words.isEmpty()) return
         var from = 0
         while (from < buffer.length) {
@@ -316,7 +316,7 @@ class EpubChapterTextIndex private constructor(
             var cursor = first + words[0].length
             var matchedAll = true
             for (index in 1 until words.size) {
-                while (cursor < buffer.length && buffer[cursor].isWhitespace()) cursor++
+                while (cursor < buffer.length && isReaderSpace(buffer[cursor])) cursor++
                 if (cursor >= buffer.length) {
                     matchedAll = false
                     break
@@ -334,9 +334,30 @@ class EpubChapterTextIndex private constructor(
         }
     }
 
-    /** True when any position in the range is not real block text. */
+    /**
+     * True when [position] is the single separator between two blocks rather than a gap in the text.
+     *
+     * Laying the chapter out inserts one separator character after each block, and those positions are
+     * deliberately left unowned. That is right for deciding which block a *character* belongs to, but it
+     * made the separator indistinguishable from a bridged gap, so any match crossing a paragraph
+     * boundary contained one and was rejected — which is precisely a highlight whose selection ran from
+     * one paragraph into the next. The separator is part of the selected text, so a range may contain
+     * one; what it may not contain is unowned text.
+     */
+    private fun isJoinSeparator(position: Int): Boolean {
+        if (position <= 0 || position >= blockOfPosition.size - 1) return false
+        val before = blockOfPosition[position - 1]
+        val after = blockOfPosition[position + 1]
+        return before >= 0 && after >= 0 && before != after
+    }
+
+    /** True when any position in the range is neither real block text nor a block join. */
     private fun spansUnowned(first: Int, last: Int): Boolean {
-        for (position in first..last) if (blockOfPosition[position] < 0) return true
+        for (position in first..last) {
+            if (blockOfPosition[position] >= 0) continue
+            if (isJoinSeparator(position)) continue
+            return true
+        }
         return false
     }
 
@@ -498,7 +519,10 @@ private class NormalizedChapterText private constructor(
             var pendingSpace = false
             for (position in buffer.indices) {
                 val char = buffer[position]
-                if (char.isWhitespace()) {
+                // Same space rule as the other matchers; see [isReaderSpace]. A non-breaking space left
+                // visible here while a matcher elsewhere folded it would make the two disagree about
+                // where one word ends and the next begins.
+                if (isReaderSpace(char)) {
                     pendingSpace = normalized.isNotEmpty()
                     continue
                 }
@@ -526,11 +550,16 @@ private class NormalizedChapterText private constructor(
 /**
  * Collapses runs of whitespace and lowercases, so two strings that differ only in wrapping compare
  * equal. Leading whitespace is dropped; trailing whitespace can remain and callers trim it.
+ *
+ * Public because comparing a stored highlight's text against placed block text is not one call site's
+ * job: the paginated surfaces do it too, to check that a range of stored offsets really covers the words
+ * the highlight is made of. Two copies of this rule would eventually disagree about what counts as a
+ * space, which is the exact failure it exists to prevent.
  */
-internal fun collapseReaderWhitespace(value: String): String = buildString(value.length) {
+fun collapseReaderWhitespace(value: String): String = buildString(value.length) {
     var lastWasSpace = false
     value.forEach { char ->
-        if (char.isWhitespace()) {
+        if (isReaderSpace(char)) {
             if (isNotEmpty() && !lastWasSpace) {
                 append(' ')
                 lastWasSpace = true
@@ -540,6 +569,44 @@ internal fun collapseReaderWhitespace(value: String): String = buildString(value
             lastWasSpace = false
         }
     }
+}
+
+/**
+ * Whether [char] separates words, for matching a highlight's stored text against parsed chapter text.
+ *
+ * `Char.isWhitespace` is not enough on its own: it is `Character.isWhitespace`, which reports false for
+ * the non-breaking spaces — U+00A0, U+2007, U+202F and the rest of Unicode's Zs category — that EPUB
+ * typography uses precisely so a line cannot break there. Two texts can be the same sentence and differ
+ * only in which kind of space sits between two words, and with the non-breaking kind invisible the two
+ * halves glued into one unmatchable "word". That is how a perfectly ordinary highlight ended up
+ * unplaceable in every surface: it was made in a WebView, which kept the character the source had, and
+ * placed against parsed blocks, which had turned it into an ordinary space.
+ *
+ * Both halves of the comparison have to agree on this, so every matcher here asks this question the same
+ * way rather than each reaching for its own whitespace test.
+ */
+internal fun isReaderSpace(char: Char): Boolean = when (char.code) {
+    0x20, 0xA0, 0x1680, 0x202F, 0x205F, 0x3000 -> true
+    in 0x2000..0x200A -> true
+    else -> char.isWhitespace()
+}
+
+/** Splits on any space [isReaderSpace] recognises, so no matcher can disagree about word boundaries. */
+internal fun splitOnReaderSpaces(value: String): List<String> {
+    val words = mutableListOf<String>()
+    val current = StringBuilder()
+    value.forEach { char ->
+        if (isReaderSpace(char)) {
+            if (current.isNotEmpty()) {
+                words += current.toString()
+                current.clear()
+            }
+        } else {
+            current.append(char)
+        }
+    }
+    if (current.isNotEmpty()) words += current.toString()
+    return words
 }
 
 /** Depth-first flattening of a block tree into its text blocks, in document order. */
