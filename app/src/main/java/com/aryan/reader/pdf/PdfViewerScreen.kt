@@ -7909,9 +7909,9 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                     if (currentIsHighlighter && currentSnapEnabled) {
                                         val startPoint = drawingState.currentAnnotation?.points?.firstOrNull()
                                         val effectivePoint = calculateSnappedPoint(pageIndex, point, startPoint)
-                                        drawingState.updateDrag(effectivePoint.copy(timestamp = System.currentTimeMillis()))
+                                        drawingState.updateDrag(resolveInkPointTimestamp(effectivePoint))
                                     } else {
-                                        drawingState.onDraw(point.copy(timestamp = System.currentTimeMillis()))
+                                        drawingState.onDraw(resolveInkPointTimestamp(point))
                                     }
                                 }
                             }
@@ -12007,9 +12007,9 @@ private fun PdfViewerPaginationPage(
                     if (currentIsHighlighterState && currentSnapEnabledState) {
                         val startPoint = drawingState.currentAnnotation?.points?.firstOrNull()
                         val effectivePoint = currentCalculateSnappedPoint(pageIndex, point, startPoint)
-                        drawingState.updateDrag(effectivePoint.copy(timestamp = System.currentTimeMillis()))
+                        drawingState.updateDrag(resolveInkPointTimestamp(effectivePoint))
                     } else {
-                        drawingState.onDraw(point.copy(timestamp = System.currentTimeMillis()))
+                        drawingState.onDraw(resolveInkPointTimestamp(point))
                     }
                 }
             }

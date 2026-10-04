@@ -107,6 +107,12 @@ import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.pdf.PdfSelectionGeometry
 import com.aryan.reader.shared.pdf.PdfTextSelectionEngine
 import com.aryan.reader.shared.pdf.PdfTextSelectionRange
+import com.aryan.reader.shared.pdf.sharedPdfInkSamplesForChange
+import com.aryan.reader.shared.pdf.sharedPdfInkEventTimeOrigin
+import com.aryan.reader.shared.pdf.sharedPdfIsEraserOverride
+import com.aryan.reader.shared.pdf.SHARED_PDF_INK_MIN_SAMPLE_DISTANCE_PX
+import com.aryan.reader.shared.pdf.SharedPdfInkSample
+import com.aryan.reader.shared.sharedPdfStylusBarrelPressed
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -398,14 +404,6 @@ internal fun PdfPageComposable(
 
     var eraserPosition by remember { mutableStateOf<Offset?>(null) }
 
-    SideEffect {
-        if (drawingState?.currentAnnotation?.pageIndex == pageIndex) {
-            Timber.tag("PdfDrawPerf").v(
-                "PAGE EFFECTIVE SCALE: Page $pageIndex = $effectiveScale (ZoomEnabled=$isZoomEnabled)"
-            )
-        }
-    }
-
     val isPdfPage = virtualPage == null || virtualPage is VirtualPage.PdfPage
     val pdfPageIndex = (virtualPage as? VirtualPage.PdfPage)?.pdfIndex ?: pageIndex
 
@@ -592,6 +590,11 @@ internal fun PdfPageComposable(
         screenOffset
     }
     val latestScreenToContentCoordinates by rememberUpdatedState(screenToContentCoordinates)
+    // Live mirrors for the ink gesture detector. It must not be keyed on these:
+    // a restart mid-stroke (the page bitmap settling on a large document, the
+    // scroll flag flipping) would drop the tail of the stroke in flight.
+    val latestBitmapWidthPx by rememberUpdatedState(actualBitmapWidthPx)
+    val latestBitmapHeightPx by rememberUpdatedState(actualBitmapHeightPx)
     var isOneHandZooming by remember(targetPageId) { mutableStateOf(false) }
     val latestIsOneHandZooming by rememberUpdatedState(isOneHandZooming)
 
@@ -3405,25 +3408,55 @@ internal fun PdfPageComposable(
             }
             .pointerInput(
                 isEditMode,
-                actualBitmapWidthPx,
-                actualBitmapHeightPx,
-                scale,
-                offset,
-                isScrolling,
                 isVerticalScroll,
                 selectedTool,
                 isStylusOnlyMode,
                 isHighlighterSnapEnabled
             ) {
-                val canDraw = isEditMode && selectedTool != InkType.TEXT && selectedTool != InkType.SELECT && !isScrolling && !isVerticalScroll && actualBitmapWidthPx > 0 && actualBitmapHeightPx > 0
+                // Only gesture *identity* keys restart this detector. Everything
+                // else a stroke can race with is read live (see
+                // latestBitmapWidthPx / latestIsScrolling), because a restart
+                // here would drop the tail of the stroke that was in flight.
+                val latestToContent = latestScreenToContentCoordinates
 
-                if (!canDraw) {
-                    return@pointerInput
+                val ownsDrawingTool = isEditMode &&
+                    selectedTool != InkType.TEXT &&
+                    selectedTool != InkType.SELECT &&
+                    !isVerticalScroll
+
+                // Tracked outside awaitEachGesture so the teardown handler below
+                // can cancel a stroke that never reached its up event.
+                var strokeInFlight = false
+
+                fun toPagePoint(screenOffset: Offset, timestamp: Long): PdfPoint? {
+                    val widthPx = latestBitmapWidthPx
+                    val heightPx = latestBitmapHeightPx
+                    if (widthPx <= 0 || heightPx <= 0) return null
+                    val contentPos = latestToContent(screenOffset)
+                    return PdfPoint(
+                        x = (contentPos.x / widthPx).coerceIn(0f, 1f),
+                        y = (contentPos.y / heightPx).coerceIn(0f, 1f),
+                        timestamp = timestamp
+                    )
                 }
 
                 try {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
+
+                        if (!ownsDrawingTool) {
+                            return@awaitEachGesture
+                        }
+
+                        // A pan owns the touch while it is scrolling, and there
+                        // is no bitmap to normalise against until the page has
+                        // rendered one.
+                        if (latestIsScrolling) {
+                            return@awaitEachGesture
+                        }
+                        if (latestBitmapWidthPx <= 0 || latestBitmapHeightPx <= 0) {
+                            return@awaitEachGesture
+                        }
 
                         Timber.tag("PointerTypeDebug").d("Page $pageIndex: Input Type detected: ${down.type}")
 
@@ -3442,13 +3475,41 @@ internal fun PdfPageComposable(
                             "Page $pageIndex | Type: ${down.type} | isPrimary: ${buttons.isPrimaryPressed} | isSecondary: ${buttons.isSecondaryPressed} | isTertiary: ${buttons.isTertiaryPressed} | buttonsString: $buttons"
                         )
 
-                        val isEraserOverride = down.type == PointerType.Eraser || (down.type == PointerType.Stylus && (currentEvent.buttons.isSecondaryPressed || currentEvent.buttons.isPrimaryPressed || stylusButtonHovering))
+                        var isEraserOverride = sharedPdfIsEraserOverride(
+                            pointerType = down.type,
+                            stylusButtonPressed = buttons.isSecondaryPressed ||
+                                buttons.isPrimaryPressed ||
+                                stylusButtonHovering
+                        )
                         isStylusEraserOverride = isEraserOverride
 
                         val dragPointerId = down.id
                         val startPos = down.position
                         var dragStarted = false
                         val touchSlop = viewConfiguration.touchSlop
+
+                        // Samples seen while the gesture is still inside the
+                        // touch slop. They belong to the stroke, so they are held
+                        // here and flushed the moment the slop trips instead of
+                        // being thrown away.
+                        val slopPendingSamples = mutableListOf<SharedPdfInkSample>()
+                        var lastEmittedPosition: Offset? = down.position
+                        val eventTimeOrigin = sharedPdfInkEventTimeOrigin(
+                            epochMillis = System.currentTimeMillis(),
+                            uptimeMillis = down.uptimeMillis
+                        )
+
+                        fun feedSample(sample: SharedPdfInkSample) {
+                            if (selectedTool == InkType.ERASER || isEraserOverride) {
+                                eraserPosition = sample.position
+                            }
+                            if (!strokeInFlight) return
+                            val point = toPagePoint(
+                                sample.position,
+                                eventTimeOrigin + sample.eventTimeMillis
+                            ) ?: return
+                            onDraw(point, isEraserOverride)
+                        }
 
                         if (selectedTool == InkType.ERASER || isEraserOverride) {
                             eraserPosition = down.position
@@ -3457,10 +3518,25 @@ internal fun PdfPageComposable(
                         while (true) {
                             val event = awaitPointerEvent()
 
+                            // A scroll that started mid-stroke means the gesture
+                            // became a pan; the partial ink is not a stroke the
+                            // reader should keep.
+                            if (latestIsScrolling) {
+                                if (dragStarted) {
+                                    drawingState?.onDrawCancel()
+                                    strokeInFlight = false
+                                }
+                                isDrawingStroke = false
+                                eraserPosition = null
+                                isStylusEraserOverride = false
+                                return@awaitEachGesture
+                            }
+
                             if (event.changes.size > 1) {
                                 if (dragStarted) {
                                     drawingState?.onDrawCancel()
                                 }
+                                strokeInFlight = false
                                 eraserPosition = null
                                 isStylusEraserOverride = false
                                 isDrawingStroke = false
@@ -3471,6 +3547,7 @@ internal fun PdfPageComposable(
                                 it.id == dragPointerId
                             }
                             if (change == null) {
+                                strokeInFlight = false
                                 isDrawingStroke = false
                                 return@awaitEachGesture
                             }
@@ -3478,17 +3555,14 @@ internal fun PdfPageComposable(
                             if (change.changedToUp()) {
                                 change.consume()
                                 if (!dragStarted) {
-                                    val contentPos = screenToContentCoordinates(startPos)
-                                    val normX =
-                                        (contentPos.x / actualBitmapWidthPx).coerceIn(0f, 1f)
-                                    val normY =
-                                        (contentPos.y / actualBitmapHeightPx).coerceIn(0f, 1f)
-
-                                    onDrawStart(PdfPoint(normX, normY), isEraserOverride)
-                                    onDrawEnd()
+                                    toPagePoint(startPos, eventTimeOrigin + down.uptimeMillis)?.let {
+                                        onDrawStart(it, isEraserOverride)
+                                        onDrawEnd()
+                                    }
                                 } else {
                                     onDrawEnd()
                                 }
+                                strokeInFlight = false
                                 eraserPosition = null
                                 isStylusEraserOverride = false
                                 // Resume tile rendering only after the post-stroke
@@ -3507,68 +3581,74 @@ internal fun PdfPageComposable(
                                 return@awaitEachGesture
                             }
 
-                            if (change.positionChanged()) {
-                                val dist = (change.position - startPos).getDistance()
-
-                                if (!dragStarted) {
-                                    if (dist > touchSlop) {
-                                        dragStarted = true
-
-                                        val startContentPos = screenToContentCoordinates(startPos)
-                                        val startNormX =
-                                            (startContentPos.x / actualBitmapWidthPx).coerceIn(
-                                                0f, 1f
-                                            )
-                                        val startNormY =
-                                            (startContentPos.y / actualBitmapHeightPx).coerceIn(
-                                                0f, 1f
-                                            )
-                                        onDrawStart(
-                                            PdfPoint(startNormX, startNormY), isEraserOverride
-                                        )
-
-                                        val currContentPos = screenToContentCoordinates(
-                                            change.position
-                                        )
-                                        val currNormX =
-                                            (currContentPos.x / actualBitmapWidthPx).coerceIn(
-                                                0f, 1f
-                                            )
-                                        val currNormY =
-                                            (currContentPos.y / actualBitmapHeightPx).coerceIn(
-                                                0f, 1f
-                                            )
-                                        onDraw(PdfPoint(currNormX, currNormY), isEraserOverride)
-
-                                        if (selectedTool == InkType.ERASER || isEraserOverride) {
-                                            eraserPosition = change.position
-                                        }
-                                        change.consume()
-                                    }
-                                } else {
-                                    val currContentPos = screenToContentCoordinates(
-                                        change.position
-                                    )
-                                    val currNormX =
-                                        (currContentPos.x / actualBitmapWidthPx).coerceIn(0f, 1f)
-                                    val currNormY =
-                                        (currContentPos.y / actualBitmapHeightPx).coerceIn(0f, 1f)
-                                    onDraw(PdfPoint(currNormX, currNormY), isEraserOverride)
-
-                                    if (selectedTool == InkType.ERASER || isEraserOverride) {
-                                        eraserPosition = change.position
-                                    }
-                                    change.consume()
-                                }
+                            // Shared parity (SharedMobilePdfRendering): the barrel
+                            // button is re-read every event, so pressing it
+                            // mid-stroke switches to the eraser instead of
+                            // waiting for the next stroke.
+                            if (!isEraserOverride && down.type == PointerType.Stylus &&
+                                sharedPdfStylusBarrelPressed(event)
+                            ) {
+                                isEraserOverride = true
+                                isStylusEraserOverride = true
                             }
+
+                            if (!change.pressed) continue
+
+                            // A single change can carry a whole batch of
+                            // coalesced samples; only the last one is in
+                            // `position`. Feed all of them, or the curve between
+                            // two of them is drawn as a chord.
+                            val samples = sharedPdfInkSamplesForChange(
+                                historical = change.historical.map {
+                                    SharedPdfInkSample(it.position, it.uptimeMillis)
+                                },
+                                current = SharedPdfInkSample(
+                                    change.position,
+                                    change.uptimeMillis
+                                ),
+                                lastEmittedPosition = lastEmittedPosition,
+                                minDistancePx = SHARED_PDF_INK_MIN_SAMPLE_DISTANCE_PX
+                            )
+                            if (samples.isEmpty()) continue
+
+                            if (!dragStarted) {
+                                slopPendingSamples.addAll(samples)
+                                val travelled = (samples.last().position - startPos).getDistance()
+                                if (travelled <= touchSlop) continue
+
+                                // The gesture became a stroke: anchor it at the
+                                // down, then replay everything it travelled
+                                // through so the entry curve is not a chord.
+                                dragStarted = true
+                                val startPoint = toPagePoint(
+                                    startPos,
+                                    eventTimeOrigin + down.uptimeMillis
+                                )
+                                if (startPoint == null) {
+                                    strokeInFlight = false
+                                    isDrawingStroke = false
+                                    return@awaitEachGesture
+                                }
+                                onDrawStart(startPoint, isEraserOverride)
+                                strokeInFlight = true
+                                slopPendingSamples.forEach { feedSample(it) }
+                                slopPendingSamples.clear()
+                            } else {
+                                samples.forEach { feedSample(it) }
+                            }
+                            lastEmittedPosition = samples.last().position
+                            change.consume()
                         }
-                        // The gesture loop exited without a return: pointer went
-                        // up outside change handling. Resume tile rendering.
-                        isDrawingStroke = false
                     }
                 } finally {
                     // Gesture detector torn down (key change / disposal). Tile
-                    // rendering must never stay frozen across detector restarts.
+                    // rendering must never stay frozen across detector restarts,
+                    // and a stroke that never reached its up event must not stay
+                    // open in the shared drawing state.
+                    if (strokeInFlight) {
+                        drawingState?.onDrawCancel()
+                        strokeInFlight = false
+                    }
                     isDrawingStroke = false
                     eraserPosition = null
                     isStylusEraserOverride = false

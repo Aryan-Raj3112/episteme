@@ -130,6 +130,12 @@ import com.aryan.reader.shared.pdf.finitePdfZoomValue
 import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
 import com.aryan.reader.shared.pdf.pdfVerticalDoubleTapTargetScale
 import com.aryan.reader.shared.pdf.pdfVerticalPageGapDp
+import com.aryan.reader.shared.pdf.sharedPdfInkSamplesForChange
+import com.aryan.reader.shared.pdf.sharedPdfInkEventTimeOrigin
+import com.aryan.reader.shared.pdf.sharedPdfIsEraserOverride
+import com.aryan.reader.shared.pdf.SHARED_PDF_INK_MIN_SAMPLE_DISTANCE_PX
+import com.aryan.reader.shared.pdf.SharedPdfInkSample
+import com.aryan.reader.shared.sharedPdfStylusBarrelPressed
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -1687,11 +1693,28 @@ internal fun PdfVerticalReader(
                     "VerticalReader | Type: ${down.type} | isPrimary: ${buttons.isPrimaryPressed} | isSecondary: ${buttons.isSecondaryPressed} | isTertiary: ${buttons.isTertiaryPressed} | buttonsString: $buttons"
                 )
 
-                val isEraserOverride = down.type == PointerType.Eraser ||
-                        (down.type == PointerType.Stylus && (currentEvent.buttons.isSecondaryPressed || currentEvent.buttons.isPrimaryPressed || stylusButtonHovering))
+                var isEraserOverride = sharedPdfIsEraserOverride(
+                    pointerType = down.type,
+                    stylusButtonPressed = buttons.isSecondaryPressed ||
+                        buttons.isPrimaryPressed ||
+                        stylusButtonHovering
+                )
                 isStylusEraserOverride = isEraserOverride
 
-                fun getPageAndPoint(screenOffset: Offset): Pair<Int, PdfPoint>? {
+                // Batch replay: one change can carry many coalesced samples and
+                // only the last of them is in `position`. `lastEmittedPosition`
+                // is where the stroke last had geometry so the expansion can
+                // drop the duplicate the following batch repeats.
+                var lastEmittedPosition: Offset? = down.position
+                val eventTimeOrigin = sharedPdfInkEventTimeOrigin(
+                    epochMillis = System.currentTimeMillis(),
+                    uptimeMillis = down.uptimeMillis
+                )
+
+                fun getPageAndPoint(
+                    screenOffset: Offset,
+                    eventTimeMillis: Long
+                ): Pair<Int, PdfPoint>? {
                     val zoom = cameraZoom
                     val panX = cameraPanX
                     val panY = cameraPanY
@@ -1708,7 +1731,7 @@ internal fun PdfVerticalReader(
                     val normX = (docX / pageLayout.width).coerceIn(0f, 1f)
                     val normY = (localY / pageLayout.height).coerceIn(0f, 1f)
 
-                    return pageLayout.index to PdfPoint(normX, normY)
+                    return pageLayout.index to PdfPoint(normX, normY, eventTimeMillis)
                 }
 
                 var isCanceled = false
@@ -1718,7 +1741,10 @@ internal fun PdfVerticalReader(
                         globalEraserPosition = down.position
                     }
 
-                    val startData = getPageAndPoint(down.position)
+                    val startData = getPageAndPoint(
+                        down.position,
+                        eventTimeOrigin + down.uptimeMillis
+                    )
                     if (startData != null) {
                         val (pageIndex, point) = startData
                         onDrawStart(pageIndex, point, isEraserOverride)
@@ -1739,12 +1765,36 @@ internal fun PdfVerticalReader(
                         val change = event.changes.firstOrNull { it.id == down.id }
                         if (change == null || !change.pressed) break
 
-                        if (change.positionChanged()) {
+                        // Shared parity (SharedMobilePdfRendering): the barrel
+                        // button is re-read every event, so pressing it
+                        // mid-stroke switches to the eraser instead of waiting
+                        // for the next stroke.
+                        if (!isEraserOverride && down.type == PointerType.Stylus &&
+                            sharedPdfStylusBarrelPressed(event)
+                        ) {
+                            isEraserOverride = true
+                            isStylusEraserOverride = true
+                        }
+
+                        val samples = sharedPdfInkSamplesForChange(
+                            historical = change.historical.map {
+                                SharedPdfInkSample(it.position, it.uptimeMillis)
+                            },
+                            current = SharedPdfInkSample(change.position, change.uptimeMillis),
+                            lastEmittedPosition = lastEmittedPosition,
+                            minDistancePx = SHARED_PDF_INK_MIN_SAMPLE_DISTANCE_PX
+                        )
+                        if (samples.isEmpty()) continue
+
+                        for (sample in samples) {
                             if (selectedTool == InkType.ERASER || isEraserOverride) {
-                                globalEraserPosition = change.position
+                                globalEraserPosition = sample.position
                             }
 
-                            val dragData = getPageAndPoint(change.position)
+                            val dragData = getPageAndPoint(
+                                sample.position,
+                                eventTimeOrigin + sample.eventTimeMillis
+                            )
                             if (dragData != null) {
                                 val (pageIndex, point) = dragData
 
@@ -1756,8 +1806,9 @@ internal fun PdfVerticalReader(
                                 }
                                 lastPageIndex = pageIndex
                             }
-                            change.consume()
+                            lastEmittedPosition = sample.position
                         }
+                        change.consume()
                     } while (true)
                 } finally {
                     if (!isCanceled) {

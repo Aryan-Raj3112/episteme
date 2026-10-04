@@ -31,7 +31,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -867,8 +866,6 @@ internal fun PdfAnnotationLayer(
     centeringOffsetY: Float,
     pageIndex: Int
 ) {
-    SideEffect { Timber.tag("PdfPerf").v("ANNOT_LAYER: Recomposing Page $pageIndex") }
-
     val staticAnnotations = annotationsProvider()
 
     val staticRenderData = remember(staticAnnotations, actualBitmapWidthPx, actualBitmapHeightPx) {
@@ -881,41 +878,6 @@ internal fun PdfAnnotationLayer(
         val duration = (System.nanoTime() - startTime) / 1_000_000f
         Timber.tag("PdfPerf").d("ANNOT_LAYER: Processed ${staticAnnotations.size} static annots in ${duration}ms")
         data
-    }
-    val currentAnnotation = remember(drawingState, pageIndex) {
-        derivedStateOf {
-            val annot = drawingState?.currentAnnotation
-            val result = if (annot?.pageIndex == pageIndex) annot else null
-            if (drawingState != null) {
-                Timber.tag("PdfDrawPerf").v(
-                    "DerivedState Calc Page $pageIndex: Global=${annot?.pageIndex} -> Result=${result != null}"
-                )
-            }
-            result
-        }
-    }.value
-
-    SideEffect {
-        Timber.tag("PdfDrawPerf").v(
-            "ANNOT LAYER: State Check Page $pageIndex | AnnotHash: ${currentAnnotation?.hashCode()} | AnnotPoints: ${currentAnnotation?.points?.size}"
-        )
-    }
-
-    val activeRenderData = remember(
-        currentAnnotation,
-        currentAnnotation?.points?.size,
-        actualBitmapWidthPx,
-        actualBitmapHeightPx
-    ) {
-        val startTime = System.nanoTime()
-        val res = currentAnnotation?.let { annot ->
-            PdfAnnotationRenderHelper.createRenderData(annot, actualBitmapWidthPx, actualBitmapHeightPx)
-        }
-        val duration = (System.nanoTime() - startTime) / 1_000_000f
-        if (duration > 0.5f) {
-            Timber.tag("PdfPerf").v("ANNOT_LAYER: Active path gen took ${duration}ms")
-        }
-        res
     }
 
     Canvas(modifier = Modifier.fillMaxSize()) {
@@ -963,7 +925,22 @@ internal fun PdfAnnotationLayer(
             }
 
             staticRenderData.forEach { drawData(it) }
-            activeRenderData?.let { drawData(it) }
+
+            // The in-flight stroke is read and turned into a path here, in the
+            // draw phase, rather than during composition. Pointer input can
+            // deliver hundreds of coalesced samples per frame while the reader is
+            // busy, and Compose coalesces draw invalidations into one rebuild per
+            // frame instead of one per sample — which is the difference between
+            // a smooth live stroke and an O(n^2) path rebuild per point.
+            val activeAnnotation = drawingState?.currentAnnotation
+            if (activeAnnotation != null && activeAnnotation.pageIndex == pageIndex) {
+                val activeRenderData = PdfAnnotationRenderHelper.createRenderData(
+                    activeAnnotation, actualBitmapWidthPx, actualBitmapHeightPx
+                )
+                if (activeRenderData != null) {
+                    drawData(activeRenderData)
+                }
+            }
         }
         val drawDuration = (System.nanoTime() - drawStart) / 1_000_000f
         if (drawDuration > 2f) {

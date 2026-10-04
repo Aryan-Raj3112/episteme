@@ -8,6 +8,7 @@ import android.view.Choreographer
 import android.util.LruCache
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
@@ -532,11 +533,22 @@ internal object PdfAnnotationRenderHelper {
     }
 }
 
+/**
+ * The stroke currently under the user's finger.
+ *
+ * The in-flight [currentAnnotation] deliberately exposes [currentPoints] itself
+ * rather than a copy: a stroke can carry hundreds of coalesced samples and
+ * copying the list on every one of them made the whole stroke O(n^2) on the
+ * main thread, inside the pointer-input coroutine. Only [onDrawEnd] — which
+ * runs once — materialises an immutable snapshot for persistence, so nothing
+ * outside this class can observe the list changing underneath it.
+ */
 @Stable
 class PdfDrawingState {
+    private val currentPoints = mutableStateListOf<PdfPoint>()
+
     var currentAnnotation by mutableStateOf<PdfAnnotation?>(null)
         private set
-    private val currentPoints = mutableListOf<PdfPoint>()
 
     fun onDrawStart(pageIndex: Int, point: PdfPoint, type: InkType, color: Color, width: Float) {
         currentPoints.clear()
@@ -545,16 +557,16 @@ class PdfDrawingState {
             type = AnnotationType.INK,
             inkType = type,
             pageIndex = pageIndex,
-            points = currentPoints.toList(),
+            points = currentPoints,
             color = color,
             strokeWidth = width
         )
     }
 
     fun onDraw(point: PdfPoint) {
-        if (currentAnnotation == null) return
+        val annotation = currentAnnotation ?: return
         currentPoints.add(point)
-        currentAnnotation = currentAnnotation?.copy(points = currentPoints.toList())
+        currentAnnotation = annotation.copy(points = currentPoints)
     }
 
     fun onDrawCancel() {
@@ -563,19 +575,24 @@ class PdfDrawingState {
     }
 
     fun onDrawEnd(): PdfAnnotation? {
-        val finalAnnot = currentAnnotation
+        val annotation = currentAnnotation ?: return null
+        val finalAnnot = if (annotation.points === currentPoints) {
+            annotation.copy(points = currentPoints.toList())
+        } else {
+            annotation
+        }
         currentAnnotation = null
         currentPoints.clear()
         return finalAnnot
     }
 
     fun updateDrag(point: PdfPoint) {
-        if (currentPoints.isNotEmpty()) {
-            val start = currentPoints.first()
-            currentPoints.clear()
-            currentPoints.add(start)
-            currentPoints.add(point)
-            currentAnnotation = currentAnnotation?.copy(points = currentPoints.toList())
-        }
+        val annotation = currentAnnotation ?: return
+        if (currentPoints.isEmpty()) return
+        val start = currentPoints.first()
+        currentPoints.clear()
+        currentPoints.add(start)
+        currentPoints.add(point)
+        currentAnnotation = annotation.copy(points = currentPoints)
     }
 }

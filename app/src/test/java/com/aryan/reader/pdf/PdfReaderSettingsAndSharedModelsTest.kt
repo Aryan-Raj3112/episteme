@@ -133,6 +133,90 @@ class PdfReaderSettingsAndSharedModelsTest {
         assertFalse(source.contains("_settings.value.copy"))
     }
 
+    /**
+     * Android batches finger/stylus samples into one MotionEvent and Compose
+     * only exposes all but the last of them through
+     * `PointerInputChange.historical`. A loop that reads `change.position` alone
+     * drops the curve between two surviving points, which is what turned
+     * handwriting into straight-line segments on heavy documents. Every ink
+     * loop has to go through the shared batch expansion.
+     */
+    @Test
+    fun `every android ink loop replays coalesced pointer samples`() {
+        val loops = mapOf(
+            "src/main/java/com/aryan/reader/pdf/PdfVerticalReader.kt" to "globalDrawingModifier",
+            "src/main/java/com/aryan/reader/pdf/PdfPageComposable.kt" to "slopPendingSamples"
+        )
+
+        for ((path, marker) in loops) {
+            val block = normalizeWhitespace(readSourceFile(path).substringAfter(marker))
+            assertTrue("$path must expand the batch", block.contains("sharedPdfInkSamplesForChange("))
+            assertTrue(
+                "$path must read the coalesced samples",
+                block.contains("historical = change.historical.map {")
+            )
+            // Geometry comes from the replayed sample, and `change.position` is
+            // only ever the batch's final entry.
+            assertTrue(
+                "$path must derive the stroke from the replayed sample",
+                block.contains("sample.position")
+            )
+            assertTrue(
+                "$path must keep change.position as the batch's last sample",
+                block.contains("current = SharedPdfInkSample(")
+            )
+        }
+    }
+
+    @Test
+    fun `ink points are stamped from the pointer event not the handling clock`() {
+        val source = normalizeWhitespace(readSourceFile("src/main/java/com/aryan/reader/pdf/PdfViewerScreen.kt"))
+
+        // A batched change is handled inside one millisecond; stamping on
+        // arrival collapses its samples onto one instant and leaves the fountain
+        // pen and pencil renderers without a usable velocity.
+        assertFalse(source.contains("point.copy(timestamp = System.currentTimeMillis())"))
+        assertFalse(source.contains("effectivePoint.copy(timestamp = System.currentTimeMillis())"))
+        assertTrue(source.contains("drawingState.onDraw(resolveInkPointTimestamp(point))"))
+        assertTrue(source.contains("drawingState.updateDrag(resolveInkPointTimestamp(effectivePoint))"))
+    }
+
+    @Test
+    fun `the ink gesture detector is not restarted by page render state`() {
+        val source = normalizeWhitespace(readSourceFile("src/main/java/com/aryan/reader/pdf/PdfPageComposable.kt"))
+        val keys = source.substringAfter(".pointerInput( isEditMode,").substringBefore(") {")
+
+        // Keying on these restarts the detector mid-stroke when a large
+        // document's bitmap settles late or the pan/zoom moves, which drops the
+        // tail of the stroke in flight.
+        for (unstable in listOf("actualBitmapWidthPx", "actualBitmapHeightPx", "scale", "offset", "isScrolling")) {
+            assertFalse("$unstable must not key the ink detector", keys.contains(unstable))
+        }
+        assertTrue(source.contains("val latestBitmapWidthPx by rememberUpdatedState(actualBitmapWidthPx)"))
+        assertTrue(source.contains("val latestIsScrolling by rememberUpdatedState(isScrolling)"))
+        // ...and the teardown has to discard the stroke such a restart orphaned.
+        assertTrue(source.contains("if (strokeInFlight) { drawingState?.onDrawCancel()"))
+    }
+
+    /**
+     * Reading the in-flight stroke during composition made every page recompose
+     * once per input sample, which is the cost the draw-phase read in
+     * PdfAnnotationLayer exists to avoid.
+     */
+    @Test
+    fun `page composition does not observe the in-flight stroke`() {
+        val source = normalizeWhitespace(readSourceFile("src/main/java/com/aryan/reader/pdf/PdfPageComposable.kt"))
+        val composableBody = source.substringAfter("internal fun PdfPageComposable(")
+
+        assertFalse(
+            "composition must not read the live stroke",
+            composableBody.contains("drawingState?.currentAnnotation")
+        )
+    }
+
+    private fun normalizeWhitespace(source: String): String =
+        source.replace(Regex("\\s+"), " ")
+
     @Test
     fun `annotation bridge keeps tool color size and snap observable`() {
         val source = readSourceFile("src/main/java/com/aryan/reader/pdf/PdfViewerScreen.kt")

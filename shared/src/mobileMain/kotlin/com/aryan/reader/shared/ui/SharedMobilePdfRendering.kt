@@ -170,7 +170,10 @@ import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfInkRenderer
 import com.aryan.reader.pdf.resolveEraserStrokeWidth
 import com.aryan.reader.pdf.calculateTextBoxChromeLayout
-import com.aryan.reader.shared.pdf.sharedPdfInkStrokeConsumesMove
+import com.aryan.reader.shared.pdf.sharedPdfInkEventTimeOrigin
+import com.aryan.reader.shared.pdf.sharedPdfInkSamplesForChange
+import com.aryan.reader.shared.pdf.SHARED_PDF_INK_MIN_SAMPLE_DISTANCE_PX
+import com.aryan.reader.shared.pdf.SharedPdfInkSample
 import com.aryan.reader.shared.pdf.sharedPdfIsInkDownAllowed
 import com.aryan.reader.shared.pdf.sharedPdfIsEraserOverride
 import com.aryan.reader.shared.sharedPdfStylusBarrelPressed
@@ -2541,6 +2544,14 @@ internal fun SharedMobilePdfPageSurface(
                         val isTextTool = selectedTool == PdfInkTool.TEXT
                         var committed = false
                         var lastEraserPoint: PdfPagePoint? = null
+                        // Coalesced samples arrive in batches; track where the
+                        // stroke last had geometry so the batch expansion can
+                        // drop the duplicate the next batch repeats.
+                        var lastEmittedScreenPosition: Offset? = null
+                        val eventTimeOrigin = sharedPdfInkEventTimeOrigin(
+                            epochMillis = currentTimestamp(),
+                            uptimeMillis = down.uptimeMillis
+                        )
                         fun hasCanvas(): Boolean =
                             latestCanvasSize.width > 0 && latestCanvasSize.height > 0
                         // Android parity (PdfViewerScreen onDrawStartStable /
@@ -2608,11 +2619,15 @@ internal fun SharedMobilePdfPageSurface(
                             clearOwnedStroke()
                             if (hasCanvas()) {
                                 (activeStroke as? MutableList<PdfPagePoint>)?.add(
-                                    down.position.toSharedMobilePdfPoint(latestCanvasSize)
+                                    down.position.toSharedMobilePdfPoint(
+                                        size = latestCanvasSize,
+                                        timestamp = eventTimeOrigin + down.uptimeMillis
+                                    )
                                 )
                                 if (eraserOverride) eraserOverridePosition = down.position
                             }
                         }
+                        lastEmittedScreenPosition = down.position
                         // Android parity: the down is consumed so no parent
                         // scroll/pager gesture can steal a stroke that has
                         // already started drawing.
@@ -2652,7 +2667,7 @@ internal fun SharedMobilePdfPageSurface(
                                     committed = true
                                     return@awaitEachGesture
                                 }
-                                if (!sharedPdfInkStrokeConsumesMove(change.pressed, change.positionChanged())) continue
+                                if (!change.pressed) continue
                                 // Android parity (onDrawStable): every movement
                                 // feeds the in-flight stroke. Android never skips
                                 // a change because something upstream consumed it,
@@ -2667,30 +2682,52 @@ internal fun SharedMobilePdfPageSurface(
                                 if (!latestIsActiveStrokeOwner) {
                                     return@awaitEachGesture
                                 }
-                                if (strokeEraser) {
-                                    if (hasCanvas()) {
-                                        eraseAtFinger(change.position, lastEraserPoint)
-                                        eraserOverridePosition = change.position
+                                // A single change can carry a whole batch of
+                                // coalesced samples; only the last one is in
+                                // `position`. Feed all of them, or the curve
+                                // between two of them is drawn as a chord.
+                                val samples = sharedPdfInkSamplesForChange(
+                                    historical = change.historical.map {
+                                        SharedPdfInkSample(it.position, it.uptimeMillis)
+                                    },
+                                    current = SharedPdfInkSample(change.position, change.uptimeMillis),
+                                    lastEmittedPosition = lastEmittedScreenPosition,
+                                    minDistancePx = SHARED_PDF_INK_MIN_SAMPLE_DISTANCE_PX
+                                )
+                                if (samples.isEmpty()) continue
+                                for (sample in samples) {
+                                    if (!latestIsActiveStrokeOwner) {
+                                        return@awaitEachGesture
                                     }
-                                } else if (hasCanvas()) {
-                                    val mutableStroke = activeStroke as? MutableList<PdfPagePoint>
-                                    if (mutableStroke != null) {
-                                        val point = change.position.toSharedMobilePdfPoint(latestCanvasSize)
-                                        val snapped = if (
-                                            highlighterSnapEnabled && selectedTool.isDesktopHighlighter &&
-                                            !eraserOverride
-                                        ) {
-                                            sharedPdfSnapHighlighterPoint(
-                                                pageAspectRatio = pageRender.aspectRatio,
-                                                currentPoint = point,
-                                                startPoint = mutableStroke.firstOrNull(),
-                                            )
-                                        } else {
-                                            point
+                                    if (strokeEraser) {
+                                        if (hasCanvas()) {
+                                            eraseAtFinger(sample.position, lastEraserPoint)
+                                            eraserOverridePosition = sample.position
                                         }
-                                        mutableStroke.add(snapped)
+                                    } else if (hasCanvas()) {
+                                        val mutableStroke = activeStroke as? MutableList<PdfPagePoint>
+                                        if (mutableStroke != null) {
+                                            val point = sample.position.toSharedMobilePdfPoint(
+                                                size = latestCanvasSize,
+                                                timestamp = eventTimeOrigin + sample.eventTimeMillis
+                                            )
+                                            val snapped = if (
+                                                highlighterSnapEnabled && selectedTool.isDesktopHighlighter &&
+                                                !eraserOverride
+                                            ) {
+                                                sharedPdfSnapHighlighterPoint(
+                                                    pageAspectRatio = pageRender.aspectRatio,
+                                                    currentPoint = point,
+                                                    startPoint = mutableStroke.firstOrNull(),
+                                                )
+                                            } else {
+                                                point
+                                            }
+                                            mutableStroke.add(snapped)
+                                        }
+                                        if (eraserOverride) eraserOverridePosition = sample.position
                                     }
-                                    if (eraserOverride) eraserOverridePosition = change.position
+                                    lastEmittedScreenPosition = sample.position
                                 }
                                 change.consume()
                             }
@@ -3345,10 +3382,10 @@ internal fun SharedMobilePdfPagePlaceholder(
     }
 }
 
-internal fun Offset.toSharedMobilePdfPoint(size: IntSize): PdfPagePoint {
+internal fun Offset.toSharedMobilePdfPoint(size: IntSize, timestamp: Long = currentTimestamp()): PdfPagePoint {
     return PdfPagePoint(
         x = (x / size.width.toFloat()).coerceIn(0f, 1f),
         y = (y / size.height.toFloat()).coerceIn(0f, 1f),
-        timestamp = currentTimestamp()
+        timestamp = timestamp
     )
 }
