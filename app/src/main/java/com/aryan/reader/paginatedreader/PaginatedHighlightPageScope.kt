@@ -157,6 +157,10 @@ private fun resolvePaginatedHighlightOnPage(
 
     // Accept only when a block on this page owns the resolved location. This is the step that stops a
     // repeated sentence from painting on every page that happens to contain a copy of it.
+    //
+    // A page with no blocks paints no text either, because the page body renders its blocks and
+    // nothing else, so there is nothing on it to highlight. That covers a genuinely blank page and one
+    // whose content has not arrived yet; the latter fills in and this runs again.
     if (pageBlocks.isEmpty()) return null
     val perBlock = pageBlocks.mapNotNull { block ->
         val segment: HighlightBlockSegment = anchor.segments

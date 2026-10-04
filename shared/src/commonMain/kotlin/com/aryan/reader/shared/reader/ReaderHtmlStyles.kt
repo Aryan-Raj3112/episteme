@@ -501,7 +501,15 @@ internal fun readerDocumentStyles(
               top: auto !important;
               bottom: auto !important;
               transform: none !important;
-              border-radius: 2px;
+              /*
+               * No rounded corners on a marker that may wrap across lines.
+               *
+               * `box-decoration-break: clone` gives each line fragment its own box, so a border-radius
+               * is drawn at every seam and the fill pulls back from the joint: a highlight split over
+               * three lines came out as three separate bands with pale notches between them. Cloned
+               * fragments are what line decorations need, so the break behaviour stays; only the
+               * radius that turns each fragment into its own object goes.
+               */
               -webkit-box-decoration-break: clone;
               box-decoration-break: clone;
             }

@@ -23,7 +23,28 @@ import com.aryan.reader.shared.ui.SharedNativeHighlightPaintPlan
  */
 fun UserHighlight.fillCssColor(
     legacyAlpha: Float = SharedNativeHighlightPaintPlan.LEGACY_HIGHLIGHT_ALPHA
-): String = renderColor(legacyAlpha).toRgbaCss()
+): String = colorArgb?.highlightFillCss(legacyAlpha) ?: renderColor(legacyAlpha).toRgbaCss()
+
+/**
+ * The fill for a stored colour, applying the legacy alpha by the same rule as
+ * [UserHighlight.renderColor]: a colour that already carries an alpha keeps it, and an opaque one is
+ * tinted.
+ *
+ * The WebView needs this for palette swatches, where there is no [UserHighlight] to ask but the marker
+ * still has to match the tone the native painters use. It used to format the colour as `#RRGGBB`
+ * instead, and the marker applies whatever it is handed as an inline `background-color` with
+ * `!important` — so that opaque value beat the stylesheet's tinted rule and a highlight made from the
+ * palette painted as a solid slab over the text, in a different tone from the same highlight in
+ * pagination.
+ */
+fun Int.highlightFillCss(
+    legacyAlpha: Float = SharedNativeHighlightPaintPlan.LEGACY_HIGHLIGHT_ALPHA
+): String {
+    val storedAlpha = (this ushr 24) and 0xFF
+    return Color(this)
+        .let { stored -> if (storedAlpha >= 0xFF) stored.copy(alpha = legacyAlpha) else stored }
+        .toRgbaCss()
+}
 
 /** [Color] as a CSS `rgba()` string, preserving its alpha. */
 fun Color.toRgbaCss(): String {

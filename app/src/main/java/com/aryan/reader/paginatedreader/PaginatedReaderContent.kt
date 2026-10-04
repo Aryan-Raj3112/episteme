@@ -195,18 +195,15 @@ internal fun PaginatedReaderContent(
      * selections, so this returns the chapter, and it suspends because the chapter may still need
      * parsing.
      */
-    onGetChapterTextBlocks: suspend (Int) -> List<TextContentBlock>?,
-    userHighlights: List<UserHighlight>,
     /**
-     * Called with the full highlight list once some of it has been repaired in place.
+     * The reader-wide chapter indexes highlights are placed against.
      *
-     * Highlights stored before the reader had a usable coordinate space carry offsets that point
-     * somewhere else, and only the chapter's own text can say where they should have pointed. That
-     * repair happens as each chapter is opened, and the corrected locators have to be written back or
-     * the same search runs again next time. The callback receives the whole list so the caller owns
-     * the single source of truth rather than this surface mutating it in place.
+     * Owned above this surface so every surface shares one answer: a highlight created in a WebView
+     * stores only its text, and each surface resolving that text separately meant each could anchor it
+     * differently, and switching modes redid the work.
      */
-    onHighlightsRepaired: (List<UserHighlight>) -> Unit = {},
+    chapterHighlightIndexes: ChapterHighlightIndexes,
+    userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String, SharedReaderLocator, HighlightStyle) -> Unit,
     onHighlightDeleted: (String) -> Unit,
     activeHighlightPalette: List<Int>,
@@ -329,46 +326,6 @@ internal fun PaginatedReaderContent(
         }
     }
 
-    // Highlights created in a WebView surface store only their selected text, so placing them needs the
-    // whole chapter rather than one page's blocks. The blocks may still need parsing, so this runs
-    // off the composition and the pages read the result.
-    val chapterTextIndexes = remember {
-        mutableStateOf(emptyMap<Int, EpubChapterTextIndex?>())
-    }
-    LaunchedEffect(uiState.generation, userHighlights) {
-        // Every chapter that holds a highlight needs its text indexed, not only the ones whose
-        // highlights look unanchored. A legacy highlight *has* offsets, and they are wrong, which is
-        // precisely the case the repair exists for: gating on "no offsets yet" would skip it and leave
-        // it pointing at the wrong text forever.
-        val chaptersNeedingIndex = userHighlights
-            .mapNotNull { it.locator.chapterIndex ?: it.chapterIndex }
-            .distinct()
-        for (chapterIndex in chaptersNeedingIndex) {
-            if (chapterTextIndexes.value.containsKey(chapterIndex)) continue
-            val blocks = runCatching { onGetChapterTextBlocks(chapterIndex) }.getOrNull()
-            val index = blocks?.let { EpubChapterTextIndex.of(chapterIndex, it.toSemanticTextBlocks()) }
-            // Published as one immutable map so every composed page recomposes when it lands. Pages
-            // composed before this finished read no index and would otherwise keep showing nothing.
-            chapterTextIndexes.value = chapterTextIndexes.value + (chapterIndex to index)
-            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                "chapter_index chapter=$chapterIndex blocks=${blocks?.size} indexed=${index != null}"
-            )
-            if (index == null) continue
-
-            // The chapter's text is available now, so repair what is already stored. Locators written
-            // before the coordinate space was fixed hold offsets pointing somewhere else entirely, and
-            // repairing them here is the only chance to fix them: a reader only ever sees the
-            // chapters it opens, so an eager pass over the whole book is both expensive and wrong.
-            val repaired = index.repairHighlights(userHighlights)
-            if (repaired.unchanged) continue
-            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                "highlight_repair chapter=$chapterIndex repaired=${repaired.repaired} " +
-                    "of=${userHighlights.size}"
-            )
-            onHighlightsRepaired(repaired.highlights)
-        }
-    }
-
     @Composable
     fun SpreadBookPage(
         bookPageIndex: Int,
@@ -390,14 +347,27 @@ internal fun PaginatedReaderContent(
         val pageTextBlocks = remember(pageContent) {
             pageContent?.content?.extractTextBlocks().orEmpty()
         }
-        val pageUserHighlights = resolvePaginatedPageHighlights(
-            scope = PaginatedPageScope(
-                chapterIndex = pageChapterIndex,
-                textBlocks = pageTextBlocks
-            ),
-            highlights = userHighlights,
-            chapterTextIndex = pageChapterIndex?.let { chapterTextIndexes.value[it] }
-        )
+        // Placed highlights are cached against their exact inputs. Resolving one can mean searching a
+        // whole chapter for the highlight's text, and this is called for every composed page on every
+        // recomposition, so doing it unconditionally made page turns redo the same searches dozens of
+        // times for answers that had not changed. The chapter index is a key rather than read inside,
+        // so landing one for a chapter recomputes exactly the pages that needed it.
+        val pageChapterIndexValue = chapterHighlightIndexes.forChapter(pageChapterIndex)
+        val pageUserHighlights = remember(
+            pageChapterIndex,
+            pageTextBlocks,
+            userHighlights,
+            pageChapterIndexValue
+        ) {
+            resolvePaginatedPageHighlights(
+                scope = PaginatedPageScope(
+                    chapterIndex = pageChapterIndex,
+                    textBlocks = pageTextBlocks
+                ),
+                highlights = userHighlights,
+                chapterTextIndex = pageChapterIndexValue
+            )
+        }
         val themedPageContent = remember(pageContent, isDarkTheme, effectiveBg, effectiveText) {
             pageContent?.applyReaderThemeForDisplay(
                 isDarkTheme = isDarkTheme,
@@ -410,16 +380,6 @@ internal fun PaginatedReaderContent(
         LaunchedEffect(bookPageIndex, themedPageContent != null) {
             Timber.tag(EpubSpreadBlinkTag).d(
                 "page_shown book=$bookPageIndex hasContent=${themedPageContent != null} gen=${uiState.generation}"
-            )
-        }
-
-        if (pageUserHighlights.highlights.size != userHighlights.size) {
-            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                "page_scope page=$bookPageIndex pageChapter=$pageChapterIndex " +
-                    "inputHighlightCount=${userHighlights.size} " +
-                    "pageHighlightCount=${pageUserHighlights.highlights.size} " +
-                    "resolved=${pageUserHighlights.rangesByHighlight.keys} " +
-                    "inputHighlightChapters=${userHighlights.map { it.chapterIndex }.distinct()}"
             )
         }
 

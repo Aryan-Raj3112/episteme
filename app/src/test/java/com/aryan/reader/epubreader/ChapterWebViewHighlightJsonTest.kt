@@ -32,7 +32,11 @@ class ChapterWebViewHighlightJsonTest {
         assertEquals("desktop:6:120:145", obj.getString("cfi"))
         assertEquals("user-highlight-green", obj.getString("cssClass"))
         assertEquals(0xFF12ABEF.toInt(), obj.getInt("colorArgb"))
-        assertEquals("#12ABEF", obj.getString("colorCss"))
+        // The fill, alpha included, not the bare colour. The marker applies whatever arrives here as an
+        // inline `background-color` marked `!important`, so a bare `#RRGGBB` overrode the stylesheet's
+        // tinted rule and painted an opaque slab over the text in the WebView only. Asserting the hex
+        // here is what kept that in place; it now pins the tint.
+        assertEquals("rgba(18,171,239,0.4)", obj.getString("colorCss"))
         assertEquals(6, locator.getInt("chapterIndex"))
         assertEquals(120, locator.getInt("startOffset"))
         assertEquals(145, locator.getInt("endOffset"))

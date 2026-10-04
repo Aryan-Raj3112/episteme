@@ -182,6 +182,7 @@ import com.aryan.reader.paginatedreader.LocatorConverter
 import com.aryan.reader.paginatedreader.NativeVerticalLocation
 import com.aryan.reader.paginatedreader.NativeVerticalReaderScreen
 import com.aryan.reader.paginatedreader.PaginatedReaderScreen
+import com.aryan.reader.paginatedreader.rememberChapterHighlightIndexes
 import com.aryan.reader.paginatedreader.resolveWebViewHighlightAnchor
 import com.aryan.reader.paginatedreader.ParagraphBlock
 import com.aryan.reader.paginatedreader.QuoteBlock
@@ -487,6 +488,21 @@ internal fun EpubReaderRenderSurfaces(
         }
     }
 
+    // One set of chapter indexes for the whole reader, shared by every surface.
+    //
+    // A highlight made in the WebView carries only its selected text, so any other surface has to
+    // resolve that text against the whole chapter before it can be placed — and resolving needs the
+    // chapter's blocks, which come from the paginator. The paginator does not exist in WebView mode,
+    // so this runs where it does exist and is keyed on it: the first pass can legitimately find no
+    // blocks, and re-running when the paginator appears is what turns a highlight that was invisible
+    // everywhere into one that is anchored once and placed everywhere.
+    val chapterHighlightIndexes = rememberChapterHighlightIndexes(
+        highlights = userHighlights,
+        chapterBlocksKey = paginator,
+        chapterBlocks = { chapterIndex -> paginator?.getChapterTextBlocks(chapterIndex) },
+        onHighlightsRepaired = onHighlightsRepaired
+    )
+
                 when (currentRenderMode) {
                     RenderMode.VERTICAL_SCROLL -> {
                         val pageInfoReserve = if (shouldReserveEpubPageInfoBarSpace(prefs.pageInfoMode, showBars, isNativeVerticalMode)) pageInfoBarHeight else 0.dp
@@ -535,10 +551,7 @@ internal fun EpubReaderRenderSurfaces(
                                     bookReplacementFileId = bookId,
                                     activeHighlightPalette = currentHighlightPalette,
                                     onUpdatePalette = onUpdateHighlightPalette,
-                                    onGetChapterTextBlocks = { chapterIndex ->
-                                        paginator?.getChapterTextBlocks(chapterIndex)
-                                    },
-                                    onHighlightsRepaired = onHighlightsRepaired,
+                                    chapterHighlightIndexes = chapterHighlightIndexes,
                                     ttsHighlightInfo = TtsHighlightInfo(
                                         text = ttsState.currentText ?: "",
                                         cfi = ttsState.sourceCfi ?: "",
@@ -2010,7 +2023,7 @@ internal fun EpubReaderRenderSurfaces(
                                         )
                                     }
                                 },
-                                onHighlightsRepaired = onHighlightsRepaired
+                                chapterHighlightIndexes = chapterHighlightIndexes
                             )
                             if (!isPagerInitialized) {
                                 Box(

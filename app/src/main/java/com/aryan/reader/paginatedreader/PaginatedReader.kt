@@ -178,11 +178,10 @@ fun PaginatedReaderScreen(
     onHighlightCreated: (String, String, String, SharedReaderLocator, HighlightStyle) -> Unit,
     onHighlightDeleted: (String) -> Unit,
     /**
-     * Receives the full highlight list after the reader has corrected stored locators that pointed at
-     * the wrong place. Defaulted so every other caller of this screen keeps compiling; the surfaces
-     * that can repair highlights are the ones that pass it.
+     * The reader-wide chapter indexes highlights are placed against, built and repaired by the reader
+     * rather than by each surface, so switching reading modes reuses one answer.
      */
-    onHighlightsRepaired: (List<UserHighlight>) -> Unit = {},
+    chapterHighlightIndexes: ChapterHighlightIndexes,
     activeHighlightPalette: List<Int>,
     onUpdatePalette: (Int, Int) -> Unit,
     activeTextureId: String? = null,
@@ -942,10 +941,7 @@ fun PaginatedReaderScreen(
             userHighlights = userHighlights,
             onHighlightCreated = onHighlightCreated,
             onHighlightDeleted = onHighlightDeleted,
-            onGetChapterTextBlocks = { chapterIndex ->
-                paginator?.getChapterTextBlocks(chapterIndex)
-            },
-            onHighlightsRepaired = onHighlightsRepaired,
+            chapterHighlightIndexes = chapterHighlightIndexes,
             isDarkTheme = isDarkTheme,
             activeHighlightPalette = activeHighlightPalette,
             onUpdatePalette = onUpdatePalette,

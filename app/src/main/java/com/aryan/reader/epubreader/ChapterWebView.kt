@@ -92,6 +92,7 @@ import com.aryan.reader.copyPlainTextToClipboard
 import com.aryan.reader.getReaderTextureDataUri
 import com.aryan.reader.readerFontDiagnosticSummary
 import com.aryan.reader.shared.fillCssColor
+import com.aryan.reader.shared.highlightFillCss
 import com.aryan.reader.shared.detectFontVariant
 import com.aryan.reader.shared.familyFilenameSignature
 import com.aryan.reader.shared.fontWeightCssDescriptor
@@ -724,7 +725,7 @@ internal fun highlightsJsonForWebView(userHighlights: List<UserHighlight>): Stri
         obj.put("style", highlight.style.id)
         highlight.colorArgb?.let { argb ->
             obj.put("colorArgb", argb)
-            obj.put("colorCss", colorCssForArgb(argb))
+            obj.put("colorCss", argb.highlightFillCss())
         }
         // The tone the other surfaces fill with, alpha included. Sent for every highlight, palette or
         // custom, so a highlight looks the same here as it does in pagination and scrolling. Without
@@ -750,10 +751,6 @@ internal fun highlightsJsonForWebView(userHighlights: List<UserHighlight>): Stri
         jsonArray.put(obj)
     }
     return jsonArray.toString()
-}
-
-private fun colorCssForArgb(argb: Int): String {
-    return String.format("#%06X", 0xFFFFFF and argb)
 }
 
 @Suppress("unused")
@@ -1783,7 +1780,7 @@ fun ChapterWebView(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             activeHighlightPalette.forEachIndexed { index, colorArgb ->
-                                val colorCss = colorCssForArgb(colorArgb)
+                                val colorCss = colorArgb.highlightFillCss()
                                 val colorEnum = legacyHighlightColorForArgb(colorArgb)
                                 Box(
                                     modifier = Modifier
@@ -1874,7 +1871,7 @@ fun ChapterWebView(
                                     } else {
                                         onNoteRequested(null)
                                         localWebViewRef?.evaluateJavascript(
-                                            "javascript:window.HighlightBridgeHelper.createUserHighlight('${HighlightColor.YELLOW.cssClass}', '${HighlightColor.YELLOW.color.toArgb()}', '${colorCssForArgb(HighlightColor.YELLOW.color.toArgb())}', '${style.id}');", null
+                                            "javascript:window.HighlightBridgeHelper.createUserHighlight('${HighlightColor.YELLOW.cssClass}', '${HighlightColor.YELLOW.color.toArgb()}', '${HighlightColor.YELLOW.color.toArgb().highlightFillCss()}', '${style.id}');", null
                                         )
                                     }
                                     state.finishActionModeCallback()

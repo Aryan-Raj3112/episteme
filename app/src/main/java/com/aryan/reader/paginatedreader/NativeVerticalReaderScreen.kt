@@ -253,15 +253,7 @@ fun NativeVerticalReaderScreen(
      * against a single block is what lost multi-paragraph selections entirely, so this returns the
      * chapter. Suspends because the chapter may still need parsing.
      */
-    onGetChapterTextBlocks: suspend (Int) -> List<TextContentBlock>?,
-    /**
-     * Called with the full highlight list once some of it has been repaired in place.
-     *
-     * Locators stored before the reader had a usable coordinate space carry offsets that point
-     * somewhere else, and only the chapter's own text can say where they should have pointed. The
-     * corrected values have to be written back, or the same search runs again on every open.
-     */
-    onHighlightsRepaired: (List<UserHighlight>) -> Unit = {},
+    chapterHighlightIndexes: ChapterHighlightIndexes,
     activeTextureId: String? = null,
     activeTextureAlpha: Float = 0.55f
 ) {
@@ -286,38 +278,6 @@ fun NativeVerticalReaderScreen(
     var rootWindowBounds by remember { mutableStateOf(Rect.Zero) }
     var rootCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val hapticFeedback = LocalHapticFeedback.current
-
-    // Highlights created in a WebView surface store only their selected text, so placing them needs
-    // the whole chapter rather than the single block on screen. Built off the composition because the
-    // chapter's blocks may still need parsing.
-    val chapterHighlightIndexes = remember {
-        mutableStateOf(emptyMap<Int, EpubChapterTextIndex?>())
-    }
-    LaunchedEffect(userHighlights) {
-        // Every chapter that holds a highlight, not only the ones whose highlights lack offsets: a
-        // legacy highlight has offsets and they are wrong, which is exactly what the repair fixes.
-        for (chapterIndex in userHighlights
-            .mapNotNull { it.locator.chapterIndex ?: it.chapterIndex }
-            .distinct()
-        ) {
-            if (chapterHighlightIndexes.value.containsKey(chapterIndex)) continue
-            val blocks = runCatching { onGetChapterTextBlocks(chapterIndex) }.getOrNull()
-            val index = blocks?.let { EpubChapterTextIndex.of(chapterIndex, it.toSemanticTextBlocks()) }
-            chapterHighlightIndexes.value = chapterHighlightIndexes.value + (chapterIndex to index)
-            if (index == null) continue
-
-            // Repair locators stored before the coordinate space was fixed. Same reasoning as the
-            // paginated surface: only this chapter's own text can say where they should point, and
-            // the corrected values must be written back or the same search runs again next open.
-            val repaired = index.repairHighlights(userHighlights)
-            if (repaired.unchanged) continue
-            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                "highlight_repair surface=native_vertical chapter=$chapterIndex " +
-                    "repaired=${repaired.repaired} of=${userHighlights.size}"
-            )
-            onHighlightsRepaired(repaired.highlights)
-        }
-    }
 
     BoxWithConstraints(
         modifier = modifier
@@ -1109,7 +1069,7 @@ fun NativeVerticalReaderScreen(
                             // The vertical flow shows one block at a time, so scoping is by that block alone. Highlights
                             // created in a WebView surface have no absolute offsets, so they are
                             // located against the whole chapter first and then narrowed to this block.
-                            val chapterTextIndex = chapterHighlightIndexes.value[chapterIndex]
+                            val chapterTextIndex = chapterHighlightIndexes.forChapter(chapterIndex)
                             val pageUserHighlights = resolvePaginatedPageHighlights(
                                 scope = PaginatedPageScope(
                                     chapterIndex = chapterIndex,
