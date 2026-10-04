@@ -229,6 +229,93 @@ class EpubHighlightRepairTest {
         assertEquals(listOf(alreadyCorrect), result.highlights)
     }
 
+    /**
+     * Repair may rewrite a highlight but must never lose one.
+     *
+     * This is the property the whole migration rests on. Stored locators were being corrected in place on
+     * every open, so if repair could drop, merge or reorder anything, a reader would open a book and find
+     * annotations missing — the one failure that cannot be undone, because the data being rewritten is
+     * the only copy. So the guarantee is stated as a whole-batch property rather than per case: whatever
+     * the batch contains, the result contains the same highlights in the same order, and any difference
+     * is confined to a locator's coordinates.
+     *
+     * The batch is deliberately hostile: a highlight in another chapter, one whose text is not in this
+     * chapter, one with offsets from the broken space, one already correct, one with no text at all, and
+     * two identical ones.
+     */
+    @Test
+    fun `repair changes only coordinates, never which highlights exist`() {
+        val batch = listOf(
+            legacy(ReaderLocator(chapterIndex = 0, textQuote = filler)), // placed by text
+            legacy(ReaderLocator(chapterIndex = 0, textQuote = "alpha beta")),
+            legacy( // offsets from the broken space
+                ReaderLocator(chapterIndex = 0, startOffset = 3, endOffset = 300, textQuote = "delta")
+            ),
+            legacy( // already correct
+                ReaderLocator(
+                    chapterIndex = 0,
+                    startOffset = laidOutStart(2),
+                    endOffset = laidOutStart(2) + "delta".length,
+                    textQuote = "delta"
+                ).let { it }
+            ),
+            highlight(text = "not in this chapter at all", locator = ReaderLocator(chapterIndex = 0)),
+            highlight(text = "", locator = ReaderLocator(chapterIndex = 0)), // no text to place
+            highlight( // another chapter entirely
+                text = filler,
+                chapterIndex = 2,
+                locator = ReaderLocator(chapterIndex = 2, textQuote = filler),
+                id = "other-chapter"
+            ),
+            highlight(text = "delta", locator = ReaderLocator(chapterIndex = 0, textQuote = "delta"), id = "dupe"),
+            highlight(text = "delta", locator = ReaderLocator(chapterIndex = 0, textQuote = "delta"), id = "dupe")
+        )
+
+        val result = index().repairHighlights(batch)
+
+        // The batch is genuinely repaired, so this cannot pass by repair doing nothing at all.
+        assertTrue(result.repaired > 0, "expected some highlights to be corrected")
+        assertEquals(batch.size, result.highlights.size)
+        assertEquals(batch.map { it.id }, result.highlights.map { it.id })
+        // Nothing but the locator may differ, so a reader's own text, colour and notes are untouched.
+        result.highlights.forEachIndexed { position, repaired ->
+            assertEquals(batch[position].text, repaired.text)
+            assertEquals(batch[position].color, repaired.color)
+            assertEquals(batch[position].cfi.orEmpty(), repaired.cfi.orEmpty())
+        }
+        // And the highlights this chapter cannot place come back unchanged rather than dropped or blanked.
+        listOf(4, 5, 6).forEach { position ->
+            assertEquals(batch[position], result.highlights[position])
+        }
+    }
+
+    /**
+     * A highlight whose text cannot be placed keeps whatever position it already had.
+     *
+     * The other half of not losing anything: repair is a correction, not a reconstruction. It replaces a
+     * range only when it has found a better one, so a highlight it cannot resolve is left exactly as the
+     * reader last had it — still listed, still carrying its own text, and still painted by whichever
+     * surface can. Blanking its locator "to be safe" would be the one thing guaranteed to lose it.
+     */
+    @Test
+    fun `a highlight repair cannot place keeps the locator it already had`() {
+        val stored = ReaderLocator(
+            chapterIndex = 0,
+            startOffset = 41,
+            endOffset = 55,
+            blockIndex = 2,
+            charOffset = 41,
+            textQuote = "text from a later edition",
+            cfi = "/4/4:7"
+        )
+        val before = highlight(text = "text from a later edition", locator = stored)
+
+        val result = index().repairHighlights(listOf(before))
+
+        assertEquals(0, result.repaired)
+        assertEquals(listOf(before), result.highlights)
+    }
+
     @Test
     fun `repair is idempotent, so opening a book twice writes the same locator`() {
         val stored = legacy(ReaderLocator(chapterIndex = 0, textQuote = filler))

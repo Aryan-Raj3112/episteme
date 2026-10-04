@@ -229,140 +229,130 @@ class PaginatedHighlightPageScopeTest {
 
         // Both are reported, each with its own range: neither is dropped for overlapping the other.
         assertEquals(setOf("a", "b"), resolved.highlights.map { it.id }.toSet())
-        assertEquals(listOf(6 until 15), resolved.rangesForBlock(0).getValue("a"))
+        // "b" is stored as 10..16 and its quote "gamma" is what sits there, leading space included, so the
+        // stored range is honoured exactly. "a" is stored as 6..15, one character short of its own
+        // ten-character quote, so it is not a range describing this highlight and the quote decides
+        // instead: 6..16 is "beta gamma". Neither answer comes from whichever integers happened to be
+        // stored; both come from the chapter's text.
         assertEquals(listOf(10 until 16), resolved.rangesForBlock(0).getValue("b"))
+        assertEquals(listOf(6 until 16), resolved.rangesForBlock(0).getValue("a"))
     }
 
     /**
-     * Stored offsets that describe a different range than the highlight's text must not paint.
+     * A highlight places identically whether its stored offsets are right, wrong, or absent.
      *
-     * Offsets are written by several surfaces and by older builds, so they can be in a coordinate space
-     * the page's blocks do not use. The bounds arithmetic still produces a well-formed range in that
-     * case, just over the wrong characters — and because it is well formed, nothing downstream objects.
-     * A 118-character selection stored as a 297-character span satisfied the bounds check against every
-     * block on the page and painted most of it. Checking the range against the highlight's own words is
-     * what makes the optimisation safe to trust.
+     * This is the whole point of the migration. Offsets used to be an input to placement, computed by a
+     * second piece of arithmetic over a field that is element-relative and therefore meaningless across
+     * blocks; the result was that a 118-character selection stored as a 297-character span satisfied the
+     * bounds check against every block on a page and painted most of it. Nothing downstream could object,
+     * because the range it produced was well formed — it was simply over the wrong characters.
+     *
+     * Storing offsets is still worth doing, so this does not assert they are ignored: it asserts they
+     * cannot change the answer. Only the chapter layout decides where a highlight goes.
      */
     @Test
-    fun offsetsInTheWrongSpaceOnlyPaintBlocksThatReallyContainTheText() {
-        // Distinct paragraphs, so "contains the highlight's text" has exactly one answer. The shared
-        // fixture repeats a sentence, which would make an unrelated copy indistinguishable from the
-        // right one by text alone — that ambiguity is what the chapter index exists to settle.
-        val quote = "the quick brown fox jumps"
-        val texts = listOf("alpha beta gamma", quote, "delta epsilon zeta")
-        var cursor = 0
-        val blocks = texts.mapIndexed { index, text ->
+    fun storedOffsetsCannotChangeWhereAHighlightIsPainted() {
+        val blocks = chapterBlocks()
+        val quote = filler
+        val blockStart = blocks[1].startCharOffsetInSource
+
+        val correct = UserHighlight(
+            id = "correct",
+            cfi = "0:2:1:5:3",
+            text = quote,
+            color = HighlightColor.GREEN,
+            chapterIndex = 0,
+            locator = ReaderLocator(
+                chapterIndex = 0,
+                startOffset = blockStart,
+                endOffset = blockStart + quote.length,
+                textQuote = quote,
+                cfi = "0:2:1:5:3"
+            )
+        )
+        val wrong = correct.copy(
+            id = "wrong",
+            locator = correct.locator.copy(startOffset = 3, endOffset = 300)
+        )
+        val absent = correct.copy(
+            id = "absent",
+            locator = ReaderLocator(chapterIndex = 0, textQuote = quote, cfi = "0:2:1:5:3")
+        )
+
+        val expected = resolve(blocks, listOf(correct)).rangesForBlock(1).getValue("correct")
+
+        for (candidate in listOf(wrong, absent)) {
+            val resolved = resolve(blocks, listOf(candidate))
+            assertEquals(
+                "highlight ${candidate.id} painted somewhere other than its own words",
+                expected,
+                resolved.rangesForBlock(1).getValue(candidate.id)
+            )
+            // And nowhere else. The failure this guards against was a range landing on every block the
+            // page happened to contain.
+            assertTrue(
+                "highlight ${candidate.id} painted on more than one block",
+                resolved.rangesByHighlight.getValue(candidate.id).keys.size == 1
+            )
+        }
+    }
+
+    /**
+     * Blocks that all report the same start must still place correctly.
+     *
+     * `startCharOffsetInSource` is computed per HTML element, so a real parsed chapter reports the same
+     * value for every block and cannot be used to compare positions across them. The old placement path
+     * tested for that by checking the page's blocks had distinct starts, and refused to place anything
+     * from offsets when they did not — which meant placement took a different branch depending on how the
+     * chapter happened to be parsed. Now the page's blocks are only matched by identity, and the text is
+     * laid out by the chapter index, so the same highlight lands in the same place either way.
+     */
+    @Test
+    fun elementRelativeBlockStartsDoNotAffectPlacement() {
+        val texts = listOf("alpha beta gamma", "delta epsilon zeta")
+        val indistinguishable = texts.mapIndexed { index, text ->
             paragraph(
                 text = text,
                 cfi = "/4/${index * 2}",
-                startOffset = cursor,
+                // Every block claims the chapter starts here, as an element-relative counter does.
+                startOffset = 0,
                 blockIndex = index
-            ).also { cursor += text.length + 1 }
-        }
-        val mismatched = UserHighlight(
-            id = "wrong-space",
-            cfi = "0:2:1:5:3",
-            text = quote,
-            color = HighlightColor.GREEN,
-            chapterIndex = 0,
-            locator = ReaderLocator(
-                chapterIndex = 0,
-                startOffset = 3,
-                // Far longer than the quote and spanning past it, as a range in another space would be.
-                endOffset = 300,
-                textQuote = quote,
-                cfi = "0:2:1:5:3"
             )
-        )
+        }
+        val highlight = quoteOnlyHighlight("delta epsilon")
 
         val resolved = resolvePaginatedPageHighlights(
-            scope = PaginatedPageScope(chapterIndex = 0, textBlocks = blocks),
-            highlights = listOf(mismatched),
-            chapterTextIndex = null
+            scope = PaginatedPageScope(chapterIndex = 0, textBlocks = indistinguishable),
+            highlights = listOf(highlight),
+            chapterTextIndex = EpubChapterTextIndex.of(0, indistinguishable.toSemanticTextBlocks())
         )
 
-        // Only the block that really contains the quote. Before the check, the bounds arithmetic put a
-        // range on every block the page had, which is what painted most of a page in the field.
-        val paintedBlocks: List<Int> = resolved.rangesByHighlight["wrong-space"]?.keys?.sorted()
-            ?: emptyList()
-        assertEquals(listOf(1), paintedBlocks)
+        assertEquals(listOf("h"), resolved.highlights.map { it.id })
+        assertEquals(listOf(0 until 13), resolved.rangesForBlock(1).getValue("h"))
     }
 
     /**
-     * Offsets that fail the check must not end the attempt when the text can still place the highlight.
+     * A chapter index covering only this page must not be able to place a repeated sentence on both.
      *
-     * Rejecting a bad range and returning is only safe when nothing better is on offer. The chapter index
-     * resolves the same highlight from its stored words in one lookup, so bailing out instead left a
-     * recoverable highlight invisible on every page — with a working resolver sitting right there,
-     * because the offsets path runs first and returned before the quote path could be tried.
+     * The resolver needs the whole chapter to choose one occurrence. Handing it a page's worth of blocks
+     * makes "the page contains a copy" indistinguishable from "this is the occurrence", which is how one
+     * highlight ended up on every page of a chapter.
      */
     @Test
-    fun wrongSpaceOffsetsFallBackToTheTextWhenTheChapterIndexCanPlaceThem() {
+    fun pageScopedIndexDoesNotPlaceARepeatedSentenceTwice() {
         val blocks = chapterBlocks()
-        val quote = filler
-        val mismatched = UserHighlight(
-            id = "wrong-space-but-placeable",
-            cfi = "0:2:1:5:3",
-            text = quote,
-            color = HighlightColor.GREEN,
-            chapterIndex = 0,
-            locator = ReaderLocator(
-                chapterIndex = 0,
-                // Past the end of every block on the page, so no range survives at all. This is what
-                // makes the case bite: rejection on its own would leave the highlight unpainted.
-                startOffset = 200,
-                endOffset = 260,
-                textQuote = quote,
-                cfi = "0:2:1:5:3"
-            )
+        val highlight = quoteOnlyHighlight(filler)
+        val firstPageOnly = resolvePaginatedPageHighlights(
+            scope = PaginatedPageScope(chapterIndex = 0, textBlocks = listOf(blocks[0], blocks[3])),
+            highlights = listOf(highlight),
+            chapterTextIndex = EpubChapterTextIndex.of(0, listOf(blocks[0], blocks[3]).toSemanticTextBlocks())
         )
 
-        val resolved = resolvePaginatedPageHighlights(
-            scope = PaginatedPageScope(chapterIndex = 0, textBlocks = blocks),
-            highlights = listOf(mismatched),
-            chapterTextIndex = chapterIndex()
-        )
-
-        val paintedBlocks: List<Int> = resolved.rangesByHighlight["wrong-space-but-placeable"]
-            ?.keys?.sorted() ?: emptyList()
-        // Placed by text on the block the resolver settles on — the first occurrence in document
-        // order, not the repeated copy — so one place, not every block the bad range would have touched.
-        assertEquals(listOf(1), paintedBlocks)
-        // And it lands only where the quote actually is, not on every block the bad range touched.
-        // Placed by text on the block the resolver settles on — the first occurrence in
-        // document order, not the repeated copy — so one place, not every block the bad
-        // range would have touched.
-        assertEquals(listOf(1), paintedBlocks)
-    }
-
-    /** The same offsets are fine when they do describe the highlight, so the guard is not a blanket veto. */
-    @Test
-    fun offsetsThatCoverTheHighlightTextStillPaint() {
-        val blocks = chapterBlocks()
-        val quote = filler
-        val target = blocks[1]
-        val matching = UserHighlight(
-            id = "right-space",
-            cfi = "0:2:1:5:3",
-            text = quote,
-            color = HighlightColor.GREEN,
-            chapterIndex = 0,
-            locator = ReaderLocator(
-                chapterIndex = 0,
-                startOffset = target.startCharOffsetInSource,
-                endOffset = target.startCharOffsetInSource + quote.length,
-                textQuote = quote,
-                cfi = "0:2:1:5:3"
-            )
-        )
-
-        val resolved = resolvePaginatedPageHighlights(
-            scope = PaginatedPageScope(chapterIndex = 0, textBlocks = blocks),
-            highlights = listOf(matching),
-            chapterTextIndex = null
-        )
-
-        assertEquals(listOf("right-space"), resolved.rangesByHighlight.keys.toList())
+        // Whichever copy this page-scope index settles on, it settles on one block of this page and not
+        // on a block belonging to the whole chapter as well.
+        val painted = firstPageOnly.rangesByHighlight["h"]?.keys?.sorted() ?: emptyList()
+        assertTrue("painted on $painted", painted.size == 1)
+        assertEquals(listOf(3), painted)
     }
 
     private fun paragraph(

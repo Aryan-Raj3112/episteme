@@ -1194,70 +1194,54 @@ fun NativeVerticalReaderScreen(
                                 activeSelection = null
                             },
                             onHighlight = { color, style ->
-                                val startAbsoluteOffset = sel.startBlockCharOffset + sel.startOffset
-                                val endAbsoluteOffset = sel.endBlockCharOffset + sel.endOffset
                                 val finalCfi =
                                     "${sel.startBaseCfi}:${sel.startOffset}|${sel.endBaseCfi}:${sel.endOffset}"
-                                val absoluteCandidateCfi =
-                                    "${sel.startBaseCfi}:$startAbsoluteOffset|${sel.endBaseCfi}:$endAbsoluteOffset"
                                 val locator = sel.toSharedHighlightLocator(
                                     chapterIndex = sel.startPageIndex,
                                     cfi = finalCfi
                                 )
                                 Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
                                     "create_request source=native_vertical_highlight_menu colorArgb=$color " +
-                                        "savedCfi=$finalCfi absoluteCandidateCfi=$absoluteCandidateCfi " +
+                                        "savedCfi=$finalCfi " +
                                         "startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
                                         "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
                                         "localOffsets=${sel.startOffset}..${sel.endOffset} " +
-                                        "blockAbsStarts=${sel.startBlockCharOffset}..${sel.endBlockCharOffset} " +
-                                        "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
-                                        "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                                                                                                                        "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                 )
                                 Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
                                     "create_request surface=native_vertical action=highlight colorArgb=$color " +
-                                        "savedCfi=$finalCfi absoluteCandidateCfi=$absoluteCandidateCfi " +
+                                        "savedCfi=$finalCfi " +
                                         "startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
                                         "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
                                         "localOffsets=${sel.startOffset}..${sel.endOffset} " +
-                                        "blockAbsStarts=${sel.startBlockCharOffset}..${sel.endBlockCharOffset} " +
-                                        "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
-                                        "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                                                                                                                        "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                 )
                                 onHighlightCreated(finalCfi, sel.text, color.toString(), locator, style)
                                 activeSelection = null
                             },
                             onNote = { style ->
                                 onNoteRequested(null)
-                                val startAbsoluteOffset = sel.startBlockCharOffset + sel.startOffset
-                                val endAbsoluteOffset = sel.endBlockCharOffset + sel.endOffset
                                 val finalCfi =
                                     "${sel.startBaseCfi}:${sel.startOffset}|${sel.endBaseCfi}:${sel.endOffset}"
-                                val absoluteCandidateCfi =
-                                    "${sel.startBaseCfi}:$startAbsoluteOffset|${sel.endBaseCfi}:$endAbsoluteOffset"
                                 val locator = sel.toSharedHighlightLocator(
                                     chapterIndex = sel.startPageIndex,
                                     cfi = finalCfi
                                 )
                                 Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
                                     "create_request source=native_vertical_note_menu color=${HighlightColor.YELLOW.id} " +
-                                        "savedCfi=$finalCfi absoluteCandidateCfi=$absoluteCandidateCfi " +
+                                        "savedCfi=$finalCfi " +
                                         "startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
                                         "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
                                         "localOffsets=${sel.startOffset}..${sel.endOffset} " +
-                                        "blockAbsStarts=${sel.startBlockCharOffset}..${sel.endBlockCharOffset} " +
-                                        "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
-                                        "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                                                                                                                        "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                 )
                                 Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
                                     "create_request surface=native_vertical action=note color=${HighlightColor.YELLOW.id} " +
-                                        "savedCfi=$finalCfi absoluteCandidateCfi=$absoluteCandidateCfi " +
+                                        "savedCfi=$finalCfi " +
                                         "startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
                                         "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
                                         "localOffsets=${sel.startOffset}..${sel.endOffset} " +
-                                        "blockAbsStarts=${sel.startBlockCharOffset}..${sel.endBlockCharOffset} " +
-                                        "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
-                                        "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                                                                                                                        "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                 )
                                 onHighlightCreated(finalCfi, sel.text, (activeHighlightPalette.firstOrNull() ?: HighlightColor.YELLOW.color.toArgb()).toString(), locator, style)
                                 activeSelection = null

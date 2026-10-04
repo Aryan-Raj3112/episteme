@@ -111,28 +111,45 @@ data class PaginatedSelection(
     val textPerBlock: Map<String, String> = emptyMap()
 )
 
+/**
+ * The locator to store for a highlight created from this selection.
+ *
+ * It records what the selection genuinely knows — which chapter, which block, which words, and the DOM
+ * position it came from — and nothing else.
+ *
+ * In particular it does not compute `startBlockCharOffset + startOffset` as a chapter offset. That sum
+ * was never a chapter position: [PaginatedSelection.startBlockCharOffset] carries
+ * `startCharOffsetInSource`, which the parser computes per HTML element, so it restarts at every
+ * paragraph and describes nothing outside its own element. Adding a character offset within the block to
+ * it produces a number that looks like a chapter offset and is not one, and it was stored as though it
+ * were. The result was a highlight whose persisted range pointed at unrelated text, which is what let a
+ * 118-character selection be painted across most of a page.
+ *
+ * Leaving the chapter range unset is not a gap to be filled in later by guessing. Placement resolves a
+ * highlight from its own words through [EpubChapterTextIndex.anchorFor], which works whether or not a
+ * range was stored, and the reader-wide reconciliation writes a correct range in as soon as the
+ * chapter's blocks can be read. So the stored locator becomes a record of a position rather than the
+ * means of finding one, and a highlight is placeable from the moment it is created.
+ */
 internal fun PaginatedSelection.toSharedHighlightLocator(
     chapterIndex: Int?,
     cfi: String
 ): SharedReaderLocator {
-    val startAbsoluteOffset = startBlockCharOffset + startOffset
-    val endAbsoluteOffset = endBlockCharOffset + endOffset
-    val rangeStart = minOf(startAbsoluteOffset, endAbsoluteOffset)
-    val rangeEnd = maxOf(startAbsoluteOffset, endAbsoluteOffset)
     // Note: pageIndex is a volatile pagination hint (shifts with font/margin settings).
-    // Render scoping intentionally ignores it and uses the absolute offsets + structural
-    // scope below, so stored page numbers can never hide a highlight after repagination.
+    // Render scoping intentionally ignores it and uses the structural scope below, so stored page
+    // numbers can never hide a highlight after repagination.
     Timber.tag(TAG_HIGHLIGHT_DIAG).d(
-        "create chapter=$chapterIndex absoluteRange=$rangeStart..$rangeEnd " +
-            "blockIndex=$startBlockIndex pageHint=$startPageIndex..$endPageIndex cfi=$cfi"
+        "create chapter=$chapterIndex textChars=${text.length} " +
+            "blockIndex=$startBlockIndex pageHint=$startPageIndex..$endPageIndex cfi=$cfi " +
+            "range=unresolved_until_chapter_index"
     )
     return SharedReaderLocator(
         chapterIndex = chapterIndex,
         pageIndex = startPageIndex,
-        startOffset = rangeStart,
-        endOffset = rangeEnd,
+        startOffset = null,
+        endOffset = null,
         blockIndex = startBlockIndex.takeIf { it >= 0 },
-        charOffset = rangeStart,
+        charOffset = null,
         textQuote = text,
         cfi = cfi
     )

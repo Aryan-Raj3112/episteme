@@ -206,14 +206,28 @@ class EpubChapterTextIndex private constructor(
     }
 
     /**
-     * The anchor for [highlight], preferring its stored offsets and falling back to its text.
+     * Where this highlight is in this chapter, or null when it cannot be placed here.
      *
-     * Order matters and matches Android. A locator that validates against the chapter's own text is
-     * already correct, so it is used as stored. Only a locator that does not validate is relocated by
-     * searching for its text, which is what repairs both anchor-less highlights and ones written in the
-     * broken space.
-     */
-    private fun anchorFor(highlight: UserHighlight): HighlightAnchor? {
+     * This is the single entry point for placing a highlight, and every surface goes through it. It
+     * exists because a highlight's stored locator cannot be trusted as input: it carries no schema
+     * marker, so a locator written by an older build — or by a surface whose offsets are relative to
+     * one HTML element rather than to the chapter — is structurally indistinguishable from a correct
+     * one. Deciding between them is only possible by checking the claim against the chapter's own text,
+     * which is what this does.
+     *
+     * The order is deliberate:
+     *
+     * 1. Stored offsets that demonstrably cover the highlight's own words are already correct and are
+     *    returned as they are, so an anchored highlight does not re-search its chapter on every repaint.
+     * 2. Anything else is relocated by searching for the text, which covers a highlight created in a
+     *    WebView (no position at all), one carrying offsets from a different coordinate space, and one
+     *    left behind by an older build.
+     *
+     * Null means the chapter cannot place this highlight. A caller must treat that as "paint nothing"
+     * rather than "paint somewhere plausible" — the ambiguity is real, and guessing is what put one
+     * highlight on every page of a chapter.
+ */
+fun anchorFor(highlight: UserHighlight): HighlightAnchor? {
         val quote = highlight.locator.textQuote?.takeIf { it.isNotBlank() } ?: highlight.text
         if (quote.isBlank()) return null
         if (storedRangeAgreesWithQuote(highlight.locator, quote)) {
@@ -236,8 +250,16 @@ class EpubChapterTextIndex private constructor(
         while (position < end) {
             val block = blockOfPosition[position]
             if (block < 0) {
-                // A position outside any block: the stored offsets straddle a gap, which cannot be
-                // painted as one run. Report nothing rather than a range that spans missing text.
+                // A block join carries no owner but is part of the chapter's text, so it ends the run
+                // rather than the range. Rejecting the whole range here, as this once did, meant a
+                // highlight whose selection ran from one paragraph into the next could never be placed
+                // from its own offsets — the same defect [spansUnowned] had.
+                if (isJoinSeparator(position)) {
+                    position++
+                    continue
+                }
+                // Any other unowned position means the range reaches text that is not in any block, so
+                // it cannot be painted as a run. Report nothing rather than a range spanning a gap.
                 return null
             }
             var runEnd = position
@@ -410,10 +432,6 @@ class EpubChapterTextIndex private constructor(
         /** Stands in for the separator between two blocks, and belongs to neither of them. */
         private const val SEPARATOR = ' '
 
-        /**
-         * Builds the index for [chapterIndex] from its blocks. Returns null when the chapter has no
-         * text blocks, in which case no quote can be placed.
-         */
         /**
          * Lays the chapter's text blocks out in one contiguous character space.
          *

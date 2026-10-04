@@ -1,10 +1,6 @@
 package com.aryan.reader.paginatedreader
 
 import com.aryan.reader.epubreader.logHighlightTrace
-import com.aryan.reader.paginatedreader.EpubChapterTextIndex
-import com.aryan.reader.paginatedreader.HighlightAnchor
-import com.aryan.reader.paginatedreader.HighlightAnchorConfidence
-import com.aryan.reader.paginatedreader.HighlightBlockSegment
 import com.aryan.reader.shared.UserHighlight
 import timber.log.Timber
 
@@ -107,9 +103,20 @@ internal fun resolvePaginatedPageHighlights(
 /**
  * The block-local ranges [highlight] occupies on this page, or null when it is not on this page.
  *
- * A highlight with absolute offsets is placed by those offsets, which is exact and survives
- * repagination. One without them is located once in the chapter and accepted here only when a block
- * on this page owns the resolved location.
+ * There is deliberately no second way to place a highlight. An earlier version placed from the stored
+ * offsets whenever the page's blocks reported distinct start offsets, doing its own arithmetic against
+ * `startCharOffsetInSource` — a field that is element-relative, so it restarts for every paragraph and
+ * cannot be compared across blocks. The arithmetic still produced well-formed ranges, just over the
+ * wrong characters, and it painted a 297-character span of stored offsets across most of a page for a
+ * 118-character selection. A guard that compared the painted slice with the highlight's own text caught
+ * most of those, but a guard is a patch on top of two coordinate systems: it could only reject a range,
+ * never correct one.
+ *
+ * [EpubChapterTextIndex.anchorFor] is now the only path. It owns the chapter's layout, so the offsets it
+ * returns are block-local by construction, and it decides whether the stored locator may be used at all
+ * by checking it against the chapter's text. A highlight whose stored locator cannot be trusted is
+ * relocated by its own text, which is also what repairs it — so placing and repairing are the same
+ * question asked twice, and they cannot answer differently.
  */
 private fun resolvePaginatedHighlightOnPage(
     highlight: UserHighlight,
@@ -118,57 +125,7 @@ private fun resolvePaginatedHighlightOnPage(
 ): Map<Int, List<IntRange>>? {
     val pageBlocks = scope.textBlocks
     val locator = highlight.locator
-
-    if (locator.hasTextRange && pageBlocks.pageBlocksHaveChapterOffsets()) {
-        val start = locator.startOffset ?: return null
-        val end = locator.endOffset ?: return null
-        val quote = locator.textQuote?.takeIf { it.isNotBlank() } ?: highlight.text
-        val perBlock = pageBlocks.mapNotNull { block ->
-            val blockStartAbs = block.startCharOffsetInSource
-            val blockEndAbs = block.textEndOffset(blockStartAbs)
-            if (start < blockEndAbs && end > blockStartAbs) {
-                val from = maxOf(start, blockStartAbs) - blockStartAbs
-                val to = minOf(end, blockEndAbs) - blockStartAbs
-                if (to <= from) return@mapNotNull null
-                // Stored offsets are an optimisation, not an authority. They are written by several
-                // surfaces and by older builds, so they can describe a range in a different coordinate
-                // space from the one these blocks use — and then the arithmetic still produces a
-                // perfectly well-formed range, just over the wrong characters. That is how a
-                // 118-character selection came to be painted across most of a page: a 297-character
-                // span of stored offsets satisfied the bounds check against every block on it.
-                //
-                // The highlight's own text is the only thing that can say whether a range is right, so
-                // it is checked before anything is painted. A selection spanning paragraphs contributes
-                // one contiguous slice per block, each of which appears in the quote, so a containment
-                // test covers single- and multi-block highlights alike.
-                val slice = block.content.text.substring(from, to)
-                if (!highlightCoversText(slice, quote)) {
-                    logHighlightTrace(
-                        "place_offsets_rejected id=${highlight.id} block=${block.blockIndex} " +
-                            "range=$from..$to quoteChars=${quote.length} " +
-                            "reason=range_does_not_match_highlight_text"
-                    )
-                    return@mapNotNull null
-                }
-                block.blockIndex to listOf(from until to)
-            } else {
-                null
-            }
-        }.toMap()
-        if (perBlock.isNotEmpty()) return perBlock
-
-        // Nothing survived the check, which means these offsets do not describe this highlight. The
-        // chapter index is how it gets placed instead, and it may well be available — so falling
-        // through is not optional. Returning here left a highlight unpainted on every page even with a
-        // perfectly good resolver in hand, which is a repairable position presented as a dead end.
-        logHighlightTrace(
-            "place_offsets_unusable id=${highlight.id} quoteChars=${quote.length} " +
-                "offsets=$start..$end action=resolve_by_text"
-        )
-    }
-
     val quote = locator.textQuote?.takeIf { it.isNotBlank() } ?: highlight.text
-    if (quote.isBlank()) return null
 
     logHighlightTrace(
         "scope id=${highlight.id} chapter=${highlight.chapterIndex} page=${scope.chapterIndex} " +
@@ -182,7 +139,9 @@ private fun resolvePaginatedHighlightOnPage(
         )
         return null
     }
-    val anchor: HighlightAnchor? = chapterTextIndex.resolve(quote)
+    if (quote.isBlank()) return null
+
+    val anchor: HighlightAnchor? = chapterTextIndex.anchorFor(highlight)
     if (anchor == null) {
         Timber.tag(TAG_HIGHLIGHT_DIAG).d(
             "map_skip reason=quote_unresolved highlightId=${highlight.id} " +
@@ -191,7 +150,8 @@ private fun resolvePaginatedHighlightOnPage(
         return null
     }
     if (anchor.chapterIndex != scope.chapterIndex) return null
-    if (anchor.confidence != HighlightAnchorConfidence.QuoteMatched) return null
+    // Both are placements, not guesses. `Unresolved` would mean the search found nothing worth painting.
+    if (anchor.confidence == HighlightAnchorConfidence.Unresolved) return null
 
     // Accept only when a block on this page owns the resolved location. This is the step that stops a
     // repeated sentence from painting on every page that happens to contain a copy of it.
@@ -276,45 +236,6 @@ internal fun resolveWebViewHighlightAnchor(
     return EpubChapterTextIndex.of(target.chapterIndex, blocks.toSemanticTextBlocks())
         ?.anchorMissingOffsets(target)
 }
-
-/**
- * Whether these blocks carry usable chapter offsets.
- *
- * `startCharOffsetInSource` is element-relative: the parser restarts its counter for each element, so
- * a real parsed chapter reports the same start for every block. Comparing a stored absolute range
- * against such blocks would accept or reject by accident, so placement falls back to the text search
- * instead. A single block is fine either way, since there is nothing to compare against.
- */
-/**
- * Whether [slice] is text this highlight actually covers.
- *
- * Whitespace is collapsed on both sides because the two come from different places — the stored offsets
- * index parsed block text, while the quote came from a DOM selection — and the join between two
- * paragraphs is represented differently in each. Only letters, digits and punctuation are compared;
- * whitespace differences are not evidence that a range is wrong.
- */
-private fun highlightCoversText(slice: String, quote: String): Boolean {
-    val collapsedSlice = collapseReaderWhitespace(slice)
-    if (collapsedSlice.isEmpty()) return false
-    val collapsedQuote = collapseReaderWhitespace(quote)
-    if (collapsedQuote.isEmpty()) return false
-    // Either the slice is the whole quote, or it is one contiguous part of it.
-    return collapsedSlice == collapsedQuote || collapsedQuote.contains(collapsedSlice)
-}
-
-internal fun List<TextContentBlock>.pageBlocksHaveChapterOffsets(): Boolean {
-    val starts = map { it.startCharOffsetInSource }
-    return starts.size <= 1 || starts.distinct().size > 1
-}
-
-/**
- * Where this block's text ends in the chapter.
- *
- * The recorded end is -1 on blocks that never had one stored, which must not be read as "ends at -1"
- * or the block looks empty and every highlight inside it is dropped.
- */
-internal fun TextContentBlock.textEndOffset(fallbackStart: Int): Int =
-    endCharOffsetInSource.takeIf { it > fallbackStart } ?: (fallbackStart + content.text.length)
 
 /**
  * A text block expressed in the [SemanticTextBlock] shape the shared chapter index expects.

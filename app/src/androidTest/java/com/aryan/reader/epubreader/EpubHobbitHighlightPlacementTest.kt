@@ -59,11 +59,19 @@ class EpubHobbitHighlightPlacementTest {
     private var bookId: String = ""
     private var quoteChapterIndex: Int = -1
 
+    /** Which highlight the running case seeded. */
+    private var seededId: String = ""
+
     /** Verbatim from the book, including the bracketed editorial note and the en dashes. */
     private val quote =
         "without a mighty warrior; even a hero. I tried to find one, but I had to fall back " +
             "(I beg your pardon, but I am sure you will understand – dragon-slaying is not I " +
             "believe your speciality) – to fall back on little Bilbo"
+
+    private companion object {
+        const val LEGACY_ID = "hobbit_legacy_offsets"
+        const val NO_OFFSETS_ID = "hobbit_no_offsets"
+    }
 
     @Before
     fun setup() {
@@ -88,8 +96,38 @@ class EpubHobbitHighlightPlacementTest {
         currentEpubFile?.takeIf { it.exists() }?.delete()
     }
 
+    /**
+     * A highlight stored with offsets from the coordinate space the reader no longer uses.
+     *
+     * The offsets are the shape older builds wrote: an element-relative base plus a character offset
+     * within the block, spanning far past the quote. Nothing but a real book and a real paginator can
+     * say whether such a highlight is put back where it belongs, and every synthetic book said yes.
+     */
     @Test
     fun aRealBookHighlightIsRewrittenToCoverExactlyItsOwnText() {
+        requireBook()
+        seedHighlight(id = LEGACY_ID, startOffset = 32, endOffset = 347)
+
+        assertPlacedOverItsOwnWords(LEGACY_ID, "hobbit_legacy_offsets")
+    }
+
+    /**
+     * A highlight stored with no offsets at all, which is what a highlight created by this build carries.
+     *
+     * Creation no longer computes a chapter position from an element-relative start, because that number
+     * was never a position in the chapter. So the shape is now "text, block, DOM position and nothing
+     * else", and the first thing the reader has to do with it is find it. This asserts it does, on the one
+     * book whose text does not match its own markup tidily.
+     */
+    @Test
+    fun aHighlightCreatedWithoutOffsetsIsPlacedOnItsOwnWords() {
+        requireBook()
+        seedHighlight(id = NO_OFFSETS_ID, startOffset = null, endOffset = null)
+
+        assertPlacedOverItsOwnWords(NO_OFFSETS_ID, "hobbit_no_offsets")
+    }
+
+    private fun requireBook() {
         /*
          * This book is not in the repository. It is a commercial title, so committing it would be
          * distributing copyrighted material, and the test is skipped rather than shipped with one when
@@ -98,9 +136,9 @@ class EpubHobbitHighlightPlacementTest {
          * the difference between the two visible.
          */
         assumeTrue("the test book is not available locally", assetPresent)
+    }
 
-        seedWrongSpaceHighlight()
-
+    private fun assertPlacedOverItsOwnWords(id: String, captureName: String) {
         scenario = ActivityScenario.launch<MainActivity>(createEpubViewIntent())
         composeTestRule.waitUntil(timeoutMillis = 90_000) {
             composeTestRule.onAllNodesWithTag("ReaderContainer").fetchSemanticsNodes().isNotEmpty()
@@ -110,11 +148,11 @@ class EpubHobbitHighlightPlacementTest {
         val start = anchored?.locator?.startOffset
         val end = anchored?.locator?.endOffset
         println(
-            "HOBBIT_RESULT found=${anchored != null} quoteChars=${quote.length} " +
+            "HOBBIT_RESULT id=$id found=${anchored != null} quoteChars=${quote.length} " +
                 "offsets=$start..$end span=${if (start != null && end != null) end - start else null} " +
                 "block=${anchored?.locator?.blockIndex} chapter=${anchored?.chapterIndex}"
         )
-        capture("hobbit_highlight_placement")
+        capture(captureName)
 
         check(anchored != null) { "the highlight was dropped from the book entirely" }
         check(start != null && end != null) {
@@ -133,18 +171,22 @@ class EpubHobbitHighlightPlacementTest {
         }
 
         /*
-         * Open the book again at the position the repair found, which is what a reader does after
-         * closing a book: the repaired locator is the only thing that knows where on the page this
-         * highlight belongs, so using it as the landing position is the only way to see whether the
-         * highlight is actually painted on the page holding its words — rather than trusting offsets
-         * that only ever get read by the same code that wrote them.
+         * Open the book again at the position the repair found, which is what a reader does after closing a
+         * book. The repaired locator is the only thing that knows which page this highlight belongs on, so
+         * landing on it is the only way to see the highlight painted rather than merely stored correctly —
+         * and a stored offset is not evidence of a painted one.
          */
         scenario?.close()
         scenario = null
+        // The reader saves its position as it shuts down, which would overwrite a position written too
+        // eagerly. This is the harness waiting for the book to be closed, not a product behaviour.
+        Thread.sleep(2_000)
         runBlocking {
             AppDatabase.getDatabase(targetContext).recentFileDao().updateEpubReadingPosition(
                 bookId = bookId,
-                cfi = anchored.cfi,
+                // No CFI: the stored one is a DOM position from the seeding, which cannot be converted
+                // back to a chapter, and a CFI the reader can read takes precedence over the locator.
+                cfi = null,
                 chapterIndex = anchored.locator.chapterIndex ?: quoteChapterIndex,
                 blockIndex = anchored.locator.blockIndex ?: 0,
                 charOffset = anchored.locator.startOffset ?: 0,
@@ -156,15 +198,36 @@ class EpubHobbitHighlightPlacementTest {
         composeTestRule.waitUntil(timeoutMillis = 60_000) {
             composeTestRule.onAllNodesWithTag("ReaderContainer").fetchSemanticsNodes().isNotEmpty()
         }
-        // Give the paginator a moment to lay out the landing page before looking at it.
-        Thread.sleep(4_000)
-        capture("hobbit_highlight_painted")
-        val painted = countHighlightPixels("hobbit_highlight_painted")
-        println("HOBBIT_PIXELS green=${painted.first} any=${painted.second}")
-        check(painted.first > 2_000) {
-            "the repaired locator opens the page holding the quote but only ${painted.first} green " +
-                "pixels are drawn, so the highlight is not painted there"
+        // Give the paginator a moment to lay out the landing page, and let the reader report where it
+        // actually landed: a reader that ignored the stored position and opened the cover would make the
+        // pixel check below meaningless, because this cover is largely green.
+        Thread.sleep(5_000)
+        val landedIn = landedChapterIndex()
+        println("HOBBIT_LANDED id=$id chapter=$landedIn expected=$quoteChapterIndex")
+        check(landedIn == quoteChapterIndex) {
+            "the book reopened at chapter $landedIn rather than $quoteChapterIndex, so this case would " +
+                "measure the cover instead of the highlight — a harness problem, not a placement result"
         }
+        capture(captureName)
+        val (green, opaque) = countHighlightPixels(captureName)
+        println("HOBBIT_PIXELS id=$id green=$green any=$opaque")
+        check(green > 2_000) {
+            "on the page holding the quote, only $green sampled pixels are the highlight's colour, so " +
+                "nothing was painted there"
+        }
+        // The failure being guarded against is a highlight painted over whole blocks across many pages,
+        // which floods the page with its colour. Four lines of text over a full page is a small fraction;
+        // a page-swallowing paint is not. Both bounds matter, because the first alone is satisfied by this
+        // book's cover art and the second alone by a single stray pixel.
+        check(green.toDouble() < opaque * 0.25) {
+            "$green of $opaque sampled pixels are the highlight's colour, so it is painted over much of " +
+                "the page rather than over its own words"
+        }
+    }
+
+    /** The chapter the reader last recorded itself to be in, or null if it has not saved yet. */
+    private fun landedChapterIndex(): Int? = runBlocking {
+        AppDatabase.getDatabase(targetContext).recentFileDao().getFileByBookId(bookId)?.lastChapterIndex
     }
 
     /**
@@ -249,9 +312,16 @@ class EpubHobbitHighlightPlacementTest {
         error("the quote is not in the book; the test's premise is wrong, not the reader's")
     }
 
-    private fun seedWrongSpaceHighlight() {
-        val wrongSpace = UserHighlight(
-            id = "hobbit_wrong_space",
+    /**
+     * Stores one highlight in the shape [id] describes, for this run's chapter.
+     *
+     * Written to the preferences key the reader reads on open, derived from the book's title the same way
+     * the reader derives it. Seeding the wrong key is a quiet way to assert against an empty list.
+     */
+    private fun seedHighlight(id: String, startOffset: Int?, endOffset: Int?) {
+        seededId = id
+        val seeded = UserHighlight(
+            id = id,
             cfi = "/4/2/6/4/2/8:300",
             text = quote,
             color = HighlightColor.GREEN,
@@ -259,8 +329,8 @@ class EpubHobbitHighlightPlacementTest {
             colorArgb = 0xFF388E3C.toInt(),
             locator = ReaderLocator(
                 chapterIndex = quoteChapterIndex,
-                startOffset = 32,
-                endOffset = 347,
+                startOffset = startOffset,
+                endOffset = endOffset,
                 textQuote = quote,
                 cfi = "/4/2/6/4/2/8:300"
             )
@@ -269,20 +339,39 @@ class EpubHobbitHighlightPlacementTest {
             .edit()
             .putString(
                 "highlights_data_$sanitizedTitle",
-                EpubAnnotationSerializer.highlightsToJson(listOf(wrongSpace))
+                EpubAnnotationSerializer.highlightsToJson(listOf(seeded))
             )
             .commit()
     }
 
+    /**
+     * The seeded highlight as the reader now stores it, or null if it has gone missing entirely.
+     *
+     * Read from the database and the preferences copy together, because either can be the one holding it
+     * at a given moment: the reader reads highlights from preferences when a book is opened and moves them
+     * into the database, and which of the two a lookup finds depends on how far along that handover is.
+     * Depending on one of them made this case fail for reasons that had nothing to do with placement.
+     */
     private fun awaitAnchor(): UserHighlight? {
         val deadline = System.currentTimeMillis() + 120_000
         var latest: UserHighlight? = null
         while (System.currentTimeMillis() < deadline) {
-            latest = persisted().firstOrNull { it.id == "hobbit_wrong_space" }
+            latest = stored().firstOrNull { it.id == seededId }
             if (latest?.locator?.blockIndex != null) return latest
             Thread.sleep(500)
         }
         return latest
+    }
+
+    /** Everywhere the reader might have put the highlight, newest location last. */
+    private fun stored(): List<UserHighlight> {
+        val fromPrefs = runCatching {
+            EpubAnnotationSerializer.parseHighlightsJson(
+                targetContext.getSharedPreferences("epub_reader_settings", Context.MODE_PRIVATE)
+                    .getString("highlights_data_$sanitizedTitle", "[]")
+            )
+        }.getOrDefault(emptyList())
+        return fromPrefs.ifEmpty { persisted() } + persisted()
     }
 
     /** The database is authoritative; an open reader clears the preferences copy. */
