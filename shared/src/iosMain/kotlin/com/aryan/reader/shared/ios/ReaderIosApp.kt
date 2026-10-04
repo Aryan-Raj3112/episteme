@@ -155,6 +155,7 @@ import com.aryan.reader.shared.SharedAudiobookImportMetadata
 import com.aryan.reader.shared.SharedAudiobookImportRequest
 import com.aryan.reader.shared.SharedAudiobookImportStatus
 import com.aryan.reader.shared.SharedAudiobookFormats
+import com.aryan.reader.shared.sortBooks
 import com.aryan.reader.shared.splitFilesByAudiobookDecodability
 import com.aryan.reader.shared.SharedAudiobookPlaybackRequest
 import com.aryan.reader.shared.SharedAudiobookPlaybackState
@@ -9443,7 +9444,7 @@ private fun SharedReaderScreenState.withIosImportsFolder(importedBooks: List<Boo
     }
     val folderIds = sourceNames.associateWith { name -> "ios_folder_${name.normalizedId()}" }
     val folders = sourceNames.map { sourceName ->
-        val books = rawLibraryBooks.filter { it.sourceFolder == sourceName }
+        val books = sortBooks(rawLibraryBooks.filter { it.sourceFolder == sourceName }, sortOrder)
         Shelf(
             id = folderIds.getValue(sourceName),
             name = sourceName,
@@ -9482,13 +9483,15 @@ private fun SharedReaderScreenState.createIosShelf(
     val id = "ios_shelf_${currentTimestamp()}"
     val books = rawLibraryBooks.filter { it.id in bookIds }
     val addedAt = currentTimestamp()
+    // New shelves are built straight into state, so they must already carry the active sort order.
+    val sortedBooks = sortBooks(books, sortOrder)
     return copy(
         shelves = shelves + Shelf(
             id = id,
             name = trimmedName,
             type = ShelfType.MANUAL,
-            books = books,
-            directBooks = books,
+            books = sortedBooks,
+            directBooks = sortedBooks,
             directBookAddedAt = books.associate { it.id to addedAt },
         ),
         selectedBookIds = emptySet(),

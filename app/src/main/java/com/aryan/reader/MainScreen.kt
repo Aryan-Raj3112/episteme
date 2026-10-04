@@ -35,7 +35,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavHostController
 import com.aryan.reader.shared.SharedLibraryEditor
-import com.aryan.reader.shared.Shelf as SharedShelf
 import com.aryan.reader.shared.ui.SharedAddToShelfDialog
 import com.aryan.reader.shared.ui.SharedMobileMainScaffold
 
@@ -89,7 +88,7 @@ fun MainScreen(
             SharedAddToShelfDialog(
                 shelves = uiState.shelves
                     .filter { shelf -> shelf.type == ShelfType.MANUAL && SharedLibraryEditor.canMutateShelf(shelf.id) }
-                    .map { shelf -> shelf.toSharedShelfForAddDialog() },
+                    .map { shelf -> shelf.toSharedShelf { it.toSharedBookItem() } },
                 onDismiss = viewModel::closeAddSelectedToShelf,
                 onCreateShelf = {
                     val selectedBookIds = uiState.showAddSelectedToShelfDialogFor
@@ -102,18 +101,4 @@ fun MainScreen(
             )
         }
     }
-}
-
-private fun Shelf.toSharedShelfForAddDialog(): SharedShelf {
-    return SharedShelf(
-        id = id,
-        name = name,
-        type = type,
-        books = books.map { it.toSharedBookItem() },
-        directBooks = directBooks.map { it.toSharedBookItem() },
-        parentShelfId = parentShelfId,
-        childShelfIds = childShelfIds,
-        depth = depth,
-        sortKey = sortKey
-    )
 }

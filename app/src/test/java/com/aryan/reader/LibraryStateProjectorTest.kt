@@ -5,9 +5,12 @@ import com.aryan.reader.data.BookTagCrossRef
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.ShelfEntity
 import com.aryan.reader.data.TagEntity
+import com.aryan.reader.shared.AddBooksSource
+import com.aryan.reader.shared.SortOrder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -627,6 +630,97 @@ class LibraryStateProjectorTest {
 
         assertEquals("Manual PDF name", pdf.cardTitle(usePdfFileNameAsDisplayName = true))
         assertEquals("Manual comic name", cbz.cardTitle(usePdfFileNameAsDisplayName = true))
+    }
+
+    @Test
+    fun `manual shelf books honour the selected sort order`() {
+        val zeta = recentFile("zeta", title = "Zeta", timestamp = 1L, progressPercentage = 80f)
+        val alpha = recentFile("alpha", title = "Alpha", timestamp = 3L, progressPercentage = 20f)
+        val mu = recentFile("mu", title = "Mu", timestamp = 2L, progressPercentage = 50f)
+        // Added to the shelf in zeta, alpha, mu order.
+        val shelfRefs = listOf(
+            BookShelfCrossRef(bookId = "zeta", shelfId = "manual", addedAt = 1L),
+            BookShelfCrossRef(bookId = "alpha", shelfId = "manual", addedAt = 2L),
+            BookShelfCrossRef(bookId = "mu", shelfId = "manual", addedAt = 3L),
+        )
+
+        fun projectBookIds(sortOrder: SortOrder): List<String> = LibraryStateProjector().project(
+            LibraryProjectionInput(
+                state = ReaderScreenState(libraryState = LibraryState(sortOrder = sortOrder)),
+                recentFilesFromDb = listOf(zeta, alpha, mu),
+                dbShelves = listOf(shelfEntity("manual", "Manual")),
+                shelfRefs = shelfRefs,
+                dbTags = emptyList(),
+                tagRefs = emptyList()
+            )
+        ).shelves.single { it.id == "manual" }.let { shelf ->
+            assertEquals(shelf.books.ids(), shelf.directBooks.ids())
+            shelf.directBooks.ids()
+        }
+
+        assertEquals(listOf("alpha", "mu", "zeta"), projectBookIds(SortOrder.TITLE_ASC))
+        assertEquals(listOf("alpha", "mu", "zeta"), projectBookIds(SortOrder.RECENT))
+        assertEquals(listOf("zeta", "mu", "alpha"), projectBookIds(SortOrder.PERCENT_DESC))
+    }
+
+    @Test
+    fun `add books candidates exclude books already on the shelf and honour the source`() {
+        val onShelf = recentFile("on_shelf")
+        val unshelvedOnly = recentFile("unshelved_only")
+        val otherShelved = recentFile("other_shelved")
+        val books = listOf(onShelf, unshelvedOnly, otherShelved)
+        val manualShelf = Shelf(
+            id = "manual",
+            name = "Manual",
+            type = ShelfType.MANUAL,
+            books = listOf(onShelf),
+            directBooks = listOf(onShelf)
+        )
+        val otherShelf = Shelf(
+            id = "other",
+            name = "Other",
+            type = ShelfType.MANUAL,
+            books = listOf(otherShelved),
+            directBooks = listOf(otherShelved)
+        )
+        val unshelvedShelf = Shelf(
+            id = "unshelved",
+            name = "Unshelved",
+            type = ShelfType.MANUAL,
+            books = listOf(unshelvedOnly)
+        )
+
+        assertEquals(
+            listOf("unshelved_only"),
+            androidBooksAvailableForShelfAddition(
+                allLibraryBooks = books,
+                shelves = listOf(manualShelf, otherShelf, unshelvedShelf),
+                shelfId = "manual",
+                source = AddBooksSource.UNSHELVED
+            ).ids()
+        )
+        assertEquals(
+            listOf("unshelved_only", "other_shelved"),
+            androidBooksAvailableForShelfAddition(
+                allLibraryBooks = books,
+                shelves = listOf(manualShelf, otherShelf, unshelvedShelf),
+                shelfId = "manual",
+                source = AddBooksSource.ALL_BOOKS
+            ).ids()
+        )
+    }
+
+    @Test
+    fun `add books candidates return the original android rows`() {
+        val book = recentFile("book")
+        val candidates = androidBooksAvailableForShelfAddition(
+            allLibraryBooks = listOf(book),
+            shelves = listOf(Shelf(id = "manual", name = "Manual", type = ShelfType.MANUAL, books = emptyList())),
+            shelfId = "manual",
+            source = AddBooksSource.ALL_BOOKS
+        )
+
+        assertSame(book, candidates.single())
     }
 
     private fun recentFile(

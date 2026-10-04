@@ -158,13 +158,17 @@ class SharedLibraryStateProjector(
                     .sortedBy { it.addedAt }
                     .map { it.bookId }
                 val books = bookIds.mapNotNull { booksById[it] }
+                // Manual shelves are not nested, so `books` and `directBooks` hold the same
+                // membership. Both must honour `sortOrder`: shelf screens render `directBooks`
+                // directly, and folder shelves below already sort theirs the same way.
+                val sortedBooks = sortBooks(books, sortOrder)
                 shelves.add(
                     Shelf(
                         id = shelf.id,
                         name = shelf.name,
                         type = ShelfType.MANUAL,
-                        books = sortBooks(books, sortOrder),
-                        directBooks = books,
+                        books = sortedBooks,
+                        directBooks = sortedBooks,
                         modifiedAt = shelf.modifiedAt,
                         directBookAddedAt = shelfRefs
                             .filter { it.shelfId == shelf.id && it.bookId in booksById }

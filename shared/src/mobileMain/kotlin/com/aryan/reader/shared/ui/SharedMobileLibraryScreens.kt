@@ -1826,8 +1826,8 @@ private fun SharedMobileShelfDetail(
             }
         }
     }
-    val visibleBooks = remember(shelf.directBooks, normalizedQuery, sortOrder) {
-        sortBooks(shelf.directBooks.filteredSharedMobileBooks(normalizedQuery), sortOrder)
+    val visibleBooks = remember(shelf.directBooks, normalizedQuery) {
+        shelf.directBooks.filteredSharedMobileBooks(normalizedQuery)
     }
     LaunchedEffect(isSearchActive, shelf.id) {
         if (isSearchActive) shelfSearchFocusRequester.requestFocus()

@@ -4,7 +4,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -41,9 +40,14 @@ fun SharedExposedDropdownMenuField(
         field()
         // Tap layer above the field: the field's own focus/selection pointer input would
         // otherwise consume the press before it reached a clickable.
+        //
+        // `matchParentSize` (not `fillMaxSize`) is required here: these fields live inside
+        // vertically scrolling columns, so the incoming height constraint is unbounded and
+        // `fillMaxHeight` collapses to `minHeight` = 0. A zero-height overlay never receives
+        // the press, the readOnly field swallows it instead, and the menu never opens.
         Box(
             modifier = Modifier
-                .fillMaxSize()
+                .matchParentSize()
                 .clickable(
                     enabled = !expanded,
                     interactionSource = remember { MutableInteractionSource() },

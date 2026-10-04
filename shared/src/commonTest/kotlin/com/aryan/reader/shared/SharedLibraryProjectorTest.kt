@@ -565,6 +565,53 @@ class SharedLibraryProjectorTest {
         )
     }
 
+    @Test
+    fun `manual shelf direct books honour the selected sort order`() {
+        val zeta = book("zeta", title = "Zeta", timestamp = 1L, progressPercentage = 80f)
+        val alpha = book("alpha", title = "Alpha", timestamp = 3L, progressPercentage = 20f)
+        val mu = book("mu", title = "Mu", timestamp = 2L, progressPercentage = 50f)
+
+        // Added to the shelf in zeta, alpha, mu order.
+        val refs = listOf(
+            BookShelfRef(bookId = "zeta", shelfId = "manual", addedAt = 1L),
+            BookShelfRef(bookId = "alpha", shelfId = "manual", addedAt = 2L),
+            BookShelfRef(bookId = "mu", shelfId = "manual", addedAt = 3L),
+        )
+
+        fun projectDirectBookIds(sortOrder: SortOrder): List<String> =
+            SharedLibraryStateProjector().project(
+                SharedLibraryProjectionInput(
+                    state = LibraryFeatureState(sortOrder = sortOrder),
+                    booksFromStore = listOf(zeta, alpha, mu),
+                    shelfRecords = listOf(ShelfRecord(id = "manual", name = "Manual")),
+                    shelfRefs = refs,
+                    tags = emptyList(),
+                )
+            ).shelves.single { it.id == "manual" }.directBooks.ids()
+
+        assertEquals(listOf("alpha", "mu", "zeta"), projectDirectBookIds(SortOrder.TITLE_ASC))
+        assertEquals(listOf("alpha", "mu", "zeta"), projectDirectBookIds(SortOrder.RECENT))
+        assertEquals(listOf("zeta", "mu", "alpha"), projectDirectBookIds(SortOrder.PERCENT_DESC))
+    }
+
+    @Test
+    fun `folder shelf direct books honour the selected sort order`() {
+        val alpha = book("alpha", title = "Alpha", timestamp = 1L, sourceFolder = "/books")
+        val beta = book("beta", title = "Beta", timestamp = 2L, sourceFolder = "/books")
+
+        val result = SharedLibraryStateProjector().project(
+            SharedLibraryProjectionInput(
+                state = LibraryFeatureState(sortOrder = SortOrder.RECENT),
+                booksFromStore = listOf(alpha, beta),
+                shelfRecords = emptyList(),
+                shelfRefs = emptyList(),
+                tags = emptyList(),
+            )
+        )
+
+        assertEquals(listOf("beta", "alpha"), result.shelves.single { it.id == "folder_/books" }.directBooks.ids())
+    }
+
     private fun book(
         id: String,
         displayName: String = "$id.epub",

@@ -689,7 +689,19 @@ fun UnifiedLibraryScreen(
                         UnifiedAddBooksSection(
                             modifier = Modifier.padding(padding),
                             shelf = shelfBeingAddedTo,
-                            availableBooks = uiState.booksAvailableForAdding,
+                            availableBooks = remember(
+                                uiState.rawLibraryFiles,
+                                uiState.shelves,
+                                shelfBeingAddedTo.id,
+                                uiState.addBooksSource,
+                            ) {
+                                androidBooksAvailableForShelfAddition(
+                                    allLibraryBooks = uiState.rawLibraryFiles,
+                                    shelves = uiState.shelves,
+                                    shelfId = shelfBeingAddedTo.id,
+                                    source = uiState.addBooksSource,
+                                )
+                            },
                             selectedBookIds = uiState.booksSelectedForAdding,
                             addBooksSource = uiState.addBooksSource,
                             sortOrder = uiState.sortOrder,
