@@ -57,6 +57,67 @@ class AndroidLauncherIconContractTest {
     }
 
     @Test
+    fun appMarkIsTheThemedGlyphWithItsViewportCroppedToTheArtwork() {
+        // The icon shown *inside* the app is this glyph tinted from the app theme, not the
+        // launcher icon. It has to be the cropped form, and that is the one thing that would
+        // silently undo the change: `ic_launcher_monochrome` is fieldless and centred in the
+        // 108dp adaptive viewport because the *launcher* is what draws the plate behind it, so
+        // a Compose slot sized to that vector draws the glyph at 54/108 of its own width -- a
+        // 16x10dp speck in a 32dp avatar. That reads fine in a diff and not at all on screen.
+        val mono = parse("drawable/ic_launcher_monochrome.xml")
+        val mark = parse("drawable/ic_app_mark.xml")
+
+        // Same glyph, so the in-app icon cannot drift away from the themed one.
+        assertEquals(
+            "the in-app mark must carry the themed layer's own path data",
+            mono.singlePath().getAttribute("android:pathData"),
+            mark.singlePath().getAttribute("android:pathData"),
+        )
+        assertEquals("a tinted mark must stay one flat colour", 1, mark.paths().size)
+        assertEquals(
+            listOf("#FFFFFFFF"),
+            mark.paths().map { it.getAttribute("android:fillColor") },
+        )
+        assertFalse(
+            "the mark is recoloured by a tint, so a baked gradient would be thrown away",
+            readText("drawable/ic_app_mark.xml").contains("gradient"),
+        )
+
+        // Cropped: the viewport is the glyph's own placed size, not the launcher's canvas.
+        val (viewportWidth, viewportHeight) = mark.viewport()
+        assertEquals(
+            "the mark's viewport must be the glyph's placed width ($THEMED_GLYPH_DP dp), " +
+                "not the ${ADAPTIVE_DP}dp adaptive canvas the launcher masks",
+            THEMED_GLYPH_DP, viewportWidth, 0.01,
+        )
+        assertEquals(
+            "the mark is 54 x 32.8 -- wider than tall, because the fan is. A square viewport " +
+                "means the crop was replaced by a plain canvas.",
+            32.77, viewportHeight, 0.01,
+        )
+
+        // ...and cropped by re-anchoring, not by rescaling: both files place the same glyph
+        // with the same scale, one centred in the 108dp viewport and one with its own top-left
+        // at (0, 0). So the two translations must differ by exactly half the mark's viewport.
+        // Any drift in the glyph, the scale or the crop breaks that identity.
+        assertEquals(
+            "the mark must reuse the themed layer's scale, so its optical size is unchanged",
+            mono.groupScale(), mark.groupScale(),
+        )
+        assertEquals(
+            "the mark must be re-anchored at the glyph's origin, centred in the themed layer",
+            ADAPTIVE_DP / 2 - viewportWidth / 2,
+            mono.groupTranslate("android:translateX") - mark.groupTranslate("android:translateX"),
+            0.05,
+        )
+        assertEquals(
+            ADAPTIVE_DP / 2 - viewportHeight / 2,
+            mono.groupTranslate("android:translateY") - mark.groupTranslate("android:translateY"),
+            0.05,
+        )
+    }
+
+    @Test
     fun adaptiveBackgroundIsOneSolidFillOverTheWholeViewport() {
         val xml = readText("drawable/ic_launcher_background.xml")
         assertTrue("background must stay a vector", xml.contains("<vector"))
@@ -242,6 +303,21 @@ class AndroidLauncherIconContractTest {
         }
     }
 
+    private fun Element.paths(): List<Element> = elements("path")
+
+    private fun Element.singlePath(): Element = paths().single()
+
+    private fun Element.viewport(): Pair<Double, Double> =
+        getAttribute("android:viewportWidth").toDouble() to
+            getAttribute("android:viewportHeight").toDouble()
+
+    private fun Element.groupScale(): String = group().getAttribute("android:scaleX")
+
+    private fun Element.groupTranslate(attribute: String): Double =
+        group().getAttribute(attribute).toDouble()
+
+    private fun Element.group(): Element = elements("group").single()
+
     /** Bounding box of the pixels with meaningful alpha, as left/top/right/bottom. */
     private fun alphaBox(img: java.awt.image.BufferedImage): IntArray? {
         var x0 = Int.MAX_VALUE
@@ -265,6 +341,8 @@ class AndroidLauncherIconContractTest {
         const val ADAPTIVE_DP = 108
         const val SAFE_ZONE_DP = 66
         const val SAFE_RADIUS_DP = 33.0            // half of the 66dp safe zone
+        /** The themed glyph's placed width: 72dp of visible icon x the fan's 0.75 width fraction. */
+        const val THEMED_GLYPH_DP = 54.0
         val DENSITIES = listOf("mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi")
     }
 }

@@ -84,7 +84,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.os.LocaleListCompat
 import androidx.navigation.NavHostController
-import coil.compose.AsyncImage
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.shared.formatMicrosUsd
 import com.aryan.reader.shared.ui.SharedMobileAppDestination
@@ -309,10 +308,9 @@ internal fun AppDrawerContent(
                         .padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    AsyncImage(
-                        model = R.mipmap.ic_launcher,
+                    AppMonochromeIcon(
                         contentDescription = stringResource(R.string.content_desc_app_icon),
-                        modifier = Modifier.size(64.dp)
+                        size = 64.dp,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(text = stringResource(R.string.app_name_oss), style = MaterialTheme.typography.titleMedium)

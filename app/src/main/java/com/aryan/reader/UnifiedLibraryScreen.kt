@@ -33,7 +33,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -118,7 +117,6 @@ import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavHostController
-import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.AppDatabase
@@ -1022,13 +1020,12 @@ private fun UnifiedLibraryDrawer(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
-                        AsyncImage(
-                            model = R.mipmap.ic_launcher,
-                            contentDescription = stringResource(R.string.content_desc_app_icon),
-                            modifier = Modifier.size(44.dp).padding(4.dp)
-                        )
-                    }
+                    AppMonochromeIcon(
+                        contentDescription = stringResource(R.string.content_desc_app_icon),
+                        size = 44.dp,
+                        shape = RoundedCornerShape(16.dp),
+                        plateColor = MaterialTheme.colorScheme.surface,
+                    )
                     Column(modifier = Modifier.weight(1f)) {
                         Text(stringResource(R.string.app_name), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         Text(stringResource(R.string.unified_library_drawer_title), style = MaterialTheme.typography.bodySmall)

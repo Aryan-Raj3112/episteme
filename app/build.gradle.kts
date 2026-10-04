@@ -4,6 +4,7 @@ import java.util.Properties
 import java.io.StringReader
 import javax.xml.parsers.DocumentBuilderFactory
 import com.android.build.api.artifact.SingleArtifact
+import org.gradle.api.tasks.PathSensitivity
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.gradle.api.tasks.Copy
 import org.xml.sax.InputSource
@@ -171,6 +172,15 @@ android {
         unitTests.all {
             it.maxHeapSize = "4g"
             it.jvmArgs("-Xss2m")
+            // The resource-contract tests (launcher icon, string resources) read src/main/res
+            // straight off disk rather than through the merged resources, so Gradle sees no
+            // input change when only an asset does and skips them as up-to-date. That leaves
+            // the launcher icon's own contract green against an icon it no longer describes,
+            // which is the one case it exists to catch -- regenerating the icon changes nothing
+            // else the test task depends on.
+            it.inputs.dir(layout.projectDirectory.dir("src/main/res"))
+                .withPathSensitivity(PathSensitivity.RELATIVE)
+                .optional()
         }
     }
     configurations {

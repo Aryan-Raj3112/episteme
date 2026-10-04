@@ -49,6 +49,7 @@ change shape when the OS changes its mask.
 | `episteme-icon-android-foreground.svg` | 108vp adaptive foreground (the fan) |
 | `episteme-icon-monochrome.svg` | 108vp Android 13+ themed icon |
 | `ic_launcher_background.xml`, `ic_launcher_monochrome.xml` | the two flat layers, as Android VectorDrawables |
+| `ic_app_mark.xml` | the same glyph with its viewport cropped, for the icon drawn *inside* the app |
 | `png/ios/` | 14 AppIcon slots, opaque RGB, no baked rounding |
 | `png/android/mipmap-*/` | legacy `ic_launcher` + `ic_launcher_round`, 48dp x 5 densities |
 | `png/android/adaptive/` | raster foreground layer, 108dp x 5 densities |
@@ -131,6 +132,21 @@ viewport, the bands only ever cut *into* it, so nothing needs trimming.
 That vector also serves as the TTS notification's small icon (`TtsService`), which is why
 it must stay a vector — a raster would be both wrong semantically and wasteful in the
 status bar.
+
+**The same glyph, cropped, is what the app draws as its own icon in-app** (`ic_app_mark.xml`).
+`"arcs"` is fieldless, so `ic_launcher_monochrome` is a mark floating in the middle 54x33dp of
+a 108dp viewport — the launcher supplies the plate behind it. Inside the app nothing does, so a
+Compose slot sized to that vector would render the mark at 54/108 of its own width: a 16x10dp
+speck in a 32dp avatar. `ic_app_mark.xml` is therefore the identical path data at the identical
+scale, re-anchored at the glyph's own bounding-box origin with the viewport cropped to it, so it
+fills whatever slot it is given. The plate is drawn in Compose from the app theme
+(`AppMonochromeIcon`), which is the whole point: the icon shown inside the app tracks light/dark
+and any dynamic or custom seed colour, where a baked launcher raster cannot.
+
+Two things keep the pair honest. They are generated from one `mono_geometry`, so the glyph and
+its optical size cannot drift; and `AndroidLauncherIconContractTest` asserts the relationship
+directly — same path data, same scale, translations differing by exactly half the mark's
+viewport.
 
 Legacy Android icons have the launcher mask baked in (`squircle` for `ic_launcher`,
 `circle` for `ic_launcher_round`) because API < 26 launchers do not mask. Everything else

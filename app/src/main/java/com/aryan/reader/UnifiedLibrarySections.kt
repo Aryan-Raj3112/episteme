@@ -37,7 +37,6 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.SortOrder
@@ -214,7 +213,11 @@ internal fun UnifiedLibraryTopBar(
 internal fun UnifiedProfileAvatar(uiState: ReaderScreenState) {
     val user = uiState.currentUser
     when {
-        BuildConfig.FLAVOR != "pro" -> AsyncImage(model = R.mipmap.ic_launcher, contentDescription = stringResource(R.string.content_desc_app_icon), modifier = Modifier.size(32.dp).clip(CircleShape))
+        BuildConfig.FLAVOR != "pro" -> AppMonochromeIcon(
+            contentDescription = stringResource(R.string.content_desc_app_icon),
+            size = 32.dp,
+            shape = CircleShape,
+        )
         user != null -> AndroidAccountAvatar(
             user = user,
             modifier = Modifier.size(32.dp),
