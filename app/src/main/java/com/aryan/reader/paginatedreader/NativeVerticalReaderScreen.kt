@@ -156,6 +156,9 @@ import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
 import com.aryan.reader.shared.reader.paintOnlyColorOverlayText
 import com.aryan.reader.shared.reader.withoutForegroundColorSpans
+import com.aryan.reader.shared.ui.PaintableHighlight
+import com.aryan.reader.shared.ui.highlightHitsAt
+import com.aryan.reader.shared.ui.SharedNativeHighlightPaintPlan
 import com.aryan.reader.shared.ui.sharedAcceleratedLazyWheelScroll
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -2543,35 +2546,55 @@ internal fun TextWithEmphasis(
         val paths = mutableListOf<HighlightDrawInfo>()
         val layout = textLayoutResult
         if (layout != null && highlightRanges.isNotEmpty()) {
-            highlightRanges.forEach { (highlightId, ranges) ->
-                val highlight = highlightById[highlightId] ?: return@forEach
-                ranges.forEach { range ->
+            // One plan for both platforms. Merging same-colour, same-style ranges here means an
+            // overlap is filled once instead of once per highlight, so two translucent highlights over
+            // the same words no longer compound into a darker patch than either one alone.
+            val paintable = highlightRanges.mapNotNull { (highlightId, ranges) ->
+                highlightById[highlightId]?.let { PaintableHighlight(it, ranges) }
+            }
+            val plan = SharedNativeHighlightPaintPlan.build(paintable)
+            for (group in plan.groups) {
+                for (range in group.ranges) {
                     try {
-                        val blockStartAbs = getTextBlockCharOffset(block)
-                        val blockEndAbs = block.endCharOffsetInSource
-                            .takeIf { it > blockStartAbs }
-                            ?: (blockStartAbs + block.content.text.length)
-                        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                            "draw_highlight page=$pageIndex blockCfi=${block.cfi} " +
-                                "blockIndex=${block.blockIndex} blockAbs=$blockStartAbs..$blockEndAbs " +
-                                "highlightId=${highlight.id} highlightChapter=${highlight.chapterIndex} " +
-                                "highlightCfi=${highlight.cfi} range=$range " +
-                                "blockText='${highlightDiagSnippet(block.content.text)}'"
-                        )
-                        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-                            "draw_highlight surface=native_or_paginated page=$pageIndex blockIndex=${block.blockIndex} " +
-                                "blockCfi=${block.cfi} blockAbs=$blockStartAbs..$blockEndAbs range=$range " +
-                                "blockText='${highlightDiagSnippet(block.content.text)}' " +
-                                highlight.androidHighlightRenderLabel()
-                        )
                         val path = layout.getPathForRange(range.first, range.last + 1)
-                        paths.add(HighlightDrawInfo(path, highlight.renderColor(legacyAlpha = 0.4f), highlight.style, range))
-                        if (highlight.cfi == pressedHighlightCfi) {
-                            paths.add(HighlightDrawInfo(path, Color.Black.copy(alpha = 0.1f), HighlightStyle.BACKGROUND, range))
-                        }
+                        paths.add(HighlightDrawInfo(path, group.color, group.style, range))
                     } catch (e: Exception) {
                         Timber.tag("DecorationsDiag").e(e, "Highlight path out of bounds")
                     }
+                }
+            }
+            // Pressed state is drawn over the finished fills, not merged into them: it is a transient
+            // overlay on the highlight under the finger, and folding it into a group would recolour the
+            // neighbours it happens to overlap.
+            val pressed = highlightRanges
+                .mapNotNull { (highlightId, ranges) ->
+                    val highlight = highlightById[highlightId]
+                    if (highlight != null && highlight.cfi == pressedHighlightCfi) highlight to ranges else null
+                }
+                .map { (highlight, ranges) -> PaintableHighlight(highlight, ranges) }
+            for (range in SharedNativeHighlightPaintPlan.build(pressed).groups.flatMap { it.ranges }) {
+                try {
+                    paths.add(
+                        HighlightDrawInfo(
+                            path = layout.getPathForRange(range.first, range.last + 1),
+                            color = Color.Black.copy(alpha = 0.1f),
+                            style = HighlightStyle.BACKGROUND,
+                            range = range
+                        )
+                    )
+                } catch (e: Exception) {
+                    Timber.tag("DecorationsDiag").e(e, "Highlight path out of bounds")
+                }
+            }
+            highlightRanges.forEach { (highlightId, ranges) ->
+                val highlight = highlightById[highlightId] ?: return@forEach
+                ranges.forEach { range ->
+                    Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                        "draw_highlight page=$pageIndex blockCfi=${block.cfi} " +
+                            "blockIndex=${block.blockIndex} range=$range " +
+                            "highlightId=${highlight.id} highlightChapter=${highlight.chapterIndex} " +
+                            "blockText='${highlightDiagSnippet(block.content.text)}'"
+                    )
                 }
             }
         }
@@ -2866,22 +2889,23 @@ internal fun TextWithEmphasis(
         }
 
         val blockStartAbs = getTextBlockCharOffset(block)
-        for ((highlightId, ranges) in highlightRanges.entries.reversed()) {
-            val highlight = highlightById[highlightId] ?: continue
-            for (range in ranges) {
-                if (charOffset in range) {
-                    Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                        "tap_highlight page=$pageIndex blockCfi=${block.cfi} " +
-                            "blockIndex=${block.blockIndex} blockAbsStart=$blockStartAbs " +
-                            "charOffset=$charOffset absoluteCharOffset=${blockStartAbs + charOffset} " +
-                            "highlightId=${highlight.id} highlightCfi=${highlight.cfi} range=$range"
-                    )
-                    val bounds = layout.getPathForRange(range.first, range.last + 1).getBounds()
-                    return highlight to bounds
-                }
+        val hits = highlightHitsAt(
+            offset = charOffset,
+            highlights = highlightRanges.mapNotNull { (highlightId, ranges) ->
+                highlightById[highlightId]?.let { PaintableHighlight(it, ranges) }
             }
-        }
-        return null
+        )
+        val hit = hits.lastOrNull() ?: return null
+        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+            "tap_highlight page=$pageIndex blockCfi=${block.cfi} " +
+                "blockIndex=${block.blockIndex} blockAbsStart=$blockStartAbs " +
+                "charOffset=$charOffset absoluteCharOffset=${blockStartAbs + charOffset} " +
+                "highlightId=${hit.highlight.id} highlightCfi=${hit.highlight.cfi} range=${hit.range} " +
+                // Every highlight under the tap, not just the one opened. An overlap used to make the
+                // other one unreachable, so this is how that stays visible.
+                "overlapping=${hits.size}"
+        )
+        return hit.highlight to layout.getPathForRange(hit.range.first, hit.range.last + 1).getBounds()
     }
 
     fun logCutoffIfNeeded(

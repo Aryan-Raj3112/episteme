@@ -329,29 +329,25 @@ internal fun AnnotatedString.Builder.applyHighlightsToTextRanges(
     // contains its id. Annotating it meant tapping a spoken sentence opened the selection sheet on an
     // id that could not be found — not recolourable, not deletable — and, since the band covered
     // whatever was under it, it could shadow a real highlight there.
-    val backgrounds = resolved.filter { it.first.style == HighlightStyle.BACKGROUND }
-    for ((highlight, range) in backgrounds) {
-        if (!highlight.isTransientPlaybackBand) {
-            addStringAnnotation(ReaderNativeAnnotationHighlight, highlight.id, range.start, range.end)
+    //
+    // The plan decides what to fill; the annotations below record who owns each range, which merging
+    // does not and must not destroy — two highlights drawn as one fill are still two highlights to
+    // tap on.
+    val plan = SharedNativeHighlightPaintPlan.build(
+        resolved.map { (highlight, range) ->
+            PaintableHighlight(highlight, listOf(range.start until range.end))
         }
-    }
-    for (merged in mergeHighlightRanges(backgrounds.map { it.second })) {
-        // One span per distinct colour: the overlap keeps a single alpha instead of compounding.
-        val colors = backgrounds
-            .filter { (_, range) -> range.start < merged.end && range.end > merged.start }
-            .map { it.first.renderColor(legacyAlpha = 0.38f) }
-            .distinct()
-        for (color in colors) {
-            addStyle(style = SpanStyle(background = color), start = merged.start, end = merged.end)
+    )
+    for (group in plan.groups) {
+        for (range in group.ranges) {
+            val span = nativeSpanStyle(color = group.color, style = group.style)
+            addStyle(style = span, start = range.first, end = range.last + 1)
         }
     }
 
     for ((highlight, range) in resolved) {
-        if (highlight.style == HighlightStyle.BACKGROUND) continue
-        addStyle(style = highlight.nativeSpanStyle(), start = range.start, end = range.end)
-        if (!highlight.isTransientPlaybackBand) {
-            addStringAnnotation(ReaderNativeAnnotationHighlight, highlight.id, range.start, range.end)
-        }
+        if (highlight.isTransientPlaybackBand) continue
+        addStringAnnotation(ReaderNativeAnnotationHighlight, highlight.id, range.start, range.end)
     }
 }
 
@@ -379,7 +375,7 @@ internal fun mergeHighlightRanges(ranges: List<SharedNativeReaderTextRange>): Li
 /** Reads the inclusive-start, exclusive-end ranges a renderer's `getPathForRange` expects. */
 
 internal fun UserHighlight.nativeSpanStyle(): SpanStyle = nativeSpanStyle(
-    color = renderColor(legacyAlpha = 0.38f),
+    color = renderColor(legacyAlpha = SharedNativeHighlightPaintPlan.LEGACY_HIGHLIGHT_ALPHA),
     style = style
 )
 
@@ -783,12 +779,23 @@ internal fun AnnotatedString.Builder.applySelectionToTextRange(
     }
 }
 
-internal fun AnnotatedString.stringAnnotationAt(tag: String, offset: Int): String? {
-    if (isEmpty()) return null
+/**
+ * The tag's annotations covering an offset, in the order they were added.
+ *
+ * All of them, not the first. A reader may highlight the same words twice, and those annotations
+ * overlap; taking the first made whichever highlight was added second unreachable by tap, so one of
+ * the two could not be opened, recoloured or deleted.
+ */
+internal fun AnnotatedString.stringAnnotationsAt(tag: String, offset: Int): List<String> {
+    if (isEmpty()) return emptyList()
     val start = offset.coerceIn(0, (length - 1).coerceAtLeast(0))
     val end = (start + 1).coerceAtMost(length)
-    return getStringAnnotations(tag, start, end).firstOrNull()?.item
+    return getStringAnnotations(tag, start, end).map { it.item }
 }
+
+/** The last of [stringAnnotationsAt]: the annotation drawn on top, and so the one a tap means. */
+internal fun AnnotatedString.stringAnnotationAt(tag: String, offset: Int): String? =
+    stringAnnotationsAt(tag, offset).lastOrNull()
 
 internal fun sharedNativeReaderSelectionGestureKey(
     textBlockKey: String,

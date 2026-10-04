@@ -156,7 +156,7 @@ class SharedNativeHighlightOverlapTest {
             text = "",
             color = HighlightColor.GREEN,
             chapterIndex = 0
-        ).renderColor(legacyAlpha = 0.38f)
+        ).renderColor(legacyAlpha = SharedNativeHighlightPaintPlan.LEGACY_HIGHLIGHT_ALPHA)
         assertEquals(expected, decoration.item.color)
     }
 
