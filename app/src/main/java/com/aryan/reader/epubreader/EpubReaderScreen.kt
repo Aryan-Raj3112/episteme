@@ -5010,9 +5010,14 @@ fun EpubReaderHost(
                             // Plus the measured corner radius: safeDrawing covers
                             // bars/cutouts/waterfall, never the rounded corners, which
                             // on a bezel-less phone in portrait has no inset at all.
+                            // Per side: the corner radii and the system insets
+                            // both differ per edge, so a single symmetric value
+                            // would sit the labels off-centre.
                             .padding(
-                                horizontal = SharedReaderPageInfoBarSidePadding +
-                                    pageInfoCornerClearance
+                                start = SharedReaderPageInfoBarSidePadding +
+                                    pageInfoCornerClearance.start,
+                                end = SharedReaderPageInfoBarSidePadding +
+                                    pageInfoCornerClearance.end
                             ),
                         contentAlignment = Alignment.Center
                     ) {
@@ -5073,9 +5078,14 @@ fun EpubReaderHost(
                             .windowInsetsPadding(
                                 WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
                             )
+                            // Per side: the corner radii and the system insets
+                            // both differ per edge, so a single symmetric value
+                            // would sit the labels off-centre.
                             .padding(
-                                horizontal = SharedReaderPageInfoBarSidePadding +
-                                    pageInfoCornerClearance
+                                start = SharedReaderPageInfoBarSidePadding +
+                                    pageInfoCornerClearance.start,
+                                end = SharedReaderPageInfoBarSidePadding +
+                                    pageInfoCornerClearance.end
                             ),
                         contentAlignment = Alignment.Center
                     ) {

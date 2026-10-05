@@ -1,5 +1,6 @@
 package com.aryan.reader.shared
 
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
@@ -106,20 +107,71 @@ fun readerPageInfoTitleSideReservePx(
 }
 
 /**
+ * Horizontal rounded-corner clearance for each edge of the PageInfo bar.
+ *
+ * A data class so the value compares by content: it recomposes whenever the
+ * window insets change, and an identity comparison would make every recomposition
+ * look like a change and re-run the bar's layout.
+ */
+data class ReaderPageInfoCornerClearance(val start: Dp, val end: Dp)
+
+/**
  * Extra horizontal inset, in pixels, that keeps the PageInfo bar's edge-pinned
  * clock and percentage clear of the screen's rounded corners.
  *
- * Compose's `WindowInsets.safeDrawing` is the union of the system bars, the
- * display cutout and the waterfall; it carries nothing about the corner curve, so
- * a bezel-less phone in portrait reports no horizontal inset at all while the
- * corners still curve into the bar. The platform guideline is to inset the content
- * edge by the radius, less whatever the bar already pads, never below zero.
+ * Compose's `WindowInsets.safeDrawing` is the union of the system bars, the display
+ * cutout and the waterfall; it carries nothing about the corner curve, so a
+ * bezel-less phone in portrait reports no horizontal inset at all while the corners
+ * still curve into the bar. The platform guideline
+ * (https://developer.android.com/develop/ui/views/layout/insets/rounded-corners) is
+ * to inset the content edge by the radius of the corners on that edge, less the
+ * margin and padding already there, never below zero.
  *
- * [maxCornerRadiusPx] is the largest radius over the corners the bar can touch
- * (all four, since the bar can be pinned to either edge).
+ * Two details from that guideline matter here and are easy to get wrong:
+ *
+ *  * The radius is resolved **per side**, `start = max(topStart, bottomStart)` and
+ *    `end = max(topEnd, bottomEnd)`, not as one maximum over all four. The two
+ *    sides genuinely differ — in landscape the gesture pill sits on one edge only,
+ *    and a bar spanning both edges must not borrow the far corner's radius for the
+ *    near one, or it shifts off-centre.
+ *  * Both the margin and the padding are subtracted. [startInsetPx]/[endInsetPx]
+ *    are the system insets already applied as padding, and those count toward the
+ *    clearance the corner needs; leaving them out double-counts the inset and
+ *    pushes the labels further in than the guideline asks.
+ *
+ * Insets are reported in window coordinates, so a window that does not fill the
+ * display still gets the radius measured from the window's own edge.
  */
-fun readerPageInfoCornerClearancePx(maxCornerRadiusPx: Int, barSidePaddingPx: Int): Int =
-    (maxCornerRadiusPx - barSidePaddingPx).coerceAtLeast(0)
+fun readerPageInfoCornerClearance(
+    startTopRadius: Dp,
+    startBottomRadius: Dp,
+    endTopRadius: Dp,
+    endBottomRadius: Dp,
+    startInset: Dp,
+    endInset: Dp,
+    barSidePadding: Dp
+): ReaderPageInfoCornerClearance = ReaderPageInfoCornerClearance(
+    start = readerPageInfoCornerSidePadding(
+        radius = maxOf(startTopRadius, startBottomRadius),
+        inset = startInset,
+        barSidePadding = barSidePadding
+    ),
+    end = readerPageInfoCornerSidePadding(
+        radius = maxOf(endTopRadius, endBottomRadius),
+        inset = endInset,
+        barSidePadding = barSidePadding
+    )
+)
+
+/**
+ * The guideline's `calculatePadding`: the edge's corner radius less the margin and
+ * padding already present, floored at zero.
+ */
+private fun readerPageInfoCornerSidePadding(
+    radius: Dp,
+    inset: Dp,
+    barSidePadding: Dp
+): Dp = (radius - inset - barSidePadding).coerceAtLeast(0.dp)
 
 /**
  * Width the centred title can occupy inside a bar once [sideReservePx] is taken

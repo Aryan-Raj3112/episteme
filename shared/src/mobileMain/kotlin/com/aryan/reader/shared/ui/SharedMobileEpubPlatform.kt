@@ -13,6 +13,7 @@ import com.aryan.reader.shared.ReaderVoiceSampleState
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.ReaderLocator
+import com.aryan.reader.shared.ReaderPageInfoCornerClearance
 
 internal data class SharedMobileEpubLoadState(
     val isLoading: Boolean = true,
@@ -102,14 +103,19 @@ internal expect fun openSharedMobileEpubExternalLink(url: String): Boolean
  * the union of the system bars, the display cutout and the waterfall insets, and
  * a device can have generous corner radii with no bar or cutout inset at all
  * (the common case in portrait). The platform guideline for this is to read the
- * real radii and inset the content edge by them, so each platform reports the
- * measured corner radius rather than a guessed constant.
+ * real radii and inset the content edge by them, less the margin and padding
+ * already applied. See [readerPageInfoCornerClearance] for the arithmetic, which
+ * is shared so both platforms resolve the radius the same way.
+ *
+ * Per side rather than symmetric: the two edges differ whenever the insets do (a
+ * landscape gesture pill on one edge), and a symmetric value would shift the
+ * labels off-centre.
  *
  * Composable because the Android implementation reads the live window insets, which
  * change on rotation, on multi-window resize and when the app is letterboxed.
  */
 @Composable
-expect fun sharedMobileEpubPageInfoCornerClearance(): Dp
+expect fun sharedMobileEpubPageInfoCornerClearance(): ReaderPageInfoCornerClearance
 
 /**
  * Whether a visible bottom PageInfo bar always stays above the bottom safe

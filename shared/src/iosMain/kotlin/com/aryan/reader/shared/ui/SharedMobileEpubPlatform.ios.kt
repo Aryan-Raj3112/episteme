@@ -131,6 +131,18 @@ import platform.posix.fclose
 import platform.posix.fopen
 import platform.posix.fwrite
 import platform.posix.memcpy
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import com.aryan.reader.shared.ReaderPageInfoCornerClearance
+import com.aryan.reader.shared.readerPageInfoCornerClearance
 
 @Composable
 internal actual fun rememberSharedMobileEpubLoadState(book: BookItem): SharedMobileEpubLoadState {
@@ -219,13 +231,36 @@ internal actual fun openSharedMobileEpubExternalLink(url: String): Boolean {
     return openSharedMobileExternalUrl(url)
 }
 
-// iPhone corner radii (~13-16pt) curve into the benchmark 16.dp side padding,
-// so the edge-pinned clock/percentage gain room that safeDrawing cannot
-// provide (it reports 0 horizontally in portrait). Compose Multiplatform exposes
-// no rounded-corner radii to read, unlike Android's WindowInsets.getRoundedCorner,
-// so this stays a floor sized for the tightest supported iPhone radius.
+/** iPhone corner radius floor; see [sharedMobileEpubPageInfoCornerClearance]. */
+private val IOS_PAGE_INFO_CORNER_RADIUS_FLOOR = 8.dp
+
+/**
+ * iPhone corner radii (~13-16pt) curve into the benchmark 16.dp side padding, so
+ * the edge-pinned clock/percentage need room that safeDrawing cannot provide (it
+ * reports 0 horizontally in portrait).
+ *
+ * Compose Multiplatform exposes no rounded-corner radii to read, unlike Android's
+ * `WindowInsets.getRoundedCorner`, so the radius term is a floor sized for the
+ * tightest supported iPhone rather than a measurement. Everything else follows
+ * Android exactly: the horizontal insets are subtracted per side, so landscape
+ * safe-area insets reduce the floor instead of stacking with it.
+ */
 @Composable
-actual fun sharedMobileEpubPageInfoCornerClearance(): Dp = 8.dp
+actual fun sharedMobileEpubPageInfoCornerClearance(): ReaderPageInfoCornerClearance {
+    val layoutDirection = LocalLayoutDirection.current
+    val safeInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+    // Directional, matching the padding this clearance is added to.
+    val safePadding = safeInsets.asPaddingValues()
+    return readerPageInfoCornerClearance(
+        startTopRadius = IOS_PAGE_INFO_CORNER_RADIUS_FLOOR,
+        startBottomRadius = IOS_PAGE_INFO_CORNER_RADIUS_FLOOR,
+        endTopRadius = IOS_PAGE_INFO_CORNER_RADIUS_FLOOR,
+        endBottomRadius = IOS_PAGE_INFO_CORNER_RADIUS_FLOOR,
+        startInset = safePadding.calculateStartPadding(layoutDirection),
+        endInset = safePadding.calculateEndPadding(layoutDirection),
+        barSidePadding = SharedReaderPageInfoBarSidePadding
+    )
+}
 
 // With menus hidden the bar would sit flush at the bottom edge, inside the
 // corner curve. Always lifting it above the home-indicator zone keeps the

@@ -859,9 +859,13 @@ internal fun rememberSharedMobileEpubPageInfoBottomPad(
     pageInfoPosition: PageInfoPosition,
     applySystemBarsInsets: Boolean
 ): Dp {
+    // Vertical space the bottom pad has to give back because the corner curve
+    // already covers it; the larger side governs a single shared bottom value.
+    val cornerClearance = sharedMobileEpubPageInfoCornerClearance()
     val safeBottom = WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
     return if (applySystemBarsInsets && pageInfoPosition == PageInfoPosition.BOTTOM) {
-        (safeBottom - sharedMobileEpubPageInfoCornerClearance()).coerceAtLeast(0.dp)
+        (safeBottom - maxOf(cornerClearance.start, cornerClearance.end))
+            .coerceAtLeast(0.dp)
     } else {
         0.dp
     }
@@ -882,9 +886,13 @@ internal fun rememberSharedMobileEpubPageInfoBottomPad(
 internal fun rememberSharedMobileEpubPageInfoMaxBottomPad(
     pageInfoPosition: PageInfoPosition
 ): Dp {
+    // Vertical space the bottom pad has to give back because the corner curve
+    // already covers it; the larger side governs a single shared bottom value.
+    val cornerClearance = sharedMobileEpubPageInfoCornerClearance()
     val safeBottom = WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
     return if (pageInfoPosition == PageInfoPosition.BOTTOM) {
-        (safeBottom - sharedMobileEpubPageInfoCornerClearance()).coerceAtLeast(0.dp)
+        (safeBottom - maxOf(cornerClearance.start, cornerClearance.end))
+            .coerceAtLeast(0.dp)
     } else {
         0.dp
     }
@@ -934,7 +942,8 @@ internal fun SharedMobileEpubPageInfo(
     // bar's edge-pinned clock and percentage are the only thing at the very edge,
     // so they are what the corner curve can clip.
     val cornerClearance = sharedMobileEpubPageInfoCornerClearance()
-    val sidePadding = SharedReaderPageInfoBarSidePadding + cornerClearance
+    val sidePadding = SharedReaderPageInfoBarSidePadding +
+        maxOf(cornerClearance.start, cornerClearance.end)
     // The title's own inset is measured per side label now (see
     // SharedReaderPageInfoBarRow), so this only logs the floor it can never go
     // below. Kept in the diagnostic because it is the number the old fixed
@@ -1036,7 +1045,10 @@ internal fun SharedMobileEpubPageInfo(
         Box(
             Modifier.fillMaxWidth().height(contentHeight)
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
-                .padding(horizontal = SharedReaderPageInfoBarSidePadding + cornerClearance)
+                .padding(
+                    start = SharedReaderPageInfoBarSidePadding + cornerClearance.start,
+                    end = SharedReaderPageInfoBarSidePadding + cornerClearance.end
+                )
         ) {
             // Shared row: measures the clock and percentage, then gives the title
             // exactly the gap left between them (shrinking and wrapping to two

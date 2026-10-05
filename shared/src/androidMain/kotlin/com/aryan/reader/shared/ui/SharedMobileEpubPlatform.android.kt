@@ -40,7 +40,17 @@ import android.os.Build
 import android.view.RoundedCorner
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
-import com.aryan.reader.shared.readerPageInfoCornerClearancePx
+import com.aryan.reader.shared.readerPageInfoCornerClearance
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
+import com.aryan.reader.shared.ReaderPageInfoCornerClearance
 @Composable
 internal actual fun rememberSharedMobileEpubLoadState(book: BookItem): SharedMobileEpubLoadState {
     val context = rememberAndroidSharedMobileContext()
@@ -355,39 +365,59 @@ private val AndroidEpubBridgeBootstrapScript = """
 internal actual fun openSharedMobileEpubExternalLink(url: String): Boolean = openAndroidUrl(url)
 
 /**
- * Real rounded-corner inset for the PageInfo bar.
+ * Real rounded-corner inset for the PageInfo bar, per side.
  *
  * `WindowInsets.safeDrawing` covers the system bars, cutouts and waterfall only —
  * it says nothing about the corner curve, which is exactly what clips the bar's
  * edge-pinned clock and percentage on a device with generous radii and no bar
  * inset. So read the actual radii (API 31+) and report the inset the platform
- * guideline prescribes: the radius of the corners on that edge, less whatever the
- * bar already pads, never below zero.
+ * guideline prescribes; the arithmetic is shared in [readerPageInfoCornerClearance]
+ * so Android and iOS resolve the radius identically.
  *
- * Returns 0.dp when there is nothing to clear — pre-API 31, a window with no
- * rounded corners, or insets not attached yet — so square screens keep their
- * exact benchmark spacing.
+ * Returns a zero clearance when there is nothing to clear — pre-API 31, a window
+ * with no rounded corners, or insets not attached yet — so square screens keep
+ * their exact benchmark spacing.
  */
 @Composable
-actual fun sharedMobileEpubPageInfoCornerClearance(): Dp {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return 0.dp
-    val density = LocalDensity.current
+actual fun sharedMobileEpubPageInfoCornerClearance(): ReaderPageInfoCornerClearance {
+    val zero = ReaderPageInfoCornerClearance(0.dp, 0.dp)
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return zero
     val view = LocalView.current
-    val windowInsets = view.rootWindowInsets ?: return 0.dp
-    // The bar can be pinned to the top or the bottom edge, so both edges have to
-    // clear; the largest radius on either side governs the horizontal inset.
-    val radiusPx = listOf(
-        RoundedCorner.POSITION_TOP_LEFT,
-        RoundedCorner.POSITION_TOP_RIGHT,
-        RoundedCorner.POSITION_BOTTOM_LEFT,
-        RoundedCorner.POSITION_BOTTOM_RIGHT
-    ).mapNotNull { windowInsets.getRoundedCorner(it)?.radius }.maxOrNull() ?: 0
-    return with(density) {
-        readerPageInfoCornerClearancePx(
-            maxCornerRadiusPx = radiusPx,
-            barSidePaddingPx = SharedReaderPageInfoBarSidePadding.roundToPx()
-        ).toDp()
+    val windowInsets = view.rootWindowInsets ?: return zero
+    val density = LocalDensity.current
+    val layoutDirection = LocalLayoutDirection.current
+    fun radiusAt(position: Int): Dp = with(density) {
+        (windowInsets.getRoundedCorner(position)?.radius ?: 0).toDp()
     }
+    // The horizontal system insets the bar is already padded by. They count toward
+    // the clearance the corner needs, so they subtract rather than being ignored --
+    // a gesture pill on one edge already holds the label clear there.
+    val safeInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+    // Directional, matching the padding this clearance is added to.
+    val safePadding = safeInsets.asPaddingValues()
+    val startInset = safePadding.calculateStartPadding(layoutDirection)
+    val endInset = safePadding.calculateEndPadding(layoutDirection)
+    // RoundedCorner positions are physical, but the bar's padding is directional.
+    // In RTL the start padding is on the physical right, so it has to be cleared
+    // against the right-hand corners or the clock lands in the curve.
+    val rtl = layoutDirection == LayoutDirection.Rtl
+    return readerPageInfoCornerClearance(
+        startTopRadius = radiusAt(
+            if (rtl) RoundedCorner.POSITION_TOP_RIGHT else RoundedCorner.POSITION_TOP_LEFT
+        ),
+        startBottomRadius = radiusAt(
+            if (rtl) RoundedCorner.POSITION_BOTTOM_RIGHT else RoundedCorner.POSITION_BOTTOM_LEFT
+        ),
+        endTopRadius = radiusAt(
+            if (rtl) RoundedCorner.POSITION_TOP_LEFT else RoundedCorner.POSITION_TOP_RIGHT
+        ),
+        endBottomRadius = radiusAt(
+            if (rtl) RoundedCorner.POSITION_BOTTOM_LEFT else RoundedCorner.POSITION_BOTTOM_RIGHT
+        ),
+        startInset = startInset,
+        endInset = endInset,
+        barSidePadding = SharedReaderPageInfoBarSidePadding
+    )
 }
 
 // Android benchmark: the bar sits flush at the bottom edge when chrome hides.

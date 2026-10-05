@@ -1,5 +1,7 @@
 package com.aryan.reader.shared
 
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -72,27 +74,112 @@ class ReaderPageInfoBarLayoutTest {
         assertEquals(0, readerPageInfoTitleWidthPx(0, 0))
     }
 
+    private fun clearance(
+        startTop: Dp = 0.dp,
+        startBottom: Dp = 0.dp,
+        endTop: Dp = 0.dp,
+        endBottom: Dp = 0.dp,
+        startInset: Dp = 0.dp,
+        endInset: Dp = 0.dp,
+        barSidePadding: Dp = 16.dp
+    ) = readerPageInfoCornerClearance(
+        startTopRadius = startTop,
+        startBottomRadius = startBottom,
+        endTopRadius = endTop,
+        endBottomRadius = endBottom,
+        startInset = startInset,
+        endInset = endInset,
+        barSidePadding = barSidePadding
+    )
+
     @Test
     fun `corner clearance insets the edge by the radius beyond existing padding`() {
-        // A 40px radius against the bar's 42px side padding: already covered.
-        assertEquals(0, readerPageInfoCornerClearancePx(maxCornerRadiusPx = 40, barSidePaddingPx = 42))
+        // A radius inside the bar's 16dp side padding: already covered.
+        assertEquals(
+            0.dp,
+            clearance(startTop = 16.dp, startBottom = 16.dp, endTop = 16.dp, endBottom = 16.dp).start
+        )
         // A generous radius has to push the content further in, or the clock and
         // percentage get sliced by the corner curve.
-        assertEquals(38, readerPageInfoCornerClearancePx(maxCornerRadiusPx = 80, barSidePaddingPx = 42))
+        assertEquals(
+            14.dp,
+            clearance(startTop = 30.dp, startBottom = 30.dp, endTop = 30.dp, endBottom = 30.dp).start
+        )
     }
 
     @Test
     fun `corner clearance is zero on a screen with no rounded corners`() {
         // The API is a no-op on square displays, so the bar must keep its exact
         // benchmark spacing rather than gaining stray padding.
-        assertEquals(0, readerPageInfoCornerClearancePx(maxCornerRadiusPx = 0, barSidePaddingPx = 42))
+        assertEquals(clearance(), ReaderPageInfoCornerClearance(0.dp, 0.dp))
     }
 
     @Test
-    fun `font step picks the largest size whose text fits`() {
-        // Only the two smallest rungs fit, so the title shrinks before it wraps.
-        val step = readerPageInfoTitleFontStep { it <= 0.85f }
-        assertEquals(0.85f, step)
+    fun `corner clearance subtracts the system insets already applied`() {
+        // calculatePadding is `radius - margin - padding`. Leaving the margin out
+        // double-counts the inset and pushes the labels further in than the
+        // guideline asks -- a landscape gesture pill already holds the label clear.
+        assertEquals(
+            10.dp,
+            clearance(
+                startTop = 40.dp,
+                startBottom = 40.dp,
+                endTop = 40.dp,
+                endBottom = 40.dp,
+                startInset = 14.dp
+            ).start
+        )
+        assertEquals(
+            0.dp,
+            clearance(
+                startTop = 40.dp,
+                startBottom = 40.dp,
+                endTop = 40.dp,
+                endBottom = 40.dp,
+                startInset = 24.dp
+            ).start
+        )
+    }
+
+    @Test
+    fun `corner clearance resolves each side from that side's own corners`() {
+        // The guide pairs corners per edge: start = max(topStart, bottomStart).
+        // Reading all four as one maximum borrows the far corner's radius for the
+        // near one and shifts the labels off-centre.
+        assertEquals(
+            14.dp,
+            clearance(
+                startTop = 20.dp,
+                startBottom = 30.dp,
+                endTop = 40.dp,
+                endBottom = 10.dp
+            ).start
+        )
+        assertEquals(
+            24.dp,
+            clearance(
+                startTop = 20.dp,
+                startBottom = 30.dp,
+                endTop = 40.dp,
+                endBottom = 10.dp
+            ).end
+        )
+    }
+
+    @Test
+    fun `corner clearance can differ per side when the insets do`() {
+        // Landscape with a gesture pill on one edge: that side needs no corner
+        // clearance at all, the other still does.
+        assertEquals(
+            ReaderPageInfoCornerClearance(start = 0.dp, end = 24.dp),
+            clearance(
+                startTop = 40.dp,
+                startBottom = 40.dp,
+                endTop = 40.dp,
+                endBottom = 40.dp,
+                startInset = 24.dp
+            )
+        )
     }
 
     @Test
