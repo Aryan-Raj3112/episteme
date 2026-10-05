@@ -2,8 +2,10 @@ package com.aryan.reader
 
 import android.content.Context
 import androidx.annotation.VisibleForTesting
+import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequest
+import androidx.work.PeriodicWorkRequest
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkRequest
@@ -74,6 +76,27 @@ object SafeWorkManager {
             true
         } catch (t: Throwable) {
             Timber.e(t, "Failed to enqueue unique work $uniqueWorkName; skipping")
+            false
+        }
+    }
+
+    /**
+     * See [WorkManager.enqueueUniquePeriodicWork]. False when the work could
+     * not be scheduled, which keeps a periodic safety net from becoming a
+     * crash source on devices where WorkManager is degraded.
+     */
+    fun enqueueUniquePeriodicWork(
+        context: Context,
+        uniqueWorkName: String,
+        existingWorkPolicy: ExistingPeriodicWorkPolicy,
+        request: PeriodicWorkRequest,
+    ): Boolean {
+        val workManager = getOrNull(context) ?: return false
+        return try {
+            workManager.enqueueUniquePeriodicWork(uniqueWorkName, existingWorkPolicy, request)
+            true
+        } catch (t: Throwable) {
+            Timber.e(t, "Failed to enqueue periodic work $uniqueWorkName; skipping")
             false
         }
     }

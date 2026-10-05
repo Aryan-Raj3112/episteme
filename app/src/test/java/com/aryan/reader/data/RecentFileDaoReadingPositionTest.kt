@@ -82,6 +82,34 @@ class RecentFileDaoReadingPositionTest {
     }
 
     @Test
+    fun `position survives process death because room write precedes any cloud push`() = runTest {
+        // The reading-position flush redesign makes Room the durable record and
+        // pushes to the cloud only on a slow cadence. That is only safe if the
+        // local write is committed independently of any network call, so a
+        // kill before the first flush must still find the position on disk.
+        dao.insertOrUpdateFile(recentFileEntity())
+        dao.updateEpubReadingPosition(
+            bookId = "book-1",
+            cfi = "/4/2:99",
+            chapterIndex = 5,
+            blockIndex = 77,
+            charOffset = 99,
+            progress = 61f,
+            timestamp = 7_000L
+        )
+
+        // Simulate the process being killed: a fresh read of the row, with no
+        // in-memory state carried over, must yield the final position.
+        val recovered = dao.getFileByBookId("book-1")!!
+        assertEquals("/4/2:99", recovered.lastPositionCfi)
+        assertEquals(5, recovered.lastChapterIndex)
+        assertEquals(61f, recovered.progressPercentage)
+        // And it is newer than any pre-position row, which is exactly what the
+        // startup merge uses to decide an unsynced position must be uploaded.
+        assertTrue(recovered.lastModifiedTimestamp > 1_000L)
+    }
+
+    @Test
     fun `recent file summary exposes persisted cfi and locator fields for reader restore`() = runTest {
         dao.insertOrUpdateFile(recentFileEntity())
         dao.updateEpubReadingPosition(

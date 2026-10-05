@@ -113,6 +113,9 @@ class FirestoreRepository {
         expectedRevision: Long?,
         revision: Long,
         deviceId: String,
+        // Kept for signature parity with the pro implementation; OSS has no
+        // FCM fan-out and therefore no publisher to exclude.
+        installationId: String? = null,
     ): CloudFolderManifestLeaseResult = CloudFolderManifestLeaseResult.Unsupported
 
     suspend fun commitCloudFolderManifest(

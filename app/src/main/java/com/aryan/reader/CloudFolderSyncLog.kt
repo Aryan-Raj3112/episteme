@@ -294,14 +294,42 @@ internal fun cloudFolderFailureIsDeterministic(error: Throwable): Boolean =
  * halfway through. A genuine revocation surfaces as a permission/scope error
  * instead.
  */
-internal fun cloudFolderAuthFailureIsTransient(error: Throwable): Boolean =
-    cloudFolderErrorChain(error)
+internal fun cloudFolderAuthFailureIsTransient(error: Throwable): Boolean {
+    // Inspect the whole cause chain for a typed 401 first. Relying on message
+    // text alone was how this regressed: a wrapper that rethrew the raw Drive
+    // exception matched "unauthenticated" as a substring but carried no status
+    // code, so it looked permanent.
+    val typedAuthFailure = cloudFolderErrorChain(error)
         .filterIsInstance<CloudFolderDriveException>()
         .any {
             it.httpStatusCode == 401 ||
                 it.driveReason.equals("autherror", ignoreCase = true) ||
-                it.statusCategory.equals("unauthenticated", ignoreCase = true)
+                it.statusCategory.equals("unauthenticated", ignoreCase = true) ||
+                it.statusCategory.equals("unauthorized", ignoreCase = true)
         }
+    if (typedAuthFailure) return true
+
+    // Fall back to the message for any wrapper shape that discarded the typed
+    // exception. Only the unambiguous auth phrasings count; "permission" and
+    // "forbidden" are deliberately excluded because those mean the user really
+    // did revoke access and retrying forever would be wrong.
+    val normalized = cloudFolderErrorChain(error)
+        .mapNotNull { it.message }
+        .joinToString(" ")
+        .lowercase(Locale.US)
+    val unauthenticated = normalized.contains("unauthenticated") ||
+        normalized.contains("invalid credentials") ||
+        normalized.contains("invalid credential") ||
+        normalized.contains("status code: 401") ||
+        normalized.contains("http 401")
+    // A genuine revocation surfaces as permission/scope errors; if the same
+    // chain mentions those, it outranks a bare "unauthenticated" substring.
+    val revoked = normalized.contains("permission_denied") ||
+        normalized.contains("permission denied") ||
+        normalized.contains("insufficientpermissions") ||
+        normalized.contains("missing or insufficient permissions")
+    return unauthenticated && !revoked
+}
 
 internal fun cloudFolderLogD(message: String) {
     Timber.tag(CLOUD_FOLDER_SYNC_LOG_TAG).d(message)

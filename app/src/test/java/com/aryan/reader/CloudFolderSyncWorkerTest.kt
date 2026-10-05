@@ -750,7 +750,7 @@ class CloudFolderSyncWorkerTest {
     }
 
     @Test
-    fun transientAuthFailureIsRecognizedOnlyForDriveTokenErrors() {
+    fun transientAuthFailureIsRecognizedForDriveTokenErrors() {
         assertTrue(
             cloudFolderAuthFailureIsTransient(
                 CloudFolderDriveException(
@@ -781,8 +781,25 @@ class CloudFolderSyncWorkerTest {
                 ),
             ),
         )
-        assertFalse(cloudFolderAuthFailureIsTransient(IOException("unauthenticated")))
+        // A bare message is now enough to recognise a stale token. This used to
+        // assert the opposite, which is exactly how one expired token silenced
+        // every later pass: the manifest-read path rethrew a plain IOException
+        // carrying "unauthenticated", the typed status code was lost, and the
+        // pass was marked terminal instead of retried.
+        assertTrue(cloudFolderAuthFailureIsTransient(IOException("unauthenticated")))
+        assertTrue(
+            cloudFolderAuthFailureIsTransient(
+                IOException("Unable to read cloud-folder manifest", IllegalStateException("unauthenticated")),
+            ),
+        )
         assertFalse(cloudFolderAuthFailureIsTransient(IOException("network timeout")))
+        // A genuine revocation outranks a bare "unauthenticated" substring, so
+        // it still stops rather than retrying forever.
+        assertFalse(
+            cloudFolderAuthFailureIsTransient(
+                IOException("unauthenticated: permission_denied, missing or insufficient permissions"),
+            ),
+        )
     }
 
     @Test

@@ -60,6 +60,8 @@ import com.aryan.reader.pdf.data.PdfAnnotationRepository
 import com.aryan.reader.pdf.data.PageLayoutRepository
 import com.aryan.reader.pdf.data.PdfTextBoxRepository
 import com.aryan.reader.pdf.data.PdfTextRepository
+import com.aryan.reader.shared.SharedAnnotationSidecarExportDecision
+import com.aryan.reader.shared.decideSharedAnnotationSidecarExport
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import org.json.JSONObject
 import org.json.JSONArray
@@ -579,18 +581,38 @@ class RecentFilesRepository(
         val hasLocalPayload =
             hasInk || hasDeletedInk || hasRichText || hasLayout || hasTextBoxes || hasHighlights
         val maxFileTs = maxOf(tsInk, tsDeletedInk, tsText, tsLayout, tsBox, tsHighlight)
-        val nextClearTimestamp = if (!hasLocalPayload) {
-            existingSidecarBeforeClear?.first?.let { previousTimestamp ->
-                if (previousTimestamp == Long.MAX_VALUE) Long.MAX_VALUE else previousTimestamp + 1L
-            } ?: 0L
-        } else {
-            0L
+        // Single source of truth for the export timestamp rules, shared with iOS.
+        // See SharedAnnotationSidecarExportPolicy for why a clear may not use
+        // wall clock.
+        val exportDecision = decideSharedAnnotationSidecarExport(
+            hasLocalPayload = hasLocalPayload,
+            newestLocalArtifactTimestamp = maxFileTs,
+            priorSidecarTimestamp = existingSidecarBeforeClear?.first ?: 0L,
+            now = System.currentTimeMillis(),
+        )
+        val plan = when (exportDecision) {
+            is SharedAnnotationSidecarExportDecision.Skip -> {
+                // No local annotations and no prior sidecar to clear. This
+                // device simply has never seen an annotation for this book —
+                // most often because it has not imported the peer's sidecar
+                // yet. Returning true means "nothing to export": the durable
+                // pending row is cleared and no manifest revision is burned.
+                Timber.tag("FolderAnnotationSync").d(
+                    "No local annotations and no prior sidecar for bookId: $bookId; nothing to export."
+                )
+                cloudFolderLogD(
+                    "event=annotation_sidecar_write_skip book=${cloudFolderSafeId(bookId)} " +
+                        "reason=no_local_payload_no_prior_sidecar",
+                )
+                return@withContext true
+            }
+            is SharedAnnotationSidecarExportDecision.Write -> exportDecision.plan
         }
-        val finalTs = maxOf(maxFileTs, System.currentTimeMillis(), nextClearTimestamp)
+        val finalTs = plan.timestamp
 
         Timber.tag("FolderAnnotationSync").d("Pushing annotation bundle for $bookId to folder. finalTs=$finalTs")
 
-        val canonicalBundleJson = if (!hasLocalPayload) {
+        val canonicalBundleJson = if (plan.isClear) {
             SharedPdfAnnotationSidecarCodec.clearAllAnnotationsDataJson(
                 previousDataJson = existingSidecarBeforeClear?.second,
                 deletedAt = finalTs,

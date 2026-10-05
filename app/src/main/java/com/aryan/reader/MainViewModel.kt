@@ -22,6 +22,7 @@
 
 package com.aryan.reader
 
+import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.content.Intent
@@ -198,6 +199,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -210,6 +212,7 @@ import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
+import android.os.Bundle
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CancellationException
 import java.util.concurrent.Executors.newSingleThreadExecutor
@@ -242,6 +245,19 @@ private data class FolderBookLocation(
 private const val BANNER_AUTO_DISMISS_MILLIS = 3_000L
 private const val CLOUD_CONTENT_RETRY_DELAY_MILLIS = 10_000L
 private const val CLOUD_METADATA_UPLOAD_DEBOUNCE_MILLIS = 1_500L
+
+/**
+ * Reading position is written to Room on every page change; that local row is
+ * the durable source of truth and is what a crash recovers from. Pushing it to
+ * the cloud on every write produced one Firestore write plus one fan-out push
+ * to every other device per page turn, which was the dominant sync cost.
+ *
+ * Remote flushes are therefore rare and deliberate: on reader close, on app
+ * background, on this slow interval while reading is still active, and — for a
+ * process killed without any of those — by the startup merge, which already
+ * uploads whenever the local row is newer than the remote one.
+ */
+internal const val CLOUD_READING_POSITION_FLUSH_INTERVAL_MILLIS = 2L * 60L * 1_000L
 private const val LOCAL_FOLDER_INVENTORY_REFRESH_MILLIS = 5L * 60L * 1_000L
 private const val LOCAL_FOLDER_INVENTORY_RETRY_MILLIS = 30L * 1_000L
 private const val LOCAL_FOLDER_INVENTORY_STALE_MILLIS = 60L * 1_000L
@@ -313,6 +329,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private var temporaryExternalSessionBookId: String? = null
     private var cloudContentRetryJob: Job? = null
     private val cloudMetadataUploadJobs = ConcurrentHashMap<String, Job>()
+    /**
+     * Books whose local reading position changed but has not yet reached the
+     * cloud. Drained by [flushPendingReadingPositions] on a slow interval, on
+     * reader close, and on app background. A process killed before any of
+     * those is still covered: the startup merge uploads any local row that is
+     * newer than its remote counterpart.
+     */
+    private val pendingReadingPositionFlushes = ConcurrentHashMap.newKeySet<String>()
+    private var readingPositionFlushJob: Job? = null
+    private val readingPositionFlushLock = Mutex()
+    private var startedActivityCountForFlush = 0
     /**
      * Reader callbacks are intentionally fire-and-forget, but closing a
      * reader must take a durable snapshot only after the final Room write has
@@ -1864,6 +1891,38 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
         }
 
+        // Push-independent safety net for cloud folders. The FCM fan-out is the
+        // fast path; this bounds staleness when a push is missed, which would
+        // otherwise leave a device stale until the user next opened the app.
+        // Eligibility changes re-arm or cancel it.
+        viewModelScope.launch {
+            _internalState
+                .map { state ->
+                    Triple(
+                        state.currentUser?.uid?.trim()?.takeIf { it.isNotBlank() },
+                        state.isProUser,
+                        state.isSyncEnabled,
+                    )
+                }
+                .distinctUntilChanged()
+                .collect { (accountId, isPro, syncEnabled) ->
+                    if (accountId != null && isPro && syncEnabled) {
+                        CloudFolderSyncWorker.enqueuePeriodicReconcile(appContext, accountId)
+                    } else {
+                        accountId?.let {
+                            runCatching {
+                                CloudFolderSyncWorker.cancelPeriodicReconcile(appContext, it)
+                            }
+                        }
+                    }
+                }
+        }
+
+        // Flush a pending reading position when the app leaves the foreground.
+        // Without this, a process killed from the background would keep the
+        // position only in Room until the next startup merge.
+        installReadingPositionFlushOnBackground()
+
         if (_internalState.value.syncedFolders.any { it.localSyncEnabled }) {
             // SAF tree enumeration storms ContentResolver; run after first
             // paint. Sync badges arrive ~2s later; no data loss.
@@ -2565,15 +2624,38 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun getInstallationId(): String {
-        var installationId = prefs.getString(KEY_INSTALLATION_ID, null)
-        if (installationId == null) {
-            installationId = UUID.randomUUID().toString()
-            prefs.edit { putString(KEY_INSTALLATION_ID, installationId) }
-            Timber.d("Generated new stable installation ID: $installationId")
-        }
-        return installationId
-    }
+    private fun getInstallationId(): String = CloudInstallationId.get(appContext)
+
+    /**
+     * Shared-tag record of a library-side sync decision. Emitted next to the
+     * full trace so one `logcat -s EpistemeCloudSync` line answers "which side
+     * won, and did anything actually move?".
+     */
+    private fun logLibrarySyncDecision(
+        dir: String,
+        event: String,
+        result: String,
+        bookId: String,
+        local: RecentFileItem?,
+        // Accepts either representation: the merge loop compares against a
+        // RecentFileItem, the upload path against a BookMetadata.
+        remote: Any?,
+        details: String = "",
+    ) = cloudSyncEvent(
+        plane = CloudSyncPlaneLibrary,
+        dir = dir,
+        event = event,
+        result = result,
+        scope = cloudFolderSafeId(bookId),
+        device = syncDeviceLogLabel(),
+        local = local?.cloudSyncTraceSummary("local"),
+        remote = when (remote) {
+            is com.aryan.reader.data.BookMetadata -> remote.cloudSyncTraceSummary("remote")
+            is RecentFileItem -> remote.cloudSyncTraceSummary("remote")
+            else -> null
+        },
+        details = details,
+    )
 
     private fun getDeviceName(): String {
         val manufacturer = Build.MANUFACTURER
@@ -3149,6 +3231,193 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         queueCloudMetadataUpload(bookId, reason = "pdf_sidecar")
     }
 
+    // ---------------------------------------------------------------------
+    // Reading position: local-first, cloud-on-a-cadence.
+    //
+    // Every page change already writes Room (updateEpubReadingPosition /
+    // updatePdfReadingPosition), so nothing is lost by not pushing each of
+    // those writes. These helpers decide *when* the cloud copy catches up.
+    // ---------------------------------------------------------------------
+
+    /**
+     * Record that [bookId]'s local reading position needs a cloud flush and
+     * make sure the slow interval ticker is running. Deliberately does not
+     * touch the network: the Room row written just before this call is the
+     * durable record.
+     */
+    private fun scheduleReadingPositionFlush(bookId: String, reason: String) {
+        if (!uiState.value.isSyncEnabled) return
+        pendingReadingPositionFlushes.add(bookId)
+        logCloudSyncTrace {
+            "android.position.pending book=$bookId trigger=$reason pending=${pendingReadingPositionFlushes.size}"
+        }
+        // Local-only by design: this marks the book for a later cloud flush and
+        // never touches the network. Logged so "position saved but nothing
+        // reached the cloud" is explainable from one tag.
+        cloudSyncEvent(
+            plane = CloudSyncPlaneLibrary,
+            dir = CloudSyncDirNone,
+            event = "position_local_write",
+            scope = cloudFolderSafeId(bookId),
+            device = syncDeviceLogLabel(),
+            details = "trigger=$reason pending=${pendingReadingPositionFlushes.size} target=room",
+        )
+        if (readingPositionFlushJob?.isActive == true) return
+        readingPositionFlushJob = viewModelScope.launch {
+            // Leading-edge ticker: while reading continues this fires every
+            // CLOUD_READING_POSITION_FLUSH_INTERVAL_MILLIS, and the loop exits
+            // once nothing is pending, so an idle app holds no timer.
+            while (isActive && pendingReadingPositionFlushes.isNotEmpty()) {
+                delay(CLOUD_READING_POSITION_FLUSH_INTERVAL_MILLIS)
+                flushPendingReadingPositions(reason = "interval")
+            }
+        }
+    }
+
+    /**
+     * Push every book whose local position changed since the last flush. A
+     * flush already in flight wins; the caller re-marks on its next save.
+     */
+    private suspend fun flushPendingReadingPositions(reason: String) {
+        if (pendingReadingPositionFlushes.isEmpty()) return
+        if (!readingPositionFlushLock.tryLock()) return
+        try {
+            val bookIds = pendingReadingPositionFlushes.toList()
+            if (bookIds.isEmpty()) return
+            pendingReadingPositionFlushes.removeAll(bookIds.toSet())
+            cloudSyncEvent(
+                plane = CloudSyncPlaneLibrary,
+                dir = CloudSyncDirPush,
+                event = "position_batch_flush",
+                scope = "batch",
+                device = syncDeviceLogLabel(),
+                details = "trigger=$reason books=${bookIds.size}",
+            )
+            for (bookId in bookIds) {
+                flushBookMetadataToCloud(bookId, reason)
+            }
+        } finally {
+            readingPositionFlushLock.unlock()
+        }
+    }
+
+    /**
+     * Single entry point for pushing one book's metadata to its remote of
+     * record.
+     *
+     * Library books go to Firestore via [uploadSingleBookMetadata]. Folder
+     * books must NOT: that function bails out with `reason=folder_book`, which
+     * is why folder reading position historically only reached Drive when the
+     * reader was closed. Their remote is the sidecar file plus the folder
+     * manifest, so they go through [folderMirrorStore] instead.
+     */
+    private suspend fun flushBookMetadataToCloud(bookId: String, reason: String) {
+        if (!uiState.value.isSyncEnabled) return
+        val book = bookStore.getFileByBookId(bookId) ?: run {
+            logCloudSyncTrace { "android.flush.skip reason=missing_local book=$bookId trigger=$reason" }
+            cloudSyncEvent(
+                plane = CloudSyncPlaneLibrary,
+                dir = CloudSyncDirNone,
+                event = "position_flush",
+                result = "blocked:missing_local",
+                scope = cloudFolderSafeId(bookId),
+                device = syncDeviceLogLabel(),
+                details = "trigger=$reason",
+            )
+            return
+        }
+        val isFolderBook = book.sourceFolderUri != null
+        cloudSyncEvent(
+            plane = if (isFolderBook) CloudSyncPlaneFolder else CloudSyncPlaneLibrary,
+            dir = CloudSyncDirPush,
+            event = "position_flush_start",
+            scope = cloudFolderSafeId(bookId),
+            device = syncDeviceLogLabel(),
+            local = book.cloudSyncTraceSummary("local"),
+            details = "trigger=$reason target=${if (isFolderBook) "sidecar" else "firestore"}",
+        )
+        if (isFolderBook) {
+            logCloudSyncTrace { "android.flush.sidecar book=$bookId trigger=$reason" }
+            val saved = folderMirrorStore.syncLocalMetadataToFolder(bookId, force = true)
+            if (!saved) {
+                // Re-mark so the next flush retries instead of losing the
+                // position for this book entirely.
+                pendingReadingPositionFlushes.add(bookId)
+                Timber.tag("FolderAnnotationSync").w(
+                    "Folder metadata sidecar write failed; will retry on next flush: $bookId"
+                )
+            }
+            FolderAnnotationExportWorker.markPending(
+                context = appContext,
+                bookId = bookId,
+                reason = reason,
+                immediate = false,
+            )
+            cloudSyncEvent(
+                plane = CloudSyncPlaneFolder,
+                dir = CloudSyncDirPush,
+                event = "position_flush_end",
+                result = if (saved) "ok" else "error:sidecar_write",
+                scope = cloudFolderSafeId(bookId),
+                device = syncDeviceLogLabel(),
+                local = book.cloudSyncTraceSummary("local"),
+                details = "trigger=$reason sidecarSaved=$saved",
+            )
+            return
+        }
+        logCloudSyncTrace { "android.flush.firestore book=$bookId trigger=$reason" }
+        uploadSingleBookMetadata(book)
+        cloudSyncEvent(
+            plane = CloudSyncPlaneLibrary,
+            dir = CloudSyncDirPush,
+            event = "position_flush_end",
+            scope = cloudFolderSafeId(bookId),
+            device = syncDeviceLogLabel(),
+            local = book.cloudSyncTraceSummary("local"),
+            details = "trigger=$reason target=firestore",
+        )
+    }
+
+    /** Cached because every log line derives a label from it. */
+    private var syncDeviceLogLabelCache: String? = null
+
+    private fun syncDeviceLogLabel(): String = syncDeviceLogLabelCache
+        ?: CloudInstallationId.get(appContext)
+            .let { cloudSyncDeviceLabel(it) }
+            .also { syncDeviceLogLabelCache = it }
+
+    /**
+     * Flush on the way to the background. `onStop` counting mirrors
+     * `CloudFolderHeadListenerCoordinator`: the last activity stopping means
+     * the process may be killed shortly after, which is the last cheap moment
+     * to make the cloud copy match Room.
+     */
+    private fun installReadingPositionFlushOnBackground() {
+        val application = getApplication<Application>() as? Application ?: return
+        application.registerActivityLifecycleCallbacks(
+            object : Application.ActivityLifecycleCallbacks {
+                override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+                override fun onActivityStarted(activity: Activity) {
+                    startedActivityCountForFlush++
+                }
+
+                override fun onActivityResumed(activity: Activity) = Unit
+                override fun onActivityPaused(activity: Activity) = Unit
+                override fun onActivityStopped(activity: Activity) {
+                    startedActivityCountForFlush--
+                    if (startedActivityCountForFlush > 0) return
+                    startedActivityCountForFlush = 0
+                    viewModelScope.launch(Dispatchers.IO) {
+                        flushPendingReadingPositions(reason = "app_background")
+                    }
+                }
+
+                override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+                override fun onActivityDestroyed(activity: Activity) = Unit
+            }
+        )
+    }
+
     suspend fun onPdfSidecarsCommitted(bookId: String, reason: String, immediate: Boolean) {
         val book = bookStore.getFileByBookId(bookId)
         if (book?.sourceFolderUri != null) {
@@ -3591,6 +3860,16 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         readingPositionModifiedTimestamp = readingPositionTimestamp
                     )
                 )
+                logLibrarySyncDecision(
+                    dir = if (remoteReadingPositionWins) CloudSyncDirPull else CloudSyncDirPush,
+                    event = "library_metadata_publish",
+                    result = "ok",
+                    bookId = book.bookId,
+                    local = metadataBook,
+                    remote = remoteMetadata,
+                    details = "newTs=$newTimestamp readTs=$readingPositionTimestamp " +
+                        "remoteWins=${remoteMetadataWins} positionRemoteWins=$remoteReadingPositionWins",
+                )
                 logCloudAnnotationSyncTrace {
                     "android.upload.metadata_success book=${bookForMetadata.bookId} newTs=$newTimestamp " +
                         "readTs=$readingPositionTimestamp hasAnnotations=$syncedHasAnnotations " +
@@ -3769,6 +4048,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     "event=reader_state_wait_start operation=$closeOperation correlation=$closeCorrelation " +
                         "book=${cloudFolderSafeId(closingBookId)} source=${cloudFolderSafeUri(uriString.toUri())}",
                 )
+                // The close flush drains this book's pending entry, so a
+                // position saved moments before closing cannot be re-pushed
+                // by the interval ticker afterwards.
+                closingBookId?.let { pendingReadingPositionFlushes.remove(it) }
                 awaitReaderStateWrites(uriString, closingBookId)
                 cloudFolderLogD(
                     "event=reader_state_wait_end operation=$closeOperation correlation=$closeCorrelation " +
@@ -3792,24 +4075,26 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     if (uiState.value.isSyncEnabled) {
                         logCloudSyncTrace { "android.reader.close_upload_start ${it.cloudSyncTraceSummary()}" }
                         Timber.d("Book closed, triggering metadata sync for ${it.bookId}")
-                        uploadSingleBookMetadata(it)
+                        // One entry point for both book kinds: Firestore for
+                        // library books, sidecar + folder manifest for folder
+                        // books. Previously this called uploadSingleBookMetadata
+                        // (which no-ops for folder books) and then duplicated the
+                        // folder branch inline.
+                        flushBookMetadataToCloud(it.bookId, reason = "reader_close")
                     } else {
                         logCloudSyncTrace { "android.reader.close_upload_skip reason=sync_disabled ${it.cloudSyncTraceSummary()}" }
                     }
 
                     if (it.sourceFolderUri != null) {
-                        Timber.tag("FolderAnnotationSync")
-                            .d("Book closed (Folder Linked), syncing metadata and scheduling annotations: ${it.bookId}")
-                        val metadataSaved = folderMirrorStore.syncLocalMetadataToFolder(it.bookId, force = true)
+                        // The sidecar commit itself is logged by
+                        // flushBookMetadataToCloud, which ran above.
                         cloudFolderLogD(
                             "event=reader_close_sidecar_commit operation=$closeOperation correlation=$closeCorrelation " +
-                                "book=${cloudFolderSafeId(it.bookId)} result=${if (metadataSaved) "success" else "failure"}",
+                                "book=${cloudFolderSafeId(it.bookId)} result=delegated",
                         )
-                        if (!metadataSaved) {
-                            Timber.tag("FolderAnnotationSync").w(
-                                "Book close metadata sidecar write failed; keeping local state for retry: ${it.bookId}"
-                            )
-                        }
+                        // Close is the last chance to carry annotations too, so
+                        // this one stays immediate rather than waiting for the
+                        // batched export.
                         FolderAnnotationExportWorker.markPending(
                             context = appContext,
                             bookId = it.bookId,
@@ -5957,11 +6242,31 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             pendingContentDownloads += bookId
                         }
 
+                        logLibrarySyncDecision(
+                            dir = CloudSyncDirNone,
+                            event = "library_merge_decision",
+                            result = "compared",
+                            bookId = bookId,
+                            local = effectiveLocal,
+                            remote = remoteItem,
+                            details = "localTs=${effectiveLocal.lastModifiedTimestamp} " +
+                                "remoteTs=${remote.lastModifiedTimestamp} " +
+                                "localReadTs=$localReadingTimestamp remoteReadTs=$remoteReadingTimestamp",
+                        )
                         if (shouldUploadLocalCloudBookMetadataUpdate(
                                 localModifiedTimestamp = effectiveLocal.lastModifiedTimestamp,
                                 remoteModifiedTimestamp = remote.lastModifiedTimestamp
                             )
                         ) {
+                            logLibrarySyncDecision(
+                                dir = CloudSyncDirPush,
+                                event = "library_merge_decision",
+                                result = "push",
+                                bookId = bookId,
+                                local = effectiveLocal,
+                                remote = remoteItem,
+                                details = "reason=local_newer",
+                            )
                             logCloudSyncTrace {
                                 "android.full_sync.decision action=upload_local book=$bookId " +
                                     "localTs=${effectiveLocal.lastModifiedTimestamp} remoteTs=${remote.lastModifiedTimestamp} " +
@@ -7990,7 +8295,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         "afterChapter=${updated?.lastChapterIndex ?: "none"} afterBlock=${updated?.locatorBlockIndex ?: "none"} " +
                         "afterChar=${updated?.locatorCharOffset ?: "none"} afterProgress=${updated?.progressPercentage ?: "none"}",
                 )
-                queueCloudMetadataUpload(book.bookId, reason = "epub_position")
+                // Room is the durable record; the cloud copy follows on the
+                // slow cadence. See scheduleReadingPositionFlush.
+                scheduleReadingPositionFlush(book.bookId, reason = "epub_position")
             }
         }
     }
@@ -8138,7 +8445,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         "afterReadTs=${updated?.effectiveReadingPositionModifiedTimestamp() ?: 0L} " +
                         "afterPage=${updated?.lastPage ?: "none"} afterProgress=${updated?.progressPercentage ?: "none"}",
                 )
-                queueCloudMetadataUpload(book.bookId, reason = "pdf_position")
+                // Room is the durable record; the cloud copy follows on the
+                // slow cadence. See scheduleReadingPositionFlush.
+                scheduleReadingPositionFlush(book.bookId, reason = "pdf_position")
             } ?: run {
                 cloudFolderLogW(
                     "event=reader_position_save_skip kind=pdf reason=book_not_found " +

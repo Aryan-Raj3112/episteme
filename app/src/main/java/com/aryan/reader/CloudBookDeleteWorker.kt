@@ -288,14 +288,7 @@ class CloudBookDeleteWorker(
         }
     }
 
-    private fun installationId(): String {
-        var value = preferences.getString(KEY_INSTALLATION_ID, null)
-        if (value.isNullOrBlank()) {
-            value = java.util.UUID.randomUUID().toString()
-            preferences.edit().putString(KEY_INSTALLATION_ID, value).apply()
-        }
-        return value
-    }
+    private fun installationId(): String = CloudInstallationId.get(applicationContext)
 
     private fun CloudBookDeleteIntentEntity.toTombstone() = CloudBookTombstone(
         bookId = bookId,
@@ -305,7 +298,6 @@ class CloudBookDeleteWorker(
 
     companion object {
         const val KEY_ACCOUNT_ID = "account_id"
-        private const val KEY_INSTALLATION_ID = "installation_id"
         private const val PREFERENCES_NAME = "reader_user_prefs"
         private const val WORK_NAME_PREFIX = "CloudBookDeleteWorker_"
         private const val MAX_PARALLEL_BOOK_DELETIONS = 4
