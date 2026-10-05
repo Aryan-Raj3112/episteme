@@ -161,6 +161,17 @@ private const val PDF_TILE_STROKE_RESUME_DELAY_MS = 150L
 private const val PDF_TILE_RENDER_IDLE_COOLDOWN_MS = 220L
 private const val PDF_PAGINATION_PAN_FLING_MIN_VELOCITY = 600f
 private const val PDF_PAGINATION_PAN_FLING_MULTIPLIER = 0.72f
+
+/**
+ * Pixels added to every edge of a PDF-space highlight rect after mapping it to bitmap space.
+ *
+ * `mapRectToDevice` returns an `android.graphics.Rect`, so each edge is truncated toward zero and can
+ * drop up to a pixel of the final glyph. One pixel of growth is imperceptible at text sizes and keeps
+ * the highlight from ending just short of its last character. iOS keeps float bounds and needs no
+ * equivalent.
+ */
+private const val PDF_HIGHLIGHT_RECT_TRUNCATION_COMPENSATION_PX = 1
+
 private val pdfHighResTileRenderMutex = Mutex()
 
 @Stable
@@ -802,8 +813,13 @@ internal fun PdfPageComposable(
         withContext(Dispatchers.IO) {
             try {
                 pdfDocumentItem.openPage(pdfPageIndex)?.use { page ->
+                    val growth = PDF_HIGHLIGHT_RECT_TRUNCATION_COMPENSATION_PX
                     val mapped = userHighlights.map { highlight ->
-                        val screenRects = highlight.bounds.mapNotNull { pdfRectF ->
+                        val screenRects = highlight.bounds.map { pdfRectF ->
+                            // mapRectToDevice returns an android.graphics.Rect, so each edge is
+                            // truncated toward zero and can lose up to 1px of the last glyph. Grow
+                            // by a pixel so the highlight always covers its full range instead of
+                            // stopping just short of the final character.
                             page.mapRectToDevice(
                                 startX = 0,
                                 startY = 0,
@@ -811,7 +827,14 @@ internal fun PdfPageComposable(
                                 sizeY = actualBitmapHeightPx,
                                 rotate = currentPageRotation,
                                 coords = pdfRectF
-                            ).takeIf { it.width() > 0 && it.height() > 0 }
+                            ).let { mapped ->
+                                Rect(
+                                    mapped.left - growth,
+                                    mapped.top - growth,
+                                    mapped.right + growth,
+                                    mapped.bottom + growth,
+                                )
+                            }
                         }
                         highlight to screenRects
                     }

@@ -85,6 +85,30 @@ class PdfTextProcessingTest {
     }
 
     @Test
+    fun `tightly led text lines are not merged into one rect`() {
+        // A font box is roughly ascender + descender (~13.8pt for 12pt text), so 12pt leading
+        // already leaves ~1.8pt of shared vertical band between adjacent lines. A loose overlap
+        // test merged them into one rect, and because a decoration stroke is positioned relative
+        // to the rect (underline at 86% of height) the single stroke landed under the second line
+        // only, leaving the first line with no stroke at all.
+        val twoLines = listOf(
+            PdfPageBounds(10f, 700f, 200f, 713.8f),
+            PdfPageBounds(10f, 676f, 190f, 690f),
+        )
+        assertEquals(2, PdfTextProcessing.mergePdfBoundsIntoLines(twoLines).size)
+        assertEquals(2, PdfTextProcessing.mergeScreenBoundsIntoLines(twoLines).size)
+
+        // Runs on a single line still merge, which is the whole point of these helpers.
+        val oneLineRuns = listOf(
+            PdfPageBounds(10f, 100f, 80f, 113.8f),
+            PdfPageBounds(80f, 100f, 150f, 113.8f),
+            PdfPageBounds(150f, 100.5f, 220f, 114f),
+        )
+        assertEquals(1, PdfTextProcessing.mergePdfBoundsIntoLines(oneLineRuns).size)
+        assertEquals(1, PdfTextProcessing.mergeScreenBoundsIntoLines(oneLineRuns).size)
+    }
+
+    @Test
     fun `ocr matching ignores case and android trailing punctuation`() {
         val bounds = PdfPageBounds(12f, 0f, 30f, 10f)
         val punctuatedBounds = PdfPageBounds(32f, 0f, 55f, 10f)

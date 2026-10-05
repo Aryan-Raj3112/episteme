@@ -8123,10 +8123,10 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 lockedState = lockedState,
                                 showPageGap = showVerticalPageGap,
                                 showPageNumberOverlay = showPageNumberOverlay,
-                                onZoomAndPanChanged = { newScale, newOffset ->
-                                    currentActiveScale = newScale
-                                    currentActiveOffset = newOffset
-                                },
+                                // Vertical mode owns its own camera; nothing in this branch reads the
+                                // host mirror back, so do not pay two screen-scope state writes per
+                                // frame for it. The pagination branch below still reports.
+                                reportsCameraToHost = false,
                                 resetZoomTrigger = resetZoomTrigger,
                                 isBubbleZoomModeActive = isBubbleZoomModeActive,
                                 onDetectBubbles = { sourcePageIndex, bitmap ->

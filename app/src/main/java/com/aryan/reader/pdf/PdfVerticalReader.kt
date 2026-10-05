@@ -39,6 +39,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculateCentroidSize
@@ -153,6 +155,12 @@ import kotlin.math.roundToInt
 private const val SCROLL_BOUNDS_TAG = "PdfScrollBounds"
 private const val VERTICAL_TILE_RENDER_IDLE_COOLDOWN_MS = 220L
 
+/** Speed above which a fling is considered "fast", in screen px/s. Drives the prefetch window. */
+private const val PDF_FAST_FLING_VELOCITY = 500f
+
+/** A measure/place pass slower than this is worth a log line. */
+private const val PDF_SLOW_LAYOUT_THRESHOLD_MS = 2f
+
 @Stable
 class VerticalPdfReaderState {
     var currentPage by mutableIntStateOf(0)
@@ -239,7 +247,51 @@ internal data class PdfVerticalPagePosition(
     val height: Float,
 )
 
-internal fun mostVisiblePdfVerticalPageIndex(
+/**
+ * Pages intersecting `[searchTop, searchBottom]`, in document pixels.
+ *
+ * Pages are laid out top to bottom in index order, so the intersecting set is contiguous and a
+ * binary search finds its start. Returned in layout order, which the reader's `Layout` relies on.
+ */
+internal fun pdfVisibleVerticalPages(
+    layoutInfo: List<PdfPageLayout>,
+    searchTop: Float,
+    searchBottom: Float,
+): List<PdfPageLayout> {
+    if (layoutInfo.isEmpty() || searchBottom <= searchTop) return emptyList()
+
+    var start = 0
+    var end = layoutInfo.size
+    while (start < end) {
+        val mid = (start + end) / 2
+        val page = layoutInfo[mid]
+        if (page.y + page.height < searchTop) start = mid + 1 else end = mid
+    }
+    start = start.coerceIn(layoutInfo.indices)
+    // The search can land on the first page *after* the window; step back onto the page that
+    // straddles searchTop.
+    while (start > 0 && layoutInfo[start - 1].y + layoutInfo[start - 1].height >= searchTop) {
+        start--
+    }
+
+    val result = ArrayList<PdfPageLayout>()
+    for (i in start until layoutInfo.size) {
+        val page = layoutInfo[i]
+        if (page.y > searchBottom) break
+        result.add(page)
+    }
+    return result
+}
+
+internal /**
+ * The page occupying the largest share of the viewport.
+ *
+ * Pages are laid out top to bottom in index order, so the candidates are contiguous: any page fully
+ * above the viewport scores zero and any page fully below it scores zero. That makes a bounded scan
+ * from the binary-search insertion point sufficient, which matters because this runs while the
+ * camera moves. A full `maxByOrNull` over every page was O(pageCount) per frame.
+ */
+fun mostVisiblePdfVerticalPageIndex(
     pages: List<PdfVerticalPagePosition>,
     panY: Float,
     zoom: Float,
@@ -249,11 +301,32 @@ internal fun mostVisiblePdfVerticalPageIndex(
     val safeZoom = zoom.takeIf { it.isFinite() && it > 0f } ?: 1f
     val realViewportTop = -panY / safeZoom
     val realViewportBottom = (-panY + screenHeight) / safeZoom
-    return pages.maxByOrNull { page ->
-        val top = max(page.top, realViewportTop)
-        val bottom = min(page.top + page.height, realViewportBottom)
-        max(0f, bottom - top)
-    }?.index
+
+    // First page whose bottom edge is past the top of the viewport.
+    var start = 0
+    var end = pages.size
+    while (start < end) {
+        val mid = (start + end) / 2
+        if (pages[mid].top + pages[mid].height < realViewportTop) start = mid + 1 else end = mid
+    }
+
+    var bestIndex: Int? = null
+    var bestVisible = 0f
+    var index = start
+    while (index < pages.size) {
+        val page = pages[index]
+        if (page.top > realViewportBottom) break
+        val visible = minOf(page.top + page.height, realViewportBottom) -
+            maxOf(page.top, realViewportTop)
+        if (visible > bestVisible) {
+            bestVisible = visible
+            bestIndex = page.index
+        }
+        index++
+    }
+    // Nothing intersects the viewport (possible mid-relayout): fall back to the page at the
+    // viewport's top edge so the reported page still tracks the camera.
+    return bestIndex ?: pages[start.coerceIn(pages.indices)].index
 }
 
 private data class DividerLayout(val yPx: Int, val widthPx: Int, val heightPx: Int) {
@@ -289,6 +362,14 @@ internal fun PdfVerticalReader(
     headerHeight: Dp,
     footerHeight: Dp,
     onZoomChange: (Float) -> Unit,
+    /**
+     * Whether [onZoomAndPanChanged] has a consumer.
+     *
+     * The vertical reader owns its camera outright, so the host's camera mirror is only needed by
+     * callers that read it back - currently the pagination spread/page camera. Reporting every frame
+     * regardless costs two snapshot writes at host scope for values nobody reads.
+     */
+    reportsCameraToHost: Boolean = false,
     onPageClick: () -> Unit,
     showAllTextHighlights: Boolean,
     onHighlightLoading: (Boolean) -> Unit,
@@ -465,7 +546,14 @@ internal fun PdfVerticalReader(
         var isDragging by remember { mutableStateOf(false) }
         var isScrollPreparing by remember { mutableStateOf(false) }
         var scrollTraceGestureId by remember { mutableLongStateOf(0L) }
-        val renderedFlingVelocity = remember { FloatArray(2) }
+
+        // Live fling velocity, in screen px/s, kept out of Compose state because it is written on
+        // every fling frame and only read by the prefetch window. The previous code polled
+        // panX/panYAnimatable.velocity, but the decay runs on throwaway Animatable instances, so
+        // those readings were always zero and isFastFlinging could never become true.
+        val flingVelocity = remember { PdfVerticalFlingVelocity() }
+        val frameStats = remember { PdfScrollFrameStats() }
+
         var isTileRenderIdleCooldownActive by remember { mutableStateOf(false) }
 
         LaunchedEffect(isDragging, isFlinging) {
@@ -575,13 +663,18 @@ internal fun PdfVerticalReader(
             )
         }
 
+        /**
+         * Publishes the camera for this frame.
+         *
+         * The authoritative-page lookup used to run here, on every drag frame and every fling
+         * frame, walking the whole page list. It also ran a second time from the
+         * `visiblePages` collector below. It is now driven once per settled camera by a single
+         * throttled flow, so a fling frame does no page-list work at all.
+         */
         fun commitRenderedCamera(zoom: Float, panX: Float, panY: Float) {
             cameraZoom = zoom
             cameraPanX = panX
             cameraPanY = panY
-            authoritativePageForCamera(zoom, panY)?.let { pageIndex ->
-                state.updateAuthoritativeCurrentPage(pageIndex)
-            }
         }
 
         LaunchedEffect(fullPagePositions, screenHeight) {
@@ -613,12 +706,19 @@ internal fun PdfVerticalReader(
             }
         }
 
+        // Vertical mode does not use onZoomAndPanChanged at all: its only consumer is the pagination
+        // branch's spread/page camera (PdfViewerScreen.kt), which reads currentActiveScale and
+        // currentActiveOffset - both declared at the top of the screen composable. Calling it per
+        // camera frame therefore wrote two screen-scope snapshot states on every frame of every
+        // drag and fling, invalidating the screen composition to keep two values nobody read.
         val latestOnZoomAndPanChanged by rememberUpdatedState(onZoomAndPanChanged)
         LaunchedEffect(Unit) {
             snapshotFlow {
                 Triple(cameraZoom, cameraPanX, cameraPanY)
             }.collect { (zoom, panX, panY) ->
-                latestOnZoomAndPanChanged?.invoke(zoom, Offset(panX, panY))
+                if (reportsCameraToHost) {
+                    latestOnZoomAndPanChanged?.invoke(zoom, Offset(panX, panY))
+                }
             }
         }
 
@@ -924,13 +1024,23 @@ internal fun PdfVerticalReader(
                 finitePdfZoomValue(targetPanX).coerceIn(minPanX, maxPanX)
             }
 
-            val minPanY = if (zoomedDocHeight < (safeScreenHeight - safeHeaderHeight - safeFooterHeight)) {
+            // Hard limit is the document edge; the overscroll limit is where the stretch runs out.
+            // Clamping only to the hard limit is what made the ends of a document a dead wall.
+            val hardMinPanY = if (zoomedDocHeight < (safeScreenHeight - safeHeaderHeight - safeFooterHeight)) {
                 safeHeaderHeight
             } else {
                 (safeScreenHeight - safeFooterHeight - zoomedDocHeight).coerceAtMost(safeHeaderHeight)
             }
 
-            val constrainedY = finitePdfZoomValue(targetPanY, safeHeaderHeight).coerceIn(minPanY, safeHeaderHeight)
+            val constrainedY = resolveVerticalPanYWithOverscroll(
+                requestedPanY = finitePdfZoomValue(targetPanY, safeHeaderHeight),
+                hardMinPanY = hardMinPanY,
+                hardMaxPanY = safeHeaderHeight,
+                viewportHeightPx = safeScreenHeight,
+            )
+
+            // X has no overscroll: horizontal room is bounded by zoom, and the centred case
+            // (zoomedDocWidth < screenWidth) must stay pinned.
 
             return Triple(constrainedZoom, constrainedX, constrainedY)
         }
@@ -1176,15 +1286,16 @@ internal fun PdfVerticalReader(
             }
         }
 
+        // Reads the live fling velocity published by the decay itself. The previous version polled
+        // panXAnimatable.velocity / panYAnimatable.velocity, but the decay runs on throwaway
+        // Animatable instances that are only synchronised after the decay ends, so both readings
+        // were zero for the whole fling and isFastFlinging never became true.
         LaunchedEffect(isFlinging) {
             if (isFlinging) {
                 isFastFlinging = true
                 while (isActive && isFlinging) {
-                    val velX = abs(panXAnimatable.velocity)
-                    val velY = abs(panYAnimatable.velocity)
-                    val totalVelocity = max(velX, velY)
-
-                    isFastFlinging = totalVelocity > 500f
+                    val totalVelocity = max(abs(flingVelocity.x), abs(flingVelocity.y))
+                    isFastFlinging = totalVelocity > PDF_FAST_FLING_VELOCITY
                     delay(50)
                 }
             } else {
@@ -1943,9 +2054,13 @@ internal fun PdfVerticalReader(
                         }
                     )
                 }
+                // Keys are the things that change what this detector *does*, never the document
+                // geometry. `totalDocHeight` and `fullPagePositions` used to be keys: any relayout
+                // that produced new list instances tore the detector down and restarted
+                // `awaitEachGesture` mid-gesture, silently dropping the camera takeover and leaving
+                // the next pointer event to start from a stale origin. Those values are now read
+                // through `rememberUpdatedState` inside the body instead.
                 .pointerInput(
-                    totalDocHeight,
-                    fullPagePositions,
                     isEditMode,
                     selectedTool,
                     isScrollLocked,
@@ -1955,6 +2070,10 @@ internal fun PdfVerticalReader(
                     val tracker = VelocityTracker()
                     val decay = splineBasedDecay<Float>(this)
                     val touchSlop = viewConfiguration.touchSlop
+                    // Document geometry, read live rather than captured as a pointerInput key so a
+                    // relayout cannot restart this gesture loop.
+                    val latestTotalDocHeight = totalDocHeight
+                    val latestScreenHeight = screenHeight
 
                     awaitEachGesture {
                         Timber.tag("PdfTouchDebug").v(
@@ -2030,19 +2149,14 @@ internal fun PdfVerticalReader(
                         // to advance after the samples below, which made the document jump
                         // slightly when a finger interrupted deceleration.
                         val wasFlinging = verticalFlingJob?.isActive == true && isFlinging
-                        val interruptedFlingVelocityX = if (wasFlinging) {
-                            renderedFlingVelocity[0]
-                        } else 0f
-                        val interruptedFlingVelocityY = if (wasFlinging) {
-                            renderedFlingVelocity[1]
-                        } else 0f
-                        PdfScrollTrace.d(
-                            "g=$traceGestureId DOWN t=${down.uptimeMillis} pos=${PdfVerticalPerfLog.xy(down.position.x, down.position.y)} " +
-                                "camera=${PdfVerticalPerfLog.xy(cameraPanX, cameraPanY)} zoom=${PdfVerticalPerfLog.f(cameraZoom)} " +
-                                "interruptActive=$wasFlinging interruptVelocity=${PdfVerticalPerfLog.xy(interruptedFlingVelocityX, interruptedFlingVelocityY)}"
-                        )
+                        // Read before the cancel clears it. Used only to decide how aggressively to
+                        // prefetch for the arriving gesture: a touch that lands mid-fling is about to
+                        // continue moving fast, so the window is widened immediately.
+                        val interruptedFlingVelocity = flingVelocity.y
+                        frameStats.gestureDown(PdfVerticalPerfLog.nowNanos())
                         verticalFlingJob?.cancel()
                         verticalFlingJob = null
+                        flingVelocity.clear()
                         isFlinging = false
                         cameraEpoch = nextPdfVerticalCameraEpoch(cameraEpoch)
                         val gestureCameraEpoch = cameraEpoch
@@ -2084,6 +2198,13 @@ internal fun PdfVerticalReader(
                         var gestureDisambiguationMode = if (wasFlinging) 1 else 0
                         var gestureZoomAccumulator = 1f
                         var lastLoggedPinchZoom = Float.NaN
+                        // Set when a child consumes the gesture. Compose's Scrollable cancels the
+                        // drag in that case and starts no fling, because the child owns the
+                        // interaction and a fling would move content the child is acting on. This
+                        // reader used to fall through to the fling with whatever velocity the
+                        // tracker held, which is what turned a short 1cm glide ending on a tappable
+                        // glyph into an abrupt unrequested throw.
+                        var childConsumedGesture = false
 
                         do {
                             val event = awaitPointerEvent()
@@ -2106,6 +2227,7 @@ internal fun PdfVerticalReader(
 
                             if (canceled) {
                                 gestureCanceledEventCount++
+                                childConsumedGesture = true
                                 Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
                                     "vertical.scrollDetector.canceledByConsumed mode=$gestureDisambiguationMode " +
                                         "events=$gestureEventCount changes=${event.changes.joinToString { change ->
@@ -2311,6 +2433,7 @@ internal fun PdfVerticalReader(
 
                         val gestureDurationMs = PdfVerticalPerfLog.elapsedMs(gestureStartNanos)
                         isScrollPreparing = false
+                        frameStats.gestureUp(PdfVerticalPerfLog.nowNanos())
 
                         if (!cameraTakeoverRebased && gestureCameraTakeoverJob?.isCompleted == true) {
                             accumulatedPanX += cameraPanX - sampledTakeoverPanX
@@ -2357,10 +2480,23 @@ internal fun PdfVerticalReader(
                                 flingMaxX = 0f
                             }
 
-                            val minPanY =
-                                (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(
-                                    headerHeightPx
-                                )
+                            // Where the document actually ends.
+                            val hardMinPanY =
+                                (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(headerHeightPx)
+                            // The decay runs to the elastic limit, not the hard one, so a fling into
+                            // the end of the document overshoots and settles the way every other
+                            // Android scrolling surface does. Bound to the limit rather than the hard
+                            // edge, otherwise animateDecay stops dead mid-curve.
+                            val overscrollMinPanY = pdfVerticalOverscrollLimitPx(
+                                hardLimitPx = hardMinPanY,
+                                viewportHeightPx = screenHeight,
+                                outwardSign = -1,
+                            )
+                            val overscrollMaxPanY = pdfVerticalOverscrollLimitPx(
+                                hardLimitPx = headerHeightPx,
+                                viewportHeightPx = screenHeight,
+                                outwardSign = 1,
+                            )
                             val resolvedFling = resolvePdfFlingVelocity(
                                 rawX = velocity.x,
                                 rawY = velocity.y,
@@ -2370,14 +2506,17 @@ internal fun PdfVerticalReader(
                                 maximumVelocity = viewConfiguration.maximumFlingVelocity,
                                 allowHorizontal = !isScrollLocked,
                             )
-                            val flingX = resolvedFling.x
-                            val flingY = resolvedFling.y
+                            // A child owns the interaction from the moment it consumes the gesture, so no fling is
+                            // launched: same contract as Compose's Scrollable, and the fix for a
+                            // short glide that ended over a tappable glyph throwing the document.
+                            val flingX = if (childConsumedGesture) 0f else resolvedFling.x
+                            val flingY = if (childConsumedGesture) 0f else resolvedFling.y
                             val shouldRunFling = flingX != 0f || flingY != 0f ||
                                 accumulatedZoom !in fitZoom..PDF_MAX_ZOOM_SCALE
                             PdfScrollTrace.d(
                                 "g=$traceGestureId UP duration=${gestureDurationMs}ms events=$gestureEventCount " +
                                     "path=${PdfVerticalPerfLog.f(totalPanDistance)} net=${PdfVerticalPerfLog.xy(netGesturePan.x, netGesturePan.y)} " +
-                                    "releaseVelocity=${PdfVerticalPerfLog.xy(velocity.x, velocity.y)} interrupted=${PdfVerticalPerfLog.xy(interruptedFlingVelocityX, interruptedFlingVelocityY)} " +
+                                    "releaseVelocity=${PdfVerticalPerfLog.xy(velocity.x, velocity.y)} interrupted=${PdfVerticalPerfLog.f(interruptedFlingVelocity)} childConsumed=$childConsumedGesture " +
                                     "fling=${PdfVerticalPerfLog.xy(flingX, flingY)} min=${PdfVerticalPerfLog.f(minFlingVelocity)} " +
                                     "final=${PdfVerticalPerfLog.xy(finalX, finalY)} actual=${PdfVerticalPerfLog.xy(cameraPanX, cameraPanY)}"
                             )
@@ -2394,12 +2533,16 @@ internal fun PdfVerticalReader(
                                 // the release-to-fling scheduling gap.
                                 isFlinging = true
                                 val flingCameraEpoch = cameraEpoch
-                                verticalFlingJob = scope.launch {
+                                // UNDISPATCHED, like the gesture takeover above. A dispatched launch
+                                // leaves a scheduling gap between pointer-up and the first decay
+                                // frame in which the camera is frozen; under render load that reads
+                                // as a stall followed by a jump, which is the reported micro-hop.
+                                verticalFlingJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
                                     val flingStartNanos = PdfVerticalPerfLog.nowNanos()
-                                    var traceLastFlingMs = 0L
+                                    frameStats.flingStart(flingStartNanos)
                                     PdfVerticalPerfLog.i(
                                         "fling-start fling=${PdfVerticalPerfLog.xy(flingX, flingY)} " +
-                                            "boundsX=${PdfVerticalPerfLog.xy(flingMinX, flingMaxX)} boundsY=${PdfVerticalPerfLog.xy(minPanY, headerHeightPx)} " +
+                                            "boundsX=${PdfVerticalPerfLog.xy(flingMinX, flingMaxX)} boundsY=${PdfVerticalPerfLog.xy(hardMinPanY, headerHeightPx)} overscrollY=${PdfVerticalPerfLog.xy(overscrollMinPanY, overscrollMaxPanY)} " +
                                             "zoomedDocH=${PdfVerticalPerfLog.f(zoomedDocHeight)} highRes=${PdfVerticalPerfLog.f(highResScale)}"
                                     )
                                     try {
@@ -2414,28 +2557,43 @@ internal fun PdfVerticalReader(
                                             )
                                         }
                                         onZoomChange(zoomAnimatable.targetValue)
-                                        Timber.tag(SCROLL_BOUNDS_TAG).i("Fling Logic:")
-                                        Timber.tag(SCROLL_BOUNDS_TAG)
-                                            .d("- totalDocHeight: $totalDocHeight, zoom: $finalZoom -> zoomedDocHeight: $zoomedDocHeight")
-                                        Timber.tag(SCROLL_BOUNDS_TAG)
-                                            .d("- Fling bounds set to Y:[$minPanY, $headerHeightPx]")
-                                        // Android scroll physics decays each axis independently.
-                                        // Local drivers feed their frame values straight into the
-                                        // rendered camera, so there is no camera queue or mirror.
-                                        // Keeping the axes independent also prevents an X velocity
-                                        // clamped at fit zoom from shortening/canceling the Y fling.
+
+                                        // Both axes decay independently, as Android scroll physics
+                                        // does, but they share one committed camera per frame.
+                                        //
+                                        // Each decay used to call commitRenderedCamera itself and read
+                                        // the *other* axis back out of Compose state. On a diagonal
+                                        // fling the two coroutines then overwrote each other with
+                                        // one-frame-stale values, which the eye reads as jitter. The
+                                        // pending values below are plain locals written by whichever
+                                        // axis advanced this frame, so a frame always commits a
+                                        // self-consistent pair.
+                                        var pendingX = finalX
+                                        var pendingY = finalY
+                                        var pendingVelocityX = flingX
+                                        var pendingVelocityY = flingY
+
+                                        fun commitFlingFrame() {
+                                            frameStats.beginFrame(PdfVerticalPerfLog.nowNanos())
+                                            commitRenderedCamera(finalZoom, pendingX, pendingY)
+                                            flingVelocity.x = pendingVelocityX
+                                            flingVelocity.y = pendingVelocityY
+                                            flingVelocity.frameCount += 1
+                                            frameStats.flingFrame(
+                                                PdfVerticalPerfLog.nowNanos(),
+                                                pendingVelocityY,
+                                            )
+                                        }
+
                                         coroutineScope {
                                             if (flingX != 0f) {
                                                 launch {
                                                     Animatable(finalX).apply {
                                                         updateBounds(flingMinX, flingMaxX)
                                                         animateDecay(flingX, decay) {
-                                                            renderedFlingVelocity[0] = this.velocity
-                                                            commitRenderedCamera(
-                                                                finalZoom,
-                                                                value,
-                                                                cameraPanY,
-                                                            )
+                                                            pendingX = value
+                                                            pendingVelocityX = this.velocity
+                                                            commitFlingFrame()
                                                         }
                                                     }
                                                 }
@@ -2443,28 +2601,40 @@ internal fun PdfVerticalReader(
                                             if (flingY != 0f) {
                                                 launch {
                                                     Animatable(finalY).apply {
-                                                        updateBounds(minPanY, headerHeightPx)
+                                                        // Bounded to the elastic limit, not the hard
+                                                        // document edge, so the fling can overshoot
+                                                        // the last page the way every other Android
+                                                        // scrolling surface does instead of stopping
+                                                        // dead mid-curve.
+                                                        updateBounds(overscrollMinPanY, overscrollMaxPanY)
                                                         animateDecay(flingY, decay) {
-                                                            renderedFlingVelocity[1] = this.velocity
-                                                            commitRenderedCamera(
-                                                                finalZoom,
-                                                                cameraPanX,
-                                                                value,
-                                                            )
-                                                            val elapsed = PdfVerticalPerfLog.elapsedMs(
-                                                                flingStartNanos
-                                                            )
-                                                            if (elapsed - traceLastFlingMs >= PdfScrollTrace.FRAME_SAMPLE_INTERVAL_MS) {
-                                                                traceLastFlingMs = elapsed
-                                                                PdfScrollTrace.d(
-                                                                    "g=$traceGestureId FLING t=${elapsed}ms " +
-                                                                        "y=${PdfVerticalPerfLog.f(value)} " +
-                                                                        "velocity=${PdfVerticalPerfLog.f(this.velocity)} " +
-                                                                        "bounds=${PdfVerticalPerfLog.xy(minPanY, headerHeightPx)}"
-                                                                )
-    }
-}
+                                                            pendingY = value
+                                                            pendingVelocityY = this.velocity
+                                                            commitFlingFrame()
+                                                        }
                                                     }
+                                                }
+                                            }
+                                        }
+
+                                        // Spring back out of any overscroll. Runs only when the
+                                        // decay actually left the document past a hard edge, so the
+                                        // ordinary fling path pays nothing.
+                                        if (pendingY < hardMinPanY || pendingY > headerHeightPx) {
+                                            // Back to the hard edge, not to wherever the elastic
+                                            // mapping happens to put an overscrolled value: the
+                                            // gesture ended there, so that is where it settles.
+                                            val settled = pendingY.coerceIn(hardMinPanY, headerHeightPx)
+                                            if (settled != pendingY) {
+                                                Animatable(pendingY).animateTo(
+                                                    settled,
+                                                    animationSpec = spring(
+                                                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                                                        stiffness = Spring.StiffnessMediumLow,
+                                                    ),
+                                                ) {
+                                                    pendingY = value
+                                                    commitFlingFrame()
                                                 }
                                             }
                                         }
@@ -2477,12 +2647,19 @@ internal fun PdfVerticalReader(
                                         panXAnimatable.snapTo(cameraPanX)
                                         panYAnimatable.snapTo(cameraPanY)
                                     } finally {
-                                        val endingVelocityX = renderedFlingVelocity[0]
-                                        val endingVelocityY = renderedFlingVelocity[1]
+                                        val endingVelocityX = flingVelocity.x
+                                        val endingVelocityY = flingVelocity.y
+                                        frameStats.endFrame()
+                                        frameStats.flingEnd(PdfVerticalPerfLog.nowNanos())
+                                        flingVelocity.clear()
                                         PdfVerticalPerfLog.i(
                                             "fling-end duration=${PdfVerticalPerfLog.elapsedMs(flingStartNanos)}ms " +
                                                 "zoom=${PdfVerticalPerfLog.f(cameraZoom)} pan=${PdfVerticalPerfLog.xy(cameraPanX, cameraPanY)} " +
-                                                "velocity=${PdfVerticalPerfLog.xy(endingVelocityX, endingVelocityY)}"
+                                                "velocity=${PdfVerticalPerfLog.xy(endingVelocityX, endingVelocityY)} " +
+                                                frameStats.summary()
+                                        )
+                                        Timber.tag(SCROLL_BOUNDS_TAG).i(
+                                            "VerticalReader scroll pacing: ${frameStats.dump()}"
                                         )
                                         // A newer gesture/fling owns this flag after advancing the
                                         // camera epoch; an older canceled decay must not clear it.
@@ -2495,13 +2672,11 @@ internal fun PdfVerticalReader(
                                                 "velocity=${PdfVerticalPerfLog.xy(endingVelocityX, endingVelocityY)} " +
                                                 "stillOwner=${cameraEpoch == flingCameraEpoch}"
                                         )
-                                        renderedFlingVelocity[0] = 0f
-                                        renderedFlingVelocity[1] = 0f
                                     }
                                 }
                             } else {
                                 panXAnimatable.updateBounds(flingMinX, flingMaxX)
-                                panYAnimatable.updateBounds(minPanY, headerHeightPx)
+                                panYAnimatable.updateBounds(hardMinPanY, headerHeightPx)
                             }
                         } else {
                             cameraEpoch = nextPdfVerticalCameraEpoch(cameraEpoch)
@@ -2532,36 +2707,22 @@ internal fun PdfVerticalReader(
 
                     val viewportTop = -panY / zoom
                     val viewportBottom = (-panY + screenHeight) / zoom
-                    val buffer = screenHeight * 0.5f
 
-                    val searchTop = viewportTop - buffer
-                    val searchBottom = viewportBottom + buffer
+                    // Prefetch window. Reads live fling velocity, which lives outside Compose state
+                    // precisely so this recomputation does not invalidate on every fling frame: the
+                    // window only needs to be right when it actually changes.
+                    val window = pdfVerticalScrollPrefetchWindow(
+                        viewportHeightPx = screenHeight,
+                        flingVelocityYPxPerSec = flingVelocity.y,
+                    )
+                    val searchTop = viewportTop - window.behindPx
+                    val searchBottom = viewportBottom + window.aheadPx
 
-                    // Standard visibility logic
-                    val baseVisiblePages = if (layoutInfo.isEmpty()) {
-                        emptyList()
-                    } else {
-                        val searchIndex = layoutInfo.binarySearch { page ->
-                            if (page.y + page.height < searchTop) -1
-                            else if (page.y > searchBottom) 1 else 0
-                        }
-
-                        var startIndex = if (searchIndex < 0) -searchIndex - 1
-                        else searchIndex
-
-                        startIndex = startIndex.coerceIn(layoutInfo.indices)
-                        while (startIndex > 0 && layoutInfo[startIndex - 1].y + layoutInfo[startIndex - 1].height >= searchTop) {
-                            startIndex--
-                        }
-
-                        val result = mutableListOf<PdfPageLayout>()
-                        for (i in startIndex until layoutInfo.size) {
-                            val page = layoutInfo[i]
-                            if (page.y > searchBottom) break
-                            result.add(page)
-                        }
-                        result
-                    }
+                    val baseVisiblePages = pdfVisibleVerticalPages(
+                        layoutInfo = layoutInfo,
+                        searchTop = searchTop,
+                        searchBottom = searchBottom,
+                    )
 
                     val draggedBox = textBoxes.find { it.id == draggingBoxId }
                     val originPage = if (draggedBox != null) {
@@ -2587,13 +2748,15 @@ internal fun PdfVerticalReader(
 
                     if (!layoutMatches) {
                         cachedVisiblePages.value = finalPages
-                        Timber.tag("PdfDrawPerf").d(
-                            "Vertical Visible Pages Changed: ${finalPages.map { it.index }} (Dragging: ${draggedBox != null})"
+                        frameStats.visiblePages(
+                            PdfVerticalPerfLog.nowNanos(),
+                            finalPages.size,
                         )
                         PdfVerticalPerfLog.d(
-                            "visible-pages pages=${finalPages.map { it.index }} base=${baseVisiblePages.map { it.index }} " +
-                                "draggingBox=${draggedBox != null} zoom=${PdfVerticalPerfLog.f(zoom)} panY=${PdfVerticalPerfLog.f(panY)} " +
-                                "viewport=${PdfVerticalPerfLog.xy(viewportTop, viewportBottom)} buffered=${PdfVerticalPerfLog.xy(searchTop, searchBottom)}"
+                            "visible-pages count=${finalPages.size} ahead=${PdfVerticalPerfLog.f(window.aheadPx)} " +
+                                "behind=${PdfVerticalPerfLog.f(window.behindPx)} " +
+                                "draggingBox=${draggedBox != null} zoom=${PdfVerticalPerfLog.f(zoom)} " +
+                                "panY=${PdfVerticalPerfLog.f(panY)} flingV=${PdfVerticalPerfLog.f(flingVelocity.y)}"
                         )
                         finalPages
                     } else {
@@ -2602,6 +2765,13 @@ internal fun PdfVerticalReader(
                 }
             }
 
+            // Single owner of the authoritative current page.
+            //
+            // This used to run twice per camera change: once inside commitRenderedCamera and once
+            // here. commitRenderedCamera is on the fling frame path, so the duplicate meant an
+            // O(pageCount) walk plus a state write per frame for a value that only matters once the
+            // camera settles. It now runs only here, and the walk itself is a bounded scan from a
+            // binary search rather than a pass over every page.
             LaunchedEffect(visiblePages, fullPagePositions, screenHeight, isResizing) {
                 snapshotFlow {
                     Pair(cameraPanY, cameraZoom)
@@ -2611,20 +2781,16 @@ internal fun PdfVerticalReader(
                         state.lastVisiblePage = visiblePages.last().index
 
                         val safeZoom = zoom.takeIf { it.isFinite() && it > 0f } ?: 1f
-                        val realViewportTop = -panY / safeZoom
-                        val realViewportBottom = (-panY + screenHeight) / safeZoom
                         val mostVisibleIndex = mostVisiblePdfVerticalPageIndex(
                             pages = fullPagePositions,
                             panY = panY,
                             zoom = safeZoom,
                             screenHeight = screenHeight,
                         )
-
                         if (mostVisibleIndex != null && mostVisibleIndex != state.currentPage) {
-                            Timber.tag("PdfPositionDebug").v("VerticalReader: Page changed to $mostVisibleIndex (PanY: $panY)")
                             PdfVerticalPerfLog.d(
                                 "current-page-change from=${state.currentPage} to=$mostVisibleIndex " +
-                                    "viewport=${PdfVerticalPerfLog.xy(realViewportTop, realViewportBottom)} panY=${PdfVerticalPerfLog.f(panY)} zoom=${PdfVerticalPerfLog.f(zoom)}"
+                                    "panY=${PdfVerticalPerfLog.f(panY)} zoom=${PdfVerticalPerfLog.f(zoom)}"
                             )
                         }
                         mostVisibleIndex?.let(state::updateAuthoritativeCurrentPage)
@@ -3130,6 +3296,10 @@ internal fun PdfVerticalReader(
                 },
                 modifier = Modifier
                     .fillMaxSize()
+                    // The camera lives here rather than on each page: one transform for the whole
+                    // document means a scroll is a single matrix update instead of N page recomposes.
+                    // `graphicsLayer` reads the camera in its block, so these are deferred reads that
+                    // invalidate only the layer, not this Layout's composition.
                     .graphicsLayer {
                         val z = cameraZoom
 
@@ -3139,10 +3309,15 @@ internal fun PdfVerticalReader(
                         translationY = cameraPanY
                         transformOrigin = TransformOrigin(0f, 0f)
                     }
-                    .onGloballyPositioned { _ -> }) { measurables, constraints ->
-                val layoutStart = System.nanoTime()
-                Timber.tag("PdfDrawPerf")
-                    .v("VERTICAL LAYOUT: Measure Pass (${measurables.size} items)")
+                    // No onGloballyPositioned here: the empty callback still cost a position read on
+                    // every measure pass, and this node's size never drives behaviour.
+            ) { measurables, constraints ->
+                // Measure/place only. The measure policy used to open with two System.nanoTime()
+                // calls and an eagerly-built log string on every pass, and then read camera state
+                // from inside the policy - which makes the whole page set remeasure whenever the
+                // camera moves. The camera reads are gone and the log line is now built only on the
+                // slow branch.
+                val layoutStartNanos = System.nanoTime()
                 val measureResult = layout(constraints.maxWidth, constraints.maxHeight) {
                     measurables.forEach { measurable ->
                         when (val id = measurable.layoutId) {
@@ -3178,15 +3353,13 @@ internal fun PdfVerticalReader(
                         }
                     }
                 }
-                val layoutTime = (System.nanoTime() - layoutStart) / 1_000_000f
-                if (layoutTime > 2f) {
-                    Timber.tag("PdfPerformance").d(
-                        "VerticalReader Layout Measure/Place took ${layoutTime}ms for ${measurables.size} items"
-                    )
+                // Reads no Compose state: reading the camera here would re-invalidate this
+                // Layout on every frame. Only the slow branch pays for a log line.
+                val layoutTimeMs = (System.nanoTime() - layoutStartNanos) / 1_000_000f
+                if (layoutTimeMs > PDF_SLOW_LAYOUT_THRESHOLD_MS) {
+                    val itemCount = measurables.size
                     PdfVerticalPerfLog.d(
-                        "compose-layout-slow duration=${PdfVerticalPerfLog.f(layoutTime)}ms items=${measurables.size} " +
-                            "visible=${visiblePages.map { it.index }} zoom=${PdfVerticalPerfLog.f(cameraZoom)} " +
-                            "pan=${PdfVerticalPerfLog.xy(cameraPanX, cameraPanY)}"
+                        "compose-layout-slow duration=${PdfVerticalPerfLog.f(layoutTimeMs)}ms items=$itemCount"
                     )
                 }
                 measureResult

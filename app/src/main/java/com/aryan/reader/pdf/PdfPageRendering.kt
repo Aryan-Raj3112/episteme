@@ -77,6 +77,11 @@ import androidx.compose.ui.util.lerp
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.zIndex
 import androidx.core.graphics.scale
+import com.aryan.reader.shared.pdf.PdfHighlightRect
+import com.aryan.reader.shared.pdf.pdfHighlightLinePath
+import com.aryan.reader.shared.pdf.pdfHighlightLines
+import com.aryan.reader.shared.pdf.pdfHighlightStrokeStyle
+import com.aryan.reader.shared.pdf.pdfHighlightWavePath
 import com.aryan.reader.isCanvasSafeBitmap
 import com.aryan.reader.ml.SpeechBubble
 import com.aryan.reader.pdf.data.PdfAnnotation
@@ -759,100 +764,89 @@ internal fun PdfHighlightsLayer(
             // 9. Persistent User Highlights
             userHighlightScreenRects.forEach { (highlight, screenRects) ->
                 val displayColor = highlight.resolvedColor(customHighlightColors)
-                screenRects.forEach { r ->
-                    if (isVisible(r)) {
-                        drawPdfUserHighlight(
-                            color = displayColor,
-                            style = highlight.style,
-                            rect = r
-                        )
-                    }
-                }
+                drawPdfUserHighlight(
+                    color = displayColor,
+                    style = highlight.style,
+                    screenRects = screenRects,
+                    isVisible = ::isVisible,
+                )
             }
         }
     }
 }
 
+/**
+ * Draws one text highlight's decoration stroke across **all** of its rects.
+ *
+ * The rects are grouped into text lines first and each line is drawn as a single path, so the
+ * baseline, the stroke width and the wave phase are resolved once per line. Drawing per rect was
+ * what produced the gaps at the end of a stroke:
+ *
+ *  - pdfium emits one rect per font run, so a normal word was already two or three rects and the
+ *    wave restarted at each one;
+ *  - the wave itself advanced in whole wavelengths and clamped only the curve *endpoints* to the
+ *    line end while leaving the control points unclamped, so the final partial period degenerated
+ *    into a loop that bulged past the last character and met the baseline at a cusp.
+ *
+ * The wave is now sine-sampled, which gives an exact amplitude and period at any width and can never
+ * leave the line horizontally.
+ *
+ * `BACKGROUND` still paints rect by rect: adjacent rects must not double-blend their shared edge.
+ */
 internal fun DrawScope.drawPdfUserHighlight(
     color: Color,
     style: HighlightStyle,
-    rect: Rect
+    screenRects: List<Rect>,
+    isVisible: (Rect) -> Boolean = { true },
 ) {
-    val left = rect.left.toFloat()
-    val top = rect.top.toFloat()
-    val width = rect.width().toFloat()
-    val height = rect.height().toFloat()
-    if (width <= 0f || height <= 0f) return
-    when (style) {
-        HighlightStyle.BACKGROUND -> drawRect(
-            color = color.copy(alpha = 0.4f),
-            topLeft = Offset(left, top),
-            size = Size(width, height)
-        )
-        HighlightStyle.UNDERLINE -> drawPdfHighlightLine(
-            color = color.copy(alpha = 0.92f),
-            left = left,
-            right = left + width,
-            y = top + height * 0.86f,
-            height = height
-        )
-        HighlightStyle.WAVY_UNDERLINE -> drawPdfHighlightWave(
-            color = color.copy(alpha = 0.92f),
-            left = left,
-            right = left + width,
-            baselineY = top + height * 0.86f,
-            height = height
-        )
-        HighlightStyle.STRIKETHROUGH -> drawPdfHighlightLine(
-            color = color.copy(alpha = 0.92f),
-            left = left,
-            right = left + width,
-            y = top + height * 0.52f,
-            height = height
-        )
-    }
-}
+    val drawable = screenRects.filter { it.width() > 0 && it.height() > 0 }
+    if (drawable.isEmpty()) return
 
-internal fun DrawScope.drawPdfHighlightLine(
-    color: Color,
-    left: Float,
-    right: Float,
-    y: Float,
-    height: Float
-) {
-    drawLine(
-        color = color,
-        start = Offset(left, y),
-        end = Offset(right, y),
-        strokeWidth = (height * 0.08f).coerceIn(1.5f, 4f),
-        cap = StrokeCap.Round
-    )
-}
-
-internal fun DrawScope.drawPdfHighlightWave(
-    color: Color,
-    left: Float,
-    right: Float,
-    baselineY: Float,
-    height: Float
-) {
-    val amplitude = (height * 0.08f).coerceIn(1.2f, 3.5f)
-    val wavelength = (height * 0.62f).coerceIn(6f, 14f)
-    val path = Path()
-    var x = left
-    path.moveTo(x, baselineY)
-    while (x < right) {
-        val midX = (x + wavelength / 2f).coerceAtMost(right)
-        val nextX = (x + wavelength).coerceAtMost(right)
-        path.quadraticBezierTo(x + wavelength / 4f, baselineY - amplitude, midX, baselineY)
-        path.quadraticBezierTo(x + wavelength * 0.75f, baselineY + amplitude, nextX, baselineY)
-        x += wavelength
+    if (style == HighlightStyle.BACKGROUND) {
+        drawable.forEach { rect ->
+            if (!isVisible(rect)) return@forEach
+            drawRect(
+                color = color.copy(alpha = 0.4f),
+                topLeft = Offset(rect.left.toFloat(), rect.top.toFloat()),
+                size = Size(rect.width().toFloat(), rect.height().toFloat())
+            )
+        }
+        return
     }
-    drawPath(
-        path = path,
-        color = color,
-        style = Stroke(width = (height * 0.06f).coerceIn(1.2f, 3f), cap = StrokeCap.Round)
+
+    val strokeColor = color.copy(alpha = 0.92f)
+    val lines = pdfHighlightLines(
+        drawable.map { PdfHighlightRect.from(it.left.toFloat(), it.top.toFloat(), it.right.toFloat(), it.bottom.toFloat()) }
     )
+    lines.forEach { line ->
+        val lineRect = Rect(
+            line.left.toInt(),
+            line.top.toInt(),
+            line.right.toInt(),
+            (line.top + line.height).toInt(),
+        )
+        // Cull on the union, not per rect, so a line is never dropped because its first rect sits
+        // off-screen while the visible part is on-screen.
+        if (!isVisible(lineRect)) return@forEach
+        val strokeStyle = pdfHighlightStrokeStyle(line.height)
+        when (style) {
+            HighlightStyle.WAVY_UNDERLINE -> drawPath(
+                path = pdfHighlightWavePath(strokeStyle, line),
+                color = strokeColor,
+                style = Stroke(width = strokeStyle.waveStrokeWidth, cap = StrokeCap.Round)
+            )
+            HighlightStyle.STRIKETHROUGH -> drawPath(
+                path = pdfHighlightLinePath(line, strikethrough = true),
+                color = strokeColor,
+                style = Stroke(width = strokeStyle.lineStrokeWidth, cap = StrokeCap.Round)
+            )
+            else -> drawPath(
+                path = pdfHighlightLinePath(line),
+                color = strokeColor,
+                style = Stroke(width = strokeStyle.lineStrokeWidth, cap = StrokeCap.Round)
+            )
+        }
+    }
 }
 
 @Suppress("SameParameterValue")

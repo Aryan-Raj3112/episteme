@@ -68,6 +68,11 @@ import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
+import com.aryan.reader.shared.pdf.pdfHighlightLinePath
+import com.aryan.reader.shared.pdf.pdfHighlightLines
+import com.aryan.reader.shared.pdf.pdfHighlightStrokeStyle
+import com.aryan.reader.shared.pdf.pdfHighlightWavePath
+import com.aryan.reader.shared.pdf.toPdfHighlightRect
 import com.aryan.reader.shared.pdf.sharedPdfTextBoxAnnotatedString
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
@@ -110,9 +115,7 @@ fun SharedPdfAnnotationOverlay(
                     PdfAnnotationKind.HIGHLIGHT -> {
                         val highlightBounds = annotation.boundsList.ifEmpty { listOfNotNull(annotation.bounds) }
                         val style = sharedPdfHighlightAnnotationOverlayStyle(annotation)
-                        highlightBounds.forEach { bounds ->
-                            drawSharedPdfHighlightAnnotation(annotation, bounds, canvasSize, style)
-                        }
+                        drawSharedPdfHighlightAnnotation(annotation, highlightBounds, canvasSize, style)
                     }
                     PdfAnnotationKind.INK -> {
                         SharedPdfInkRenderer.createRenderData(annotation, canvasSize)?.let(::drawInkRenderData)
@@ -223,83 +226,96 @@ fun SharedPdfAnnotationOverlay(
     }
 }
 
+/**
+ * Draws one text highlight's decoration stroke.
+ *
+ * [bounds] is the highlight's **whole** rect list, not a single rect. The rects are grouped into
+ * text lines first and each line is drawn as one path, so the baseline, the stroke width and the
+ * wave phase are resolved once per line. That is what removes the gaps at the end of a stroke: the
+ * old per-rect path restarted the wave at every font run and left a malformed loop past the line
+ * end. `BACKGROUND` still paints rect by rect, because adjacent rects must not double-blend their
+ * shared edge.
+ */
 internal fun DrawScope.drawSharedPdfHighlightAnnotation(
     annotation: SharedPdfAnnotation,
-    bounds: PdfPageBounds,
+    bounds: List<PdfPageBounds>,
     canvasSize: IntSize,
     overlayStyle: SharedPdfHighlightAnnotationOverlayStyle
 ) {
-    val topLeft = bounds.topLeft(canvasSize)
-    val size = bounds.size(canvasSize)
+    if (canvasSize.width <= 0 || canvasSize.height <= 0) return
+    val canvasWidth = canvasSize.width.toFloat()
+    val canvasHeight = canvasSize.height.toFloat()
+
     when (annotation.highlightStyle) {
-        HighlightStyle.BACKGROUND -> drawRect(
-            color = overlayStyle.color,
-            topLeft = topLeft,
-            size = size,
-            blendMode = overlayStyle.blendMode
-        )
-        HighlightStyle.UNDERLINE -> drawSharedPdfHighlightLine(
+        HighlightStyle.BACKGROUND -> bounds.forEach { bound ->
+            drawRect(
+                color = overlayStyle.color,
+                topLeft = bound.topLeft(canvasSize),
+                size = bound.size(canvasSize),
+                blendMode = overlayStyle.blendMode
+            )
+        }
+        HighlightStyle.UNDERLINE -> drawSharedPdfHighlightDecoration(
+            bounds = bounds,
+            canvasWidth = canvasWidth,
+            canvasHeight = canvasHeight,
             color = overlayStyle.lineColor,
-            topLeft = topLeft,
-            size = size,
-            y = topLeft.y + size.height * 0.86f
+            wave = false,
+            strikethrough = false,
         )
-        HighlightStyle.WAVY_UNDERLINE -> drawSharedPdfHighlightWave(
+        HighlightStyle.WAVY_UNDERLINE -> drawSharedPdfHighlightDecoration(
+            bounds = bounds,
+            canvasWidth = canvasWidth,
+            canvasHeight = canvasHeight,
             color = overlayStyle.lineColor,
-            topLeft = topLeft,
-            size = size,
-            baselineY = topLeft.y + size.height * 0.86f
+            wave = true,
+            strikethrough = false,
         )
-        HighlightStyle.STRIKETHROUGH -> drawSharedPdfHighlightLine(
+        HighlightStyle.STRIKETHROUGH -> drawSharedPdfHighlightDecoration(
+            bounds = bounds,
+            canvasWidth = canvasWidth,
+            canvasHeight = canvasHeight,
             color = overlayStyle.lineColor,
-            topLeft = topLeft,
-            size = size,
-            y = topLeft.y + size.height * 0.52f
+            wave = false,
+            strikethrough = true,
         )
     }
 }
 
-internal fun DrawScope.drawSharedPdfHighlightLine(
+/**
+ * Draws the underline / wavy underline / strikethrough for every text line of one highlight.
+ *
+ * One [Path] per line: a highlight that pdfium split into several font runs on the same line is
+ * unioned by [pdfHighlightLines], so the stroke is continuous instead of restarting per rect.
+ */
+private fun DrawScope.drawSharedPdfHighlightDecoration(
+    bounds: List<PdfPageBounds>,
+    canvasWidth: Float,
+    canvasHeight: Float,
     color: Color,
-    topLeft: Offset,
-    size: Size,
-    y: Float
+    wave: Boolean,
+    strikethrough: Boolean,
 ) {
-    if (size.width <= 0f || size.height <= 0f) return
-    drawLine(
-        color = color,
-        start = Offset(topLeft.x, y),
-        end = Offset(topLeft.x + size.width, y),
-        strokeWidth = (size.height * 0.08f).coerceIn(1.5f, 4f),
-        cap = StrokeCap.Round
+    val lines = pdfHighlightLines(
+        bounds.map { it.toPdfHighlightRect(canvasWidth, canvasHeight) }
     )
-}
-
-internal fun DrawScope.drawSharedPdfHighlightWave(
-    color: Color,
-    topLeft: Offset,
-    size: Size,
-    baselineY: Float
-) {
-    if (size.width <= 0f || size.height <= 0f) return
-    val amplitude = (size.height * 0.08f).coerceIn(1.2f, 3.5f)
-    val wavelength = (size.height * 0.62f).coerceIn(6f, 14f)
-    val path = Path()
-    var x = topLeft.x
-    val endX = topLeft.x + size.width
-    path.moveTo(x, baselineY)
-    while (x < endX) {
-        val midX = (x + wavelength / 2f).coerceAtMost(endX)
-        val nextX = (x + wavelength).coerceAtMost(endX)
-        path.quadraticBezierTo(x + wavelength / 4f, baselineY - amplitude, midX, baselineY)
-        path.quadraticBezierTo(x + wavelength * 0.75f, baselineY + amplitude, nextX, baselineY)
-        x += wavelength
+    lines.forEach { line ->
+        val style = pdfHighlightStrokeStyle(line.height)
+        val path = if (wave) {
+            pdfHighlightWavePath(style, line)
+        } else {
+            pdfHighlightLinePath(line, strikethrough)
+        }
+        if (path.isEmpty) return@forEach
+        drawPath(
+            path = path,
+            color = color,
+            style = Stroke(
+                width = if (wave) style.waveStrokeWidth else style.lineStrokeWidth,
+                cap = StrokeCap.Round,
+            ),
+        )
     }
-    drawPath(
-        path = path,
-        color = color,
-        style = Stroke(width = (size.height * 0.06f).coerceIn(1.2f, 3f), cap = StrokeCap.Round)
-    )
 }
 
 internal data class SharedPdfHighlightAnnotationOverlayStyle(

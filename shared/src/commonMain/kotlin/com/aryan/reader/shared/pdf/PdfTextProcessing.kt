@@ -109,20 +109,29 @@ object PdfTextProcessing {
         if (bounds.isEmpty()) return emptyList()
         val merged = mutableListOf<PdfPageBounds>()
         var current: PdfPageBounds? = null
+        // Sorted by ascending top because this coordinate space is y-down.
         bounds.sortedWith(compareBy<PdfPageBounds> { it.top }.thenBy { it.left }).forEach { next ->
             val line = current
             if (line == null) {
                 current = next
-            } else if (maxOf(line.top, next.top) < minOf(line.bottom, next.bottom)) {
-                current = PdfPageBounds(
-                    left = minOf(line.left, next.left),
-                    top = minOf(line.top, next.top),
-                    right = maxOf(line.right, next.right),
-                    bottom = maxOf(line.bottom, next.bottom)
-                )
             } else {
-                merged += line
-                current = next
+                // Same majority-overlap test as mergePdfBoundsIntoLines. The previous test here was
+                // plain `any positive overlap`, which is looser still and merged two text lines even
+                // more readily than the PDF variant - which is why the live selection could draw a
+                // different shape from the committed highlight.
+                val overlapHeight = minOf(line.bottom, next.bottom) - maxOf(line.top, next.top)
+                val minHeight = minOf(line.bottom - line.top, next.bottom - next.top)
+                if (overlapHeight > 0f && overlapHeight >= minHeight * PDF_SAME_LINE_MIN_OVERLAP) {
+                    current = PdfPageBounds(
+                        left = minOf(line.left, next.left),
+                        top = minOf(line.top, next.top),
+                        right = maxOf(line.right, next.right),
+                        bottom = maxOf(line.bottom, next.bottom)
+                    )
+                } else {
+                    merged += line
+                    current = next
+                }
             }
         }
         current?.let(merged::add)
@@ -141,14 +150,22 @@ object PdfTextProcessing {
         }
         val merged = mutableListOf<PdfPageBounds>()
         var current: PdfPageBounds? = null
+        // Sorted by descending bottom because this coordinate space is y-up.
         normalized.sortedWith(compareBy<PdfPageBounds> { -it.bottom }.thenBy { it.left }).forEach { next ->
             val line = current
             if (line == null) {
                 current = next
             } else {
+                // Two rects belong to the same text line when they share most of their vertical
+                // band. The previous test was `overlap > 0 && overlap >= 10% of the shorter box`,
+                // which also accepted the ~1.3pt overlap that tight leading produces between two
+                // adjacent lines: the pair merged into one box spanning both lines, and because a
+                // decoration stroke is placed relative to the box (underline at 86% of height) the
+                // single stroke landed under the *second* line only, leaving the first line with no
+                // stroke at all. Requiring a majority overlap keeps adjacent lines apart.
                 val overlapHeight = minOf(line.bottom, next.bottom) - maxOf(line.top, next.top)
                 val minHeight = minOf(line.bottom - line.top, next.bottom - next.top)
-                if (overlapHeight > 0f && overlapHeight >= minHeight * 0.1f) {
+                if (overlapHeight > 0f && overlapHeight >= minHeight * PDF_SAME_LINE_MIN_OVERLAP) {
                     current = PdfPageBounds(
                         left = minOf(line.left, next.left),
                         top = minOf(line.top, next.top),

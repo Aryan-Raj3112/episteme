@@ -4,6 +4,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import com.aryan.reader.shared.ReaderTheme
+import kotlin.math.abs
+import kotlin.math.sign
 
 fun resolvePdfVerticalPageBackgroundColor(activeTheme: ReaderTheme): Color {
     val resolved = when (activeTheme.id) {
@@ -56,6 +58,110 @@ fun pdfPanAfterTouchSlop(accumulatedPan: Offset, touchSlop: Float): Offset {
     if (!distance.isFinite() || distance <= safeSlop || distance == 0f) return Offset.Zero
     val retainedDistance = distance - safeSlop
     return accumulatedPan * (retainedDistance / distance)
+}
+
+/** Overscroll budget as a fraction of the viewport. */
+private const val PDF_PAN_OVERSCROLL_MAX_STRETCH = 0.22f
+
+/** Fraction of the requested distance honoured once the stretch budget is used up. */
+private const val PDF_PAN_OVERSCROLL_RESISTANCE = 0.10f
+
+/**
+ * The overscroll budget, in pixels: how far content may travel past a document edge.
+ *
+ * Every other Android scrolling surface lets content move a little past the edge and springs back,
+ * and Compose exposes that as `Modifier.scrollable(overscrollEffect = ...)`. A hand-rolled camera
+ * with a bare `coerceIn` has no equivalent, so the document ends at a dead wall: the fling simply
+ * stops mid-curve and the reader gives no signal that there is nothing further.
+ */
+fun pdfVerticalOverscrollStretchPx(viewportHeightPx: Float): Float {
+    val viewport = viewportHeightPx.takeIf { it.isFinite() && it > 0f } ?: 0f
+    if (viewport <= 0f) return 0f
+    return viewport * PDF_PAN_OVERSCROLL_MAX_STRETCH
+}
+
+/**
+ * Resists motion that goes *outward* past [hardLimitPx].
+ *
+ * [outwardSign] is `+1` when increasing pan moves past the edge and `-1` when decreasing pan does;
+ * motion in the other direction is inside the document and passes through untouched, which is what
+ * keeps ordinary scrolling exactly as it was.
+ *
+ * Past the limit the camera keeps following the finger, but the remaining distance is discounted, so
+ * the surface feels elastic rather than locked and stays bounded however far the gesture goes.
+ *
+ * Android 12+ gets the same feel from a stretch effect driven by an overscroll distance; doing it
+ * here keeps the reader's own camera instead of trading it for a `Scrollable`.
+ */
+fun pdfVerticalOverscrollResist(
+    requestedPanPx: Float,
+    hardLimitPx: Float,
+    viewportHeightPx: Float,
+    outwardSign: Int,
+): Float {
+    if (!requestedPanPx.isFinite()) return hardLimitPx.takeIf { it.isFinite() } ?: 0f
+    val safeHard = hardLimitPx.takeIf { it.isFinite() } ?: 0f
+    if (outwardSign == 0) return requestedPanPx
+    val budget = pdfVerticalOverscrollStretchPx(viewportHeightPx)
+    if (budget <= 0f) return safeHard
+
+    val overshoot = (requestedPanPx - safeHard) * outwardSign
+    // Not past the edge in the outward direction: pass through.
+    if (overshoot <= 0f) return requestedPanPx
+
+    val resisted = if (overshoot <= budget) {
+        overshoot
+    } else {
+        // Past the budget, keep a little give so the surface never feels locked, but only a
+        // fraction of the distance actually requested.
+        budget + (overshoot - budget) * PDF_PAN_OVERSCROLL_RESISTANCE
+    }
+    return safeHard + outwardSign * resisted
+}
+
+/**
+ * Vertical pan bound: hard document limits with a bounded elastic stretch beyond them.
+ *
+ * The hard limits define where the document actually ends. Past them the camera follows the finger
+ * with increasing resistance, up to [pdfVerticalOverscrollStretchPx]. Every path resolves through
+ * here - drag, fling decay and programmatic moves alike - so a fling launched at an overscrolled
+ * position decays back to exactly the edge the drag would have settled on.
+ */
+fun resolveVerticalPanYWithOverscroll(
+    requestedPanY: Float,
+    hardMinPanY: Float,
+    hardMaxPanY: Float,
+    viewportHeightPx: Float,
+): Float {
+    val safeMin = hardMinPanY.takeIf { it.isFinite() } ?: 0f
+    val safeMax = hardMaxPanY.takeIf { it.isFinite() } ?: 0f
+    if (!requestedPanY.isFinite()) return safeMin.coerceIn(minOf(safeMin, safeMax), maxOf(safeMin, safeMax))
+    return when {
+        // panY decreases toward the end of the document, so the bottom edge is the outward -1 side.
+        requestedPanY < safeMin -> pdfVerticalOverscrollResist(
+            requestedPanPx = requestedPanY,
+            hardLimitPx = safeMin,
+            viewportHeightPx = viewportHeightPx,
+            outwardSign = -1,
+        )
+        requestedPanY > safeMax -> pdfVerticalOverscrollResist(
+            requestedPanPx = requestedPanY,
+            hardLimitPx = safeMax,
+            viewportHeightPx = viewportHeightPx,
+            outwardSign = 1,
+        )
+        else -> requestedPanY
+    }
+}
+
+/** The outermost pan value reachable past [hardLimitPx], for use as an `Animatable` bound. */
+fun pdfVerticalOverscrollLimitPx(
+    hardLimitPx: Float,
+    viewportHeightPx: Float,
+    outwardSign: Int = -1,
+): Float {
+    val safeHard = hardLimitPx.takeIf { it.isFinite() } ?: 0f
+    return safeHard + outwardSign * pdfVerticalOverscrollStretchPx(viewportHeightPx)
 }
 
 /** Advancing ownership prevents a canceled animation from finishing as the current owner. */

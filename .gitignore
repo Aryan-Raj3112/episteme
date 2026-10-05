@@ -53,7 +53,4 @@ DerivedData/
 /docs
 .freebuff/
 .kotlin/
-
-# A commercial EPUB kept locally to reproduce highlight placement against real book structure.
-# Never commit: this is copyrighted material. EpubHobbitHighlightPlacementTest skips without it.
-app/src/androidTest/assets/epub/the_hobbit.epub
+app/src/androidTest/assets/
