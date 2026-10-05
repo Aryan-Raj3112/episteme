@@ -1047,9 +1047,9 @@ internal fun SharedReaderAnnotationsTab(
                                                 text = {
                                                     Text(
                                                         if (highlight.note.isNullOrBlank()) {
-                                                            readerString("menu_add_note", "Add note")
+                                                            readerString("menu_add_note", "Add Note")
                                                         } else {
-                                                            readerString("menu_edit_note", "Edit note")
+                                                            readerString("menu_edit_note", "Edit Note")
                                                         }
                                                     )
                                                 },

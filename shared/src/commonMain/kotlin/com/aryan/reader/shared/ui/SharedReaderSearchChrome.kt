@@ -471,7 +471,7 @@ internal fun SharedReaderHighlightSheet(
                 onSaveNote(noteText)
                 onDismiss()
             }) {
-                Text(readerString("action_save_note", "Save note"))
+                Text(readerString("action_save_note", "Save Note"))
             }
         }
     }

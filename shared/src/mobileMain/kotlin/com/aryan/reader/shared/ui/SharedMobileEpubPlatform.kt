@@ -95,13 +95,21 @@ internal expect fun SharedMobileEpubWebView(
 internal expect fun openSharedMobileEpubExternalLink(url: String): Boolean
 
 /**
- * Extra PageInfo side clearance for rounded screen corners.
+ * Extra horizontal clearance the PageInfo bar needs so its edge-pinned clock and
+ * percentage are not sliced off by the screen's rounded corners.
  *
- * Android keeps the benchmark 16.dp side padding untouched (0.dp here);
- * iOS adds room because portrait reports no horizontal safe inset while the
- * physical corners still curve into the bar's edge-pinned clock/percentage.
+ * Compose's [WindowInsets.safeDrawing] does **not** cover rounded corners: it is
+ * the union of the system bars, the display cutout and the waterfall insets, and
+ * a device can have generous corner radii with no bar or cutout inset at all
+ * (the common case in portrait). The platform guideline for this is to read the
+ * real radii and inset the content edge by them, so each platform reports the
+ * measured corner radius rather than a guessed constant.
+ *
+ * Composable because the Android implementation reads the live window insets, which
+ * change on rotation, on multi-window resize and when the app is letterboxed.
  */
-internal expect val sharedMobileEpubPageInfoCornerClearance: Dp
+@Composable
+expect fun sharedMobileEpubPageInfoCornerClearance(): Dp
 
 /**
  * Whether a visible bottom PageInfo bar always stays above the bottom safe

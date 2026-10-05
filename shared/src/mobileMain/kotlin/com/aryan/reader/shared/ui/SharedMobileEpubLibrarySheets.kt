@@ -74,6 +74,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.draw.clip
@@ -471,7 +474,11 @@ fun SharedMobileEpubHighlights(
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = readerString("no_highlights_yet", "No highlights yet"),
+                // Fallback must match the Android `no_highlights_yet` string exactly, trailing
+                // period included: the reader's Android composition provides no
+                // SharedStringResolver, so this literal is what users see there
+                // and what the drawer's empty state is asserted against.
+                text = readerString("no_highlights_yet", "No highlights yet."),
                 style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center
             )
@@ -597,9 +604,9 @@ fun SharedMobileEpubHighlights(
                                         text = {
                                             Text(
                                                 if (highlight.note.isNullOrBlank()) {
-                                                    readerString("menu_add_note", "Add note")
+                                                    readerString("menu_add_note", "Add Note")
                                                 } else {
-                                                    readerString("menu_edit_note", "Edit note")
+                                                    readerString("menu_edit_note", "Edit Note")
                                                 }
                                             )
                                         },
@@ -629,8 +636,8 @@ fun SharedMobileEpubHighlights(
     deleteHighlight?.let { highlight ->
         AlertDialog(
             onDismissRequest = { deleteHighlight = null },
-            title = { Text(readerString("dialog_delete_highlight", "Delete highlight?")) },
-            text = { Text(readerString("dialog_delete_highlight_desc", "This removes the highlight.")) },
+            title = { Text(readerString("dialog_delete_highlight", "Delete Highlight?")) },
+            text = { Text(readerString("dialog_delete_highlight_desc", "Are you sure you want to permanently delete this highlight?")) },
             confirmButton = {
                 TextButton(onClick = {
                     onDeleteHighlight(highlight)
@@ -666,6 +673,13 @@ private fun SharedMobileEpubHighlightColorRow(
     ) {
         palette.sanitized().colors.forEach { color ->
             val selected = selectedHighlight.color == color && selectedHighlight.colorArgb == null
+            // Swatches are pure colour, so they were unlabelled: TalkBack announced
+            // an unlabelled button and tests had no stable handle to select one by.
+            // Resolved here because the semantics lambda is not @Composable.
+            val colorLabel = readerString(
+                "color_${color.id}",
+                color.id.replaceFirstChar { it.uppercase() }
+            )
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
@@ -678,6 +692,11 @@ private fun SharedMobileEpubHighlightColorRow(
                         color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                         shape = CircleShape,
                     )
+                    // Swatches are pure colour, so they were unlabelled: TalkBack
+                    // announced an unlabelled button and tests had no stable handle
+                    // to select one by.
+                    .semantics { contentDescription = colorLabel }
+                    .testTag("HighlightColor_${color.id}")
                     .clickable { onColorSelect(color) },
             ) {
                 if (selected) {

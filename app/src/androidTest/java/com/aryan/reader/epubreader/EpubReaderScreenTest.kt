@@ -11,6 +11,7 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -406,8 +407,12 @@ class EpubReaderScreenTest {
                 .getBoolean("format_is_local_$fixtureBookId", false)
         }
 
-        composeTestRule.onAllNodesWithContentDescription(text(R.string.content_desc_increase))[0]
-            .performClick()
+        // The stepper labels its buttons per row ("Increase Font Size", "Increase Line
+        // Height", ...) so TalkBack announces which value changes; matching the bare
+        // "Increase" finds nothing.
+        composeTestRule.onNodeWithContentDescription(
+            "${text(R.string.content_desc_increase)} ${text(R.string.label_font_size)}"
+        ).performClick()
 
         composeTestRule.waitUntil(timeoutMillis = 5_000) {
             targetContext.getSharedPreferences("epub_reader_settings", Context.MODE_PRIVATE)

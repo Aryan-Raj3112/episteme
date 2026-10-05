@@ -221,8 +221,11 @@ internal actual fun openSharedMobileEpubExternalLink(url: String): Boolean {
 
 // iPhone corner radii (~13-16pt) curve into the benchmark 16.dp side padding,
 // so the edge-pinned clock/percentage gain room that safeDrawing cannot
-// provide (it reports 0 horizontally in portrait).
-internal actual val sharedMobileEpubPageInfoCornerClearance: Dp = 8.dp
+// provide (it reports 0 horizontally in portrait). Compose Multiplatform exposes
+// no rounded-corner radii to read, unlike Android's WindowInsets.getRoundedCorner,
+// so this stays a floor sized for the tightest supported iPhone radius.
+@Composable
+actual fun sharedMobileEpubPageInfoCornerClearance(): Dp = 8.dp
 
 // With menus hidden the bar would sit flush at the bottom edge, inside the
 // corner curve. Always lifting it above the home-indicator zone keeps the

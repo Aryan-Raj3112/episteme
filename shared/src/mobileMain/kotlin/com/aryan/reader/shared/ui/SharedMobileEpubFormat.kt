@@ -115,6 +115,7 @@ import com.aryan.reader.shared.toAndroidEpubFormatSliderValues
 import com.aryan.reader.shared.withAndroidEpubFormatSliderValue
 import com.aryan.reader.shared.reader.ReaderPageInfo
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
+import com.aryan.reader.shared.ReaderPageInfoTitleMinSideReserve
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.isTwoPageSpreadEnabled
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -840,20 +841,11 @@ internal fun SharedMobileEpubThemeGridItem(
     }
 }
 
-/**
- * Content height of the shared mobile PageInfo bar.
- *
- * Android benchmark ([PAGE_INFO_BAR_HEIGHT]) adds a rounded-corner allowance on
- * top of this; the safe-area background extension below covers the iOS home
- * indicator and curved corners instead of growing the content row.
- */
-val SharedMobileEpubPageInfoBarContentHeight = 25.dp
-
 /** Common log tag for PageInfo-bar clipping diagnosis on iOS and Android. */
 internal const val ReaderPageInfoBarDiagTag = "ReaderPageInfoBar"
 
 /** Bump when the bar layout changes, so logs prove which code produced them. */
-internal const val ReaderPageInfoBarDiagRevision = 8
+internal const val ReaderPageInfoBarDiagRevision = 9
 
 /**
  * Bottom safe padding owned by the PageInfo bar (single source of truth).
@@ -869,7 +861,7 @@ internal fun rememberSharedMobileEpubPageInfoBottomPad(
 ): Dp {
     val safeBottom = WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
     return if (applySystemBarsInsets && pageInfoPosition == PageInfoPosition.BOTTOM) {
-        (safeBottom - sharedMobileEpubPageInfoCornerClearance).coerceAtLeast(0.dp)
+        (safeBottom - sharedMobileEpubPageInfoCornerClearance()).coerceAtLeast(0.dp)
     } else {
         0.dp
     }
@@ -892,7 +884,7 @@ internal fun rememberSharedMobileEpubPageInfoMaxBottomPad(
 ): Dp {
     val safeBottom = WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
     return if (pageInfoPosition == PageInfoPosition.BOTTOM) {
-        (safeBottom - sharedMobileEpubPageInfoCornerClearance).coerceAtLeast(0.dp)
+        (safeBottom - sharedMobileEpubPageInfoCornerClearance()).coerceAtLeast(0.dp)
     } else {
         0.dp
     }
@@ -938,8 +930,16 @@ internal fun SharedMobileEpubPageInfo(
     val containerSize = LocalWindowInfo.current.containerSize
     val safeDrawing = WindowInsets.safeDrawing.asPaddingValues()
     val cutout = WindowInsets.displayCutout.asPaddingValues()
-    val sidePadding = 16.dp + sharedMobileEpubPageInfoCornerClearance
-    val centerReserve = 48.dp + sharedMobileEpubPageInfoCornerClearance
+    // Measured rounded-corner clearance (see the platform declaration): the
+    // bar's edge-pinned clock and percentage are the only thing at the very edge,
+    // so they are what the corner curve can clip.
+    val cornerClearance = sharedMobileEpubPageInfoCornerClearance()
+    val sidePadding = SharedReaderPageInfoBarSidePadding + cornerClearance
+    // The title's own inset is measured per side label now (see
+    // SharedReaderPageInfoBarRow), so this only logs the floor it can never go
+    // below. Kept in the diagnostic because it is the number the old fixed
+    // 48.dp layout used.
+    val centerReserve = ReaderPageInfoTitleMinSideReserve
     // Hug the bottom edge a little closer than the full safe inset so the bar
     // doesn't float high above it; the same corner room keeps the content clear
     // of the home indicator and the curve. Android clearance is 0.dp, so its
@@ -957,7 +957,7 @@ internal fun SharedMobileEpubPageInfo(
         writeSharedReaderDiagnostic(
             ReaderPageInfoBarDiagTag,
             "config rev=$ReaderPageInfoBarDiagRevision pos=$pageInfoPosition applyInsets=$applySystemBarsInsets " +
-                "clearance=$sharedMobileEpubPageInfoCornerClearance sidePad=$sidePadding " +
+                "clearance=$cornerClearance sidePad=$sidePadding " +
                 "centerReserve=$centerReserve density=${density.density} " +
                 "fontScale=${density.fontScale} container=$containerSize orient=$orientation " +
                 "safeDrawing=l${safeDrawing.calculateLeftPadding(LayoutDirection.Ltr)}" +
@@ -1032,32 +1032,23 @@ internal fun SharedMobileEpubPageInfo(
             },
         contentAlignment = Alignment.Center
     ) {
+        val contentHeight = sharedMobileEpubPageInfoBarContentHeight()
         Box(
-            Modifier.fillMaxWidth().height(SharedMobileEpubPageInfoBarContentHeight)
+            Modifier.fillMaxWidth().height(contentHeight)
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
-                .padding(horizontal = 16.dp + sharedMobileEpubPageInfoCornerClearance),
-            contentAlignment = Alignment.Center
+                .padding(horizontal = SharedReaderPageInfoBarSidePadding + cornerClearance)
         ) {
-            Text(
-                centerLabel,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodySmall,
+            // Shared row: measures the clock and percentage, then gives the title
+            // exactly the gap left between them (shrinking and wrapping to two
+            // lines before it ellipsizes). Android uses the same row, so the two
+            // platforms cannot drift apart here.
+            SharedReaderPageInfoBarRow(
+                clockText = clockTime,
+                titleText = centerLabel,
+                progressText = "${formatReaderProgress(progressPercent)}%",
                 color = foreground,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 48.dp + sharedMobileEpubPageInfoCornerClearance)
-            )
-            Text(
-                clockTime,
-                style = MaterialTheme.typography.bodySmall,
-                color = foreground,
-                modifier = Modifier.align(Alignment.CenterStart)
-            )
-            Text(
-                "${formatReaderProgress(progressPercent)}%",
-                style = MaterialTheme.typography.bodySmall,
-                color = foreground,
-                modifier = Modifier.align(Alignment.CenterEnd)
+                contentHeight = contentHeight,
+                modifier = Modifier.fillMaxSize()
             )
         }
     }

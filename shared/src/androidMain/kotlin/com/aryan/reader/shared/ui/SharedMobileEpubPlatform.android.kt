@@ -36,6 +36,11 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
 import org.json.JSONObject
 import java.io.File
+import android.os.Build
+import android.view.RoundedCorner
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
+import com.aryan.reader.shared.readerPageInfoCornerClearancePx
 @Composable
 internal actual fun rememberSharedMobileEpubLoadState(book: BookItem): SharedMobileEpubLoadState {
     val context = rememberAndroidSharedMobileContext()
@@ -349,8 +354,41 @@ private val AndroidEpubBridgeBootstrapScript = """
 
 internal actual fun openSharedMobileEpubExternalLink(url: String): Boolean = openAndroidUrl(url)
 
-// Android benchmark: side padding stays exactly 16.dp, no corner allowance.
-internal actual val sharedMobileEpubPageInfoCornerClearance: Dp = 0.dp
+/**
+ * Real rounded-corner inset for the PageInfo bar.
+ *
+ * `WindowInsets.safeDrawing` covers the system bars, cutouts and waterfall only —
+ * it says nothing about the corner curve, which is exactly what clips the bar's
+ * edge-pinned clock and percentage on a device with generous radii and no bar
+ * inset. So read the actual radii (API 31+) and report the inset the platform
+ * guideline prescribes: the radius of the corners on that edge, less whatever the
+ * bar already pads, never below zero.
+ *
+ * Returns 0.dp when there is nothing to clear — pre-API 31, a window with no
+ * rounded corners, or insets not attached yet — so square screens keep their
+ * exact benchmark spacing.
+ */
+@Composable
+actual fun sharedMobileEpubPageInfoCornerClearance(): Dp {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return 0.dp
+    val density = LocalDensity.current
+    val view = LocalView.current
+    val windowInsets = view.rootWindowInsets ?: return 0.dp
+    // The bar can be pinned to the top or the bottom edge, so both edges have to
+    // clear; the largest radius on either side governs the horizontal inset.
+    val radiusPx = listOf(
+        RoundedCorner.POSITION_TOP_LEFT,
+        RoundedCorner.POSITION_TOP_RIGHT,
+        RoundedCorner.POSITION_BOTTOM_LEFT,
+        RoundedCorner.POSITION_BOTTOM_RIGHT
+    ).mapNotNull { windowInsets.getRoundedCorner(it)?.radius }.maxOrNull() ?: 0
+    return with(density) {
+        readerPageInfoCornerClearancePx(
+            maxCornerRadiusPx = radiusPx,
+            barSidePaddingPx = SharedReaderPageInfoBarSidePadding.roundToPx()
+        ).toDp()
+    }
+}
 
 // Android benchmark: the bar sits flush at the bottom edge when chrome hides.
 internal actual val sharedMobileEpubPageInfoAlwaysApplyBottomSafeInset: Boolean = false

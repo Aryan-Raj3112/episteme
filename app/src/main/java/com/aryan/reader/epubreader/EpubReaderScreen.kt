@@ -63,6 +63,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -70,11 +71,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.windowInsetsEndWidth
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.windowInsetsStartWidth
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -269,7 +273,10 @@ import com.aryan.reader.shared.ui.SharedMobileReaderDrawer
 import com.aryan.reader.shared.ui.SharedMobileReaderScaffold
 import com.aryan.reader.shared.ui.SharedMobileReaderRecoveryGate
 import com.aryan.reader.shared.ui.rememberReaderMotionPolicy
-import com.aryan.reader.shared.ui.SharedMobileEpubPageInfoBarContentHeight
+import com.aryan.reader.shared.ui.SharedReaderPageInfoBarRow
+import com.aryan.reader.shared.ui.SharedReaderPageInfoBarSidePadding
+import com.aryan.reader.shared.ui.sharedMobileEpubPageInfoBarContentHeight
+import com.aryan.reader.shared.ui.sharedMobileEpubPageInfoCornerClearance
 import com.aryan.reader.shared.ui.SharedMobileEpubLoading
 import com.aryan.reader.shared.reader.MobileEpubReaderBackAction
 import com.aryan.reader.shared.reader.selectMobileEpubReaderBackAction
@@ -2608,7 +2615,9 @@ fun EpubReaderHost(
         }
     }
 
-    val pageInfoBarHeight = SharedMobileEpubPageInfoBarContentHeight + pageInfoCornerBottomPadding
+    val pageInfoBarContentHeight = sharedMobileEpubPageInfoBarContentHeight()
+    val pageInfoCornerClearance = sharedMobileEpubPageInfoCornerClearance()
+    val pageInfoBarHeight = pageInfoBarContentHeight + pageInfoCornerBottomPadding
 
     val isPageInfoVisible = shouldShowEpubPageInfoBar(
         pageInfoMode = prefs.pageInfoMode,
@@ -4988,11 +4997,27 @@ fun EpubReaderHost(
                             .height(pageInfoBarHeight)
                             .background(infoBarBgColor)
                             .then(activeTextureModifier)
-                            .padding(horizontal = 16.dp),
+                            // The clock and the percentage are pinned to the very
+                            // edges, so they are the only parts of the reader that can
+                            // sit under a cutout or a gesture-nav pill, and the only
+                            // ones the corner curve can slice. The toolbar beside this
+                            // bar already takes navigationBars horizontally
+                            // (EpubReaderControls); safeDrawing adds the cutout on top
+                            // of that and is what iOS's bar uses too.
+                            .windowInsetsPadding(
+                                WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+                            )
+                            // Plus the measured corner radius: safeDrawing covers
+                            // bars/cutouts/waterfall, never the rounded corners, which
+                            // on a bezel-less phone in portrait has no inset at all.
+                            .padding(
+                                horizontal = SharedReaderPageInfoBarSidePadding +
+                                    pageInfoCornerClearance
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         val chapterTitle =
-                            chapters.getOrNull(currentChapterIndex)?.title?.take(30)?.trim()
+                            chapters.getOrNull(currentChapterIndex)?.title?.trim()
                                 ?: "Chapter"
 
                         val displayPageInfo = when {
@@ -5002,34 +5027,21 @@ fun EpubReaderHost(
                             else -> " ($currentPageInChapter/$totalPagesInCurrentChapter)"
                         }
 
-                        Text(
-                            text = readerClockTime,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = effectiveText.copy(alpha = 0.8f),
-                            modifier = Modifier.align(Alignment.CenterStart)
-                        )
+                        val progressText =
+                            if (totalBookLengthChars > 0 && currentScrollHeightValue > 0 && (!isChapterParsing || isNativeVerticalMode)) {
+                                "%.1f%%".format(currentBookProgress)
+                            } else {
+                                null
+                            }
 
-                        Text(
-                            text = "$chapterTitle$displayPageInfo",
-                            style = MaterialTheme.typography.bodySmall,
+                        SharedReaderPageInfoBarRow(
+                            clockText = readerClockTime,
+                            titleText = "$chapterTitle$displayPageInfo",
+                            progressText = progressText,
                             color = effectiveText.copy(alpha = 0.8f),
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 48.dp)
+                            contentHeight = pageInfoBarContentHeight,
+                            modifier = Modifier.fillMaxSize()
                         )
-
-                        if (totalBookLengthChars > 0 && currentScrollHeightValue > 0 && (!isChapterParsing || isNativeVerticalMode)) {
-                            Text(
-                                text = "%.1f%%".format(currentBookProgress),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = effectiveText.copy(alpha = 0.8f),
-                                textAlign = TextAlign.End,
-                                modifier = Modifier.align(Alignment.CenterEnd)
-                            )
-                        }
                     }
                 }
 
@@ -5056,7 +5068,15 @@ fun EpubReaderHost(
                             .height(pageInfoBarHeight)
                             .background(infoBarBgColor)
                             .then(activeTextureModifier)
-                            .padding(horizontal = 16.dp),
+                            // Same edge handling as the vertical bar above; see the
+                            // comment there.
+                            .windowInsetsPadding(
+                                WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+                            )
+                            .padding(
+                                horizontal = SharedReaderPageInfoBarSidePadding +
+                                    pageInfoCornerClearance
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         val bookPaginator = paginator as? BookPaginator
@@ -5064,7 +5084,7 @@ fun EpubReaderHost(
 
                         val textToShow = if (bookPaginator != null && chapterIndex != null) {
                             val chapterTitle =
-                                chapters.getOrNull(chapterIndex)?.title?.take(30)?.trim()
+                                chapters.getOrNull(chapterIndex)?.title?.trim()
                                     ?: stringResource(R.string.chapter)
                             val totalPagesInChapter = bookPaginator.chapterPageCounts[chapterIndex]
                             val chapterStartPage = bookPaginator.chapterStartPageIndices[chapterIndex]
@@ -5092,27 +5112,8 @@ fun EpubReaderHost(
                             stringResource(R.string.page_number_of_total, currentSpreadFirstBookPage() + 1, totalBookPageCount())
                         }
 
-                        Text(
-                            text = readerClockTime,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = effectiveText.copy(alpha = 0.8f),
-                            modifier = Modifier.align(Alignment.CenterStart)
-                        )
-
-                        Text(
-                            text = textToShow,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = effectiveText.copy(alpha = 0.8f),
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 48.dp)
-                        )
-
                         // Right-aligned Percentage
-                        if (paginatedPagerState.pageCount > 0) {
+                        val progressText = if (paginatedPagerState.pageCount > 0) {
                             if (totalBookLengthChars > 0 && bookPaginator != null && chapterIndex != null) {
                                 val completedCharsInPreviousChapters = remember(chapters, chapterIndex) {
                                     chapters.take(chapterIndex).sumOf { it.plainTextCharacterCount().toLong() }
@@ -5132,13 +5133,7 @@ fun EpubReaderHost(
                                     isLastPageOfBook = isLastPageOfBook
                                 )
 
-                                Text(
-                                    text = "%.1f%%".format(displayProgress),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = effectiveText.copy(alpha = 0.8f),
-                                    textAlign = TextAlign.End,
-                                    modifier = Modifier.align(Alignment.CenterEnd)
-                                )
+                                "%.1f%%".format(displayProgress)
                             } else {
                                 val totalPages = if (currentRenderMode == RenderMode.VERTICAL_SCROLL) {
                                     totalPagesInCurrentChapter
@@ -5147,15 +5142,20 @@ fun EpubReaderHost(
                                 }
                                 val currentPageOneIndexed = paginatedPagerState.currentPage + 1
                                 val percentage = (currentPageOneIndexed.toFloat() / totalPages.toFloat()) * 100f
-                                Text(
-                                    text = "%.1f%%".format(percentage),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = effectiveText.copy(alpha = 0.8f),
-                                    textAlign = TextAlign.End,
-                                    modifier = Modifier.align(Alignment.CenterEnd)
-                                )
+                                "%.1f%%".format(percentage)
                             }
+                        } else {
+                            null
                         }
+
+                        SharedReaderPageInfoBarRow(
+                            clockText = readerClockTime,
+                            titleText = textToShow,
+                            progressText = progressText,
+                            color = effectiveText.copy(alpha = 0.8f),
+                            contentHeight = pageInfoBarContentHeight,
+                            modifier = Modifier.fillMaxSize()
+                        )
                     }
                 }
 

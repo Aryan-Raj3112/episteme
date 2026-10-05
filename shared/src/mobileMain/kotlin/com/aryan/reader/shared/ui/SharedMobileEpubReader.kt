@@ -690,6 +690,7 @@ fun SharedMobileEpubReaderScreen(
     // stable across chrome toggles: the live chrome-dependent pad would
     // repaginate on every tap, so the paginator uses the chrome-independent
     // maximum and the render box shares it.
+    val pageInfoBarContentHeight = sharedMobileEpubPageInfoBarContentHeight()
     val nativePaginatedPageInfoReserveTop = if (
         settings.pageInfoPosition == PageInfoPosition.TOP &&
         shouldReserveEpubPageInfoBarSpace(
@@ -698,7 +699,7 @@ fun SharedMobileEpubReaderScreen(
             isNativeVerticalMode = false
         )
     ) {
-        SharedMobileEpubPageInfoBarContentHeight
+        pageInfoBarContentHeight
     } else {
         0.dp
     }
@@ -712,7 +713,7 @@ fun SharedMobileEpubReaderScreen(
             pageInfoMode = settings.pageInfoMode,
             showReaderChrome = showChrome
         ),
-        contentHeight = SharedMobileEpubPageInfoBarContentHeight,
+        contentHeight = pageInfoBarContentHeight,
         bottomPad = nativePaginatedPageInfoMaxBottomPad
     )
 
@@ -2540,7 +2541,7 @@ fun SharedMobileEpubReaderScreen(
                                 isNativeVerticalMode = false
                             )
                         ) {
-                            SharedMobileEpubPageInfoBarContentHeight
+                            pageInfoBarContentHeight
                         } else {
                             0.dp
                         }
@@ -3237,7 +3238,7 @@ fun SharedMobileEpubReaderScreen(
                     val pullIsPrevious = pullDirection == "previous"
                     val pullTopReserve = (if (showChrome) 55.dp else 0.dp) +
                         (if (pageInfoVisible && settings.pageInfoPosition == PageInfoPosition.TOP) {
-                            SharedMobileEpubPageInfoBarContentHeight
+                            pageInfoBarContentHeight
                         } else {
                             0.dp
                         })
@@ -3247,7 +3248,7 @@ fun SharedMobileEpubReaderScreen(
                         0.dp
                     }) +
                         (if (pageInfoVisible && settings.pageInfoPosition == PageInfoPosition.BOTTOM) {
-                            SharedMobileEpubPageInfoBarContentHeight
+                            pageInfoBarContentHeight
                         } else {
                             0.dp
                         })
@@ -3379,7 +3380,7 @@ fun SharedMobileEpubReaderScreen(
                 // PageInfo lives in the bottom Column directly above the
                 // toolbar, so overlays must clear it to avoid overlap.
                 val epubPageInfoReserve = if (epubPageInfoBottomVisible) {
-                    SharedMobileEpubPageInfoBarContentHeight
+                    pageInfoBarContentHeight
                 } else {
                     0.dp
                 }
