@@ -647,10 +647,20 @@ data class MobileEpubManifestItem(
     val id: String,
     val absPath: String,
     val mediaType: String,
-    val properties: String
+    val properties: String,
+    /**
+     * The `media-overlay` attribute: the manifest id of the `application/smil+xml` item that
+     * narrates this one, or null when the item has no overlay.
+     *
+     * A reader that does not support overlays must ignore both this attribute and the smil items
+     * (`EPUB RS §9`), so this is purely additive and never changes how a book opens.
+     */
+    val mediaOverlay: String? = null
 )
 
-const val MOBILE_EPUB_EXTRACTION_CACHE_VERSION = 3
+// 3 -> 4: `MobileEpubManifestItem` gained `mediaOverlay`, so a cached manifest written by 3 would
+// deserialize with the attribute silently absent and the book would look like it has no narration.
+const val MOBILE_EPUB_EXTRACTION_CACHE_VERSION = 4
 
 @Serializable
 data class MobileEpubExtractionCacheManifest(

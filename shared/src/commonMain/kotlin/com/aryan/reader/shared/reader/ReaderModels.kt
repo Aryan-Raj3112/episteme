@@ -20,7 +20,14 @@ data class SharedEpubBook(
     val language: String = "en",
     val seriesName: String? = null,
     val seriesIndex: Double? = null,
-    val description: String? = null
+    val description: String? = null,
+    /**
+     * EPUB media overlay facts, read from the OPF without parsing any SMIL body.
+     *
+     * `EMPTY` for the overwhelming majority of books. Built for every book, so it must stay cheap:
+     * it reuses the manifest and OPF metas the package loader already has.
+     */
+    val mediaOverlays: SharedMediaOverlayIndex = SharedMediaOverlayIndex.EMPTY
 )
 
 data class SharedEpubTocEntry(

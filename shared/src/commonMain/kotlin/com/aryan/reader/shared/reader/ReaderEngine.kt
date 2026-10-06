@@ -1221,6 +1221,70 @@ internal fun findChapterContainingElement(
     return containing.first()
 }
 
+/**
+ * The text a `path#fragment` anchor covers, as an absolute range in the chapter.
+ *
+ * This is [findElementOffset]'s sibling, and it exists because an overlay has to *highlight* a
+ * fragment, not merely locate it: knowing where `p009.xhtml#f000002` starts is not enough to paint
+ * the line it names. The traversal is deliberately identical to [findElementOffset]'s — same
+ * container recursion, same span preference — so the two cannot disagree about which node an id
+ * belongs to. Only the payload differs: a whole block for a block-level id, the span's own extent
+ * for an inline one.
+ *
+ * @return null when the id is not present, or names a non-text block. There is no text range to
+ * highlight in the latter case, and inventing one would paint an arbitrary slice of the chapter.
+ */
+internal fun Iterable<SemanticBlock>.findElementTextRange(elementId: String): SharedElementTextRange? {
+    for (block in this) {
+        block.findElementTextRange(elementId)?.let { return it }
+    }
+    return null
+}
+
+internal fun SemanticBlock.findElementTextRange(elementId: String): SharedElementTextRange? {
+    if (this is SemanticTextBlock) {
+        val start = startCharOffsetInSource
+        if (this.elementId == elementId) {
+            // A block-level id covers the whole block, which is what a publisher means by marking a
+            // paragraph: the `par` narrates the paragraph, not its first character.
+            return SharedElementTextRange(
+                blockCfi = cfi,
+                startAbs = start,
+                endAbs = start + text.length
+            )
+        }
+        spans.firstOrNull { it.elementId == elementId }?.let { span ->
+            val spanStart = span.start.coerceAtLeast(0)
+            val spanEnd = span.end.coerceAtLeast(spanStart)
+            return SharedElementTextRange(
+                blockCfi = cfi,
+                startAbs = start + spanStart,
+                endAbs = start + spanEnd
+            )
+        }
+    }
+    return when (this) {
+        is SemanticList -> items.findElementTextRange(elementId)
+        is SemanticTable -> rows.asSequence()
+            .flatMap { it.asSequence() }
+            .mapNotNull { it.content.findElementTextRange(elementId) }
+            .firstOrNull()
+        is SemanticFlexContainer -> children.findElementTextRange(elementId)
+        is SemanticWrappingBlock -> paragraphsToWrap.findElementTextRange(elementId)
+        else -> null
+    }
+}
+
+/**
+ * An element's text extent, in absolute chapter offsets, together with the cfi of the block that
+ * contains it — the identity [SharedPlaybackFragment] anchors on.
+ */
+internal data class SharedElementTextRange(
+    val blockCfi: String?,
+    val startAbs: Int,
+    val endAbs: Int
+)
+
 internal fun SemanticBlock.findElementOffset(elementId: String): Int? {
     if (this is SemanticTextBlock) {
         if (this.elementId == elementId) return startCharOffsetInSource

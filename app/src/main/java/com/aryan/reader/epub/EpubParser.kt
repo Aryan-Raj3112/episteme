@@ -808,7 +808,12 @@ class EpubParser(private val context: Context) {
                     id = itemElement.getAttribute("id"),
                     absPath = pathRelativeToEpubRoot,
                     mediaType = itemElement.getAttribute("media-type"),
-                    properties = itemElement.getAttribute("properties")
+                    properties = itemElement.getAttribute("properties"),
+                    // Media overlays: the smil item that narrates this one. Additive only --
+                    // `EPUB RS §9` requires a reader without overlay support to ignore both this
+                    // attribute and the smil items.
+                    mediaOverlay = itemElement.getAttributeValue("media-overlay")
+                        ?.trim()?.takeIf(String::isNotEmpty)
                 )
             }.associateBy { it.id }
     }
