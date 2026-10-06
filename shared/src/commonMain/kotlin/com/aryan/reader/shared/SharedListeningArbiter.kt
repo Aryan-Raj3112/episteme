@@ -39,6 +39,14 @@ class SharedListeningArbiter(
     private val releaseListen: () -> Unit,
     private val stopReaderLocal: () -> Unit,
     private val stopReaderCloud: () -> Unit,
+    /**
+     * Stops EPUB media overlay playback.
+     *
+     * Required rather than defaulted to a no-op: a media overlay owns real audio on its own engine,
+     * so a host that forgot to wire this would let a publisher's narration keep playing over read-
+     * aloud — audible, not just a wrong label.
+     */
+    private val stopMediaOverlay: () -> Unit,
 ) {
 
     /**
@@ -58,6 +66,7 @@ class SharedListeningArbiter(
         // itself is what a cloud start used to do.
         if (winner == SharedListeningSurface.LISTEN_TTS) return
         stopAudiobook()
+        stopMediaOverlay()
         yieldListenTo(winner, engine)
     }
 
@@ -76,6 +85,7 @@ class SharedListeningArbiter(
      */
     fun onListenSessionStarting() {
         stopAudiobook()
+        stopMediaOverlay()
         stopReaderLocal()
         stopReaderCloud()
     }
@@ -87,6 +97,22 @@ class SharedListeningArbiter(
      * TTS session is still live and has to be silenced rather than released.
      */
     fun onAudiobookStarting() {
+        stopListen()
+        stopMediaOverlay()
+        stopReaderLocal()
+        stopReaderCloud()
+    }
+
+    /**
+     * Media overlay playback is about to start.
+     *
+     * Stops everything else outright rather than through [sharedListeningYield], for the same
+     * ordering reason as [onListenSessionStarting]: this runs before the overlay claims anything,
+     * so the engines being stopped belong to the outgoing session. Routing it through the shared
+     * rule would look tidier and would reintroduce the class of bug this file exists to prevent.
+     */
+    fun onMediaOverlayStarting() {
+        stopAudiobook()
         stopListen()
         stopReaderLocal()
         stopReaderCloud()

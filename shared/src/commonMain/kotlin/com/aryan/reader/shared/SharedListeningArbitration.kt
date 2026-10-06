@@ -31,7 +31,25 @@ enum class SharedListeningSurface {
 
     /** Audiobook "Listen" TTS. */
     LISTEN_TTS,
+
+    /**
+     * EPUB media overlay playback: a publisher's pre-recorded narration synchronized to the text.
+     *
+     * Carries real audio on its own engine, exactly like [AUDIOBOOK], so it always excludes in both
+     * directions rather than participating in the engine-sharing RELEASE rule below. Two engines
+     * speaking at once is the failure this file exists to prevent.
+     */
+    MEDIA_OVERLAY,
 }
+
+/**
+ * Surfaces that own real audio on an engine nobody else shares.
+ *
+ * They STOP-yield like [AUDIOBOOK] for the same reason: a start on a different engine cannot
+ * silence them by accident, so the loser has to be stopped explicitly.
+ */
+private val SharedListeningSurface.ownsRealAudio: Boolean
+    get() = this == SharedListeningSurface.AUDIOBOOK || this == SharedListeningSurface.MEDIA_OVERLAY
 
 /** Which speech engine a TTS surface is speaking through. */
 enum class SharedTtsEngine {
@@ -76,9 +94,10 @@ fun sharedListeningYield(
     // session it just started.
     winner == loser -> SharedListeningYield.NONE
 
-    // Android's single-active-listening-source policy: audiobook and TTS always exclude.
-    winner == SharedListeningSurface.AUDIOBOOK || loser == SharedListeningSurface.AUDIOBOOK ->
-        SharedListeningYield.STOP
+    // Android's single-active-listening-source policy: audiobook, media overlay and TTS always
+    // exclude. The overlay belongs here rather than in the engine-sharing branch below because its
+    // audio is a publisher's recording on its own engine, not a synthesized session.
+    winner.ownsRealAudio || loser.ownsRealAudio -> SharedListeningYield.STOP
 
     loserEngine == null -> SharedListeningYield.NONE
 

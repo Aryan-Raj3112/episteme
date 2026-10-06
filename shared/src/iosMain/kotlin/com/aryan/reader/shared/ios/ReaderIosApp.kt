@@ -173,6 +173,7 @@ import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderTtsEngineOverride
 import com.aryan.reader.shared.SharedListeningArbiter
+import com.aryan.reader.shared.reader.IosSharedMediaOverlayPlaybackHolder
 import com.aryan.reader.shared.SharedListeningSurface
 import com.aryan.reader.shared.SharedTtsEngine
 import com.aryan.reader.shared.sharedListeningSurfaceForTag
@@ -3442,6 +3443,10 @@ private fun ReaderIosApp(
             releaseListen = { ttsListenController.releaseForHandoff() },
             stopReaderLocal = { readerTtsEngine.stop() },
             stopReaderCloud = { readerCloudTts.stop() },
+            // iOS has no media overlay engine yet, so this is a null-safe seam rather than a player.
+            // Dropping the holder is the stop: a stale engine left installed would keep producing
+            // audio after its surface was gone.
+            stopMediaOverlay = { IosSharedMediaOverlayPlaybackHolder.stop() },
         )
     }
     // Android parity (sharedListeningHandoff): cloud read-aloud wins the audio output — stop

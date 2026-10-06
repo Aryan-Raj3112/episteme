@@ -148,17 +148,32 @@ class SharedListeningArbitrationTest {
     }
 
     @Test
-    fun audiobookIsExcludedFromItsOwnOppositionSet() {
+    fun aSurfaceIsExcludedFromItsOwnOppositionSet() {
+        // Every surface, not just the original three: a new one added to the enum has to appear in
+        // the competing set or it silently never yields.
         assertEquals(
-            listOf(SharedListeningSurface.READER_TTS, SharedListeningSurface.LISTEN_TTS),
+            listOf(
+                SharedListeningSurface.READER_TTS,
+                SharedListeningSurface.LISTEN_TTS,
+                SharedListeningSurface.MEDIA_OVERLAY,
+            ),
             sharedListeningSurfacesOtherThan(SharedListeningSurface.AUDIOBOOK),
         )
         assertEquals(
             listOf(
                 SharedListeningSurface.AUDIOBOOK,
                 SharedListeningSurface.LISTEN_TTS,
+                SharedListeningSurface.MEDIA_OVERLAY,
             ),
             sharedListeningSurfacesOtherThan(SharedListeningSurface.READER_TTS),
+        )
+        assertEquals(
+            listOf(
+                SharedListeningSurface.AUDIOBOOK,
+                SharedListeningSurface.READER_TTS,
+                SharedListeningSurface.MEDIA_OVERLAY,
+            ),
+            sharedListeningSurfacesOtherThan(SharedListeningSurface.LISTEN_TTS),
         )
     }
 }

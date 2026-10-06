@@ -25,6 +25,7 @@ class SharedListeningArbiterTest {
             releaseListen = { log += "releaseListen" },
             stopReaderLocal = { log += "stopReaderLocal" },
             stopReaderCloud = { log += "stopReaderCloud" },
+            stopMediaOverlay = { log += "stopMediaOverlay" },
         )
     }
 
@@ -34,14 +35,14 @@ class SharedListeningArbiterTest {
         // Stopping here would silence the reader's own new session.
         val calls = Calls().apply { listenEngine = SharedTtsEngine.LOCAL }
         calls.arbiter().onTtsSessionActivated(SharedListeningSurface.READER_TTS, SharedTtsEngine.LOCAL)
-        assertEquals(listOf("stopAudiobook", "releaseListen"), calls.log)
+        assertEquals(listOf("stopAudiobook", "stopMediaOverlay", "releaseListen"), calls.log)
     }
 
     @Test
     fun readerCloudReadAloudReleasesListenOnTheCloudEngine() {
         val calls = Calls().apply { listenEngine = SharedTtsEngine.CLOUD }
         calls.arbiter().onTtsSessionActivated(SharedListeningSurface.READER_TTS, SharedTtsEngine.CLOUD)
-        assertEquals(listOf("stopAudiobook", "releaseListen"), calls.log)
+        assertEquals(listOf("stopAudiobook", "stopMediaOverlay", "releaseListen"), calls.log)
     }
 
     @Test
@@ -50,14 +51,14 @@ class SharedListeningArbiterTest {
         // audio, so it has to be stopped or both surfaces speak.
         val calls = Calls().apply { listenEngine = SharedTtsEngine.CLOUD }
         calls.arbiter().onTtsSessionActivated(SharedListeningSurface.READER_TTS, SharedTtsEngine.LOCAL)
-        assertEquals(listOf("stopAudiobook", "stopListen"), calls.log)
+        assertEquals(listOf("stopAudiobook", "stopMediaOverlay", "stopListen"), calls.log)
     }
 
     @Test
     fun readerReadAloudLeavesListenAloneWhenItHasNoSession() {
         val calls = Calls()
         calls.arbiter().onTtsSessionActivated(SharedListeningSurface.READER_TTS, SharedTtsEngine.CLOUD)
-        assertEquals(listOf("stopAudiobook"), calls.log)
+        assertEquals(listOf("stopAudiobook", "stopMediaOverlay"), calls.log)
     }
 
     @Test
@@ -71,7 +72,7 @@ class SharedListeningArbiterTest {
                 arbiter.onTtsSessionActivated(SharedListeningSurface.READER_TTS, readerTakes)
                 if (listenOn == readerTakes && listenOn != null) {
                     assertEquals(
-                        listOf("stopAudiobook", "releaseListen"),
+                        listOf("stopAudiobook", "stopMediaOverlay", "releaseListen"),
                         calls.log,
                         "reader took $readerTakes while Listen held $listenOn",
                     )
@@ -95,7 +96,7 @@ class SharedListeningArbiterTest {
         // Untagged means the reader's own session; it must still yield Listen normally.
         val calls = Calls().apply { listenEngine = SharedTtsEngine.LOCAL }
         calls.arbiter().onTtsSessionActivated(null, SharedTtsEngine.LOCAL)
-        assertEquals(listOf("stopAudiobook", "releaseListen"), calls.log)
+        assertEquals(listOf("stopAudiobook", "stopMediaOverlay", "releaseListen"), calls.log)
     }
 
     @Test
@@ -122,7 +123,7 @@ class SharedListeningArbiterTest {
         calls.arbiter().onListenSessionStarting()
         // Runs before Listen claims anything, so these belong to the outgoing session.
         assertEquals(
-            listOf("stopAudiobook", "stopReaderLocal", "stopReaderCloud"),
+            listOf("stopAudiobook", "stopMediaOverlay", "stopReaderLocal", "stopReaderCloud"),
             calls.log,
         )
     }
@@ -132,9 +133,23 @@ class SharedListeningArbiterTest {
         val calls = Calls().apply { listenEngine = SharedTtsEngine.LOCAL }
         calls.arbiter().onAudiobookStarting()
         assertEquals(
-            listOf("stopListen", "stopReaderLocal", "stopReaderCloud"),
+            listOf("stopListen", "stopMediaOverlay", "stopReaderLocal", "stopReaderCloud"),
             calls.log,
         )
+    }
+
+    @Test
+    fun mediaOverlayStartingStopsEveryOtherSurface() {
+        val calls = Calls().apply { listenEngine = SharedTtsEngine.LOCAL }
+        calls.arbiter().onMediaOverlayStarting()
+        // Plain stops, not yields: this runs before the overlay claims anything, so the engines
+        // being stopped belong to the outgoing session.
+        assertEquals(
+            listOf("stopAudiobook", "stopListen", "stopReaderLocal", "stopReaderCloud"),
+            calls.log,
+        )
+        // And it must not stop itself.
+        assertEquals(false, calls.log.contains("stopMediaOverlay"))
     }
 
     @Test
