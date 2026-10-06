@@ -132,7 +132,6 @@ import com.aryan.reader.countWords
 import com.aryan.reader.epubreader.HighlightColor
 import com.aryan.reader.epubreader.PaginatedTextSelectionMenu
 import com.aryan.reader.epubreader.PaletteManagerDialog
-import com.aryan.reader.epubreader.TtsHighlightInfo
 import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
@@ -148,6 +147,8 @@ import timber.log.Timber
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import com.aryan.reader.shared.reader.SharedPlaybackFragment
+import com.aryan.reader.shared.reader.withPlaybackFragmentBackground
 
 
 @Suppress("unused")
@@ -166,7 +167,7 @@ internal fun PaginatedReaderContent(
     effectiveBg: Color,
     effectiveText: Color,
     searchQuery: String,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     textStyle: TextStyle,
     imageSizeMultiplier: Float,
     hideImages: Boolean = false,
@@ -1014,52 +1015,13 @@ internal fun PaginatedReaderContent(
                                                     searchQuery,
                                                     searchHighlightColor
                                                 )
-                                            val finalContent =
-                                                if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-                                                    buildAnnotatedString {
-                                                        append(searchHighlighted)
-
-                                                        // Define absolute ranges
-                                                        val blockStartAbs =
-                                                            block.startCharOffsetInSource
-                                                        val blockEndAbs =
-                                                            block.startCharOffsetInSource + searchHighlighted.length
-                                                        val highlightStartAbs =
-                                                            ttsHighlightInfo.offset
-                                                        val highlightEndAbs =
-                                                            ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-
-                                                        // Calculate intersection
-                                                        val intersectionStartAbs =
-                                                            maxOf(
-                                                                blockStartAbs,
-                                                                highlightStartAbs
-                                                            )
-                                                        val intersectionEndAbs =
-                                                            minOf(
-                                                                blockEndAbs,
-                                                                highlightEndAbs
-                                                            )
-
-                                                        // Check for overlap and apply
-                                                        // style
-                                                        if (intersectionStartAbs < intersectionEndAbs) {
-                                                            val highlightStartRelative =
-                                                                intersectionStartAbs - blockStartAbs
-                                                            val highlightEndRelative =
-                                                                intersectionEndAbs - blockStartAbs
-                                                            addStyle(
-                                                                style = SpanStyle(
-                                                                    background = ttsHighlightColor
-                                                                ),
-                                                                start = highlightStartRelative,
-                                                                end = highlightEndRelative
-                                                            )
-                                                        }
-                                                    }
-                                                } else {
-                                                    searchHighlighted
-                                                }
+                                            val finalContent = searchHighlighted.withPlaybackFragmentBackground(
+                                                fragment = ttsHighlightInfo,
+                                                blockCfi = block.cfi,
+                                                blockStartAbs = block.startCharOffsetInSource,
+                                                blockLength = searchHighlighted.length,
+                                                color = ttsHighlightColor
+                                            )
 
                                             @Suppress(
                                                 "UnusedVariable",
@@ -1134,48 +1096,13 @@ internal fun PaginatedReaderContent(
                                                     searchQuery,
                                                     searchHighlightColor
                                                 )
-                                            val finalContent =
-                                                if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-                                                    buildAnnotatedString {
-                                                        append(searchHighlighted)
-
-                                                        val blockStartAbs =
-                                                            block.startCharOffsetInSource
-                                                        val blockEndAbs =
-                                                            block.startCharOffsetInSource + searchHighlighted.length
-                                                        val highlightStartAbs =
-                                                            ttsHighlightInfo.offset
-                                                        val highlightEndAbs =
-                                                            ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-
-                                                        val intersectionStartAbs =
-                                                            maxOf(
-                                                                blockStartAbs,
-                                                                highlightStartAbs
-                                                            )
-                                                        val intersectionEndAbs =
-                                                            minOf(
-                                                                blockEndAbs,
-                                                                highlightEndAbs
-                                                            )
-
-                                                        if (intersectionStartAbs < intersectionEndAbs) {
-                                                            val highlightStartRelative =
-                                                                intersectionStartAbs - blockStartAbs
-                                                            val highlightEndRelative =
-                                                                intersectionEndAbs - blockStartAbs
-                                                            addStyle(
-                                                                style = SpanStyle(
-                                                                    background = ttsHighlightColor
-                                                                ),
-                                                                start = highlightStartRelative,
-                                                                end = highlightEndRelative
-                                                            )
-                                                        }
-                                                    }
-                                                } else {
-                                                    searchHighlighted
-                                                }
+                                                val finalContent = searchHighlighted.withPlaybackFragmentBackground(
+                                                    fragment = ttsHighlightInfo,
+                                                    blockCfi = block.cfi,
+                                                    blockStartAbs = block.startCharOffsetInSource,
+                                                    blockLength = searchHighlighted.length,
+                                                    color = ttsHighlightColor
+                                                )
                                             TextWithEmphasis(
                                                 text = finalContent,
                                                 style = style,
@@ -1226,48 +1153,13 @@ internal fun PaginatedReaderContent(
                                                     searchQuery,
                                                     searchHighlightColor
                                                 )
-                                            val finalContent =
-                                                if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-                                                    buildAnnotatedString {
-                                                        append(searchHighlighted)
-
-                                                        val blockStartAbs =
-                                                            block.startCharOffsetInSource
-                                                        val blockEndAbs =
-                                                            block.startCharOffsetInSource + searchHighlighted.length
-                                                        val highlightStartAbs =
-                                                            ttsHighlightInfo.offset
-                                                        val highlightEndAbs =
-                                                            ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-
-                                                        val intersectionStartAbs =
-                                                            maxOf(
-                                                                blockStartAbs,
-                                                                highlightStartAbs
-                                                            )
-                                                        val intersectionEndAbs =
-                                                            minOf(
-                                                                blockEndAbs,
-                                                                highlightEndAbs
-                                                            )
-
-                                                        if (intersectionStartAbs < intersectionEndAbs) {
-                                                            val highlightStartRelative =
-                                                                intersectionStartAbs - blockStartAbs
-                                                            val highlightEndRelative =
-                                                                intersectionEndAbs - blockStartAbs
-                                                            addStyle(
-                                                                style = SpanStyle(
-                                                                    background = ttsHighlightColor
-                                                                ),
-                                                                start = highlightStartRelative,
-                                                                end = highlightEndRelative
-                                                            )
-                                                        }
-                                                    }
-                                                } else {
-                                                    searchHighlighted
-                                                }
+                                                val finalContent = searchHighlighted.withPlaybackFragmentBackground(
+                                                    fragment = ttsHighlightInfo,
+                                                    blockCfi = block.cfi,
+                                                    blockStartAbs = block.startCharOffsetInSource,
+                                                    blockLength = searchHighlighted.length,
+                                                    color = ttsHighlightColor
+                                                )
                                             TextWithEmphasis(
                                                 text = finalContent,
                                                 style = quoteStyle,
@@ -1349,48 +1241,13 @@ internal fun PaginatedReaderContent(
                                                         searchQuery,
                                                         searchHighlightColor
                                                     )
-                                                val finalContent =
-                                                    if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-                                                        buildAnnotatedString {
-                                                            append(searchHighlighted)
-
-                                                            val blockStartAbs =
-                                                                block.startCharOffsetInSource
-                                                            val blockEndAbs =
-                                                                block.startCharOffsetInSource + searchHighlighted.length
-                                                            val highlightStartAbs =
-                                                                ttsHighlightInfo.offset
-                                                            val highlightEndAbs =
-                                                                ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-
-                                                            val intersectionStartAbs =
-                                                                maxOf(
-                                                                    blockStartAbs,
-                                                                    highlightStartAbs
-                                                                )
-                                                            val intersectionEndAbs =
-                                                                minOf(
-                                                                    blockEndAbs,
-                                                                    highlightEndAbs
-                                                                )
-
-                                                            if (intersectionStartAbs < intersectionEndAbs) {
-                                                                val highlightStartRelative =
-                                                                    intersectionStartAbs - blockStartAbs
-                                                                val highlightEndRelative =
-                                                                    intersectionEndAbs - blockStartAbs
-                                                                addStyle(
-                                                                    style = SpanStyle(
-                                                                        background = ttsHighlightColor
-                                                                    ),
-                                                                    start = highlightStartRelative,
-                                                                    end = highlightEndRelative
-                                                                )
-                                                            }
-                                                        }
-                                                    } else {
-                                                        searchHighlighted
-                                                    }
+                                                    val finalContent = searchHighlighted.withPlaybackFragmentBackground(
+                                                        fragment = ttsHighlightInfo,
+                                                        blockCfi = block.cfi,
+                                                        blockStartAbs = block.startCharOffsetInSource,
+                                                        blockLength = searchHighlighted.length,
+                                                        color = ttsHighlightColor
+                                                    )
                                                 TextWithEmphasis(
                                                     text = finalContent,
                                                     style = textStyle,
@@ -2860,7 +2717,7 @@ internal fun RenderFlexChildBlock(
     hideImages: Boolean = false,
     searchQuery: String,
     searchHighlightColor: Color,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     ttsHighlightColor: Color,
     textMeasurer: TextMeasurer,
     onLinkClickCallback: (String) -> Unit,
@@ -2883,30 +2740,13 @@ internal fun RenderFlexChildBlock(
     fun renderTextBlock(block: TextContentBlock) {
         val searchHighlighted =
             highlightQueryInText(block.content, searchQuery, searchHighlightColor)
-        val finalContent = if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-            buildAnnotatedString {
-                append(searchHighlighted)
-                val blockStartAbs = block.startCharOffsetInSource
-                val blockEndAbs = block.startCharOffsetInSource + searchHighlighted.length
-                val highlightStartAbs = ttsHighlightInfo.offset
-                val highlightEndAbs = ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-
-                val intersectionStartAbs = maxOf(blockStartAbs, highlightStartAbs)
-                val intersectionEndAbs = minOf(blockEndAbs, highlightEndAbs)
-
-                if (intersectionStartAbs < intersectionEndAbs) {
-                    val highlightStartRelative = intersectionStartAbs - blockStartAbs
-                    val highlightEndRelative = intersectionEndAbs - blockStartAbs
-                    addStyle(
-                        style = SpanStyle(background = ttsHighlightColor),
-                        start = highlightStartRelative,
-                        end = highlightEndRelative
-                    )
-                }
-            }
-        } else {
-            searchHighlighted
-        }
+        val finalContent = searchHighlighted.withPlaybackFragmentBackground(
+            fragment = ttsHighlightInfo,
+            blockCfi = block.cfi,
+            blockStartAbs = block.startCharOffsetInSource,
+            blockLength = searchHighlighted.length,
+            color = ttsHighlightColor
+        )
 
         val finalStyle = when (block) {
             is HeaderBlock -> createHeaderTextStyle(

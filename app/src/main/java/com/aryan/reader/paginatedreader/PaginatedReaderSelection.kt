@@ -76,13 +76,14 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest.Builder
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.plainTextCharacterCount
-import com.aryan.reader.epubreader.TtsHighlightInfo
 import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
 import com.aryan.reader.shared.isReaderExternalHref as sharedIsReaderExternalHref
 import com.aryan.reader.shared.normalizeReaderHref
+import com.aryan.reader.shared.reader.SharedPlaybackFragment
 import com.aryan.reader.shared.reader.paintOnlyColorOverlayText
 import com.aryan.reader.shared.reader.sharedHeadingFontScale
+import com.aryan.reader.shared.reader.withPlaybackFragmentBackground
 import com.aryan.reader.shared.reader.withoutForegroundColorSpans
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -1766,7 +1767,7 @@ internal fun WrappingContentLayout(
     hideImages: Boolean = false,
     modifier: Modifier = Modifier,
     searchQuery: String,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     searchHighlightColor: Color,
     ttsHighlightColor: Color,
     isDarkTheme: Boolean,
@@ -1781,29 +1782,13 @@ internal fun WrappingContentLayout(
             block.paragraphsToWrap.forEachIndexed { index, p ->
                 val searchHighlighted =
                     highlightQueryInText(p.content, searchQuery, searchHighlightColor)
-                val finalContent = if (ttsHighlightInfo != null && p.cfi == ttsHighlightInfo.cfi) {
-                    buildAnnotatedString {
-                        append(searchHighlighted)
-                        val blockStartAbs = p.startCharOffsetInSource
-                        val blockEndAbs = p.startCharOffsetInSource + searchHighlighted.length
-                        val highlightStartAbs = ttsHighlightInfo.offset
-                        val highlightEndAbs = ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-                        val intersectionStartAbs = maxOf(blockStartAbs, highlightStartAbs)
-                        val intersectionEndAbs = minOf(blockEndAbs, highlightEndAbs)
-
-                        if (intersectionStartAbs < intersectionEndAbs) {
-                            val highlightStartRelative = intersectionStartAbs - blockStartAbs
-                            val highlightEndRelative = intersectionEndAbs - blockStartAbs
-                            addStyle(
-                                style = SpanStyle(
-                                    background = ttsHighlightColor
-                                ), start = highlightStartRelative, end = highlightEndRelative
-                            )
-                        }
-                    }
-                } else {
-                    searchHighlighted
-                }
+                val finalContent = searchHighlighted.withPlaybackFragmentBackground(
+                    fragment = ttsHighlightInfo,
+                    blockCfi = p.cfi,
+                    blockStartAbs = p.startCharOffsetInSource,
+                    blockLength = searchHighlighted.length,
+                    color = ttsHighlightColor
+                )
                 append(finalContent)
                 if (index < block.paragraphsToWrap.lastIndex) append("\n\n")
             }

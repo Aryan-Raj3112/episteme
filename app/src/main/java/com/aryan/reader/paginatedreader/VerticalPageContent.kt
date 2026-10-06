@@ -32,10 +32,11 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest.Builder
-import com.aryan.reader.epubreader.TtsHighlightInfo
 import com.aryan.reader.epubreader.UserHighlight
 import java.io.File
 import timber.log.Timber
+import com.aryan.reader.shared.reader.SharedPlaybackFragment
+import com.aryan.reader.shared.reader.sharedPlaybackFragmentRangeInBlock
 
 /**
  * Native vertical-rl (`tategaki`) page renderer for paginated EPUB chapters.
@@ -63,7 +64,7 @@ internal fun VerticalPageContent(
     hideImages: Boolean,
     searchQuery: String,
     searchHighlightColor: Color,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     ttsHighlightColor: Color,
     pageUserHighlights: List<UserHighlight>,
     highlightRangesByBlock: Map<Int, Map<String, List<IntRange>>>,
@@ -155,7 +156,7 @@ private fun VerticalPageTextBlock(
     spaceBeforePx: Float,
     searchQuery: String,
     searchHighlightColor: Color,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     ttsHighlightColor: Color,
     pageUserHighlights: List<UserHighlight>,
     highlightRangesByBlock: Map<Int, Map<String, List<IntRange>>>,
@@ -293,7 +294,7 @@ private fun verticalOverlayRects(
     block: TextContentBlock,
     searchQuery: String,
     searchHighlightColor: Color,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     ttsHighlightColor: Color,
     highlightRanges: Map<String, List<IntRange>>,
     highlightById: Map<String, UserHighlight>
@@ -306,17 +307,15 @@ private fun verticalOverlayRects(
             }
         }
     }
-    if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-        val blockStartAbs = block.startCharOffsetInSource
-        val blockEndAbs = blockStartAbs + block.content.length
-        val highlightStartAbs = ttsHighlightInfo.offset
-        val highlightEndAbs = ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-        val startAbs = maxOf(blockStartAbs, highlightStartAbs)
-        val endAbs = minOf(blockEndAbs, highlightEndAbs)
-        if (startAbs < endAbs) {
-            for (rect in layout.rectsForRange(startAbs - blockStartAbs, endAbs - blockStartAbs)) {
-                out.add(rect to ttsHighlightColor)
-            }
+    val fragmentRange = sharedPlaybackFragmentRangeInBlock(
+        fragment = ttsHighlightInfo,
+        blockCfi = block.cfi,
+        blockStartAbs = block.startCharOffsetInSource,
+        blockLength = block.content.length
+    )
+    if (fragmentRange != null) {
+        for (rect in layout.rectsForRange(fragmentRange.first, fragmentRange.last + 1)) {
+            out.add(rect to ttsHighlightColor)
         }
     }
     for ((highlightId, ranges) in highlightRanges) {

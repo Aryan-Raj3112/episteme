@@ -98,7 +98,6 @@ import com.aryan.reader.loadReaderTextureBitmap
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.plainTextCharacterCount
 import com.aryan.reader.epubreader.ReaderTextAlign
-import com.aryan.reader.epubreader.TtsHighlightInfo
 import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.shared.HighlightStyle
@@ -123,6 +122,7 @@ import java.net.URLDecoder
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
+import com.aryan.reader.shared.reader.SharedPlaybackFragment
 
 
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
@@ -154,7 +154,7 @@ fun PaginatedReaderScreen(
     textAlign: ReaderTextAlign,
     bookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
     bookReplacementFileId: String? = bookId,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     initialChapterIndexInBook: Int?,
     fallbackLocatorForReconfiguration: Locator? = null,
     explicitNavigationAnchor: Locator? = null,

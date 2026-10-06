@@ -148,12 +148,12 @@ import com.aryan.reader.epubreader.HighlightColor
 import com.aryan.reader.epubreader.PaginatedTextSelectionMenu
 import com.aryan.reader.epubreader.PaletteManagerDialog
 import com.aryan.reader.epubreader.ReaderTextAlign
-import com.aryan.reader.epubreader.TtsHighlightInfo
 import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
+import com.aryan.reader.shared.reader.SharedPlaybackFragment
 import com.aryan.reader.shared.reader.paintOnlyColorOverlayText
 import com.aryan.reader.shared.reader.withoutForegroundColorSpans
 import com.aryan.reader.shared.ui.PaintableHighlight
@@ -208,7 +208,7 @@ fun NativeVerticalReaderScreen(
     textAlign: ReaderTextAlign,
     bookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
     bookReplacementFileId: String? = bookId,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     initialLocator: Locator? = null,
     initialPageIndexInBook: Int = 0,
     scrollRequestPage: Int? = null,
@@ -1485,7 +1485,7 @@ internal fun NativeVerticalPage(
     hideImages: Boolean = false,
     searchQuery: String,
     searchHighlightColor: Color,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     ttsHighlightColor: Color,
     textMeasurer: TextMeasurer,
     onLinkClickCallback: (String) -> Unit,
@@ -1555,7 +1555,7 @@ internal fun NativeVerticalContentBlock(
     hideImages: Boolean = false,
     searchQuery: String,
     searchHighlightColor: Color,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     ttsHighlightColor: Color,
     textMeasurer: TextMeasurer,
     onLinkClickCallback: (String) -> Unit,

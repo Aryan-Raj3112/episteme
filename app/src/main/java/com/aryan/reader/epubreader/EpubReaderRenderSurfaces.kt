@@ -221,6 +221,7 @@ import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.findEpubBookmarkForLocation
 import com.aryan.reader.shared.reader.MobileEpubReaderBackAction
 import com.aryan.reader.shared.reader.ReaderJumpHistory
+import com.aryan.reader.shared.reader.SharedPlaybackFragment
 import com.aryan.reader.shared.reader.mobileEpubChapterScrollFraction
 import com.aryan.reader.shared.reader.mobileEpubCharacterDisplayProgress
 import com.aryan.reader.shared.reader.mobileEpubCharacterProgress
@@ -551,10 +552,10 @@ internal fun EpubReaderRenderSurfaces(
                                     activeHighlightPalette = currentHighlightPalette,
                                     onUpdatePalette = onUpdateHighlightPalette,
                                     chapterHighlightIndexes = chapterHighlightIndexes,
-                                    ttsHighlightInfo = TtsHighlightInfo(
-                                        text = ttsState.currentText ?: "",
-                                        cfi = ttsState.sourceCfi ?: "",
-                                        offset = ttsState.startOffsetInSource
+                                    ttsHighlightInfo = SharedPlaybackFragment.ofLength(
+                                        blockCfi = ttsState.sourceCfi,
+                                        startAbs = ttsState.startOffsetInSource,
+                                        length = ttsState.currentText?.length ?: 0
                                     ).takeIf { ttsState.currentText != null && ttsState.sourceCfi != null && ttsState.startOffsetInSource != -1 },
                                     activeTextureId = activeTextureId,
                                     activeTextureAlpha = activeTextureAlpha,
@@ -1818,10 +1819,10 @@ internal fun EpubReaderRenderSurfaces(
                                 activeHighlightPalette = currentHighlightPalette,
                                 onUpdatePalette = onUpdateHighlightPalette,
                                 isPageTurnAnimationEnabled = prefs.isPageTurnAnimationEnabled,
-                                ttsHighlightInfo = TtsHighlightInfo(
-                                    text = ttsState.currentText ?: "",
-                                    cfi = ttsState.sourceCfi ?: "",
-                                    offset = ttsState.startOffsetInSource
+                                ttsHighlightInfo = SharedPlaybackFragment.ofLength(
+                                    blockCfi = ttsState.sourceCfi,
+                                    startAbs = ttsState.startOffsetInSource,
+                                    length = ttsState.currentText?.length ?: 0
                                 ).takeIf { ttsState.currentText != null && ttsState.sourceCfi != null && ttsState.startOffsetInSource != -1 },
                                 activeTextureId = activeTextureId,
                                 activeTextureAlpha = activeTextureAlpha,
