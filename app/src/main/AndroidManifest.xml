@@ -361,6 +361,20 @@
             </intent-filter>
         </service>
 
+        <!--
+          EPUB media overlay narration. A sibling of the audiobook service rather than a reuse: this
+          one has no book database, no book-id keying and no resume rewind, because the unit of
+          playback is a sentence and the position must be exact.
+        -->
+        <service
+            android:name=".mediaoverlay.MediaOverlayPlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService"/>
+            </intent-filter>
+        </service>
+
         <receiver
             android:name="com.aryan.reader.MediaButtonRoutingReceiver"
             android:exported="true">

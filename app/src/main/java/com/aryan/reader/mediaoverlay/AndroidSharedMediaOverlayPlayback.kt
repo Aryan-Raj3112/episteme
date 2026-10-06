@@ -2,7 +2,7 @@ package com.aryan.reader.mediaoverlay
 
 import android.content.ComponentName
 import android.content.Context
-import android.net.Uri
+import android.os.Bundle
 import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -24,6 +24,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.File
 
 /**
  * Android media overlay playback.
@@ -50,6 +51,8 @@ class AndroidSharedMediaOverlayPlayback(
     private var future: ListenableFuture<MediaController>? = null
     private var controller: MediaController? = null
     private var pendingRequest: SharedMediaOverlayPlaybackRequest? = null
+    /** The book currently attached to the service, so a reconnect does not re-attach. */
+    private var attachedFile: File? = null
     private var positionPollJob: Job? = null
     /** Suppresses the position poll while a programmatic seek is in flight. */
     private var suppressPoll = false
@@ -87,14 +90,52 @@ class AndroidSharedMediaOverlayPlayback(
         }
     }
 
+    /**
+     * The archive the service should stream from.
+     *
+     * A path rather than a reader: the service owns the `ZipFile` so it can close it, and sending a
+     * handle across would leave two open for one file. Set before [play]; null means "the last book
+     * this controller attached", which is what makes a reconnection mid-chapter keep working.
+     */
+    var bookFile: File? = null
+        private set
+
+    fun attachBook(file: File) {
+        bookFile = file
+    }
+
     final override fun play(request: SharedMediaOverlayPlaybackRequest) {
         pendingRequest = request
         val connected = controller
         if (connected != null) {
-            load(connected, request)
+            attachBookThenLoad(connected, request)
             return
         }
         connect()
+    }
+
+    /**
+     * Attaches the book, then loads. Ordering is the whole point: the player's data source factory
+     * is rebuilt when the archive is attached, so loading first would build every clip's `MediaItem`
+     * against the previous book's archive.
+     *
+     * A failed attach still loads, so the failure surfaces as the player's own error on the first
+     * clip rather than as a silent play that never makes a sound.
+     */
+    private fun attachBookThenLoad(controller: MediaController, request: SharedMediaOverlayPlaybackRequest) {
+        val file = bookFile
+        if (file == null || attachedFile == file) {
+            load(controller, request)
+            return
+        }
+        attachedFile = file
+        val args = Bundle().apply {
+            putString(MediaOverlayPlaybackService.KEY_ATTACH_BOOK_PATH, file.absolutePath)
+        }
+        val pending = controller.sendCustomCommand(MediaOverlayPlaybackService.ATTACH_BOOK_COMMAND, args)
+        pending.addListener({
+            load(controller, request)
+        }, ContextCompat.getMainExecutor(appContext))
     }
 
     private fun connect() {
@@ -155,7 +196,10 @@ class AndroidSharedMediaOverlayPlayback(
         val audio = audioPath ?: return MediaItem.Builder().setMediaId("$index").build()
         val builder = MediaItem.Builder()
             .setMediaId("$index")
-            .setUri(Uri.fromFile(java.io.File(audio)))
+            // A zip entry, not a file. The extraction cache is keyed to book loading and would have
+            // to be invalidated by a parser bump every time this feature changed, and it would copy
+            // most of a 124 MB book for a reader that may never press play.
+            .setUri(MediaOverlayUri.uriFor(audio))
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(request.bookTitle)

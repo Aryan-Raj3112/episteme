@@ -312,11 +312,82 @@ data class ReaderHighlightPalette(
 /**
  * Names highlights that show reading position rather than reader intent.
  *
- * Both the producer ([ReaderTtsChunk.toHighlight]) and the consumers read this one constant, so
- * changing the id format cannot quietly leave painters and hit-testing disagreeing about which
- * highlights are real.
+ * Both the producer ([ReaderTtsChunk.toHighlight], [SharedMediaOverlayProjector]) and the consumers
+ * read this one constant, so changing the id format cannot quietly leave painters and hit-testing
+ * disagreeing about which highlights are real.
+ *
+ * The value is `playback_`, not `tts_`, because a media overlay produces one of these too and a
+ * TTS-named prefix made that read as a bug. [LEGACY_TRANSIENT_BAND_ID_PREFIXES] keeps in-flight
+ * bands from a running session recognised, so widening the concept cannot drop the highlight the
+ * reader is currently looking at.
  */
-const val TRANSIENT_BAND_ID_PREFIX = "tts_"
+const val TRANSIENT_BAND_ID_PREFIX = "playback_"
+
+/**
+ * Builds the transient band a playback engine paints for its current position.
+ *
+ * Single-sourced so read-aloud and a media overlay produce an identical shape. They differ only in
+ * what they measure — a spoken sentence against a synthesized chunk, a narrated line against a
+ * `par` — and the band is the one place where a divergence would be visible as one engine's
+ * highlight behaving differently from the other's: selectable, or not; recoloured, or not.
+ *
+ * @param startOffset absolute within the chapter, as every playback offset in this codebase is.
+ * @param endOffset coerced forward, so a degenerate range cannot become a backwards locator that
+ *   resolves to nothing and silently drops the band.
+ */
+fun playbackBandHighlight(
+    sessionId: Long,
+    bandIndex: Int,
+    chapterIndex: Int,
+    pageIndex: Int? = null,
+    cfi: String?,
+    text: String?,
+    startOffset: Int,
+    endOffset: Int
+): UserHighlight = playbackBandHighlight(
+    sessionId = sessionId,
+    bandIndex = bandIndex,
+    text = text,
+    locator = ReaderLocator(
+        chapterIndex = chapterIndex,
+        pageIndex = pageIndex,
+        startOffset = startOffset.coerceAtLeast(0),
+        endOffset = endOffset.coerceAtLeast(startOffset.coerceAtLeast(0)),
+        textQuote = text?.takeIf(String::isNotEmpty),
+        cfi = cfi?.takeIf(String::isNotEmpty)
+    )
+)
+
+/**
+ * [playbackBandHighlight] for a caller that has already built its locator.
+ *
+ * Read-aloud needs this: its locator carries a `desktop:chapter:start:end` cfi when the engine had no
+ * source cfi, and losing that would leave a chunk with no position at all on surfaces that resolve
+ * by cfi. The band's own `cfi` field is read from the locator rather than passed separately, because
+ * a band whose outer cfi and inner locator cfi disagreed would resolve on one path and paint on
+ * another.
+ */
+fun playbackBandHighlight(
+    sessionId: Long,
+    bandIndex: Int,
+    text: String?,
+    locator: ReaderLocator
+): UserHighlight = UserHighlight(
+    id = "$TRANSIENT_BAND_ID_PREFIX${sessionId}_$bandIndex",
+    cfi = locator.cfi.orEmpty(),
+    text = text.orEmpty(),
+    color = HighlightColor.YELLOW,
+    chapterIndex = locator.chapterIndex ?: 0,
+    locator = locator
+)
+
+/**
+ * Prefixes earlier producers used, still honoured.
+ *
+ * Nothing is ever *stored* under these — a transient band has no lifetime beyond its session — so
+ * this is purely about not losing the band currently on screen when the app updates.
+ */
+val LEGACY_TRANSIENT_BAND_ID_PREFIXES: List<String> = listOf("tts_")
 
 data class UserHighlight(
     val id: String,
@@ -339,13 +410,14 @@ data class UserHighlight(
     /**
      * Whether this is a transient reading-position band rather than something the reader owns.
      *
-     * Read-aloud paints the current chunk through the highlight pipeline, so it arrives here shaped
-     * exactly like a highlight the reader made. It is not one: it is not stored, it has no id the
-     * reader can look up, and it must not be reported as selected. Painters draw it; hit-testing and
-     * the selection sheet ignore it.
+     * Both playback engines paint their current position through the highlight pipeline, so a band
+     * arrives here shaped exactly like a highlight the reader made. It is not one: it is not stored,
+     * it has no id the reader can look up, and it must not be reported as selected. Painters draw it;
+     * hit-testing and the selection sheet ignore it.
      */
     val isTransientPlaybackBand: Boolean
-        get() = id.startsWith(TRANSIENT_BAND_ID_PREFIX)
+        get() = id.startsWith(TRANSIENT_BAND_ID_PREFIX) ||
+            LEGACY_TRANSIENT_BAND_ID_PREFIXES.any(id::startsWith)
 
     fun renderColor(legacyAlpha: Float): Color {
         val argb = colorArgb ?: return color.color.copy(alpha = legacyAlpha)

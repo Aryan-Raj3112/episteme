@@ -790,17 +790,20 @@ data class ReaderTtsChunk(
         )
     }
 
-    fun toHighlight(sessionId: Long): UserHighlight {
-        val locator = toLocator()
-        return UserHighlight(
-            id = "$TRANSIENT_BAND_ID_PREFIX${sessionId}_$index",
-            cfi = locator.cfi.orEmpty(),
+    /**
+     * The read-aloud band, painted through the shared transient-band builder.
+     *
+     * Goes through [toLocator] rather than rebuilding the locator from the chunk's own fields,
+     * because that is where the `desktop:chapter:start:end` cfi fallback lives. A band without it
+     * would have no position on the surfaces that resolve by cfi.
+     */
+    fun toHighlight(sessionId: Long): UserHighlight =
+        playbackBandHighlight(
+            sessionId = sessionId,
+            bandIndex = index,
             text = text,
-            color = HighlightColor.YELLOW,
-            chapterIndex = chapterIndex,
-            locator = locator
+            locator = toLocator()
         )
-    }
 }
 
 data class ReaderTtsProgress(

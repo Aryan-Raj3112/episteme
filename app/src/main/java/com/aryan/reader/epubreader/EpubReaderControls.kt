@@ -220,6 +220,15 @@ fun EpubReaderTopBar(
     currentRenderMode: RenderMode,
     isBookmarked: Boolean,
     isTtsActive: Boolean,
+    /**
+     * Whether this book narrates itself, i.e. its OPF declares media overlays.
+     *
+     * The button is hidden rather than disabled for a book without overlays: narration is a
+     * property of the book, and a permanently dead control on every book in the library is a
+     * worse answer than no control.
+     */
+    hasMediaOverlayNarration: Boolean = false,
+    isMediaOverlayActive: Boolean = false,
     isSliderActive: Boolean,
     tapToNavigateEnabled: Boolean,
     volumeScrollEnabled: Boolean,
@@ -252,6 +261,7 @@ fun EpubReaderTopBar(
     onToggleSearch: () -> Unit,
     onOpenAiHub: () -> Unit,
     onToggleTts: () -> Unit,
+    onToggleMediaOverlay: () -> Unit = {},
     onOpenFileInfo: () -> Unit,
     searchFocusRequester: androidx.compose.ui.focus.FocusRequester,
     hiddenTools: Set<String>,
@@ -393,6 +403,29 @@ fun EpubReaderTopBar(
                                 else -> Unit
                             }
                         }
+                    if (hasMediaOverlayNarration) {
+                        TooltipIconButton(
+                            text = stringResource(R.string.media_overlay_title),
+                            description = stringResource(
+                                if (isMediaOverlayActive) {
+                                    R.string.content_desc_media_overlay_stop
+                                } else {
+                                    R.string.content_desc_media_overlay_start
+                                }
+                            ),
+                            onClick = onToggleMediaOverlay
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.volume_up),
+                                contentDescription = stringResource(R.string.media_overlay_title),
+                                tint = if (isMediaOverlayActive) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                }
+                            )
+                        }
+                    }
                     Box {
                         val overflowMenuState = com.aryan.reader.shared.ui.rememberSharedReaderOverflowMenuState()
                         var showMoreMenu by overflowMenuState.menuExpanded

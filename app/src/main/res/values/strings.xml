@@ -2677,4 +2677,14 @@
     <!-- %1$d = number of pages carrying legacy page text. Example: "Only text boxes are available now — convert legacy text on 3 pages?". -->
     <string name="banner_legacy_page_text">Only text boxes are available now — convert legacy text on %1$d pages?</string>
     <string name="action_convert_to_text_boxes">Convert</string>
+
+    <!-- EPUB 3 media overlays: the publisher's pre-recorded narration of the open book. -->
+    <string name="media_overlay_title">Narration</string>
+    <string name="media_overlay_notification_channel_name">Narration playback</string>
+    <string name="content_desc_media_overlay_start">Start narration</string>
+    <string name="content_desc_media_overlay_stop">Stop narration</string>
+    <string name="content_desc_media_overlay_play_pause">Play or pause narration</string>
+    <string name="content_desc_media_overlay_previous">Previous narrated passage</string>
+    <string name="content_desc_media_overlay_next">Next narrated passage</string>
+    <string name="media_overlay_chapter_unavailable">This chapter has no narration</string>
 </resources>

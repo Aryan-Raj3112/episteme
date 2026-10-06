@@ -2176,6 +2176,96 @@
         }
     };
 
+    // --- EPUB media overlays: the publisher's own narration -------------------------------------
+    //
+    // Kept apart from the read-aloud highlight above on purpose. An overlay anchor is an element id
+    // resolved from the same parse that produced the text, so `getElementById` is exact and no CFI
+    // resolution or quote matching is involved. Painting by class on the element is also the only
+    // way the publisher's `media:active-class` can be honoured: the document here really is styled
+    // by the book's own stylesheet.
+    window.readerMediaOverlay = (function () {
+        var activeElement = null;
+        var publishedClass = null;
+        var FALLBACK_CLASS = "reader-media-overlay-active";
+        var STYLE_ID = "reader-media-overlay-style";
+
+        function ensureStyle() {
+            if (document.getElementById(STYLE_ID)) {
+                return;
+            }
+            var style = document.createElement("style");
+            style.id = STYLE_ID;
+            // A translucent fill that reads on paper and on a dark theme alike. The publisher's own
+            // class is applied in addition, and wins wherever the book declares a rule for it.
+            style.textContent = "." + FALLBACK_CLASS + " { background-color: rgba(255, 226, 102, 0.45); }";
+            (document.head || document.documentElement).appendChild(style);
+        }
+
+        /**
+         * True when the narrated line has left the viewport.
+         *
+         * A clip is a line and advances every couple of seconds, so this only has to guarantee the
+         * line is on screen at all — following on "not comfortably visible" would re-centre the
+         * page continuously.
+         */
+        function needsScroll(element) {
+            var rect = element.getBoundingClientRect();
+            if (!rect || (rect.top === 0 && rect.bottom === 0 && rect.height === 0)) {
+                return true;
+            }
+            var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+            if (!viewportHeight) {
+                return true;
+            }
+            return rect.bottom <= 0 || rect.top >= viewportHeight;
+        }
+
+        function clear() {
+            if (!activeElement) {
+                return;
+            }
+            activeElement.classList.remove(FALLBACK_CLASS);
+            if (publishedClass) {
+                activeElement.classList.remove(publishedClass);
+            }
+            activeElement = null;
+            publishedClass = null;
+        }
+
+        /**
+         * Marks the narrated element. The follow flag asks for a scroll, and it only happens when
+         * the line is off screen — scrollIntoView with block: nearest never re-centres, which is
+         * what keeps a line-level clip from moving the page on every advance.
+         */
+        function show(elementId, activeClass, follow) {
+            try {
+                clear();
+                if (!elementId) {
+                    return "JS: no media overlay id";
+                }
+                var element = document.getElementById(elementId);
+                if (!element) {
+                    return "JS: no element for media overlay id " + elementId;
+                }
+                ensureStyle();
+                element.classList.add(FALLBACK_CLASS);
+                if (activeClass) {
+                    element.classList.add(activeClass);
+                    publishedClass = activeClass;
+                }
+                activeElement = element;
+                if (follow && needsScroll(element)) {
+                    element.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+                }
+                return "JS: media overlay fragment shown";
+            } catch (error) {
+                return "JS: media overlay show failed: " + (error && error.message ? error.message : error);
+            }
+        }
+
+        return { show: show, clear: clear };
+    })();
+
     window.extractTextWithCfiFromTop = function () {
         console.log("TTS_CHAPTER_CHANGE_DIAG: Starting extractTextWithCfiFromTop");
         try {

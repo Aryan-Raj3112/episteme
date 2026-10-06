@@ -159,6 +159,60 @@ class SharedMediaOverlayTest {
         assertEquals(11_600L, clips[2].clipEndMs)
     }
 
+    /**
+     * `audio.mp3#t=begin,end` — the DAISY-derived media fragment a converter emits when it has no
+     * `clipBegin` to write.
+     *
+     * Not a cosmetic omission: the path resolver strips the fragment, so without this the clip comes
+     * out as "0 to end of media". `par`s in a chapter usually share one audio file, so every clip
+     * would replay that whole file from the start — a player that looks like it works and never
+     * advances, which is harder to diagnose than a missing highlight.
+     */
+    @Test
+    fun `a media fragment clock on the audio src supplies the clip boundaries`() {
+        val raw = """
+            <smil xmlns:epub="http://www.idpf.org/2007/ops" xmlns="http://www.w3.org/ns/SMIL" version="3.0">
+              <body epub:textref="../xhtml/c.xhtml">
+                <par id="a"><text src="c.xhtml#a"/><audio src="../audio/a.mp3#t=3.72,7.24"/></par>
+                <par id="b"><text src="c.xhtml#b"/><audio src="../audio/a.mp3#t=0:00:07.240"/></par>
+                <par id="c"><text src="c.xhtml#c"/><audio src="../audio/a.mp3#t=12"/></par>
+              </body>
+            </smil>
+        """.trimIndent()
+        val clips = parse(raw, "OEBPS/mo/c.smil")!!.clips
+
+        assertEquals("OEBPS/audio/a.mp3", clips[0].audioPath)
+        assertEquals(3_720L, clips[0].clipBeginMs)
+        assertEquals(7_240L, clips[0].clipEndMs)
+        // A begin-only fragment runs to the end of the media, same as a missing `clipEnd`.
+        assertEquals(7_240L, clips[1].clipBeginMs)
+        assertNull(clips[1].clipEndMs)
+        assertEquals(12_000L, clips[2].clipBeginMs)
+    }
+
+    @Test
+    fun `an explicit clip attribute wins over a media fragment clock`() {
+        val raw = """
+            <smil xmlns="http://www.w3.org/ns/SMIL" version="3.0">
+              <body epub:textref="c.xhtml">
+                <par id="a"><text src="c.xhtml#a"/><audio src="a.mp3#t=3.72,7.24" clipBegin="0:00:01.000" clipEnd="0:00:02.000"/></par>
+                <par id="b"><text src="c.xhtml#b"/><audio src="a.mp3#t=3.72,7.24" clipEnd="0:00:02.000"/></par>
+                <par id="c"><text src="c.xhtml#c"/><audio src="a.mp3#t=notaclock"/></par>
+              </body>
+            </smil>
+        """.trimIndent()
+        val clips = parse(raw)!!.clips
+
+        assertEquals(1_000L, clips[0].clipBeginMs)
+        assertEquals(2_000L, clips[0].clipEndMs)
+        // The fragment fills only what the attribute leaves unset.
+        assertEquals(3_720L, clips[1].clipBeginMs)
+        assertEquals(2_000L, clips[1].clipEndMs)
+        // An unusable fragment is not a boundary, and must not cost the `par` its narration either.
+        assertEquals(0L, clips[2].clipBeginMs)
+        assertNull(clips[2].clipEndMs)
+    }
+
     /** A publisher types the enclosing `seq`, not each `par`. A player reading only `par` skips nothing. */
     @Test
     fun `epub types are inherited from ancestor seqs and merged with the pars own`() {

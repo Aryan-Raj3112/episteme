@@ -29,6 +29,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.Intent
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioManager
@@ -167,6 +168,8 @@ import com.aryan.reader.ReaderScreenOrientationEffect
 import com.aryan.reader.ReaderScreenOrientationSheet
 import com.aryan.reader.ReaderThemePanel
 import com.aryan.reader.RenderMode
+import com.aryan.reader.audiobook.ACTION_AUDIOBOOK_STOP
+import com.aryan.reader.audiobook.AudiobookPlaybackService
 import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.AnnotationExportFormat
@@ -1884,6 +1887,174 @@ fun EpubReaderHost(
         isTwoPageSpread = isTwoPageSpread,
         totalBookPageCount = totalBookPageCount()
     )
+
+    // --- EPUB media overlays: the publisher's own narration -------------------------------------
+    //
+    // One engine, one projection, one follow rule, mirroring the read-aloud wiring directly above.
+    // The two never run at once (starting narration stops read-aloud and vice versa), so the
+    // surfaces' single playback fragment parameter always holds the live engine's position.
+
+    val mediaOverlayBookFile = remember(uiState.selectedEpubUri, epubBook.fileName) {
+        mediaOverlayArchiveFile(uiState.selectedEpubUri?.toString())
+    }
+    val mediaOverlaySession = rememberEpubMediaOverlaySession(
+        bookId = bookId,
+        bookTitle = epubBook.title,
+        narrator = epubBook.mediaOverlays.narrator,
+        totalDurationMs = epubBook.mediaOverlays.totalDurationMs,
+        overlayIndex = epubBook.mediaOverlays,
+        chapters = chapters,
+        archiveFile = mediaOverlayBookFile,
+        blocksForChapter = { chapterIndex -> paginator?.getChapterTextBlocks(chapterIndex) }
+    )
+    val mediaOverlayPlaybackState by (mediaOverlaySession?.engine?.state ?: EmptyMediaOverlayPlaybackState)
+        .collectAsStateWithLifecycle()
+    var mediaOverlayProjection by remember(bookId) { mutableStateOf<EpubMediaOverlayProjection?>(null) }
+    // Which chapter the WebView last followed, so the follow-scroll fires on a chapter change and
+    // not on every clip. Nothing else reads it; it is the WebView's counterpart to a surface's own
+    // rectangle check.
+    var lastMediaOverlayWebViewChapter by remember(bookId) { mutableStateOf<Int?>(null) }
+
+    // Playback position -> reader coordinates. Keyed on the clip, so a chapter's anchors resolve
+    // once and a clip advance within the chapter is a map lookup.
+    LaunchedEffect(mediaOverlaySession, mediaOverlayPlaybackState.spineItemIndex, mediaOverlayPlaybackState.clipIndex) {
+        val session = mediaOverlaySession ?: return@LaunchedEffect
+        val spineItemIndex = mediaOverlayPlaybackState.spineItemIndex
+        val projection = spineItemIndex?.let { session.project(it, mediaOverlayPlaybackState.clipIndex) }
+        mediaOverlayProjection = projection
+        session.onProjected(projection)
+    }
+
+    fun readerOffsetForChapter(chapterIndex: Int): Int? =
+        lastKnownLocator
+            ?.takeIf { it.chapterIndex == chapterIndex }
+            ?.charOffset
+            ?.takeIf { it >= 0 }
+
+    // Narration drives the reader: when the narrated chapter is not the visible one, follow it.
+    // Within a chapter each surface does better than any rule here — the WebView keeps the line
+    // on screen, the paginated reader turns the page — so only a chapter change navigates.
+    LaunchedEffect(
+        mediaOverlayPlaybackState.spineItemIndex,
+        mediaOverlayPlaybackState.clipIndex,
+        currentChapterIndex
+    ) {
+        val session = mediaOverlaySession ?: return@LaunchedEffect
+        val target = session.chapterIndex ?: return@LaunchedEffect
+        if (!mediaOverlayPlaybackState.hasBook) return@LaunchedEffect
+        if (target == currentChapterIndex) return@LaunchedEffect
+        Timber.tag("MediaOverlayDiag").d("Narration moved to chapter $target; following")
+        if (isNativeVerticalMode) {
+            requestNativeVerticalLocatorScroll(
+                locator = Locator(target, 0, 0),
+                fallbackChapterIndex = target
+            )
+            verticalScrollRequests.nativeVerticalProgressScrollRequest = null
+        } else {
+            initialScrollTargetForChapter = ChapterScrollPosition.START
+            cfiToLoad = null
+            currentScrollYPosition = 0
+            currentScrollHeightValue = 0
+            currentChapterIndex = target
+        }
+    }
+
+    // The reader drives the narration: navigating away while narration plays resumes it there.
+    // `RS §9.3.1` requires this — a reader who jumps to another chapter must hear that chapter,
+    // not the one they left.
+    LaunchedEffect(currentChapterIndex) {
+        val session = mediaOverlaySession ?: return@LaunchedEffect
+        if (!mediaOverlayPlaybackState.hasBook) return@LaunchedEffect
+        val narratedChapter = session.chapterIndex ?: return@LaunchedEffect
+        if (narratedChapter == currentChapterIndex) return@LaunchedEffect
+        Timber.tag("MediaOverlayDiag").d("Reader navigated to $currentChapterIndex; seeking narration")
+        session.start(currentChapterIndex, readerOffsetForChapter(currentChapterIndex))
+    }
+
+    // The band on the WebView vertical surface, and its follow-scroll. A chapter change scrolls;
+    // within a chapter the JS keeps the line on screen only when it has left the viewport, so a
+    // new line — every couple of seconds — does not re-centre the page.
+    val mediaOverlayElementId = mediaOverlayProjection?.elementId
+    LaunchedEffect(mediaOverlayElementId, mediaOverlayProjection?.chapterIndex, webViewRefForTts) {
+        if (isNativeVerticalMode || currentRenderMode != RenderMode.VERTICAL_SCROLL) return@LaunchedEffect
+        val webView = webViewRefForTts ?: return@LaunchedEffect
+        val elementId = mediaOverlayElementId
+        if (elementId == null) {
+            webView.evaluateJavascript("javascript:window.readerMediaOverlay && window.readerMediaOverlay.clear();", null)
+            return@LaunchedEffect
+        }
+        val activeClass = epubBook.mediaOverlays.activeClass
+        val follow = mediaOverlayProjection?.chapterIndex != lastMediaOverlayWebViewChapter
+        lastMediaOverlayWebViewChapter = mediaOverlayProjection?.chapterIndex
+        val script = buildString {
+            append("javascript:window.readerMediaOverlay && window.readerMediaOverlay.show(")
+            append("'").append(escapeJsString(elementId)).append("', ")
+            append(activeClass?.let { "'" + escapeJsString(it) + "'" } ?: "null").append(", ")
+            append(if (follow) "true" else "false")
+            append(");")
+        }
+        webView.evaluateJavascript(script, null)
+    }
+
+    // Paginated follow: the clip's page, in the pager's spread space. Page changes within a
+    // chapter scroll only when the target page is not already visible.
+    LaunchedEffect(
+        mediaOverlayProjection?.chapterIndex,
+        mediaOverlayProjection?.fragment?.blockCfi,
+        mediaOverlayProjection?.fragment?.startAbs,
+        paginator,
+        isTwoPageSpread
+    ) {
+        if (currentRenderMode != RenderMode.PAGINATED) return@LaunchedEffect
+        val session = mediaOverlaySession ?: return@LaunchedEffect
+        if (!mediaOverlayPlaybackState.hasBook) return@LaunchedEffect
+        val chapterIndex = mediaOverlayProjection?.chapterIndex ?: return@LaunchedEffect
+        if (chapterIndex != currentChapterIndex) return@LaunchedEffect
+        val fragment = mediaOverlayProjection?.fragment ?: return@LaunchedEffect
+        val cfi = fragment.blockCfi ?: return@LaunchedEffect
+        val pag = paginator ?: return@LaunchedEffect
+        val targetPage = pag.findPageForCfiAndOffset(chapterIndex, cfi, fragment.startAbs) ?: return@LaunchedEffect
+        val totalBookPages = totalBookPageCount()
+        val targetPagerPage = if (isTwoPageSpread && totalBookPages > 0) {
+            EpubPageSpread.bookPageToSpread(targetPage, totalBookPages, true)
+        } else {
+            targetPage
+        }
+        val isVisible = if (isTwoPageSpread && totalBookPages > 0) {
+            targetPage in EpubPageSpread.visibleBookPages(paginatedPagerState.currentPage, totalBookPages, true)
+        } else {
+            targetPage == paginatedPagerState.currentPage
+        }
+        if (!isVisible) {
+            paginatedPagerState.scrollToPage(targetPagerPage)
+        }
+    }
+
+    // Native vertical follow: a locator scroll that only moves when the line has left the screen.
+    LaunchedEffect(
+        mediaOverlayProjection?.chapterIndex,
+        mediaOverlayProjection?.fragment?.blockCfi,
+        mediaOverlayProjection?.fragment?.startAbs,
+        isNativeVerticalMode
+    ) {
+        if (!isNativeVerticalMode) return@LaunchedEffect
+        val session = mediaOverlaySession ?: return@LaunchedEffect
+        if (!mediaOverlayPlaybackState.hasBook) return@LaunchedEffect
+        val chapterIndex = mediaOverlayProjection?.chapterIndex ?: return@LaunchedEffect
+        if (chapterIndex != currentChapterIndex) return@LaunchedEffect
+        val fragment = mediaOverlayProjection?.fragment ?: return@LaunchedEffect
+        val cfi = fragment.blockCfi ?: return@LaunchedEffect
+        val locator = locatorConverter.getLocatorFromCfi(epubBook, chapterIndex, cfi, bookId) ?: return@LaunchedEffect
+        val target = locator.copy(charOffset = fragment.startAbs)
+        val fallbackPage = (paginator as? BookPaginator)?.findStablePageForLocator(target)
+            ?: (paginator as? BookPaginator)?.findStableChapterStartPage(chapterIndex)
+        requestNativeVerticalLocatorScroll(
+            locator = target,
+            fallbackPage = fallbackPage,
+            fallbackChapterIndex = chapterIndex,
+            keepVisible = true
+        )
+    }
 
     LaunchedEffect(
         isNativeVerticalMode,
@@ -4696,6 +4867,7 @@ fun EpubReaderHost(
                     currentChapterInPaginatedMode = currentChapterInPaginatedMode,
                     latestChapterIndex = latestChapterIndex,
                     ttsState = ttsState,
+                    mediaOverlayFragment = mediaOverlayProjection?.fragment,
                     ttsController = ttsController,
                     ttsReplacementPreferences = ttsReplacementPreferences,
                     totalPagesInCurrentChapter = totalPagesInCurrentChapter,
@@ -5371,6 +5543,42 @@ fun EpubReaderHost(
                     currentRenderMode = currentRenderMode,
                     isBookmarked = isBookmarked,
                     isTtsActive = isTtsSessionActive,
+                    hasMediaOverlayNarration = mediaOverlaySession != null,
+                    isMediaOverlayActive = mediaOverlayPlaybackState.hasBook,
+                    onToggleMediaOverlay = {
+                        val session = mediaOverlaySession
+                        when {
+                            session == null -> Unit
+                            mediaOverlayPlaybackState.hasBook -> session.stop()
+                            else -> {
+                                // Arbitration before anything is loaded: read-aloud and the
+                                // audiobook own real audio on their own engines, and a narration
+                                // started over either would be two voices at once.
+                                if (isActiveReaderTtsForCurrentBook()) {
+                                    userStoppedTts = true
+                                    ttsController.stop()
+                                }
+                                runCatching {
+                                    context.startService(
+                                        Intent(context, AudiobookPlaybackService::class.java)
+                                            .setAction(ACTION_AUDIOBOOK_STOP)
+                                    )
+                                }
+                                scope.launch {
+                                    val started = session.start(
+                                        currentChapterIndex,
+                                        readerOffsetForChapter(currentChapterIndex)
+                                    )
+                                    if (!started) {
+                                        viewModel.showBanner(
+                                            context.getString(R.string.media_overlay_chapter_unavailable),
+                                            isError = false
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    },
                     isSliderActive = isPageSliderVisible,
                     tapToNavigateEnabled = prefs.tapToNavigateEnabled,
                     volumeScrollEnabled = prefs.volumeScrollEnabled,
@@ -5654,6 +5862,48 @@ fun EpubReaderHost(
                         walletMicros = walletMicros,
                         walletMigrated = walletMigrated,
                         readerMotionPolicy = motionPolicy
+                    )
+                }
+
+                // The narration bar. Same place and animation as the read-aloud overlay, and shown
+                // only while a narration session is loaded, so an idle reader is unchanged.
+                val mediaOverlayClipCount = mediaOverlaySession?.clipCount ?: 0
+                val mediaOverlayClipIndex = mediaOverlayPlaybackState.clipIndex
+                val mediaOverlayBarSubtitle = listOfNotNull(
+                    mediaOverlayPlaybackState.narrator?.takeIf { it.isNotBlank() },
+                    if (mediaOverlayClipCount > 0) "${mediaOverlayClipIndex + 1} / $mediaOverlayClipCount" else null
+                ).joinToString(" · ")
+                AnimatedVisibility(
+                    visible = mediaOverlayPlaybackState.hasBook,
+                    enter = if (motionPolicy.reduceMotion) {
+                        androidx.compose.animation.EnterTransition.None
+                    } else {
+                        slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200))
+                    },
+                    exit = if (motionPolicy.reduceMotion) {
+                        androidx.compose.animation.ExitTransition.None
+                    } else {
+                        slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200))
+                    },
+                    modifier = Modifier
+                        .align(BiasAlignment(1f, 1f))
+                        .padding(bottom = ttsOverlayPadding)
+                        .padding(horizontal = 16.dp)
+                ) {
+                    EpubMediaOverlayBar(
+                        title = epubBook.mediaOverlays.narrator
+                            ?.takeIf { it.isNotBlank() }
+                            ?: context.getString(R.string.media_overlay_title),
+                        subtitle = mediaOverlayBarSubtitle,
+                        isPlaying = mediaOverlayPlaybackState.isPlaying,
+                        isLoading = mediaOverlayPlaybackState.isLoading,
+                        canSkipPrevious = mediaOverlayClipIndex > 0,
+                        canSkipNext = mediaOverlayClipCount > 0 && mediaOverlayClipIndex < mediaOverlayClipCount - 1,
+                        onTogglePlayPause = { mediaOverlaySession?.togglePlayPause() },
+                        onPreviousClip = { mediaOverlaySession?.previousClip() },
+                        onNextClip = { mediaOverlaySession?.nextClip() },
+                        onStop = { mediaOverlaySession?.stop() },
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
 

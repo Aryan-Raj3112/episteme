@@ -724,6 +724,14 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
                * scroll target, so a chunk is never parked against an edge.
                */
               var readerTtsFollowViewportMarginRatio = 0.12;
+              /**
+               * The same idea for a media overlay clip, at a much smaller value.
+               *
+               * A clip is one line, so "comfortably inside the viewport" is a test it fails almost
+               * every time it changes, and following on that would re-centre the page continuously.
+               * All this needs to guarantee is that the line is not off screen at all.
+               */
+              var readerMediaOverlayFollowViewportMarginRatio = 0.01;
               function scrollTargetTopFromRect(rect, options) {
                 var documentTop = (rect ? rect.top : 0) + window.scrollY;
                 if (shouldCenterScrollTarget(options)) {

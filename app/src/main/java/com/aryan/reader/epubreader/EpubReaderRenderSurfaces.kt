@@ -371,6 +371,14 @@ internal fun EpubReaderRenderSurfaces(
     currentChapterInPaginatedMode: Int?,
     latestChapterIndex: Int,
     ttsState: TtsPlaybackManager.TtsState,
+    /**
+     * The fragment media overlay narration is currently speaking, when a narrated book is playing.
+     *
+     * Folded into the same parameter the surfaces already paint read-aloud with instead of adding
+     * a second one: arbitration stops one engine when the other starts, so there is never more than
+     * one live position, and the band inherits read-aloud's paint-only, never-tappable semantics.
+     */
+    mediaOverlayFragment: SharedPlaybackFragment? = null,
     ttsController: TtsController,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
     totalPagesInCurrentChapter: Int,
@@ -503,6 +511,15 @@ internal fun EpubReaderRenderSurfaces(
         onHighlightsRepaired = onHighlightsRepaired
     )
 
+    // The one live playback band, shared by every surface below. A media overlay wins when it has
+    // one, because it is the engine that is actually playing — read-aloud was stopped when it
+    // started and its last chunk is history, not a position.
+    val activePlaybackFragment = mediaOverlayFragment ?: SharedPlaybackFragment.ofLength(
+        blockCfi = ttsState.sourceCfi,
+        startAbs = ttsState.startOffsetInSource,
+        length = ttsState.currentText?.length ?: 0
+    ).takeIf { ttsState.currentText != null && ttsState.sourceCfi != null && ttsState.startOffsetInSource != -1 }
+
                 when (currentRenderMode) {
                     RenderMode.VERTICAL_SCROLL -> {
                         val pageInfoReserve = if (shouldReserveEpubPageInfoBarSpace(prefs.pageInfoMode, showBars, isNativeVerticalMode)) pageInfoBarHeight else 0.dp
@@ -552,11 +569,7 @@ internal fun EpubReaderRenderSurfaces(
                                     activeHighlightPalette = currentHighlightPalette,
                                     onUpdatePalette = onUpdateHighlightPalette,
                                     chapterHighlightIndexes = chapterHighlightIndexes,
-                                    ttsHighlightInfo = SharedPlaybackFragment.ofLength(
-                                        blockCfi = ttsState.sourceCfi,
-                                        startAbs = ttsState.startOffsetInSource,
-                                        length = ttsState.currentText?.length ?: 0
-                                    ).takeIf { ttsState.currentText != null && ttsState.sourceCfi != null && ttsState.startOffsetInSource != -1 },
+                                    ttsHighlightInfo = activePlaybackFragment,
                                     activeTextureId = activeTextureId,
                                     activeTextureAlpha = activeTextureAlpha,
                                     initialLocator = lastKnownLocator,
@@ -1819,11 +1832,7 @@ internal fun EpubReaderRenderSurfaces(
                                 activeHighlightPalette = currentHighlightPalette,
                                 onUpdatePalette = onUpdateHighlightPalette,
                                 isPageTurnAnimationEnabled = prefs.isPageTurnAnimationEnabled,
-                                ttsHighlightInfo = SharedPlaybackFragment.ofLength(
-                                    blockCfi = ttsState.sourceCfi,
-                                    startAbs = ttsState.startOffsetInSource,
-                                    length = ttsState.currentText?.length ?: 0
-                                ).takeIf { ttsState.currentText != null && ttsState.sourceCfi != null && ttsState.startOffsetInSource != -1 },
+                                ttsHighlightInfo = activePlaybackFragment,
                                 activeTextureId = activeTextureId,
                                 activeTextureAlpha = activeTextureAlpha,
                                 initialChapterIndexInBook = lastKnownLocator?.chapterIndex,

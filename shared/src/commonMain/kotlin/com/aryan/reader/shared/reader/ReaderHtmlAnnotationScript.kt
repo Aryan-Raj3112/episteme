@@ -1293,7 +1293,142 @@ internal fun readerHtmlAnnotationScript(): String = """
               window.addEventListener('resize', function () {
                 if (readerTtsOverlayTimer !== null) window.clearTimeout(readerTtsOverlayTimer);
                 readerTtsOverlayTimer = window.setTimeout(refreshTtsHighlight, 80);
+                if (readerMediaOverlayOverlayTimer !== null) window.clearTimeout(readerMediaOverlayOverlayTimer);
+                readerMediaOverlayOverlayTimer = window.setTimeout(refreshMediaOverlayHighlight, 80);
               });
+
+              // --- EPUB media overlays -------------------------------------------------------------
+              //
+              // A publisher's pre-recorded narration, highlighted where it is speaking. Kept apart
+              // from the read-aloud machinery above on purpose, in three ways:
+              //
+              //   - its own CSS highlight name and its own overlay layer, so an overlay and a spoken
+              //     chunk can be mid-handoff without one deleting the other's paint;
+              //   - no quote fallback, because an overlay anchor is resolved from the same parse
+              //     that produced the blocks, so offsets and cfi are already exact. The quote path
+              //     above exists to *repair* anchors recorded against a different reflow, and
+              //     reaching for it here would hide a genuinely wrong offset behind a fuzzy match;
+              //   - its own visibility check, because a clip is a line: the comfortable-band margin
+              //     read-aloud uses is tuned for sentences, and a line leaves it on almost every
+              //     clip, which would re-centre the page continuously.
+              var readerMediaOverlayFragment = null;
+              var readerMediaOverlayOverlayTimer = null;
+              function ensureMediaOverlayLayer() {
+                var layer = document.getElementById('reader-media-overlay-highlight-layer');
+                if (!layer) {
+                  layer = document.createElement('div');
+                  layer.id = 'reader-media-overlay-highlight-layer';
+                  document.body.appendChild(layer);
+                }
+                return layer;
+              }
+              function clearMediaOverlayHighlight() {
+                if (window.CSS && CSS.highlights && CSS.highlights.delete) {
+                  CSS.highlights.delete('reader-media-overlay-highlight');
+                }
+                var layer = document.getElementById('reader-media-overlay-highlight-layer');
+                if (layer) layer.innerHTML = '';
+              }
+              function paintMediaOverlayOverlay(range) {
+                var layer = ensureMediaOverlayLayer();
+                layer.innerHTML = '';
+                var rects = Array.prototype.slice.call(range.getClientRects());
+                var painted = 0;
+                rects.forEach(function (rect) {
+                  if (!rect || rect.width <= 0 || rect.height <= 0) return;
+                  var marker = document.createElement('div');
+                  marker.className = 'reader-media-overlay-highlight-rect';
+                  marker.style.left = (rect.left + window.scrollX) + 'px';
+                  marker.style.top = (rect.top + window.scrollY) + 'px';
+                  marker.style.width = rect.width + 'px';
+                  marker.style.height = rect.height + 'px';
+                  layer.appendChild(marker);
+                  painted++;
+                });
+                readerTtsLog('media_overlay_paint rects=' + rects.length + ' painted=' + painted);
+              }
+              /**
+               * True when the narrated line has left the comfortable band.
+               *
+               * A tighter band than read-aloud's, and for the same reason the clip size differs: a
+               * line only has to be on screen, not comfortably inside it. Following on
+               * "not comfortably visible" would scroll on nearly every clip.
+               */
+              function mediaOverlayFragmentNeedsFollowScroll(fragment) {
+                if (!isVerticalReaderDocument()) return true;
+                var range = mediaOverlayRange(fragment);
+                if (!range) return true;
+                var rect = range.getClientRects().length ? range.getClientRects()[0] : range.getBoundingClientRect();
+                if (!rect || (rect.top === 0 && rect.bottom === 0)) return true;
+                var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+                if (!viewportHeight) return true;
+                // Far smaller than the read-aloud margin on purpose: see the note above.
+                var margin = Math.max(4, Math.round(viewportHeight * readerMediaOverlayFollowViewportMarginRatio));
+                return rect.top < margin || rect.bottom > viewportHeight - margin;
+              }
+              function mediaOverlayRange(fragment) {
+                if (!fragment) return null;
+                var chapterIndex = fragment.chapterIndex;
+                var startOffset = fragment.startOffset;
+                var endOffset = fragment.endOffset;
+                if (chapterIndex === undefined || chapterIndex === null || chapterIndex === '') {
+                  chapterIndex = document.body.getAttribute('data-reader-active-chapter-index');
+                }
+                if (startOffset === undefined || startOffset === null) {
+                  startOffset = numberAttribute(document.body, 'data-reader-active-start-offset', null);
+                }
+                if (chapterIndex === undefined || chapterIndex === null || chapterIndex === '') return null;
+                if (startOffset === undefined || startOffset === null) return null;
+                var end = endOffset === undefined || endOffset === null ? startOffset : endOffset;
+                var range = rangeForOffsets(
+                  parseInt(chapterIndex, 10),
+                  parseInt(startOffset, 10),
+                  Number(end) > Number(startOffset) ? Number(end) : Number(startOffset) + 1,
+                  fragment.cfi,
+                  true
+                );
+                if (range && !range.collapsed) return range;
+                if (range && range.detach) range.detach();
+                return null;
+              }
+              function applyMediaOverlayFragment(fragment) {
+                clearMediaOverlayHighlight();
+                readerMediaOverlayFragment = fragment || null;
+                if (!readerMediaOverlayFragment) return;
+                var range = mediaOverlayRange(readerMediaOverlayFragment);
+                if (!range) {
+                  readerTtsLog('media_overlay_no_range');
+                  return;
+                }
+                if (window.CSS && window.Highlight && CSS.highlights && CSS.highlights.set) {
+                  CSS.highlights.set('reader-media-overlay-highlight', new Highlight(range));
+                }
+                paintMediaOverlayOverlay(range);
+              }
+              /**
+               * Sets the narrated fragment. `follow` asks for a scroll when the line is off screen;
+               * callers decide whether to ask at all, which is how a chapter change scrolls and a
+               * line change does not.
+               */
+              window.readerSetMediaOverlayFragment = function (fragment, follow) {
+                try {
+                  applyMediaOverlayFragment(fragment);
+                  if (follow && fragment && mediaOverlayFragmentNeedsFollowScroll(fragment)) {
+                    scrollToLocator({
+                      chapterIndex: fragment.chapterIndex,
+                      startOffset: fragment.startOffset,
+                      endOffset: fragment.endOffset,
+                      cfi: fragment.cfi
+                    }, { align: 'nearest', smooth: true, trackRestore: false });
+                  }
+                } catch (error) {
+                  readerTtsLog('media_overlay_exception error=' + readerTtsPreview(error, 180));
+                }
+              };
+              function refreshMediaOverlayHighlight() {
+                if (!readerMediaOverlayFragment) return;
+                applyMediaOverlayFragment(readerMediaOverlayFragment);
+              }
               function highlightRange(colorId) {
                 if (!restoreRange()) return;
                 var selection = window.getSelection();

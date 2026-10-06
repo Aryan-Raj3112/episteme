@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
 import com.aryan.reader.audiobook.AudiobookPlaybackService
+import com.aryan.reader.mediaoverlay.MediaOverlayPlaybackService
 import com.aryan.reader.tts.TtsService
 import timber.log.Timber
 
@@ -16,9 +17,9 @@ import timber.log.Timber
  *
  * The framework requires exactly one manifest receiver for [Intent.ACTION_MEDIA_BUTTON] per
  * app; Media3's own `MediaButtonReceiver` cannot be used here because it expects a single
- * service handling `androidx.media3.session.MediaSessionService`, while this app has two
- * (TTS and audiobook). The last active playback service is persisted whenever a session
- * starts producing sound, so resumption goes back to the same surface.
+ * service handling `androidx.media3.session.MediaSessionService`, while this app has three
+ * (TTS, audiobook and media-overlay narration). The last active playback service is persisted
+ * whenever a session starts producing sound, so resumption goes back to the same surface.
  */
 object MediaButtonRouting {
     private const val PREFS_NAME = "media_button_routing"
@@ -26,6 +27,7 @@ object MediaButtonRouting {
 
     val TTS_SERVICE_CLASS_NAME: String = TtsService::class.java.name
     val AUDIOBOOK_SERVICE_CLASS_NAME: String = AudiobookPlaybackService::class.java.name
+    val MEDIA_OVERLAY_SERVICE_CLASS_NAME: String = MediaOverlayPlaybackService::class.java.name
 
     fun recordPlaybackService(context: Context, serviceClass: Class<*>) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -49,9 +51,18 @@ object MediaButtonRouting {
     }
 }
 
+/**
+ * Whitelists the remembered service name.
+ *
+ * A raw pass-through would let any value in shared preferences start an arbitrary component, so the
+ * stored class is matched against the known playback services and anything else falls back to TTS.
+ * Media-overlay narration is a recent addition here: without its case, narration that outlived the
+ * process would resume into the TTS service, which owns no narration.
+ */
 internal fun resolveMediaButtonTargetServiceClassName(storedClassName: String?): String {
     return when (storedClassName) {
         MediaButtonRouting.AUDIOBOOK_SERVICE_CLASS_NAME -> MediaButtonRouting.AUDIOBOOK_SERVICE_CLASS_NAME
+        MediaButtonRouting.MEDIA_OVERLAY_SERVICE_CLASS_NAME -> MediaButtonRouting.MEDIA_OVERLAY_SERVICE_CLASS_NAME
         else -> MediaButtonRouting.TTS_SERVICE_CLASS_NAME
     }
 }

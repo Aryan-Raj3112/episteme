@@ -1,5 +1,7 @@
 package com.aryan.reader.shared.reader
 
+import kotlinx.serialization.Serializable
+
 /**
  * EPUB 3 Media Overlays: pre-recorded narration synchronized to the text, described by an
  * `application/smil+xml` document linked from the package manifest.
@@ -114,9 +116,26 @@ data class SharedMediaOverlayDocument(
  *
  * This is the only part built at book-load time. See the type-level note on why.
  */
+/**
+ * Serializable because Android's extracted-book cache serializes the whole `EpubBook`, index
+ * included — a narrated book re-opened from cache must still narrate. The index is plain values
+ * only, so this costs nothing on the other platforms.
+ */
+@Serializable
 data class SharedMediaOverlayIndex(
     /** spine item index -> the SMIL entry that narrates it. Only items that have one appear. */
     val smilPathBySpineItem: Map<Int, String>,
+    /**
+     * spine item index -> the content document that spine item points at.
+     *
+     * Every spine item appears, narrated or not. A reader whose chapters are its own re-flow (split
+     * at TOC fragments, merged across spine documents) needs this to map a chapter back to the
+     * spine item whose overlay narrates it, and the overlay's `epub:textref` is only a hint for
+     * that — this is the authoritative link.
+     *
+     * Defaulted so every caller that only cares about narration (and every test) can omit it.
+     */
+    val contentPathBySpineItem: Map<Int, String> = emptyMap(),
     /** spine item index -> smil **manifest id**, so `media:duration refines="#id"` can be matched. */
     val smilIdBySpineItem: Map<Int, String>,
     /** `<meta property="media:duration">` with no `refines`, i.e. the whole book's runtime. */
@@ -145,6 +164,7 @@ data class SharedMediaOverlayIndex(
     companion object {
         val EMPTY = SharedMediaOverlayIndex(
             smilPathBySpineItem = emptyMap(),
+            contentPathBySpineItem = emptyMap(),
             smilIdBySpineItem = emptyMap(),
             totalDurationMs = null,
             narrator = null,
@@ -176,8 +196,12 @@ fun sharedMediaOverlayIndex(
 
     val smilPathBySpineItem = LinkedHashMap<Int, String>()
     val smilIdBySpineItem = LinkedHashMap<Int, String>()
+    val contentPathBySpineItem = LinkedHashMap<Int, String>()
     spineIds.forEachIndexed { spineItemIndex, id ->
-        val overlayId = spineItemById[id]?.mediaOverlay?.trim()?.takeIf(String::isNotEmpty) ?: return@forEachIndexed
+        val spineItem = spineItemById[id] ?: return@forEachIndexed
+        val contentPath = spineItem.absPath.takeIf(String::isNotBlank) ?: return@forEachIndexed
+        contentPathBySpineItem[spineItemIndex] = contentPath
+        val overlayId = spineItem.mediaOverlay?.trim()?.takeIf(String::isNotEmpty) ?: return@forEachIndexed
         val smil = smilItemById[overlayId] ?: return@forEachIndexed
         smilPathBySpineItem[spineItemIndex] = smil.absPath
         smilIdBySpineItem[spineItemIndex] = smil.id
@@ -209,6 +233,7 @@ fun sharedMediaOverlayIndex(
 
     return SharedMediaOverlayIndex(
         smilPathBySpineItem = smilPathBySpineItem,
+        contentPathBySpineItem = contentPathBySpineItem,
         smilIdBySpineItem = smilIdBySpineItem,
         totalDurationMs = totalDurationMs,
         narrator = narrator,
@@ -354,17 +379,18 @@ private fun SharedXmlDocumentNode.sharedMediaOverlayParsePar(
     val audio = children.firstOrNull { it.localName == "audio" }
     val audioSrc = audio?.attributeByLocalName("src")?.trim()?.takeIf(String::isNotEmpty)
     val audioPath = audioSrc?.let { sharedMediaOverlayResolvePath(smilEntryPath, it) }
+    val audioFragmentClocks = audioSrc?.let(::sharedMediaOverlayAudioFragmentClocks)
 
     // `RS §9.2.2`, and the two cases must not be conflated: an *absent* `clipBegin` is 0 and an absent
     // `clipEnd` means "to the end of the media", but a *present and malformed* one is a broken file.
     // Silently reading a malformed `clipBegin` as 0 would start the wrong paragraph, so that drops
     // the `par`; an absent one must not be mistaken for a malformed one.
     val clipBeginMs = when (val raw = audio?.attributeByLocalName("clipbegin")) {
-        null -> 0L
+        null -> audioFragmentClocks?.first ?: 0L
         else -> parseSharedClockValueMs(raw) ?: return null
     }
     val clipEndMs = when (val raw = audio?.attributeByLocalName("clipend")) {
-        null -> null
+        null -> audioFragmentClocks?.second
         else -> parseSharedClockValueMs(raw) ?: return null
     }
 
@@ -380,6 +406,37 @@ private fun SharedXmlDocumentNode.sharedMediaOverlayParsePar(
         seqDepth = depth
     )
 }
+
+/**
+ * The begin/end clocks from an audio `src`'s `#t=` media fragment, or null when there is none.
+ *
+ * `audio.mp3#t=3.72,7.24`, the DAISY-derived form a converter emits when it has no `clipBegin` to
+ * write. `RS §9.2.2` defines only the attributes, so this is a **fallback**: an explicit attribute
+ * wins and the fragment supplies only what the attribute leaves unset.
+ *
+ * Ignoring the fragment would be worse than not supporting it. The path resolver strips the fragment
+ * (`substringBefore('#')`), so the clip would come out as "0 to end of media" — and since a chapter's
+ * `par`s usually share one audio file, every clip would replay that whole file from the start. That
+ * presents as a player that works but never advances, which is harder to diagnose than a gap.
+ *
+ * A malformed fragment yields null rather than dropping the `par`: this microsyntax is not in the
+ * spec, so losing a chapter's narration to it would cost more than it protects. Same for the
+ * `#t=`-with-no-clock form, which is simply not a fragment clock.
+ */
+private fun sharedMediaOverlayAudioFragmentClocks(reference: String): Pair<Long?, Long?>? {
+    val fragment = reference.substringAfter('#', missingDelimiterValue = "")
+    val clocks = fragment.takeIf { it.startsWith(TIME_FRAGMENT_PREFIX, ignoreCase = true) }
+        ?.drop(TIME_FRAGMENT_PREFIX.length)
+        ?: return null
+    val parts = clocks.split(',', limit = 2)
+    val begin = parts.getOrNull(0)?.trim()?.takeIf(String::isNotEmpty)?.let(::parseSharedClockValueMs)
+    val end = parts.getOrNull(1)?.trim()?.takeIf(String::isNotEmpty)?.let(::parseSharedClockValueMs)
+    // Both halves unusable means there is no fragment clock, which must not read as "starts at 0" —
+    // that would be indistinguishable from a declared one.
+    return if (begin == null && end == null) null else begin to end
+}
+
+private const val TIME_FRAGMENT_PREFIX = "t="
 
 /** Resolves a `text/@src` path (no fragment) against the SMIL's own directory. */
 private fun sharedMediaOverlayResolveTextPath(smilEntryPath: String, pathPart: String): String? =
