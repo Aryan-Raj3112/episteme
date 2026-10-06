@@ -142,6 +142,75 @@ class SharedNativeImageStyleTest {
         assertEquals(24f, imagePageHeightBudgetPx(-40))
     }
 
+    /**
+     * Parity item B1, the image base width.
+     *
+     * Android's `computeImageRenderSizePx` falls back to `intrinsicImageWidthPx` when there is no
+     * CSS `width` — the `width` **attribute** read as dp, capped at the available width. Shared used
+     * `maxWidthPx` outright, so a small inline logo, ornament or `<svg viewBox>` icon was stretched
+     * to the full column on iOS and drawn at its intrinsic size on Android. Only images *narrower*
+     * than the page are affected: anything wider still saturates, because of the cap.
+     */
+    @Test
+    fun `an image narrower than the page keeps its intrinsic width`() {
+        // A 60x20 ornament on a 400px page: 60dp intrinsic, so 60px, not 400px.
+        val size = { maxWidthPx: Float ->
+            sharedNativeImageRenderSizePx(
+                image(intrinsicWidth = 60f, intrinsicHeight = 20f, styleWidth = Dp.Unspecified),
+                density,
+                maxWidthPx = maxWidthPx,
+                imageScale = 1f
+            )!!
+        }
+        assertEquals(60f to 20f, size(400f))
+        // imageScale still multiplies the base width.
+        assertEquals(
+            120f to 40f,
+            sharedNativeImageRenderSizePx(
+                image(intrinsicWidth = 60f, intrinsicHeight = 20f, styleWidth = Dp.Unspecified),
+                density,
+                maxWidthPx = 400f,
+                imageScale = 2f
+            )!!
+        )
+        // An explicit CSS width still wins over the intrinsic attribute, as on Android.
+        assertEquals(
+            300f to 100f,
+            sharedNativeImageRenderSizePx(
+                image(intrinsicWidth = 60f, intrinsicHeight = 20f, styleWidth = 300.dp),
+                density,
+                maxWidthPx = 400f,
+                imageScale = 1f
+            )!!
+        )
+    }
+
+    @Test
+    fun `an image wider than the page still saturates to the page width`() {
+        // 1200x800 on a 400px page: 1200dp intrinsic, capped at the available width.
+        val size = sharedNativeImageRenderSizePx(
+            image(intrinsicWidth = 1200f, intrinsicHeight = 800f, styleWidth = Dp.Unspecified),
+            density,
+            maxWidthPx = 400f,
+            imageScale = 1f
+        )!!
+        assertEquals(400f, size.first, 1e-3f)
+        assertEquals(400f * (800f / 1200f), size.second, 1e-3f)
+    }
+
+    /**
+     * The intrinsic width is read as **dp**, so density scales it. This is Android's
+     * `intrinsicImageWidthPx` contract, pinned here because shared now calls it directly rather than
+     * re-deriving a page-relative width: at 2x the same 60-unit attribute is 120px, and only a
+     * density change can move it.
+     */
+    @Test
+    fun `the intrinsic width attribute scales with density`() {
+        val ornament = image(intrinsicWidth = 60f, intrinsicHeight = 20f, styleWidth = Dp.Unspecified)
+        assertEquals(60f to 20f, sharedNativeImageRenderSizePx(ornament, density, 400f, 1f)!!)
+        assertEquals(120f to 40f, sharedNativeImageRenderSizePx(ornament, Density(2f, 2f), 800f, 1f)!!)
+    }
+
     @Test
     fun `the tall map from the parity bug now fits the page budget`() {
         // *The Path to Rome* illustration-20.jpg: 687x2246 at the reader's 370dp page width.

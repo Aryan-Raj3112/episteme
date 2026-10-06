@@ -10,6 +10,7 @@ import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.paginatedreader.SemanticImage
 import com.aryan.reader.paginatedreader.imagePageHeightBudgetPx
+import com.aryan.reader.paginatedreader.intrinsicImageWidthPx
 import com.aryan.reader.shared.reader.ReaderSettings
 import kotlin.math.roundToInt
 
@@ -90,8 +91,15 @@ internal fun sharedNativeImageRenderSizePx(
 
     val style = block.style.blockStyle
     val aspectRatio = intrinsicHeight / intrinsicWidth
+    // Parity item B1, the image base width. Android's `computeImageRenderSizePx` falls back to
+    // `intrinsicImageWidthPx` when there is no CSS width — the `width` attribute read as **dp**,
+    // capped at the available width. Shared used the page width outright, so a small inline logo,
+    // ornament or `<svg viewBox>` icon was stretched to the full column on iOS while Android drew
+    // it at its intrinsic size. `intrinsicImageWidthPx` is Android's own function (commonMain), so
+    // this is a call to the benchmark rather than a re-implementation of it.
     val baseWidthPx = with(density) {
-        if (style.width.isPositiveSpecified()) style.width.toPx() else maxWidthPx
+        if (style.width.isPositiveSpecified()) style.width.toPx()
+        else intrinsicImageWidthPx(intrinsicWidth, density, maxWidthPx)
     }
 
     var scaledWidthPx = baseWidthPx * imageScale

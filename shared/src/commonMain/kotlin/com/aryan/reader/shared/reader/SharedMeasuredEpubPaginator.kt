@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.paginatedreader.CssStyle
 import com.aryan.reader.paginatedreader.imagePageHeightBudgetPx
+import com.aryan.reader.paginatedreader.intrinsicImageWidthPx
 import com.aryan.reader.paginatedreader.PaginationStackFragmentationPlan
 import com.aryan.reader.paginatedreader.SemanticBlock
 import com.aryan.reader.paginatedreader.SemanticFlexContainer
@@ -1467,10 +1468,15 @@ internal fun measureImageSize(
             // Mirrors computeImageRenderSizePx on Android so measure == render.
             val maxHeight = imagePageHeightBudgetPx(geometry.pageHeightPx)
             val aspect = height / width
+            // Parity item B1, image base width — must stay identical to
+            // `sharedNativeImageRenderSizePx`, or the image is measured into one box and rendered
+            // into another. Mirrors Android's `measureScaledImageSizePx`, which also falls back to
+            // `intrinsicImageWidthPx` (the `width` attribute read as dp, capped at the content
+            // width) rather than to the content width outright.
             val baseWidth = if (style.width.isSpecified && style.width > 0.dp) {
                 with(density) { style.width.toPx().roundToInt() }.toFloat()
             } else {
-                contentMaxWidth
+                intrinsicImageWidthPx(width, density, contentMaxWidth)
             }
             var scaledWidth = baseWidth * imageScale
             if (style.maxWidth.isSpecified && style.maxWidth > 0.dp) {

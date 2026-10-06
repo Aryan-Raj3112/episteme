@@ -397,7 +397,6 @@ internal fun Modifier.sharedRealisticBookPage(
     pageOffsetProvider: () -> Float,
     touchYProvider: () -> Float?,
     paperColor: Color,
-    isDarkPaper: Boolean,
     textureBitmap: ImageBitmap? = null,
     textureAlpha: Float = 0f,
     rightToLeftPagination: Boolean = false
@@ -514,9 +513,6 @@ fun Modifier.realisticPageCurl(
                 }
                 val w = size.width
                 val h = size.height
-                val cornerY = fold.cornerY
-                val dragX = fold.dragX
-                val dragY = fold.dragY
                 val midX = fold.midX
                 val midY = fold.midY
                 val nx = fold.nx

@@ -661,7 +661,6 @@ internal fun SharedNativePaginatedPagesContent(
                 spreadMode = renderPlan.settings.pageSpreadMode.name
             )
         }
-        val paperIsDark = sharedReaderPaperIsDark(renderPlan.background)
         val isSpreadMode = renderPlan.settings.isTwoPageSpreadEnabled()
         val gutterWidthPx = with(readerDensity) { pageGap.toPx() }
         // Spread mode curls the whole Row (both pages + gutter) as one leaf hinged
@@ -741,7 +740,6 @@ internal fun SharedNativePaginatedPagesContent(
                                     pageOffsetProvider = { turnSpec.offsetForSlot(turnSlot) },
                                     touchYProvider = { turnSpec.touchY },
                                     paperColor = renderPlan.background,
-                                    isDarkPaper = paperIsDark,
                                     rightToLeftPagination = turnSpec.rightToLeft
                                 )
                             }
