@@ -38,6 +38,7 @@ import timber.log.Timber
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.ZipFile
+import androidx.annotation.VisibleForTesting
 import androidx.core.graphics.createBitmap
 
 interface ReaderDocument : AutoCloseable {
@@ -689,6 +690,17 @@ class ArchiveDocumentWrapper(private val file: File) : ReaderDocument {
 
             } catch (e: Exception) {
                 Timber.e(e, "Failed to extract archive entries")
+            } catch (e: LinkageError) {
+                // libarchive-jni.so is missing from this install (broken/partial
+                // split APK), so `Archive`'s static initializer fails with
+                // UnsatisfiedLinkError and every later access throws
+                // NoClassDefFoundError. Both are LinkageErrors, so the
+                // `catch (e: Exception)` above does NOT contain them and the
+                // error escapes the constructor, crashing add-to-recent and
+                // thumbnail generation. Degrade to "no readable pages" instead:
+                // the comic cannot be opened on this install either way, but the
+                // library must stay usable and the file must stay addable.
+                ArchiveSupport.reportUnavailable(e)
             } finally {
                 if (archive != 0L) Archive.readFree(archive)
             }
@@ -732,6 +744,43 @@ class ArchiveDocumentWrapper(private val file: File) : ReaderDocument {
         try { zipFile?.close() } catch (_: Exception) {}
         try { extractedDir?.deleteRecursively() } catch (_: Exception) {}
         try { file.delete() } catch (_: Exception) {}
+    }
+}
+
+/**
+ * Tracks whether the `libarchive-jni` native library could be loaded.
+ *
+ * The library comes from `me.zhanghai.android.libarchive:library`, which ships
+ * `arm64-v8a`/`armeabi-v7a`/`x86`/`x86_64` and is packaged into the ABI split.
+ * On a broken or partial install (base APK present, ABI split missing or
+ * corrupt) `Archive`'s static initializer throws `UnsatisfiedLinkError` and
+ * every subsequent reference throws `NoClassDefFoundError` — both
+ * `LinkageError`s, which `catch (e: Exception)` does not catch.
+ *
+ * This is reported once rather than per attempt: the condition is permanent for
+ * a given install, and the archive path is retried on every comic cover
+ * generation and add-to-recent.
+ */
+internal object ArchiveSupport {
+    private val unavailable = AtomicBoolean(false)
+
+    /** True once a load failure has been observed in this process. */
+    val isUnavailable: Boolean get() = unavailable.get()
+
+    /** Records a native-load failure. Returns true only for the first one. */
+    fun reportUnavailable(error: LinkageError): Boolean {
+        if (!unavailable.compareAndSet(false, true)) return false
+        Timber.e(
+            error,
+            "libarchive-jni unavailable (missing native split?); comic archives " +
+                "that are not plain ZIP will not open"
+        )
+        return true
+    }
+
+    @VisibleForTesting
+    fun resetForTests() {
+        unavailable.set(false)
     }
 }
 
