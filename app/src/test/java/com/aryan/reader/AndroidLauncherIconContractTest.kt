@@ -2,7 +2,6 @@ package com.aryan.reader
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -57,63 +56,78 @@ class AndroidLauncherIconContractTest {
     }
 
     @Test
-    fun appMarkIsTheThemedGlyphWithItsViewportCroppedToTheArtwork() {
-        // The icon shown *inside* the app is this glyph tinted from the app theme, not the
-        // launcher icon. It has to be the cropped form, and that is the one thing that would
-        // silently undo the change: `ic_launcher_monochrome` is fieldless and centred in the
-        // 108dp adaptive viewport because the *launcher* is what draws the plate behind it, so
-        // a Compose slot sized to that vector draws the glyph at 54/108 of its own width -- a
-        // 16x10dp speck in a 32dp avatar. That reads fine in a diff and not at all on screen.
-        val mono = parse("drawable/ic_launcher_monochrome.xml")
-        val mark = parse("drawable/ic_app_mark.xml")
-
-        // Same glyph, so the in-app icon cannot drift away from the themed one.
-        assertEquals(
-            "the in-app mark must carry the themed layer's own path data",
-            mono.singlePath().getAttribute("android:pathData"),
-            mark.singlePath().getAttribute("android:pathData"),
+    fun inAppArtworkIsTheLauncherFanAtTheLauncherFanSize() {
+        // The icon shown *inside* the app is the launcher icon's own fan,
+        // generated from the same source into AppIconArtwork.kt and repainted
+        // in the app theme by AppIcon. Two things would silently undo that:
+        // the artwork drifting away from the launcher's foreground, and the
+        // artwork stopping being the fan's own size (a Compose canvas sized
+        // against the launcher's 108dp viewport draws the fan at 54/108 of
+        // its slot -- a 16x10dp speck in a 32dp avatar).
+        val artwork = readGeneratedFile(
+            "shared/src/commonMain/kotlin/com/aryan/reader/shared/ui/AppIconArtwork.kt",
         )
-        assertEquals("a tinted mark must stay one flat colour", 1, mark.paths().size)
-        assertEquals(
-            listOf("#FFFFFFFF"),
-            mark.paths().map { it.getAttribute("android:fillColor") },
-        )
-        assertFalse(
-            "the mark is recoloured by a tint, so a baked gradient would be thrown away",
-            readText("drawable/ic_app_mark.xml").contains("gradient"),
+        val foreground = readGeneratedFile(
+            "branding/app-icon/episteme-icon-android-foreground.svg",
         )
 
-        // Cropped: the viewport is the glyph's own placed size, not the launcher's canvas.
-        val (viewportWidth, viewportHeight) = mark.viewport()
+        // The same wave paths the launcher foreground ships, so the in-app
+        // fan cannot drift from the launcher fan. The shade layer is
+        // deliberately excluded: it is counter-transformed into gradient
+        // space, so its path data differs by design.
+        val wavePaths = Regex("""<path\b[^>]*\sd="([^"]+)"[^>]*/>""")
+            .findAll(foreground)
+            .map { it.groupValues[1] }
+            .filter { it.contains('c') }   // the four bands are curves; the shade is a rectangle
+            .toList()
         assertEquals(
-            "the mark's viewport must be the glyph's placed width ($THEMED_GLYPH_DP dp), " +
-                "not the ${ADAPTIVE_DP}dp adaptive canvas the launcher masks",
-            THEMED_GLYPH_DP, viewportWidth, 0.01,
+            "the foreground should carry four curved wave bands",
+            4, wavePaths.size,
         )
+        for (path in wavePaths) {
+            assertTrue(
+                "AppIconArtwork lost the wave path $path",
+                artwork.contains(path),
+            )
+        }
+        // ...and the shade layer is still there alongside them
         assertEquals(
-            "the mark is 54 x 32.8 -- wider than tall, because the fan is. A square viewport " +
-                "means the crop was replaced by a plain canvas.",
-            32.77, viewportHeight, 0.01,
+            "the artwork should carry the four bands plus the shade layer",
+            5, artwork.split("AppIconLayer(").size - 1,
         )
 
-        // ...and cropped by re-anchoring, not by rescaling: both files place the same glyph
-        // with the same scale, one centred in the 108dp viewport and one with its own top-left
-        // at (0, 0). So the two translations must differ by exactly half the mark's viewport.
-        // Any drift in the glyph, the scale or the crop breaks that identity.
+        // The artwork's viewport is the fan's placed size, measured here
+        // from the shipped foreground the same way the safe-zone test above
+        // measures it -- so the in-app icon and the launcher icon render the
+        // fan at the same optical size. The tolerance is the anti-aliased
+        // fringe on the fan's tips, which the alpha measurement picks up;
+        // any real regression (the 108dp canvas, a square viewport, a lost
+        // crop) is off by whole dp and nowhere near it.
+        val size = 432                                   // 108dp at xxxhdpi
+        val img = ImageIO.read(file("mipmap-xxxhdpi/ic_launcher_foreground.png").inputStream())
+        val (x0, y0, x1, y1) = alphaBox(img)!!
+        val dp = { px: Int -> px * ADAPTIVE_DP.toDouble() / size }
         assertEquals(
-            "the mark must reuse the themed layer's scale, so its optical size is unchanged",
-            mono.groupScale(), mark.groupScale(),
+            "the artwork's viewport width must be the fan's placed width",
+            (dp(x1) - dp(x0) + 1),
+            artwork.constValue("viewportWidth"),
+            1.25,
         )
         assertEquals(
-            "the mark must be re-anchored at the glyph's origin, centred in the themed layer",
-            ADAPTIVE_DP / 2 - viewportWidth / 2,
-            mono.groupTranslate("android:translateX") - mark.groupTranslate("android:translateX"),
-            0.05,
+            "the artwork's viewport height must be the fan's placed height",
+            (dp(y1) - dp(y0) + 1),
+            artwork.constValue("viewportHeight"),
+            1.25,
         )
+
+        // ...and the artwork is placed with the same transform the themed
+        // glyph uses, so an in-app plate never shows a bigger or smaller
+        // mark than a themed launcher icon does.
         assertEquals(
-            ADAPTIVE_DP / 2 - viewportHeight / 2,
-            mono.groupTranslate("android:translateY") - mark.groupTranslate("android:translateY"),
-            0.05,
+            "AppIconArtwork must scale the fan exactly as the themed glyph does",
+            parse("drawable/ic_launcher_monochrome.xml").groupScale().toDouble(),
+            artwork.constValue("sourceScale"),
+            0.001,
         )
     }
 
@@ -287,6 +301,24 @@ class AndroidLauncherIconContractTest {
 
     private fun readText(relativePath: String) = file(relativePath).readText()
 
+    /**
+     * A generated file that lives outside `res/`: the artwork in shared and
+     * the SVGs in branding. The unit test's working directory is either the
+     * module or the project root, so both are tried.
+     */
+    private fun readGeneratedFile(relativePath: String): String {
+        return sequenceOf(
+            File(relativePath),
+            File("../$relativePath"),
+        ).firstOrNull(File::isFile)?.readText()
+            ?: File(relativePath).readText()   // fail with the expected path
+    }
+
+    /** The value of a `const val name = <number>f` in generated Kotlin. */
+    private fun String.constValue(name: String): Double =
+        Regex("const val $name = ([\\d.]+)f").find(this)?.groupValues?.get(1)?.toDouble()
+            ?: error("AppIconArtwork has no const val $name")
+
     private fun file(relativePath: String): File {
         return sequenceOf(
             File("src/main/res/$relativePath"),
@@ -303,18 +335,7 @@ class AndroidLauncherIconContractTest {
         }
     }
 
-    private fun Element.paths(): List<Element> = elements("path")
-
-    private fun Element.singlePath(): Element = paths().single()
-
-    private fun Element.viewport(): Pair<Double, Double> =
-        getAttribute("android:viewportWidth").toDouble() to
-            getAttribute("android:viewportHeight").toDouble()
-
     private fun Element.groupScale(): String = group().getAttribute("android:scaleX")
-
-    private fun Element.groupTranslate(attribute: String): Double =
-        group().getAttribute(attribute).toDouble()
 
     private fun Element.group(): Element = elements("group").single()
 
@@ -341,8 +362,6 @@ class AndroidLauncherIconContractTest {
         const val ADAPTIVE_DP = 108
         const val SAFE_ZONE_DP = 66
         const val SAFE_RADIUS_DP = 33.0            // half of the 66dp safe zone
-        /** The themed glyph's placed width: 72dp of visible icon x the fan's 0.75 width fraction. */
-        const val THEMED_GLYPH_DP = 54.0
         val DENSITIES = listOf("mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi")
     }
 }

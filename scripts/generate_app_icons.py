@@ -17,7 +17,7 @@ Outputs (all regenerated, safe to run repeatedly):
   branding/app-icon/episteme-icon-android-background.svg   108vp adaptive background (flat)
   branding/app-icon/episteme-icon-android-foreground.svg   108vp adaptive foreground (the fan)
   branding/app-icon/episteme-icon-monochrome.svg           108vp Android 13+ themed icon
-  branding/app-icon/ic_app_mark.xml                        the same glyph, viewport cropped, for in-app use
+  branding/app-icon/AppIconArtwork.kt                      the fan as Kotlin, for the in-app icon
   branding/app-icon/preview/*.png                          masked previews
 
 Rasterisation goes through headless Chrome; launcher masks are applied in Pillow
@@ -294,6 +294,126 @@ def _taper(c: tuple, delta: float, side: int) -> tuple:
     )
 
 
+# ----------------------------------------------------------------- gradients
+def parse_gradient(src: dict, gradient_id: str) -> dict:
+    """A gradient definition as the in-app artwork consumes it.
+
+    Only the two shapes Compose can express directly: a user-space linear
+    gradient, and a radial whose ``gradientTransform`` is a diagonal scale
+    (the artwork's shade). A rotated or sheared radial fails loudly --
+    approximating it silently would change the artwork.
+    """
+    block = src["linear"].get(gradient_id) or src["radial"][gradient_id]
+    stops = []
+    for m in re.finditer(r"<stop\b([^>]*)/>", block):
+        attrs = m.group(1)
+        offset = float(re.search(r'offset="([\d.]+)"', attrs).group(1))
+        colour = re.search(r'stop-color="(#[0-9a-fA-F]+)"', attrs).group(1)
+        opacity = re.search(r'stop-opacity="([\d.]+)"', attrs)
+        stops.append((offset, colour, float(opacity.group(1)) if opacity else 1.0))
+    if not stops:
+        raise SystemExit(f"gradient {gradient_id} has no stops")
+
+    def attr(name, default=None):
+        m = re.search(r'%s="([-\d.]+)"' % name, block)
+        return float(m.group(1)) if m else default
+
+    if "linearGradient" in block:
+        for name in ("x1", "y1", "x2", "y2"):
+            if attr(name) is None:
+                raise SystemExit(f"linear gradient {gradient_id} lacks {name}")
+        return {"kind": "linear",
+                "from": (attr("x1"), attr("y1")),
+                "to": (attr("x2"), attr("y2")),
+                "stops": stops}
+
+    transform = re.search(r'gradientTransform="matrix\(([^)]+)\)"', block)
+    if not transform:
+        raise SystemExit(
+            f"radial gradient {gradient_id} has no matrix gradientTransform; "
+            "the in-app artwork only knows diagonal ones")
+    a, b, c, d, e, f = (float(v) for v in
+                        transform.group(1).replace(",", " ").split())
+    if b != 0.0 or c != 0.0:
+        raise SystemExit(
+            f"radial gradient {gradient_id} rotates or shears "
+            f"({transform.group(1).strip()}); only a diagonal scale is supported")
+    return {"kind": "radial",
+            "center": (attr("cx", 0.0), attr("cy", 0.0)),
+            "radius": attr("r", 1.0),
+            "matrix": (a, d, e, f),
+            "stops": stops}
+
+
+def transform_path_data(d: str, a: float, d_scale: float,
+                        e: float, f: float) -> str:
+    """Apply the diagonal affine ``x' = a*x + e, y' = d*y + f`` to a path.
+
+    The shade layer is a rectangle, so only M/L/H/V (absolute or relative)
+    and Z occur; a curve or arc fails loudly instead of being dropped.
+    Relative commands are resolved against the point in the path's *own*
+    coordinates and emitted as transformed deltas, so the result stays a
+    valid path in the target space.
+    """
+    tokens = _PATH_TOKEN.findall(d)
+    out = []
+    cmd = None
+    ox = oy = 0.0            # current point in the path's own coordinates
+    x = y = 0.0              # ... and in the target space
+    start_ox = start_oy = 0.0
+    start_x = start_y = 0.0
+    i = 0
+    while i < len(tokens):
+        if tokens[i].isalpha():
+            cmd = tokens[i]
+            i += 1
+            if cmd in "Zz":
+                ox, oy = start_ox, start_oy
+                x, y = start_x, start_y
+                out.append("Z")
+                continue
+            out.append(cmd)
+        if cmd is None:
+            raise SystemExit(f"path does not start with a command: {d!r}")
+        rel = cmd.islower()
+        head = cmd.upper()
+        if head in ("M", "L"):
+            nx, ny = float(tokens[i]), float(tokens[i + 1])
+            i += 2
+            if rel:
+                nx, ny = ox + nx, oy + ny
+            px, py = a * nx + e, d_scale * ny + f
+            if head == "M":
+                start_ox, start_oy = nx, ny
+                start_x, start_y = px, py
+            if rel:
+                out.append(f"{px - x:.4f} {py - y:.4f}")
+            else:
+                out.append(f"{px:.4f} {py:.4f}")
+            ox, oy, x, y = nx, ny, px, py
+            if head == "M":
+                cmd = "l" if rel else "L"
+        elif head == "H":
+            nx = float(tokens[i])
+            i += 1
+            if rel:
+                nx += ox
+            px = a * nx + e
+            out.append(f"{px - x:.4f}" if rel else f"{px:.4f}")
+            ox, x = nx, px
+        elif head == "V":
+            ny = float(tokens[i])
+            i += 1
+            if rel:
+                ny += oy
+            py = d_scale * ny + f
+            out.append(f"{py - y:.4f}" if rel else f"{py:.4f}")
+            oy, y = ny, py
+        else:
+            raise SystemExit(f"unsupported path command {cmd!r} in {d!r}")
+    return " ".join(out)
+
+
 def mono_arc_paths(src: dict, gap: float) -> str:
     """The four wave bands as four disjoint arcs, separated by a wedge of width `gap`.
 
@@ -560,6 +680,9 @@ def vector_layers(src: dict, tmp: pathlib.Path) -> dict[str, str]:
     deliberately not among them: it carries the wave gradients, two of which are radials
     positioned by a gradient transform that ``VectorDrawable`` cannot express, so
     approximating it would quietly change the artwork. It ships as density-bucketed PNGs.
+
+    The in-app icon is not an Android layer at all any more: it is the fan drawn by
+    ``AppIcon`` in Compose, from ``AppIconArtwork.kt`` (see ``app_icon_artwork``).
     """
     return {
         "ic_launcher_background.xml": (
@@ -572,7 +695,7 @@ def vector_layers(src: dict, tmp: pathlib.Path) -> dict[str, str]:
             f"</vector>\n"
         ),
         "ic_launcher_monochrome.xml": _vector_group(_vector_mono(src, tmp)),
-        "ic_app_mark.xml": _vector_app_mark(src, tmp),
+        "AppIconArtwork.kt": app_icon_artwork(src, tmp),
     }
 
 
@@ -613,37 +736,114 @@ def _vector_mono(src: dict, tmp: pathlib.Path) -> str:
     return _mono_group(d, rule, scale, tx, ty)
 
 
-def _vector_app_mark(src: dict, tmp: pathlib.Path) -> str:
-    """The themed glyph with its viewport cropped to the artwork, for use inside the app.
+# ================================================================= in-app artwork
+def _kotlin_float(v: float) -> str:
+    return f"{v:.4f}".rstrip("0").rstrip(".") + "f"
 
-    ``ic_launcher_monochrome`` is deliberately *not* an icon on its own. ``MONO_STYLE`` is
-    fieldless, so the mark floats in the middle 54x33dp of a 108dp viewport and the *launcher*
-    is what draws the plate behind it. Inside the app nothing draws that plate, so a Compose
-    slot sized to that vector renders the mark at 54/108 of its own width -- a 16x10dp speck
-    in a 32dp avatar.
 
-    Cropping the viewport to the mark's own bounds lets it fill whatever slot it is given, and
-    the plate is then drawn in Compose out of the app theme, so it tracks light/dark and any
-    dynamic or custom seed colour. The path data is the same one the monochrome layer ships,
-    re-anchored at the bounding box's origin instead of the viewport centre, so the two cannot
-    drift apart. Optical size is unchanged: still ``MONO_GLYPH_DP`` across.
+def _kotlin_colour(hex_colour: str) -> str:
+    return f"Color(0xFF{hex_colour[1:].upper()})"
+
+
+def app_icon_artwork(src: dict, tmp: pathlib.Path) -> str:
+    """The fan artwork as Kotlin, for the icon drawn inside the app.
+
+    The fan is placed exactly as the launcher's adaptive foreground places it
+    (``MONO_GLYPH_DP`` wide, the fan's own bounding box), but re-anchored at
+    that box's top-left so a Compose canvas sized to the artwork fills it --
+    the same crop ``ic_app_mark`` used to apply to the monochrome glyph. The
+    wave paths are the foreground's own, so the in-app icon and the launcher
+    icon cannot drift apart.
+
+    Gradients keep the artwork's colours and geometry in source coordinates;
+    ``AppIcon`` repaints every stop in the app theme at runtime, so this file
+    stays theme-free and only ever changes when the artwork does.
     """
     geo = mono_geometry(src, tmp, MONO_GLYPH_DP)
     x0, y0 = geo["origin"]
     scale = geo["scale"]
     width, height = geo["placed"]
-    d, rule = _mono_body(src, tmp)
-    return ('<?xml version="1.0" encoding="utf-8"?>\n'
-            "<!-- Generated by scripts/generate_app_icons.py. The monochrome glyph with its\n"
-            "     viewport cropped to the artwork so it fills the slot it is given, rather than\n"
-            "     floating in the middle of one as ic_launcher_monochrome does: that one keeps\n"
-            "     the 108dp viewport because the launcher draws the plate behind it. Tinted,\n"
-            "     not coloured: in-app it is drawn in the app theme's own colours. -->\n"
-            '<vector xmlns:android="http://schemas.android.com/apk/res/android"\n'
-            f'    android:width="{width:.2f}dp" android:height="{height:.2f}dp"\n'
-            f'    android:viewportWidth="{width:.4f}" android:viewportHeight="{height:.4f}">\n'
-            + _mono_group(d, rule, scale, -x0 * scale, -y0 * scale)
-            + "</vector>\n")
+
+    def stops_kotlin(stops):
+        return ",\n".join(
+            "                    AppIconStop("
+            f"{_kotlin_float(offset)}, {_kotlin_colour(colour)}, "
+            f"alpha = {_kotlin_float(alpha)})"
+            for offset, colour, alpha in stops
+        )
+
+    layers = []
+    for element in wave_elements(src):
+        fill = re.search(r'fill="url\(#(\w+)\)"', element).group(1)
+        d = re.search(r'\sd="([^"]+)"', element).group(1)
+        gradient = parse_gradient(src, fill)
+        stops = stops_kotlin(gradient["stops"])
+        if gradient["kind"] == "linear":
+            (x1, y1), (x2, y2) = gradient["from"], gradient["to"]
+            paint = (
+                "AppIconPaint.Linear(\n"
+                f"                startX = {_kotlin_float(x1)},\n"
+                f"                startY = {_kotlin_float(y1)},\n"
+                f"                endX = {_kotlin_float(x2)},\n"
+                f"                endY = {_kotlin_float(y2)},\n"
+                f"                stops = listOf(\n{stops},\n"
+                "                ),\n"
+                "            )"
+            )
+        else:
+            # Counter-transform the path into gradient space: the layer is drawn
+            # inside the gradient's own transform, so path and gradient compose
+            # back onto the artwork while the radial stays an exact ellipse.
+            a, d_scale, e, f = gradient["matrix"]
+            d = transform_path_data(d, 1 / a, 1 / d_scale, -e / a, -f / d_scale)
+            cx, cy = gradient["center"]
+            paint = (
+                "AppIconPaint.Radial(\n"
+                f"                centerX = {_kotlin_float(cx)},\n"
+                f"                centerY = {_kotlin_float(cy)},\n"
+                f"                radius = {_kotlin_float(gradient['radius'])},\n"
+                f"                translateX = {_kotlin_float(e)},\n"
+                f"                translateY = {_kotlin_float(f)},\n"
+                f"                scaleX = {_kotlin_float(a)},\n"
+                f"                scaleY = {_kotlin_float(d_scale)},\n"
+                f"                stops = listOf(\n{stops},\n"
+                "                ),\n"
+                "            )"
+            )
+        layers.append(
+            "AppIconLayer(\n"
+            f'            pathData = "{d}",\n'
+            f"            paint = {paint},\n"
+            "        )"
+        )
+
+    return f'''package com.aryan.reader.shared.ui
+
+// Generated by scripts/generate_app_icons.py -- do not edit by hand. The fan
+// artwork of the app icon, in the source artwork's own coordinates: the same
+// geometry the launcher's adaptive foreground ships, so the icon drawn inside
+// the app cannot drift from the launcher icon. The colours are the artwork's
+// own; AppIcon repaints every gradient stop in the app theme at runtime, so
+// this file stays theme-free.
+
+import androidx.compose.ui.graphics.Color
+
+internal object AppIconArtwork {{
+    /** The fan's placed size, in the dp the composable sizes its canvas to. */
+    const val viewportWidth = {_kotlin_float(width)}
+    const val viewportHeight = {_kotlin_float(height)}
+
+    /** Source coordinates to viewport: the placement the launcher foreground uses. */
+    const val sourceScale = {_kotlin_float(scale)}
+    const val sourceTranslateX = {_kotlin_float(-x0 * scale)}
+    const val sourceTranslateY = {_kotlin_float(-y0 * scale)}
+
+    /** The fan's bands in the order the artwork paints them. */
+    val layers: List<AppIconLayer> = listOf(
+{chr(10).join("        " + layer + "," for layer in layers)}
+    )
+}}
+'''
 
 
 # ================================================================= rasterising
@@ -832,9 +1032,10 @@ def write_raster_sets(docs: dict[str, str], tmp: pathlib.Path) -> list[pathlib.P
 # Where each generated asset is consumed. Kept as one table so `--deploy` stays the only
 # thing that knows the platform layouts.
 ANDROID_RES = ROOT / "app/src/main/res"
+SHARED_UI = ROOT / "shared/src/commonMain/kotlin/com/aryan/reader/shared/ui"
 IOS_APPICON = ROOT / "iosApp/Reader/Assets.xcassets/AppIcon.appiconset"
 DESKTOP_RES = ROOT / "desktopApp/src/desktopMain/resources"
-# superseded by the full-bleed adaptive layers, which carry their own artwork
+# superseded by the full-colour adaptive layers, which carry their own artwork
 # the legacy icons ship as PNG: byte-identical to the reviewed asset, with no re-encode
 # step that could drop the alpha channel the baked-in outline depends on
 OBSOLETE_ANDROID_FILES = tuple(
@@ -844,6 +1045,10 @@ OBSOLETE_ANDROID_FILES = tuple(
     # the background is a flat vector now; this raster is left over from the full-bleed
     # layout and would otherwise ship as dead weight
     f"mipmap-{density}/ic_launcher_background.png" for density in ANDROID_DENSITIES
+) + (
+    # the in-app icon is the fan drawn by AppIcon from AppIconArtwork.kt now; this
+    # monochrome twin of the themed glyph has no consumer left
+    "drawable/ic_app_mark.xml",
 )
 
 
@@ -860,6 +1065,15 @@ def deploy() -> list[pathlib.Path]:
         to.write_bytes(data)
         changed.append(to)
 
+    def put_generated(name: str, to: pathlib.Path) -> None:
+        """Copy a generated file that lives in the icon dir, not png/."""
+        data = (ICON_DIR / name).read_bytes()
+        if to.exists() and to.read_bytes() == data:
+            return
+        to.parent.mkdir(parents=True, exist_ok=True)
+        to.write_bytes(data)
+        changed.append(to)
+
     # Android: adaptive layers are vectors, legacy icons are density-bucketed PNGs
     for density in ANDROID_DENSITIES:
         put(f"android/adaptive/mipmap-{density}/ic_launcher_foreground.png",
@@ -869,8 +1083,9 @@ def deploy() -> list[pathlib.Path]:
         put(f"android/mipmap-{density}/ic_launcher_round.png",
             ANDROID_RES / f"mipmap-{density}/ic_launcher_round.png")
 
-    for name in ("ic_launcher_background.xml", "ic_launcher_monochrome.xml", "ic_app_mark.xml"):
+    for name in ("ic_launcher_background.xml", "ic_launcher_monochrome.xml"):
         put(f"../{name}", ANDROID_RES / "drawable" / name)
+    put_generated("AppIconArtwork.kt", SHARED_UI / "AppIconArtwork.kt")
     put("store/play-store-512.png", ROOT / "app/src/main/ic_launcher-playstore.png")
 
     for _, name in IOS_SIZES:

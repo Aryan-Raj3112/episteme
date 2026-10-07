@@ -86,6 +86,7 @@ import androidx.core.os.LocaleListCompat
 import androidx.navigation.NavHostController
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.shared.formatMicrosUsd
+import com.aryan.reader.shared.ui.AppIcon
 import com.aryan.reader.shared.ui.SharedMobileAppDestination
 import com.aryan.reader.shared.ui.SharedMobileLanguageSelectionList
 import com.aryan.reader.shared.ui.SharedAppThemeBottomSheet
@@ -308,7 +309,7 @@ internal fun AppDrawerContent(
                         .padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    AppMonochromeIcon(
+                    AppIcon(
                         contentDescription = stringResource(R.string.content_desc_app_icon),
                         size = 64.dp,
                     )

@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.SortOrder
+import com.aryan.reader.shared.ui.AppIcon
 
 /**
  * Section-level composables for Library Beta.
@@ -213,7 +214,7 @@ internal fun UnifiedLibraryTopBar(
 internal fun UnifiedProfileAvatar(uiState: ReaderScreenState) {
     val user = uiState.currentUser
     when {
-        BuildConfig.FLAVOR != "pro" -> AppMonochromeIcon(
+        BuildConfig.FLAVOR != "pro" -> AppIcon(
             contentDescription = stringResource(R.string.content_desc_app_icon),
             size = 32.dp,
             shape = CircleShape,

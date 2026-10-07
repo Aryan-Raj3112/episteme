@@ -124,6 +124,7 @@ import com.aryan.reader.data.AudiobookImporter
 import com.aryan.reader.audiobook.AudiobookController
 import com.aryan.reader.shared.AnnotationExportFormat
 import com.aryan.reader.shared.CloudFolderSyncSelection
+import com.aryan.reader.shared.ui.AppIcon
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerAppearance
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerCapabilities
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerDestination
@@ -1032,7 +1033,7 @@ private fun UnifiedLibraryDrawer(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    AppMonochromeIcon(
+                    AppIcon(
                         contentDescription = stringResource(R.string.content_desc_app_icon),
                         size = 44.dp,
                         shape = RoundedCornerShape(16.dp),

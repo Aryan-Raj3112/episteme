@@ -49,7 +49,7 @@ change shape when the OS changes its mask.
 | `episteme-icon-android-foreground.svg` | 108vp adaptive foreground (the fan) |
 | `episteme-icon-monochrome.svg` | 108vp Android 13+ themed icon |
 | `ic_launcher_background.xml`, `ic_launcher_monochrome.xml` | the two flat layers, as Android VectorDrawables |
-| `ic_app_mark.xml` | the same glyph with its viewport cropped, for the icon drawn *inside* the app |
+| `AppIconArtwork.kt` | the fan as Kotlin — paths plus gradient geometry, for the icon drawn *inside* the app |
 | `png/ios/` | 14 AppIcon slots, opaque RGB, no baked rounding |
 | `png/android/mipmap-*/` | legacy `ic_launcher` + `ic_launcher_round`, 48dp x 5 densities |
 | `png/android/adaptive/` | raster foreground layer, 108dp x 5 densities |
@@ -133,20 +133,30 @@ That vector also serves as the TTS notification's small icon (`TtsService`), whi
 it must stay a vector — a raster would be both wrong semantically and wasteful in the
 status bar.
 
-**The same glyph, cropped, is what the app draws as its own icon in-app** (`ic_app_mark.xml`).
-`"arcs"` is fieldless, so `ic_launcher_monochrome` is a mark floating in the middle 54x33dp of
-a 108dp viewport — the launcher supplies the plate behind it. Inside the app nothing does, so a
-Compose slot sized to that vector would render the mark at 54/108 of its own width: a 16x10dp
-speck in a 32dp avatar. `ic_app_mark.xml` is therefore the identical path data at the identical
-scale, re-anchored at the glyph's own bounding-box origin with the viewport cropped to it, so it
-fills whatever slot it is given. The plate is drawn in Compose from the app theme
-(`AppMonochromeIcon`), which is the whole point: the icon shown inside the app tracks light/dark
-and any dynamic or custom seed colour, where a baked launcher raster cannot.
+**The fan itself, with its gradients, is what the app draws as its own icon in-app**
+(`AppIconArtwork.kt`, drawn by `AppIcon` in Compose). The launcher's foreground is a
+PNG because its gradients cannot be expressed in a `VectorDrawable`; the in-app icon
+has no such constraint — Compose can paint any gradient — so the artwork ships as
+Kotlin instead: the same wave paths, the same placement (re-anchored at the fan's
+bounding-box origin, with the viewport cropped to it so it fills whatever slot it is
+given), and every gradient's geometry in source coordinates. The radial shade's
+`gradientTransform` is a diagonal scale, so the layer is drawn inside that transform
+with its path counter-transformed into gradient space — path and gradient compose
+back onto the artwork exactly.
 
-Two things keep the pair honest. They are generated from one `mono_geometry`, so the glyph and
-its optical size cannot drift; and `AndroidLauncherIconContractTest` asserts the relationship
-directly — same path data, same scale, translations differing by exactly half the mark's
-viewport.
+The colours in `AppIconArtwork.kt` are the artwork's own, and stay that way: `AppIcon`
+repaints every gradient stop in the app theme at runtime, keeping each stop's lightness
+and adopting the theme primary's hue and saturation. That keeps the pale-to-deep ladder
+that gives the fan its reading while the icon tracks light/dark and any dynamic or custom
+seed colour — the same thing the old monochrome mark did, but in the icon's own colours
+instead of a flat tint. The plate behind the fan is a themed surface, which is what makes
+it read as an icon rather than as loose artwork.
+
+Two things keep the pair honest. The artwork and the launcher foreground are generated
+from one `wave_elements`, so the fan cannot drift between them; and
+`AndroidLauncherIconContractTest` asserts the relationship directly — every wave path
+present verbatim, the viewport equal to the fan's measured size in the shipped
+foreground, and the placement scale equal to the themed glyph's.
 
 Legacy Android icons have the launcher mask baked in (`squircle` for `ic_launcher`,
 `circle` for `ic_launcher_round`) because API < 26 launchers do not mask. Everything else
