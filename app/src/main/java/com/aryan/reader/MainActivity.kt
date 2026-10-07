@@ -36,7 +36,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
-import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
+
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -132,7 +132,7 @@ open class MainActivity : AppCompatActivity() {
             // this outer scope so uiState recompositions below never redo
             // platform work. Everything that reads uiState sits in
             // MainContent, which restarts independently.
-            val windowSizeClass = calculateWindowSizeClass(this@MainActivity)
+            val windowSizeClass = rememberSafeWindowSizeClass(this@MainActivity)
             val navController = rememberNavController()
             // Every screen opens links through this handler: Custom Tabs
             // with a browser fallback that copies the link instead of

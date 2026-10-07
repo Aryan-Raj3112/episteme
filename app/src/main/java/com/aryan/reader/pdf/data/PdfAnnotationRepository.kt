@@ -22,9 +22,10 @@ package com.aryan.reader.pdf.data
 import android.content.Context
 import com.aryan.reader.data.AndroidBookArtifactPaths
 import com.aryan.reader.logCloudAnnotationSyncTrace
-import com.aryan.reader.data.hasSameUtf8Content
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
+import com.aryan.reader.shared.pdf.SharedPdfLegacyInkStreamEncoder
 import com.aryan.reader.data.writeJsonAtomically
+import com.aryan.reader.data.writeJsonAtomicallyIfChanged
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -67,9 +68,16 @@ class PdfAnnotationRepository(private val context: Context) {
                     return@withContext
                 }
 
-                val json = AnnotationSerializer.toJson(annotations)
+                // Streamed encode: building the full JSON DOM plus its String first
+                // OOMs the saver on a large ink collection, so the payload is
+                // written incrementally and never held whole. The unchanged
+                // check compares files, so a no-op save still skips the write.
                 val file = getFile(bookId)
-                if (file.exists() && file.hasSameUtf8Content(json)) {
+                val legacyAnnotations = AnnotationSerializer.toLegacyAnnotations(annotations)
+                val changed = file.writeJsonAtomicallyIfChanged { out ->
+                    SharedPdfLegacyInkStreamEncoder.encode(legacyAnnotations, out)
+                }
+                if (!changed) {
                     logCloudAnnotationSyncTrace {
                         "android.repository.save_ink_noop book=$bookId count=${annotations.values.sumOf { it.size }} " +
                             "bytes=${file.length()} ts=${file.lastModified()}"
@@ -77,7 +85,6 @@ class PdfAnnotationRepository(private val context: Context) {
                     Timber.tag("AnnotationSync").d("Skipping unchanged annotation JSON for $bookId.")
                     return@withContext
                 }
-                file.writeJsonAtomically(json)
                 logCloudAnnotationSyncTrace {
                     "android.repository.save_ink book=$bookId count=${annotations.values.sumOf { it.size }} " +
                         "bytes=${file.length()} ts=${file.lastModified()}"

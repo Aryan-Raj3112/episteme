@@ -122,6 +122,10 @@ class RecentFilesRepository(
         return@withContext recentFileDao.getAllFiles().map { it.toRecentFileItem() }
     }
 
+    override suspend fun getAllBookIdsForMaintenance(): Set<String> = withContext(Dispatchers.IO) {
+        recentFileDao.getAllBookIds().toSet()
+    }
+
     override suspend fun clearAllLocalData() = withContext(Dispatchers.IO) {
         // Keep the database cleanup together so a successful remote clear
         // cannot leave orphaned library metadata behind.

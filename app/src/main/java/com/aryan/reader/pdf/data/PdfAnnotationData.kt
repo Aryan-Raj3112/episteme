@@ -83,7 +83,15 @@ data class PdfAnnotation(
 
 object AnnotationSerializer {
     fun toJson(annotations: Map<Int, List<PdfAnnotation>>): String {
-        return SharedPdfLegacyInkCodec.encode(annotations.values.flatten().map { annotation ->
+        return SharedPdfLegacyInkCodec.encode(toLegacyAnnotations(annotations))
+    }
+
+    /**
+     * The persisted projection of [annotations]. Shared by the String and the
+     * streaming encoder so both write the same payload.
+     */
+    fun toLegacyAnnotations(annotations: Map<Int, List<PdfAnnotation>>): List<SharedPdfLegacyInkAnnotation> =
+        annotations.values.flatten().map { annotation ->
             SharedPdfLegacyInkAnnotation(
                 id = annotation.id,
                 pageIndex = annotation.pageIndex,
@@ -94,8 +102,7 @@ object AnnotationSerializer {
                 points = annotation.points.map { PdfPagePoint(it.x, it.y, it.timestamp) },
                 note = annotation.note,
             )
-        })
-    }
+        }
 
     fun fromJson(json: String): Map<Int, List<PdfAnnotation>> {
         if (json.isBlank()) return emptyMap()

@@ -50,6 +50,16 @@ interface RecentFileDao {
     @Query("SELECT * FROM recent_files")
     suspend fun getAllFiles(): List<RecentFileEntity>
 
+    /**
+     * Book ids only. Maintenance tasks (cache sweeper, stale-artifact cleanup)
+     * need nothing but the id set, and `getAllFiles()` is `SELECT *`: it drags
+     * every JSON blob column (bookmarks, highlights, descriptions) plus ~40
+     * mapped fields per row into memory, and the mapped `List<RecentFileItem>`
+     * then doubles that while both lists are live.
+     */
+    @Query("SELECT bookId FROM recent_files")
+    suspend fun getAllBookIds(): List<String>
+
     @Query("UPDATE recent_files SET isReflowPreferred = :isPreferred WHERE bookId = :bookId")
     suspend fun updateReflowPreference(bookId: String, isPreferred: Boolean)
 

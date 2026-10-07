@@ -7063,7 +7063,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 if (!cacheDir.exists()) return@launch
 
                 val oneHourAgo = System.currentTimeMillis() - TimeUnit.HOURS.toMillis(1)
-                val allDbIds = bookStore.getAllFilesForSync().map { it.bookId }.toSet()
+                val allDbIds = bookStore.getAllBookIdsForMaintenance()
                 val validStreamHashes = allDbIds.map { it.hashCode().toString() }.toSet()
                 val validActiveBookCacheDirs = allDbIds.mapTo(mutableSetOf()) {
                     ImportedFileCache.activeBookDirName(it)
@@ -9511,12 +9511,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 imagesDir.deleteRecursively()
             }
 
-            val allFiles = bookStore.getAllFilesForSync()
-            val reflowBooks = allFiles.filter { it.bookId.endsWith("_reflow") }
+            val reflowBookIds = bookStore.getAllBookIdsForMaintenance()
+                .filter { it.endsWith("_reflow") }
 
-            if (reflowBooks.isNotEmpty()) {
-                val reflowBookIds = reflowBooks.map { it.bookId }
-
+            if (reflowBookIds.isNotEmpty()) {
                 reflowBookIds.forEach { bookId ->
                     cleanupBookDataLocally(bookId)
                 }

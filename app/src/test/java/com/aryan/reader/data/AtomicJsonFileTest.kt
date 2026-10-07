@@ -1,6 +1,7 @@
 package com.aryan.reader.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Rule
@@ -26,6 +27,24 @@ class AtomicJsonFileTest {
         override fun renameTo(dest: File): Boolean = false
     }
 
+    /**
+     * Reproduces firmwares where [File.renameTo] moves the file but still
+     * reports failure. The payload is at the destination and the source is
+     * gone, which is what made the delete-and-retry destroy the only good copy
+     * (crashlytics-triage #53).
+     */
+    private class LyingRenameSourceFile(parent: File, name: String) : File(parent, name) {
+        override fun renameTo(dest: File): Boolean {
+            super.renameTo(dest)
+            return false
+        }
+    }
+
+    /** A rename the filesystem genuinely refuses: nothing moves, source stays. */
+    private class RefusingSourceFile(parent: File, name: String) : File(parent, name) {
+        override fun renameTo(dest: File): Boolean = false
+    }
+
     @Test
     fun `vanished source during backup still writes fresh content instead of crashing`() {
         val target = VanishingSourceFile(tempFolder.root, "annotation_test.json")
@@ -33,6 +52,46 @@ class AtomicJsonFileTest {
         target.writeJsonAtomically("""{"ink":[]}""") // must not throw
 
         assertEquals("""{"ink":[]}""", File(tempFolder.root, "annotation_test.json").readText())
+    }
+
+    @Test
+    fun `rename that moved despite reporting failure is treated as success`() {
+        val src = LyingRenameSourceFile(tempFolder.root, "payload.json.new")
+        src.writeText("""{"ink":[]}""")
+        val dst = File(tempFolder.root, "payload.json")
+
+        assertTrue(
+            "a rename that moved the file must not be retried",
+            moveByRename(src, dst),
+        )
+        assertEquals("""{"ink":[]}""", dst.readText())
+    }
+
+    @Test
+    fun `atomic write survives a rename that moved despite reporting failure`() {
+        val dir = tempFolder.newFolder("lying-rename-atomic")
+        val target = LyingRenameSourceFile(dir, "annotation_lie.json")
+
+        // End to end: the payload must land and survive, not be deleted by the
+        // retry and then fail the copy fallback with NoSuchFileException.
+        target.writeJsonAtomically("""{"v":1}""")
+
+        val stored = File(dir, "annotation_lie.json")
+        assertEquals("""{"v":1}""", stored.readText())
+        assertFalse(File(dir, "annotation_lie.json.new").exists())
+    }
+
+    @Test
+    fun `genuine rename refusal still falls back so the save lands`() {
+        val dir = tempFolder.newFolder("genuine-refusal")
+        // The source survives the refusal, so this is the real #27 case rather
+        // than the lying-rename case above: the new guard must not swallow it.
+        val src = RefusingSourceFile(dir, "payload.json.new").apply { writeText("""{"v":1}""") }
+        val dst = File(dir, "payload.json")
+
+        assertFalse(moveByRename(src, dst))
+        // The source is intact, which is what lets the copy fallback land.
+        assertEquals("""{"v":1}""", src.readText())
     }
 
     @Test
