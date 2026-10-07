@@ -2686,5 +2686,6 @@
     <string name="content_desc_media_overlay_play_pause">Play or pause narration</string>
     <string name="content_desc_media_overlay_previous">Previous narrated passage</string>
     <string name="content_desc_media_overlay_next">Next narrated passage</string>
+    <string name="content_desc_media_overlay_speed">Narration speed</string>
     <string name="media_overlay_chapter_unavailable">This chapter has no narration</string>
 </resources>

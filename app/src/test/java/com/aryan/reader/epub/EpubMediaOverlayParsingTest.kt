@@ -7,6 +7,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -79,6 +80,88 @@ class EpubMediaOverlayParsingTest {
         assertEquals(1, cache.parseCount)
         assertEquals(chapter, cache.document(0))
         assertEquals(1, cache.parseCount)
+    }
+
+    /**
+     * The instrumented fixture book narrates, asserted here rather than on a device.
+     *
+     * `app/src/androidTest/assets/epub/reader_test_book.epub` is what the reader's own UI tests open,
+     * and several of them now depend on chapter one being narrated: the narration button, the bar, and
+     * the clip the highlight follows. When the fixture is regenerated from
+     * `fixtures/epub/build_reader_test_book.py` a mistake in the OPF or the SMIL shows up here in
+     * milliseconds instead of as a UI test that cannot find a button — which is exactly the failure
+     * this test was written to explain, so the diagnosis is kept.
+     */
+    @Test
+    fun `the narrated android fixture book carries its overlay and its audio`() = runTest {
+        // Module-relative first, then repository-relative: the unit tests run with either working
+        // directory depending on the task, which is why the source-reading tests here do the same.
+        val fixture = listOf(
+            File("src/androidTest/assets/epub/reader_test_book.epub"),
+            File("app/src/androidTest/assets/epub/reader_test_book.epub")
+        ).firstOrNull { it.isFile }
+        assertNotNull("the android fixture book must be on disk", fixture)
+
+        val book = parse(fixture!!)
+        val overlays = book.mediaOverlays
+        assertTrue("the fixture's chapter one must be narrated", overlays.hasOverlays)
+        assertEquals("Fixture Narrator", overlays.narrator)
+        // Chapters one and two, and deliberately not three: the un-narrated tail is what makes the
+        // continuation test able to assert that the run *ends* rather than inventing narration.
+        assertEquals(
+            mapOf(
+                0 to "OEBPS/mo/chapter-01.smil",
+                1 to "OEBPS/mo/chapter-02.smil"
+            ),
+            overlays.smilPathBySpineItem
+        )
+        assertEquals(3, overlays.contentPathBySpineItem.size)
+
+        val cache = SharedMediaOverlayDocumentCache(
+            index = overlays,
+            readSmil = { path -> fixture.readEntry(path) }
+        )
+        val chapter = cache.document(0)
+        assertNotNull("chapter one's SMIL body must parse", chapter)
+        assertEquals(
+            listOf("opening-paragraph", "position-target-alpha", "highlight-target-bravo"),
+            chapter!!.clips.map { it.elementId }
+        )
+        // The audio the clip addresses, resolved against the SMIL's directory. Without a real entry
+        // the plan would drop every clip and the reader would narrate nothing at all.
+        assertEquals(
+            setOf("OEBPS/audio/chapter-01.wav"),
+            chapter.clips.mapNotNull { it.audioPath }.toSet()
+        )
+        assertTrue(
+            "every clip must address the audio entry",
+            chapter.clips.all { it.audioPath == "OEBPS/audio/chapter-01.wav" }
+        )
+        assertTrue("the overlay's audio must be in the archive", fixture.readBytes("OEBPS/audio/chapter-01.wav") != null)
+        // 1.5-second clips: the UI test polls for the second one, so a fixture regenerated with
+        // millisecond clips would make that poll a coin flip.
+        assertEquals(listOf(0L, 1_500L, 3_000L), chapter.clips.map { it.clipBeginMs })
+        assertEquals(listOf(1_500L, 3_000L, 4_500L), chapter.clips.map { it.clipEndMs })
+
+        // The second narrated chapter, which is where narration has to continue to. It has a
+        // different clip count from the first on purpose: that difference is what a UI test uses to
+        // prove the *next* chapter loaded rather than the same one restarting.
+        val second = cache.document(1)
+        assertNotNull("chapter two's SMIL body must parse", second)
+        assertEquals(
+            listOf("search-target-delta", "bookmark-target-echo"),
+            second!!.clips.map { it.elementId }
+        )
+        assertEquals(2, second.clips.size)
+        assertTrue(second.clips.all { it.audioPath == "OEBPS/audio/chapter-02.wav" })
+        assertTrue(fixture.readBytes("OEBPS/audio/chapter-02.wav") != null)
+        assertEquals(listOf(0L, 1_500L), second.clips.map { it.clipBeginMs })
+        // The third spine item declares no overlay, so a reader that narrates it is inventing audio.
+        assertNull(cache.document(2))
+    }
+
+    private fun File.readBytes(path: String): ByteArray? = ZipFile(this).use { zip ->
+        zip.getEntry(path)?.let { entry -> zip.getInputStream(entry).readBytes() }
     }
 
     @Test

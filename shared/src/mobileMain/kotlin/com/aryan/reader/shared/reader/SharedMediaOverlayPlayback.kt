@@ -1,5 +1,7 @@
 package com.aryan.reader.shared.reader
 
+import kotlin.math.roundToInt
+
 /**
  * The playback contract for EPUB media overlays, and the platform-free decisions behind it.
  *
@@ -55,6 +57,38 @@ const val SharedMediaOverlayDefaultSpeed = 1f
 
 /** Speed limits, matching the audiobook player's own range. */
 val SharedMediaOverlaySpeedRange = 0.5f..3.0f
+
+/**
+ * The speeds the narration bar offers, slowest first.
+ *
+ * A ladder rather than a slider: narration is listened to at two or three speeds in practice, and a
+ * menu of known values is one tap with a stable label, where a drag lands on 1.13× and then reads
+ * differently on each platform's number formatting. Every entry is inside
+ * [SharedMediaOverlaySpeedRange], which is what the engine clamps to anyway, so the UI can never offer
+ * a speed the engine would refuse.
+ */
+val SharedMediaOverlaySpeeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f)
+
+/**
+ * A speed as the reader sees it, e.g. `1.25×`.
+ *
+ * Written by hand because common code has no number formatting, and because `String.format` per
+ * platform would print `1.00×` on one and `1,00×` on another. Trailing zeros are trimmed: a button that
+ * reads `2.00×` is noise, and `2×` is what a listener says out loud. Unsupported values are clamped
+ * first, so a bad restored speed shows the speed that will actually play.
+ */
+fun sharedMediaOverlaySpeedLabel(speed: Float): String {
+    val hundredths = (sharedMediaOverlaySpeed(speed) * 100f).roundToInt()
+    val whole = hundredths / 100
+    val fraction = hundredths % 100
+    val text = when {
+        fraction == 0 -> "$whole"
+        fraction % 10 == 0 -> "$whole.${fraction / 10}"
+        fraction < 10 -> "$whole.0$fraction"
+        else -> "$whole.$fraction"
+    }
+    return "$text×"
+}
 
 /**
  * What to play, in what order.
@@ -194,4 +228,40 @@ fun sharedMediaOverlayStartPlaybackIndex(
     return plan.sourceClipIndices.indexOfFirst { it >= readerClipIndex }
         .takeIf { it >= 0 }
         ?: plan.entries.lastIndex
+}
+
+/**
+ * The spine items narration should continue into after [finishedSpineItemIndex], in reading order.
+ *
+ * A narrated book is a sequence, and a reader who lets the narration run expects it to keep going
+ * rather than stop at the end of every chapter — the expectation an audiobook sets. Which item comes
+ * next is a fact about the package, so it is decided here once rather than by each engine.
+ *
+ * [spineItemsInReadingOrder] is the *reader's* order, not the spine array's: a book whose content
+ * documents were split at TOC fragments has several reader chapters per spine item, and a book with a
+ * non-linear spine need not ascend. The caller builds it from its chapter list, deduplicated.
+ *
+ * The whole tail is returned rather than one item so a caller can skip an overlay whose SMIL turns
+ * out to be unparseable — the OPF is a promise about intent, not about the file — without this
+ * function having to read anything.
+ *
+ * Empty at the end of a narrated run, when every item after this one is un-narrated, and when the
+ * finished item is not in the order at all (a book that was replaced under a live session). All three
+ * mean the same thing to a caller: nothing left to narrate, stop.
+ *
+ * Un-narrated spine items in between are skipped rather than treated as a stop: a narrated book with
+ * a cover, a colophon and a playlist between its chapters is the normal shape, and stopping at the
+ * first one would make continuation almost never fire.
+ */
+fun sharedMediaOverlaySpineItemsAfter(
+    index: SharedMediaOverlayIndex,
+    spineItemsInReadingOrder: List<Int>,
+    finishedSpineItemIndex: Int
+): List<Int> {
+    if (spineItemsInReadingOrder.isEmpty()) return emptyList()
+    val position = spineItemsInReadingOrder.indexOf(finishedSpineItemIndex)
+    if (position < 0) return emptyList()
+    return spineItemsInReadingOrder
+        .subList(position + 1, spineItemsInReadingOrder.size)
+        .filter { index.smilPathBySpineItem.containsKey(it) }
 }

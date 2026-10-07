@@ -6,12 +6,25 @@
     <dc:creator>Reader Test Fixtures</dc:creator>
     <dc:language>en</dc:language>
     <meta property="dcterms:modified">2026-01-01T00:00:00Z</meta>
+    <!-- Media overlays (EPUB 3 §9). Chapters one and two are narrated and chapter three is not: a
+         book that narrates some spine items and not others is the normal shape, and the un-narrated
+         tail is what a continuation test needs at the end of the run. -->
+    <meta property="media:duration">0:00:07.500</meta>
+    <meta refines="#chapter-1-smil" property="media:duration">0:00:04.500</meta>
+    <meta refines="#chapter-2-smil" property="media:duration">0:00:03.000</meta>
+    <meta property="media:narrator">Fixture Narrator</meta>
+    <meta property="media:active-class">mo-active</meta>
+    <meta property="media:playback-active-class">mo-playing</meta>
   </metadata>
   <manifest>
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
     <item id="style" href="styles/reader-test.css" media-type="text/css"/>
-    <item id="chapter-1" href="chapters/chapter-01.xhtml" media-type="application/xhtml+xml"/>
-    <item id="chapter-2" href="chapters/chapter-02.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter-1" href="chapters/chapter-01.xhtml" media-type="application/xhtml+xml" media-overlay="chapter-1-smil"/>
+    <item id="chapter-1-smil" href="mo/chapter-01.smil" media-type="application/smil+xml"/>
+    <item id="chapter-1-audio" href="audio/chapter-01.wav" media-type="audio/wav"/>
+    <item id="chapter-2" href="chapters/chapter-02.xhtml" media-type="application/xhtml+xml" media-overlay="chapter-2-smil"/>
+    <item id="chapter-2-smil" href="mo/chapter-02.smil" media-type="application/smil+xml"/>
+    <item id="chapter-2-audio" href="audio/chapter-02.wav" media-type="audio/wav"/>
     <item id="chapter-3" href="chapters/chapter-03.xhtml" media-type="application/xhtml+xml"/>
     <item id="inline-svg" href="images/fixture-diagram.svg" media-type="image/svg+xml"/>
   </manifest>

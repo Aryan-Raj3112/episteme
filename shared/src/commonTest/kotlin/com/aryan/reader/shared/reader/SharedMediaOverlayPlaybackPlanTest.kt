@@ -251,6 +251,86 @@ class SharedMediaOverlayPlaybackPlanTest {
         assertEquals(1, sharedMediaOverlayStartPlaybackIndex(plan, readerClipIndex = 2))
     }
 
+    // --- what plays after this chapter ---------------------------------------------------------
+
+    /**
+     * A narrated book has un-narrated spine items inside it — a cover, a colophon, a playlist — and
+     * stopping at the first one would make continuation almost never fire. They are skipped.
+     */
+    @Test
+    fun `continuation skips spine items that do not narrate`() {
+        val index = index(narrated = listOf(0, 2, 3))
+
+        assertEquals(
+            listOf(2, 3),
+            sharedMediaOverlaySpineItemsAfter(index, listOf(0, 1, 2, 3), finishedSpineItemIndex = 0)
+        )
+    }
+
+    /** The whole tail comes back, so a caller can skip one whose SMIL turns out to be unusable. */
+    @Test
+    fun `continuation returns every narrated item after this one in reading order`() {
+        val index = index(narrated = listOf(0, 1, 2))
+
+        assertEquals(
+            listOf(2),
+            sharedMediaOverlaySpineItemsAfter(index, listOf(0, 1, 2), finishedSpineItemIndex = 1)
+        )
+    }
+
+    @Test
+    fun `continuation ends at the last narrated chapter`() {
+        val index = index(narrated = listOf(0, 1))
+
+        assertTrue(sharedMediaOverlaySpineItemsAfter(index, listOf(0, 1, 2), finishedSpineItemIndex = 1).isEmpty())
+        assertTrue(sharedMediaOverlaySpineItemsAfter(index, listOf(0, 1, 2), finishedSpineItemIndex = 2).isEmpty())
+    }
+
+    /**
+     * A reading order that does not contain the finished item is a book replaced under a live
+     * session. Continuing from a guess would narrate the wrong chapter, so there is nothing to do.
+     */
+    @Test
+    fun `an unknown finished item continues nowhere`() {
+        val index = index(narrated = listOf(0, 1))
+
+        assertTrue(sharedMediaOverlaySpineItemsAfter(index, listOf(0, 1), finishedSpineItemIndex = 7).isEmpty())
+        assertTrue(sharedMediaOverlaySpineItemsAfter(index, emptyList(), finishedSpineItemIndex = 0).isEmpty())
+    }
+
+    /** A book with no overlays at all has nowhere to continue to, however long its spine is. */
+    @Test
+    fun `a book that does not narrate has no continuation`() {
+        val index = index(narrated = emptyList())
+
+        assertTrue(sharedMediaOverlaySpineItemsAfter(index, listOf(0, 1), finishedSpineItemIndex = 0).isEmpty())
+    }
+
+    /**
+     * The reading order is the reader's, so a document split into several chapters contributes one
+     * spine item — and the item *after* it is still found.
+     */
+    @Test
+    fun `continuation reads the order it is given, not the spine array`() {
+        val index = index(narrated = listOf(4, 9))
+
+        // Chapter order 4, 4, 9 — the caller deduplicates before asking.
+        assertEquals(listOf(9), sharedMediaOverlaySpineItemsAfter(index, listOf(4, 9), finishedSpineItemIndex = 4))
+        // A non-ascending spine (a right-to-left book's reader order) still works positionally.
+        assertEquals(listOf(4), sharedMediaOverlaySpineItemsAfter(index, listOf(9, 4), finishedSpineItemIndex = 9))
+    }
+
+    private fun index(narrated: List<Int>) = SharedMediaOverlayIndex(
+        smilPathBySpineItem = narrated.associateWith { "OEBPS/Text/p$it.xhtml.smil" },
+        contentPathBySpineItem = emptyMap(),
+        smilIdBySpineItem = emptyMap(),
+        totalDurationMs = null,
+        narrator = null,
+        activeClass = null,
+        playbackActiveClass = null,
+        declaredDurationMsBySpineItem = emptyMap()
+    )
+
     // --- speed -------------------------------------------------------------------------------
 
     @Test
@@ -265,6 +345,39 @@ class SharedMediaOverlayPlaybackPlanTest {
     fun `a nonsensical speed resets to the default`() {
         assertEquals(SharedMediaOverlayDefaultSpeed, sharedMediaOverlaySpeed(Float.NaN))
         assertEquals(SharedMediaOverlayDefaultSpeed, sharedMediaOverlaySpeed(Float.POSITIVE_INFINITY))
+    }
+
+    /**
+     * The offered ladder has to be usable by the engine as-is: every entry inside the supported
+     * range, ascending, and containing the default. A ladder entry the engine would clamp is a button
+     * that lies about what is playing.
+     */
+    @Test
+    fun `the offered speeds are all playable and ascending`() {
+        assertTrue(SharedMediaOverlaySpeeds.isNotEmpty())
+        assertTrue(SharedMediaOverlaySpeeds.all { it in SharedMediaOverlaySpeedRange })
+        assertTrue(SharedMediaOverlaySpeeds.contains(SharedMediaOverlayDefaultSpeed))
+        assertEquals(SharedMediaOverlaySpeeds.sorted(), SharedMediaOverlaySpeeds)
+        // Every offered speed must clamp to itself, or the button would promise a pace the engine
+        // silently changes.
+        assertEquals(SharedMediaOverlaySpeeds, SharedMediaOverlaySpeeds.map(::sharedMediaOverlaySpeed))
+    }
+
+    /**
+     * The label is what the reader sees on the button, so it must not be formatted by the platform:
+     * one locale writes `1,5` where another writes `1.5`, and the trailing zeros are noise.
+     */
+    @Test
+    fun `a speed label is trimmed and clamped`() {
+        assertEquals("1×", sharedMediaOverlaySpeedLabel(1.0f))
+        assertEquals("1.5×", sharedMediaOverlaySpeedLabel(1.5f))
+        assertEquals("1.25×", sharedMediaOverlaySpeedLabel(1.25f))
+        assertEquals("0.75×", sharedMediaOverlaySpeedLabel(0.75f))
+        assertEquals("2×", sharedMediaOverlaySpeedLabel(2.0f))
+        // Out of range and nonsense values label what will really play, not what was asked for.
+        assertEquals("3×", sharedMediaOverlaySpeedLabel(9f))
+        assertEquals("0.5×", sharedMediaOverlaySpeedLabel(0.1f))
+        assertEquals("1×", sharedMediaOverlaySpeedLabel(Float.NaN))
     }
 
     // --- state -------------------------------------------------------------------------------

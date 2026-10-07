@@ -1914,6 +1914,12 @@ fun EpubReaderHost(
     // not on every clip. Nothing else reads it; it is the WebView's counterpart to a surface's own
     // rectangle check.
     var lastMediaOverlayWebViewChapter by remember(bookId) { mutableStateOf<Int?>(null) }
+    // The chapter narration asked the reader to show, so the rule below can tell "the reader
+    // navigated" apart from "narration moved and we followed it". Without it, carrying narration into
+    // the next chapter would look like a manual navigation — and the answer to that is to restart the
+    // chapter narration just began, so following forward would rewind to the top of every chapter.
+    // Consumed on the first use: a change that is *not* the follow is the reader's, by definition.
+    var mediaOverlayFollowedChapter by remember(bookId) { mutableStateOf<Int?>(null) }
 
     // Playback position -> reader coordinates. Keyed on the clip, so a chapter's anchors resolve
     // once and a clip advance within the chapter is a map lookup.
@@ -1923,6 +1929,21 @@ fun EpubReaderHost(
         val projection = spineItemIndex?.let { session.project(it, mediaOverlayPlaybackState.clipIndex) }
         mediaOverlayProjection = projection
         session.onProjected(projection)
+    }
+
+    // One line per clip, next to the chapter the reader is showing. The failures this feature has are
+    // all disagreements *between* those two numbers — a clip that advances while the reader stays put, a
+    // chapter that loads and never plays, a follow that bounces back — and every one of them is
+    // invisible in a screenshot and obvious in this line.
+    LaunchedEffect(
+        mediaOverlayPlaybackState.spineItemIndex,
+        mediaOverlayPlaybackState.clipIndex,
+        mediaOverlayPlaybackState.isPlaying
+    ) {
+        Timber.tag("MediaOverlayDiag").d(
+            "state spine=${mediaOverlayPlaybackState.spineItemIndex} clip=${mediaOverlayPlaybackState.clipIndex} " +
+                "playing=${mediaOverlayPlaybackState.isPlaying} chapter=$currentChapterIndex"
+        )
     }
 
     fun readerOffsetForChapter(chapterIndex: Int): Int? =
@@ -1944,6 +1965,7 @@ fun EpubReaderHost(
         if (!mediaOverlayPlaybackState.hasBook) return@LaunchedEffect
         if (target == currentChapterIndex) return@LaunchedEffect
         Timber.tag("MediaOverlayDiag").d("Narration moved to chapter $target; following")
+        mediaOverlayFollowedChapter = target
         if (isNativeVerticalMode) {
             requestNativeVerticalLocatorScroll(
                 locator = Locator(target, 0, 0),
@@ -1964,6 +1986,11 @@ fun EpubReaderHost(
     // not the one they left.
     LaunchedEffect(currentChapterIndex) {
         val session = mediaOverlaySession ?: return@LaunchedEffect
+        if (mediaOverlayFollowedChapter == currentChapterIndex) {
+            mediaOverlayFollowedChapter = null
+            return@LaunchedEffect
+        }
+        mediaOverlayFollowedChapter = null
         if (!mediaOverlayPlaybackState.hasBook) return@LaunchedEffect
         val narratedChapter = session.chapterIndex ?: return@LaunchedEffect
         if (narratedChapter == currentChapterIndex) return@LaunchedEffect
@@ -5897,11 +5924,13 @@ fun EpubReaderHost(
                         subtitle = mediaOverlayBarSubtitle,
                         isPlaying = mediaOverlayPlaybackState.isPlaying,
                         isLoading = mediaOverlayPlaybackState.isLoading,
+                        speed = mediaOverlayPlaybackState.speed,
                         canSkipPrevious = mediaOverlayClipIndex > 0,
                         canSkipNext = mediaOverlayClipCount > 0 && mediaOverlayClipIndex < mediaOverlayClipCount - 1,
                         onTogglePlayPause = { mediaOverlaySession?.togglePlayPause() },
                         onPreviousClip = { mediaOverlaySession?.previousClip() },
                         onNextClip = { mediaOverlaySession?.nextClip() },
+                        onSpeedSelected = { mediaOverlaySession?.setSpeed(it) },
                         onStop = { mediaOverlaySession?.stop() },
                         modifier = Modifier.fillMaxWidth()
                     )

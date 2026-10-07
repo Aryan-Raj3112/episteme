@@ -404,20 +404,25 @@ fun EpubReaderTopBar(
                             }
                         }
                     if (hasMediaOverlayNarration) {
+                        // The icon's description is the *action*, following the read-aloud button
+                        // above: a screen reader has to say what pressing this does, and one name
+                        // for both states leaves the button reading identically whether narration is
+                        // running or not. The tooltip keeps the feature name as its label.
+                        val narrationActionDescription = stringResource(
+                            if (isMediaOverlayActive) {
+                                R.string.content_desc_media_overlay_stop
+                            } else {
+                                R.string.content_desc_media_overlay_start
+                            }
+                        )
                         TooltipIconButton(
                             text = stringResource(R.string.media_overlay_title),
-                            description = stringResource(
-                                if (isMediaOverlayActive) {
-                                    R.string.content_desc_media_overlay_stop
-                                } else {
-                                    R.string.content_desc_media_overlay_start
-                                }
-                            ),
+                            description = narrationActionDescription,
                             onClick = onToggleMediaOverlay
                         ) {
                             Icon(
                                 painter = painterResource(id = R.drawable.volume_up),
-                                contentDescription = stringResource(R.string.media_overlay_title),
+                                contentDescription = narrationActionDescription,
                                 tint = if (isMediaOverlayActive) {
                                     MaterialTheme.colorScheme.primary
                                 } else {

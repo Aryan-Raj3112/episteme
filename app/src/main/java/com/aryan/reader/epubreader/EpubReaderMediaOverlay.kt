@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,6 +20,8 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -26,8 +29,10 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,6 +42,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -48,13 +55,18 @@ import com.aryan.reader.paginatedreader.resolveSharedMediaOverlayFragmentsInBloc
 import com.aryan.reader.shared.reader.SharedMediaOverlayDocument
 import com.aryan.reader.shared.reader.SharedMediaOverlayDocumentCache
 import com.aryan.reader.shared.reader.SharedMediaOverlayIndex
+import com.aryan.reader.shared.reader.SharedMediaOverlayPlaybackPlan
 import com.aryan.reader.shared.reader.SharedMediaOverlayPlaybackRequest
 import com.aryan.reader.shared.reader.SharedMediaOverlayPlaybackState
+import com.aryan.reader.shared.reader.SharedMediaOverlaySpeeds
 import com.aryan.reader.shared.reader.SharedPlaybackFragment
 import com.aryan.reader.shared.reader.rememberSharedMediaOverlaySmilReader
 import com.aryan.reader.shared.reader.sharedMediaOverlayPlaybackPlan
+import com.aryan.reader.shared.reader.sharedMediaOverlaySpeedLabel
+import com.aryan.reader.shared.reader.sharedMediaOverlaySpineItemsAfter
 import com.aryan.reader.shared.reader.sharedMediaOverlayStartPlaybackIndex
 import kotlinx.coroutines.flow.MutableStateFlow
+import timber.log.Timber
 import java.io.File
 
 /**
@@ -139,23 +151,40 @@ internal class EpubMediaOverlayProjector(
         cache.document(spineItemIndex)
 
     /**
-     * Resolves one playback position, or null when nothing there can be painted.
+     * Resolves one playback position, or null when the position names no clip at all.
      *
-     * Null is the normal outcome for a clip with no resolvable text anchor — an unresolvable anchor
-     * is a fact about the book, not a failure, and playback must keep going.
+     * The result is deliberately partial rather than all-or-nothing: the *chapter* comes from the
+     * overlay's `epub:textref` whenever the blocks needed to place the offsets are unavailable, the
+     * *element id* comes from the clip, and the *fragment* — the only part the Compose surfaces need
+     * — is present only when an anchor really resolved. A position with a chapter but no fragment is
+     * the WebView's normal case, and it is enough to follow the narration and to paint the band
+     * there. Failing the whole projection instead would take the follow with it.
      */
     suspend fun project(spineItemIndex: Int, clipIndex: Int): EpubMediaOverlayProjection? {
         val document = cache.document(spineItemIndex) ?: return null
         val clip = document.clips.getOrNull(clipIndex) ?: return null
+        val candidates = candidateChapters(document)
         var chapterIndex: Int? = null
         var fragment: SharedPlaybackFragment? = null
+        var inspectedAnyBlocks = false
         // A plain loop rather than `firstOrNull`: resolving anchors suspends, and a split chapter
         // that does not carry the element must be skipped rather than assumed to hold it.
-        for (candidate in candidateChapters(document)) {
-            val resolved = anchorsFor(document, candidate)[clipIndex] ?: continue
+        for (candidate in candidates) {
+            val anchors = anchorsFor(document, candidate) ?: continue
+            inspectedAnyBlocks = true
+            val resolved = anchors[clipIndex] ?: continue
             chapterIndex = candidate
             fragment = resolved
             break
+        }
+        if (chapterIndex == null && !inspectedAnyBlocks && clip.elementId != null) {
+            // Not one candidate had blocks to inspect, so the *chapter* is still known even though the
+            // offsets are not: the document's `epub:textref` names the content document, and the reader's
+            // chapter list is matched to it by path. This is the WebView surface's normal case — it has
+            // no `ContentBlock`s at all, it anchors by element id in the DOM — so without this fallback
+            // narration never follows across a chapter boundary there, and the band is the only thing
+            // that works. A fragment stays null: the Compose surfaces need offsets this cannot invent.
+            chapterIndex = candidates.firstOrNull()
         }
         return EpubMediaOverlayProjection(
             spineItemIndex = spineItemIndex,
@@ -177,7 +206,7 @@ internal class EpubMediaOverlayProjector(
         val document = cache.document(spineItemIndex) ?: return null
         if (readerOffset < 0) return null
         for (chapterIndex in candidateChapters(document)) {
-            val anchors = anchorsFor(document, chapterIndex)
+            val anchors = anchorsFor(document, chapterIndex) ?: continue
             if (anchors.isEmpty()) continue
             val hit = document.clips.firstOrNull { clip ->
                 val fragment = anchors[clip.clipIndex]
@@ -189,25 +218,27 @@ internal class EpubMediaOverlayProjector(
     }
 
     /**
-     * The chapter's resolved anchors, computed once and reused.
+     * The chapter's resolved anchors, computed once and reused, or null when the chapter's blocks
+     * could not be read at all.
      *
-     * Only non-empty results are cached. An empty map is a legitimate answer (the chapter does not
-     * carry the document's ids), and caching it would be wrong when the reason was a chapter whose
-     * blocks were not loadable yet — the paginator builds them on demand, so retrying is both
-     * possible and cheap, while a stuck empty map would silence a chapter for the rest of the
+     * The distinction between "no blocks" and "blocks, none of which carry this document's ids" is
+     * load-bearing. An empty map is a legitimate answer about the book, and callers may act on it; a
+     * null means the surface has nothing to resolve against — a WebView chapter the paginator never
+     * built — and a caller must not read that as evidence about the book.
+     *
+     * Only non-empty results are cached. Caching an empty map would be wrong when the reason was a
+     * chapter whose blocks were not loadable yet — the paginator builds them on demand, so retrying is
+     * both possible and cheap, while a stuck empty map would silence a chapter for the rest of the
      * session.
      */
     private suspend fun anchorsFor(
         document: SharedMediaOverlayDocument,
         chapterIndex: Int
-    ): Map<Int, SharedPlaybackFragment> {
+    ): Map<Int, SharedPlaybackFragment>? {
         anchorsByChapter[chapterIndex]?.let { return it }
-        val blocks = blocksForChapter(chapterIndex).orEmpty()
-        val anchors = if (blocks.isEmpty()) {
-            emptyMap()
-        } else {
-            resolveSharedMediaOverlayFragmentsInBlocks(document, blocks)
-        }
+        val blocks = blocksForChapter(chapterIndex)
+        if (blocks.isNullOrEmpty()) return null
+        val anchors = resolveSharedMediaOverlayFragmentsInBlocks(document, blocks)
         if (anchors.isNotEmpty()) {
             anchorResolutionCount++
             anchorsByChapter[chapterIndex] = anchors
@@ -292,11 +323,28 @@ internal class EpubMediaOverlaySession(
     private val bookTitle: String,
     private val narrator: String?,
     private val totalDurationMs: Long?,
+    private val overlayIndex: SharedMediaOverlayIndex,
     private val spineItemIndexByChapter: Map<Int, Int>,
+    /**
+     * The book's spine items in the order the reader reads them, without repeats.
+     *
+     * The reader's chapter list is its own re-flow — a spine document may have been split at several
+     * TOC fragments — so the reading order is the chapter sequence, not the spine array, and the same
+     * spine item appears once however many chapters reference it.
+     */
+    private val spineItemsInReadingOrder: List<Int>,
 ) {
     /** The chapter narration is currently in, or null. Follow compares this with the visible one. */
     var chapterIndex: Int? by mutableStateOf(null)
         private set
+
+    init {
+        // Running off the end of a chapter continues into the next narrated one. Installed here rather
+        // than by the screen because the decision needs the book's reading order and the overlay
+        // index, both of which the session already holds — and because it is the session, not the
+        // screen, that owns the engine's lifetime.
+        engine.onChapterFinished = { finished -> continueAfter(finished) }
+    }
 
     /** How many clips the loaded chapter has, for the bar's position label. */
     var clipCount: Int by mutableStateOf(0)
@@ -325,20 +373,56 @@ internal class EpubMediaOverlaySession(
             ?.takeIf { it >= 0 }
             ?.let { projector.clipIndexForReaderPosition(spineItemIndex, it) }
         clipCount = plan.entries.size
-        engine.play(
-            SharedMediaOverlayPlaybackRequest(
-                sourceId = bookId,
-                bookTitle = bookTitle,
-                spineItemIndex = spineItemIndex,
-                clips = plan.entries,
-                startPlaybackIndex = sharedMediaOverlayStartPlaybackIndex(plan, readerClipIndex),
-                playWhenReady = true,
-                narrator = narrator,
-                totalDurationMs = totalDurationMs
-            )
-        )
+        engine.play(requestFor(spineItemIndex, plan, sharedMediaOverlayStartPlaybackIndex(plan, readerClipIndex)))
         return true
     }
+
+    /**
+     * Carries narration into the next narrated chapter, or ends it when the book runs out.
+     *
+     * Called by the engine when a chapter's clips play out. A chapter in between that has no overlay
+     * is skipped rather than ending the run, and so is one whose SMIL is declared but unusable — the
+     * OPF saying an overlay exists is a promise about intent, not about the file, and stopping there
+     * would strand the listener on a chapter they cannot hear.
+     *
+     * This is synchronous on purpose. Continuation must start before the player goes idle for long
+     * enough to be noticed as a gap between chapters, and nothing here needs the anchor resolution a
+     * `par` seek would: chapter playback starts at its first clip.
+     *
+     * @return true when another chapter was loaded; false ends playback, which is what the end of a
+     *   narrated run looks like.
+     */
+    private fun continueAfter(finishedSpineItemIndex: Int): Boolean {
+        val candidates = sharedMediaOverlaySpineItemsAfter(
+            index = overlayIndex,
+            spineItemsInReadingOrder = spineItemsInReadingOrder,
+            finishedSpineItemIndex = finishedSpineItemIndex
+        )
+        for (candidate in candidates) {
+            val document = projector.document(candidate) ?: continue
+            val plan = sharedMediaOverlayPlaybackPlan(document)
+            if (plan.isEmpty) continue
+            clipCount = plan.entries.size
+            engine.play(requestFor(candidate, plan, startPlaybackIndex = 0))
+            return true
+        }
+        return false
+    }
+
+    private fun requestFor(
+        spineItemIndex: Int,
+        plan: SharedMediaOverlayPlaybackPlan,
+        startPlaybackIndex: Int
+    ) = SharedMediaOverlayPlaybackRequest(
+        sourceId = bookId,
+        bookTitle = bookTitle,
+        spineItemIndex = spineItemIndex,
+        clips = plan.entries,
+        startPlaybackIndex = startPlaybackIndex,
+        playWhenReady = true,
+        narrator = narrator,
+        totalDurationMs = totalDurationMs
+    )
 
     fun togglePlayPause() {
         if (engine.state.value.isPlaying) engine.pause() else engine.resume()
@@ -348,11 +432,33 @@ internal class EpubMediaOverlaySession(
 
     fun nextClip() = engine.skipNext()
 
+    fun setSpeed(speed: Float) = engine.setSpeed(speed)
+
     fun stop() {
         chapterIndex = null
         clipCount = 0
         engine.stop()
     }
+}
+
+/**
+ * The book's spine items in reading order, deduplicated.
+ *
+ * Reads the chapter list rather than the spine so a document split into several reader chapters
+ * contributes one entry, and a chapter with no spine item — a cover page the reader synthesises —
+ * contributes none. This is what `sharedMediaOverlaySpineItemsAfter` walks to find the next narrated
+ * chapter, so getting the order wrong is heard as narration that skips or repeats a chapter.
+ */
+internal fun spineItemsInReadingOrder(
+    chapters: List<EpubChapter>,
+    spineItemIndexByChapter: Map<Int, Int>
+): List<Int> {
+    if (chapters.isEmpty()) return emptyList()
+    val ordered = LinkedHashSet<Int>(chapters.size)
+    chapters.indices.forEach { chapterIndex ->
+        spineItemIndexByChapter[chapterIndex]?.let(ordered::add)
+    }
+    return ordered.toList()
 }
 
 /**
@@ -394,6 +500,27 @@ internal fun rememberEpubMediaOverlaySession(
         smilReader?.takeIf { overlayIndex.hasOverlays }
             ?.let { readSmil -> SharedMediaOverlayDocumentCache(overlayIndex, readSmil) }
     }
+    // Narration's failure mode is an absence, and three unrelated causes produce it: no local archive,
+    // no overlays in the OPF, no SMIL reader on this platform — plus a fourth the user cannot see,
+    // chapters whose paths match no spine item, which leaves a working button that narrates nothing.
+    // They are one line apart on the screen and indistinguishable from a bug report, so the state is
+    // logged once per book. This is the line that would have explained the reported "it does not
+    // work" without a device in hand.
+    val chapterSpineItems = remember(chapters, overlayIndex) {
+        spineItemIndexByChapter(chapters, overlayIndex)
+    }
+    val readingOrder = remember(chapterSpineItems) {
+        spineItemsInReadingOrder(chapters, chapterSpineItems)
+    }
+    LaunchedEffect(archivePath, cache, overlayIndex.hasOverlays, chapters.size) {
+        Timber.tag("MediaOverlayDiag").d(
+            "session archive=${archivePath.ifBlank { "none" }} smilReader=${smilReader != null} " +
+                "overlays=${overlayIndex.hasOverlays} narratedSpineItems=${overlayIndex.smilPathBySpineItem.size} " +
+                "chapters=${chapters.size} mappedChapters=${chapterSpineItems.size} narratedChapters=${
+                    readingOrder.count { overlayIndex.smilPathBySpineItem.containsKey(it) }
+                }"
+        )
+    }
     // The session is remembered even when there is nothing to narrate. Returning before this call
     // would make the hook count depend on whether the archive resolved, which is exactly the
     // inconsistency Compose's slot table cannot recover from — the null is carried as a value
@@ -411,7 +538,9 @@ internal fun rememberEpubMediaOverlaySession(
                 bookTitle = bookTitle,
                 narrator = narrator,
                 totalDurationMs = totalDurationMs,
-                spineItemIndexByChapter = spineItemIndexByChapter(chapters, overlayIndex)
+                overlayIndex = overlayIndex,
+                spineItemIndexByChapter = chapterSpineItems,
+                spineItemsInReadingOrder = readingOrder
             )
         }
     }
@@ -424,6 +553,10 @@ internal fun rememberEpubMediaOverlaySession(
  * than a mode of it. The two bars show different things — a spoken chunk's progress against a
  * synthesized session, a narrated clip's position in a publisher's recording — and coupling them
  * would mean one growing conditionals for the other's state.
+ *
+ * It carries the speed control because narration is the one playback surface where the recording's
+ * pace is the publisher's choice rather than the reader's: a 2× listener has no other way to say so,
+ * and `SharedMediaOverlaySpeeds` is small enough to be a menu rather than a screen.
  */
 @Composable
 internal fun EpubMediaOverlayBar(
@@ -431,14 +564,17 @@ internal fun EpubMediaOverlayBar(
     subtitle: String,
     isPlaying: Boolean,
     isLoading: Boolean,
+    speed: Float,
     canSkipPrevious: Boolean,
     canSkipNext: Boolean,
     onTogglePlayPause: () -> Unit,
     onPreviousClip: () -> Unit,
     onNextClip: () -> Unit,
+    onSpeedSelected: (Float) -> Unit,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val speedDescription = stringResource(R.string.content_desc_media_overlay_speed)
     Surface(
         shape = RoundedCornerShape(28.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -522,6 +658,44 @@ internal fun EpubMediaOverlayBar(
                     Icons.Default.SkipNext,
                     contentDescription = stringResource(R.string.content_desc_media_overlay_next)
                 )
+            }
+
+            var speedMenuExpanded by remember { mutableStateOf(false) }
+            Box {
+                TextButton(
+                    onClick = { speedMenuExpanded = true },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier
+                        .size(width = 48.dp, height = 40.dp)
+                        .semantics {
+                            contentDescription = speedDescription
+                        }
+                ) {
+                    Text(
+                        text = sharedMediaOverlaySpeedLabel(speed),
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 1
+                    )
+                }
+                DropdownMenu(
+                    expanded = speedMenuExpanded,
+                    onDismissRequest = { speedMenuExpanded = false }
+                ) {
+                    SharedMediaOverlaySpeeds.forEach { option ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = sharedMediaOverlaySpeedLabel(option),
+                                    fontWeight = if (option == speed) FontWeight.Medium else FontWeight.Normal
+                                )
+                            },
+                            onClick = {
+                                speedMenuExpanded = false
+                                onSpeedSelected(option)
+                            }
+                        )
+                    }
+                }
             }
 
             IconButton(onClick = onStop, modifier = Modifier.size(40.dp)) {

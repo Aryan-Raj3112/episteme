@@ -76,6 +76,22 @@ data class SharedMediaOverlayPlaybackRequest(
  */
 abstract class SharedMediaOverlayPlaybackBase : SharedMediaOverlayPlayback {
 
+    /**
+     * Called when the loaded chapter's clips have played out, with the spine item that just ended.
+     *
+     * "Finished" and "stopped" end in the same state and are not the same event: running off the end
+     * of a chapter should carry the narration into the next one, while a reader who pressed stop must
+     * not be narrated at again. Only the first calls this — [stop] and [release] do not, and neither
+     * does a failed load, so a host can treat it as "there is more book to read" rather than as a
+     * lifecycle notification.
+     *
+     * The host answers by calling [play] with the next chapter's request. It is invoked *after* the
+     * state has been reset, so a host that starts the next chapter immediately is not overwritten by
+     * this chapter's teardown. A host that leaves it unset simply ends playback, which is how the
+     * feature behaved before continuation existed.
+     */
+    var onChapterFinished: ((spineItemIndex: Int) -> Unit)? = null
+
     protected val mutableState = MutableStateFlow(SharedMediaOverlayPlaybackState())
 
     final override val state: StateFlow<SharedMediaOverlayPlaybackState> = mutableState.asStateFlow()
@@ -227,11 +243,31 @@ abstract class SharedMediaOverlayPlaybackBase : SharedMediaOverlayPlayback {
         }
     }
 
-    /** Publishes the state for a finished chapter. */
+    /**
+     * Publishes the state for a finished chapter, then tells the host which chapter it was.
+     *
+     * The order matters: the reset lands first, so a host that loads the next chapter from the
+     * callback is not immediately overwritten by this chapter's idle state.
+     */
     protected fun publishFinished() {
+        val finishedSpineItemIndex = mutableState.value.spineItemIndex
         onStopRequested()
         val speed = mutableState.value.speed
         request = null
         mutableState.value = SharedMediaOverlayPlaybackState(speed = speed)
+        if (finishedSpineItemIndex != null) notifyChapterFinished(finishedSpineItemIndex)
+    }
+
+    /**
+     * Hands the finished chapter to the host.
+     *
+     * Overridable because the platform may need to leave its own callback first: an engine that learns
+     * about the end of a chapter *inside* a player callback cannot start the next chapter from there
+     * without re-entering the player it is being called by. Android does exactly that (see
+     * `AndroidSharedMediaOverlayPlayback`), and the symptom of getting it wrong is a next chapter that
+     * loads and then never plays.
+     */
+    protected open fun notifyChapterFinished(spineItemIndex: Int) {
+        onChapterFinished?.invoke(spineItemIndex)
     }
 }
