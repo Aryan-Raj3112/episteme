@@ -263,7 +263,9 @@ import com.aryan.reader.shared.pdf.resolveSharedPdfBarDropX
 import com.aryan.reader.shared.pdf.resolveSharedPdfDockSnapLocation
 import com.aryan.reader.shared.pdf.resolveSharedPdfSideWheelClearOfBarBand
 import com.aryan.reader.shared.pdf.resolveSharedPdfSideWheelDropY
+import com.aryan.reader.shared.pdf.sharedPdfPopupClearanceAboveBarPx
 import com.aryan.reader.shared.pdf.sharedPdfPopupMaxHeightDp
+import com.aryan.reader.shared.pdf.sharedPdfSideWheelPopupSidePadPx
 import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockSticky
 import com.aryan.reader.shared.pdf.launchSharedPdfDockGlide
 import com.aryan.reader.shared.pdf.pdfTextDockKeyboardLiftPx
@@ -3769,7 +3771,12 @@ fun SharedMobilePdfReaderHost(
                             0.dp
                         }
                         val popupBottomPad = if (popupAboveDock && !isAnnotationSideDocked) {
-                            with(density) { (boxMaxHeightPx - dockTopYPx).toDp() } + popupDockBottomInset + popupMargin
+                            with(density) {
+                                sharedPdfPopupClearanceAboveBarPx(
+                                    dockTopYPx = dockTopYPx,
+                                    boxHeightPx = boxMaxHeightPx,
+                                ).toDp()
+                            } + popupDockBottomInset + popupMargin
                         } else {
                             0.dp
                         }
@@ -3784,12 +3791,26 @@ fun SharedMobilePdfReaderHost(
                             0.dp
                         }
                         val popupSideTopPad = if (isAnnotationSideDocked && !annotationWheelInBottomHalf) {
-                            with(density) { annotationWheelYpx.toDp() }
+                            with(density) {
+                                sharedPdfSideWheelPopupSidePadPx(
+                                    wheelYPx = annotationWheelYpx,
+                                    wheelHeightPx = annotationWheelHeightPx,
+                                    boxHeightPx = boxMaxHeightPx,
+                                    wheelInBottomHalf = false,
+                                ).toDp()
+                            }
                         } else {
                             0.dp
                         }
                         val popupSideBottomPad = if (isAnnotationSideDocked && annotationWheelInBottomHalf) {
-                            with(density) { (boxMaxHeightPx - annotationWheelYpx - annotationWheelHeightPx).toDp() }
+                            with(density) {
+                                sharedPdfSideWheelPopupSidePadPx(
+                                    wheelYPx = annotationWheelYpx,
+                                    wheelHeightPx = annotationWheelHeightPx,
+                                    boxHeightPx = boxMaxHeightPx,
+                                    wheelInBottomHalf = true,
+                                ).toDp()
+                            }
                         } else {
                             0.dp
                         }

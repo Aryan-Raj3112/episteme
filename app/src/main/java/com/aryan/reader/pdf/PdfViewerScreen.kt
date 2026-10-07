@@ -335,6 +335,7 @@ import com.aryan.reader.shared.pdf.resolveSharedPdfBarDropX
 import com.aryan.reader.shared.pdf.resolveSharedPdfDockSnapLocation
 import com.aryan.reader.shared.pdf.resolveSharedPdfSideWheelClearOfBarBand
 import com.aryan.reader.shared.pdf.resolveSharedPdfSideWheelDropY
+import com.aryan.reader.shared.pdf.sharedPdfSideWheelPopupSidePadPx
 import com.aryan.reader.shared.pdf.pdfTextDockKeyboardLiftPx
 import com.aryan.reader.shared.pdf.pdfTextDockRestingBottomPadding
 import com.aryan.reader.shared.pdf.shouldShowPdfTextDock
@@ -9626,13 +9627,30 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         val annotationWheelInBottomHalf =
             annotationWheelYpx + annotationWheelHeightPx / 2f > boxMaxHeightFloat / 2f
         val popupSidePad = if (isAnnotationSideDocked) SharedPdfSideWheelWidth + 16.dp else 0.dp
+        // Popup pads are clamped in the shared policy: the wheel is a fixed
+        // 192dp tall, so when it outlives the box (IME open, split screen)
+        // "space below the wheel" goes negative and padding throws.
         val popupSideTopPad = if (isAnnotationSideDocked && !annotationWheelInBottomHalf) {
-            with(density) { annotationWheelYpx.toDp() }
+            with(density) {
+                sharedPdfSideWheelPopupSidePadPx(
+                    wheelYPx = annotationWheelYpx,
+                    wheelHeightPx = annotationWheelHeightPx,
+                    boxHeightPx = boxMaxHeightFloat,
+                    wheelInBottomHalf = false,
+                ).toDp()
+            }
         } else {
             0.dp
         }
         val popupSideBottomPad = if (isAnnotationSideDocked && annotationWheelInBottomHalf) {
-            with(density) { (boxMaxHeightFloat - annotationWheelYpx - annotationWheelHeightPx).toDp() }
+            with(density) {
+                sharedPdfSideWheelPopupSidePadPx(
+                    wheelYPx = annotationWheelYpx,
+                    wheelHeightPx = annotationWheelHeightPx,
+                    boxHeightPx = boxMaxHeightFloat,
+                    wheelInBottomHalf = true,
+                ).toDp()
+            }
         } else {
             0.dp
         }
