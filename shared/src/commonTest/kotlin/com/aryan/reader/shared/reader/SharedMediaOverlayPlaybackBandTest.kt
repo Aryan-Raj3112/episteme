@@ -127,6 +127,64 @@ class SharedMediaOverlayPlaybackBandTest {
         assertNull(assertNotNull(sharedMediaOverlayPlaybackBand(projection(), pageIndex = null, sessionId = 1L)).locator.pageIndex)
     }
 
+    // --- which page the narrated line is on --------------------------------------------------
+
+    /**
+     * The page the band records, and the rule for finding it, together — because the recorded value
+     * is only as good as the rule, and a reader cannot see the rule while it is wrong.
+     */
+    @Test
+    fun `a fragment resolves to the page that reaches past its start`() {
+        val page = assertNotNull(sharedMediaOverlayPageForFragment(pages(), 2, fragment(start = 320)))
+        assertEquals(5, assertNotNull(sharedMediaOverlayPlaybackBand(projection(), pageIndex = page, sessionId = 1L)).locator.pageIndex)
+    }
+
+    /**
+     * The boundary convention, which is the whole reason this is a rule and not a lookup.
+     *
+     * A page's `endOffset` is exclusive, so a fragment beginning exactly where one page ends is
+     * rendered on the *next* page. An inclusive comparison would leave the reader one page behind at
+     * every boundary clip — and for a well-produced book that is most of them, since a clip is
+     * usually a paragraph and a page break usually falls between paragraphs.
+     */
+    @Test
+    fun `a fragment starting where a page ends belongs to the next page`() {
+        assertEquals(6, sharedMediaOverlayPageForFragment(pages(), 2, fragment(start = 400)))
+    }
+
+    /**
+     * Mid-pagination a chapter has no pages yet, and a guess would be a needless page turn on every
+     * clip. Nothing is the better answer, exactly as it is everywhere else in this file.
+     */
+    @Test
+    fun `an unpaginated chapter resolves to no page`() {
+        assertNull(sharedMediaOverlayPageForFragment(emptyList(), 2, fragment(start = 320)))
+        assertNull(sharedMediaOverlayPageForFragment(pages(), 3, fragment(start = 320)))
+        assertNull(sharedMediaOverlayPageForFragment(pages(), null, fragment(start = 320)))
+        assertNull(sharedMediaOverlayPageForFragment(pages(), 2, null))
+    }
+
+    /** Chapter 2 only, so a wrong chapter index has to fail rather than match by accident. */
+    private fun pages() = listOf(
+        page(0, 0, 0, 200),
+        page(1, 0, 200, 400),
+        page(4, 2, 0, 300),
+        page(5, 2, 300, 400),
+        page(6, 2, 400, 520)
+    )
+
+    private fun page(pageIndex: Int, chapterIndex: Int, startOffset: Int, endOffset: Int) = ReaderPage(
+        pageIndex = pageIndex,
+        chapterIndex = chapterIndex,
+        chapterTitle = "Chapter $chapterIndex",
+        text = "",
+        startOffset = startOffset,
+        endOffset = endOffset
+    )
+
+    private fun fragment(start: Int, end: Int = start + 20) =
+        SharedPlaybackFragment("/2/4/3", start, end)
+
     // --- when there is nothing to paint -------------------------------------------------------
 
     /**

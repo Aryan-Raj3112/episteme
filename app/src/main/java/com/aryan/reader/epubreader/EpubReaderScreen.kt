@@ -257,6 +257,8 @@ import com.aryan.reader.tts.saveReaderTtsOverlaySize
 import com.aryan.reader.tts.splitTextIntoChunks
 import com.aryan.reader.withTtsReplacements
 import com.aryan.reader.shared.reader.ReaderJumpHistory
+import com.aryan.reader.shared.reader.SharedMediaOverlayProjection
+import com.aryan.reader.shared.ui.SharedMobileEpubMediaOverlayBar
 import com.aryan.reader.shared.reader.mobileEpubChapterScrollFraction
 import com.aryan.reader.shared.reader.mobileEpubCharacterProgress
 import com.aryan.reader.shared.reader.mobileEpubCharacterDisplayProgress
@@ -1909,7 +1911,7 @@ fun EpubReaderHost(
     )
     val mediaOverlayPlaybackState by (mediaOverlaySession?.engine?.state ?: EmptyMediaOverlayPlaybackState)
         .collectAsStateWithLifecycle()
-    var mediaOverlayProjection by remember(bookId) { mutableStateOf<EpubMediaOverlayProjection?>(null) }
+    var mediaOverlayProjection by remember(bookId) { mutableStateOf<SharedMediaOverlayProjection?>(null) }
     // Which chapter the WebView last followed, so the follow-scroll fires on a chapter change and
     // not on every clip. Nothing else reads it; it is the WebView's counterpart to a surface's own
     // rectangle check.
@@ -1926,9 +1928,9 @@ fun EpubReaderHost(
     LaunchedEffect(mediaOverlaySession, mediaOverlayPlaybackState.spineItemIndex, mediaOverlayPlaybackState.clipIndex) {
         val session = mediaOverlaySession ?: return@LaunchedEffect
         val spineItemIndex = mediaOverlayPlaybackState.spineItemIndex
-        val projection = spineItemIndex?.let { session.project(it, mediaOverlayPlaybackState.clipIndex) }
-        mediaOverlayProjection = projection
-        session.onProjected(projection)
+        // `session.project` records the chapter it resolved, which is what the follow rule below
+        // compares against the visible one; the screen keeps no second copy of that.
+        mediaOverlayProjection = spineItemIndex?.let { session.project(it, mediaOverlayPlaybackState.clipIndex) }
     }
 
     // One line per clip, next to the chapter the reader is showing. The failures this feature has are
@@ -5917,7 +5919,7 @@ fun EpubReaderHost(
                         .padding(bottom = ttsOverlayPadding)
                         .padding(horizontal = 16.dp)
                 ) {
-                    EpubMediaOverlayBar(
+                    SharedMobileEpubMediaOverlayBar(
                         title = epubBook.mediaOverlays.narrator
                             ?.takeIf { it.isNotBlank() }
                             ?: context.getString(R.string.media_overlay_title),

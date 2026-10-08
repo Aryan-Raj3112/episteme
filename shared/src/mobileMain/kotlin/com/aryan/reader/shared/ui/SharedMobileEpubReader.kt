@@ -51,6 +51,7 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -134,6 +135,21 @@ import com.aryan.reader.shared.reader.ReaderJumpHistory
 import com.aryan.reader.shared.reader.PaginatedReaderState
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SharedEpubBook
+import com.aryan.reader.shared.reader.SharedMediaOverlayDocumentCache
+import com.aryan.reader.shared.reader.SharedMediaOverlayEngine
+import com.aryan.reader.shared.reader.SharedMediaOverlayIndex
+import com.aryan.reader.shared.reader.SharedMediaOverlayPlaybackState
+import com.aryan.reader.shared.reader.SharedMediaOverlayPlaybackBand
+import com.aryan.reader.shared.reader.SharedMediaOverlayProjection
+import com.aryan.reader.shared.reader.SharedMediaOverlayProjector
+import com.aryan.reader.shared.reader.SharedMediaOverlaySession
+import com.aryan.reader.shared.reader.rememberSharedMediaOverlaySmilReader
+import com.aryan.reader.shared.reader.sharedMediaOverlayIsOffered
+import com.aryan.reader.shared.reader.sharedMediaOverlayPageForFragment
+import com.aryan.reader.shared.reader.sharedMediaOverlayPlaybackBand
+import com.aryan.reader.shared.reader.sharedMediaOverlaySpineItemIndexByChapter
+import com.aryan.reader.shared.reader.sharedMediaOverlaySpineItemsInReadingOrder
+import com.aryan.reader.shared.reader.sharedMediaOverlayTextQuote
 import com.aryan.reader.shared.reader.captureReaderJumpHistoryOrigin
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import com.aryan.reader.shared.reader.ReaderPage
@@ -171,6 +187,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -204,6 +221,15 @@ private data class SharedMobileEpubActivePageTurn(
     val direction: Int,
     val touchY: Float?
 )
+
+/**
+ * The state a screen that cannot narrate still reads.
+ *
+ * A screen collects its session's state flow whenever a session exists, so the no-session case needs
+ * a flow of the same shape to collect instead of a branch inside the collect call — one code path
+ * whether or not the book has narration. Mirrors Android's `EmptyMediaOverlayPlaybackState`.
+ */
+private val EmptySharedMediaOverlayPlaybackState = MutableStateFlow(SharedMediaOverlayPlaybackState())
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -296,8 +322,26 @@ fun SharedMobileEpubReaderScreen(
      * per-screen engine (desktop/legacy behavior).
      */
     externalLocalTts: SharedMobileEpubLocalTts? = null,
+    /**
+     * The app-level media overlay engine, so narration arbitrates against the other audio surfaces
+     * while this reader is not the one composing.
+     *
+     * Null when the host has no engine — the normal answer for a book that does not narrate itself,
+     * and the answer `RS §9` asks for from a reader that cannot support overlays.
+     */
+    mediaOverlayEngine: SharedMediaOverlayEngine? = null,
+    /**
+     * Claims the audio output before narration starts, and reports when narration gives it up.
+     *
+     * Callbacks rather than an engine reference because arbitration is the *host's* decision: it owns
+     * the audiobook and both TTS engines, and the reader screen has no business knowing what else can
+     * make noise. `onMediaOverlayStarting` runs before anything is loaded, which is what makes it safe
+     * to stop the outgoing session there.
+     */
+    onMediaOverlayStarting: () -> Unit = {},
+    onMediaOverlayStopped: () -> Unit = {},
     /** Reports mini-bar state to an app-level host (global TTS bar). */
-    onReaderTtsSessionChange: (SharedReaderTtsMiniBarState?) -> Unit = {}
+    onReaderTtsSessionChange: (SharedReaderTtsMiniBarState?) -> Unit = {},
 ) {
     val motionPolicy = rememberReaderMotionPolicy()
     remember(book.id) {
@@ -421,6 +465,7 @@ fun SharedMobileEpubReaderScreen(
         mutableIntStateOf(book.readerPosition?.chapterIndex?.coerceAtLeast(0) ?: 0)
     }
     val activeCloudTtsChunk = cloudTtsState.progress.currentChunk
+
 
     // Android parity (chapter chaining): read-aloud plans one chapter at a
     // time. Planning the rest of the book on the main thread froze the UI
@@ -1427,6 +1472,245 @@ fun SharedMobileEpubReaderScreen(
         followTtsChunkNavigation(chunk)
     }
 
+    // --- EPUB media overlays: the publisher's own narration ---------------------------------------
+    //
+    // One session, one projector, one follow rule, mirroring the read-aloud wiring above. The two
+    // never run at once (starting narration stops read-aloud and vice versa), so the single playback
+    // highlight each surface paints always holds the live engine's position.
+
+    val mediaOverlayEngineScope = rememberCoroutineScope()
+    // The engine is app-level, so it outlives this composition; the archive is not, and detaching on
+    // dispose is what stops a resource loader answering for a book this reader no longer shows.
+    DisposableEffect(mediaOverlayEngine, book.id) {
+        mediaOverlayEngine?.attachArchive(book)
+        onDispose { mediaOverlayEngine?.attachArchive(null) }
+    }
+    // Empty rather than null: the archive reader's contract is that a blank path means "no archive",
+// and the hook order here is deliberately unconditional so a screen that recomposes around a book
+    // that cannot narrate does not change how many composables it calls.
+    val mediaOverlaySmilReader = rememberSharedMediaOverlaySmilReader(book.path.orEmpty())
+    val mediaOverlayCache = remember(loadedBook?.mediaOverlays, mediaOverlaySmilReader, book.id) {
+        val index = loadedBook?.mediaOverlays ?: SharedMediaOverlayIndex.EMPTY
+        mediaOverlaySmilReader?.takeIf { index.hasOverlays }
+            ?.let { readSmil -> SharedMediaOverlayDocumentCache(index, readSmil) }
+    }
+    val mediaOverlayChapters = remember(loadedBook?.chapters) { loadedBook?.chapters.orEmpty() }
+    val mediaOverlaySpineItemsByChapter = remember(mediaOverlayChapters, loadedBook?.mediaOverlays) {
+        val index = loadedBook?.mediaOverlays ?: SharedMediaOverlayIndex.EMPTY
+        sharedMediaOverlaySpineItemIndexByChapter(
+            chapterContentPaths = mediaOverlayChapters.map { it.baseHref.orEmpty() },
+            overlayIndex = index
+        )
+    }
+    val mediaOverlaySession = remember(mediaOverlayCache, mediaOverlayEngine, mediaOverlayChapters, book.id) {
+        val engine = mediaOverlayEngine
+        val cache = mediaOverlayCache
+        val index = loadedBook?.mediaOverlays ?: SharedMediaOverlayIndex.EMPTY
+        if (engine == null || cache == null) {
+            null
+        } else {
+            SharedMediaOverlaySession(
+                engine = engine,
+                projector = SharedMediaOverlayProjector(
+                    cache = cache,
+                    chapters = mediaOverlayChapters,
+                    spineItemIndexToChapterIndex = mediaOverlaySpineItemsByChapter
+                ),
+                bookId = book.id,
+                bookTitle = loadedBook?.title ?: book.displayName.orEmpty(),
+                narrator = index.narrator,
+                totalDurationMs = index.totalDurationMs,
+                overlayIndex = index,
+                spineItemIndexByChapter = mediaOverlaySpineItemsByChapter,
+                spineItemsInReadingOrder = sharedMediaOverlaySpineItemsInReadingOrder(
+                    mediaOverlayChapters.size,
+                    mediaOverlaySpineItemsByChapter
+                )
+            )
+        }
+    }
+    val mediaOverlayPlaybackState by remember(mediaOverlaySession) {
+        mediaOverlaySession?.engine?.state ?: EmptySharedMediaOverlayPlaybackState
+    }.collectAsState()
+    var mediaOverlayProjection by remember(book.id) { mutableStateOf<SharedMediaOverlayProjection?>(null) }
+    /**
+     * The chapter narration asked the reader to show, so the rule below can tell "the reader
+     * navigated" apart from "narration moved and we followed it". Without it, carrying narration into
+     * the next chapter would look like a manual navigation — and the answer to that would be to
+     * restart the chapter narration just began, so following forward would rewind to the top of every
+     * chapter. Consumed on first use: a change that is *not* the follow is the reader's, by
+     * definition.
+     */
+    var mediaOverlayFollowedChapter by remember(book.id) { mutableStateOf<Int?>(null) }
+
+    // Playback position -> reader coordinates. Keyed on the clip, so a chapter's anchors resolve once
+    // and a clip advance within the chapter is a map lookup.
+    LaunchedEffect(mediaOverlaySession, mediaOverlayPlaybackState.spineItemIndex, mediaOverlayPlaybackState.clipIndex) {
+        val session = mediaOverlaySession ?: return@LaunchedEffect
+        val spineItemIndex = mediaOverlayPlaybackState.spineItemIndex ?: return@LaunchedEffect
+        mediaOverlayProjection = session.project(spineItemIndex, mediaOverlayPlaybackState.clipIndex)
+    }
+
+    /**
+     * The page the narrated fragment sits on, or null while the chapter has no pages yet.
+     *
+     * Resolved from the reader's own pages rather than carried on the band, because a band does not
+     * care which page it is on — only the follow does, and it asks the same question one step later.
+     */
+    val mediaOverlayPageIndex: Int? = remember(mediaOverlayProjection, pages) {
+        sharedMediaOverlayPageForFragment(
+            pages = pages,
+            chapterIndex = mediaOverlayProjection?.chapterIndex,
+            fragment = mediaOverlayProjection?.fragment
+        )
+    }
+
+    /**
+     * The narration band: the paintable highlight plus the locator a follow would navigate to.
+     *
+     * A [UserHighlight] rather than a fragment parameter because that is how this screen already
+     * paints a spoken chunk, and because `isTransientPlaybackBand` makes the existing hit-testing
+     * refuse to select it — so a narrated line can never be mistaken for a highlight the reader made,
+     * and no new paint path or hit-test rule is needed.
+     *
+     * The quote is read from the block the fragment lands in rather than from the chapter's
+     * `plainText`, because `plainText` has book replacements applied to it: a reader who replaced a
+     * word would otherwise get a quote that no longer matches the rendered text.
+     *
+     * The session's id and clip count are in the key rather than a value of this screen's own: a
+     * continuation rewrites the count without changing the projection — a bar reading "1 / 3" over a
+     * chapter with two clips — and a fresh run changes the id, which is what retires the last run's
+     * band instead of leaving it painted.
+     */
+    val mediaOverlayBand: SharedMediaOverlayPlaybackBand? = remember(
+        mediaOverlayProjection,
+        mediaOverlayPageIndex,
+        mediaOverlaySession?.clipCount,
+        mediaOverlaySession?.bandSessionId,
+    ) {
+        sharedMediaOverlayPlaybackBand(
+            projection = mediaOverlayProjection,
+            pageIndex = mediaOverlayPageIndex,
+            textQuote = sharedMediaOverlayTextQuote(
+                chapters = mediaOverlayChapters,
+                chapterIndex = mediaOverlayProjection?.chapterIndex,
+                fragment = mediaOverlayProjection?.fragment
+            ),
+            sessionId = mediaOverlaySession?.bandSessionId ?: 0L
+        )
+    }
+
+    // Narration drives the reader, and only ever towards the narrated line.
+    //
+    // Android benchmark (`EpubReaderScreen.kt` media overlay follow, `keepVisible = true`): a chapter
+    // change navigates, and within a chapter the paginated reader turns only when the narrated page
+    // is not the one showing. Turning on every clip is the jarring auto-scroll that read-aloud used
+    // to have — a clip boundary every couple of seconds, and the page is usually already right — so
+    // the within-chapter case turns only when it would otherwise narrate off-screen. Vertical mode
+    // needs no rule here: its document script keeps the line on screen itself.
+    LaunchedEffect(
+        mediaOverlayPlaybackState.spineItemIndex,
+        mediaOverlayPlaybackState.clipIndex,
+        mediaOverlayProjection?.fragment,
+        currentChapterIndex,
+        currentPageIndex
+    ) {
+        val session = mediaOverlaySession ?: return@LaunchedEffect
+        val target = session.chapterIndex ?: return@LaunchedEffect
+        if (!mediaOverlayPlaybackState.hasBook) return@LaunchedEffect
+
+        if (target != currentChapterIndex) {
+            mediaOverlayFollowedChapter = target
+            navigate(
+                ReaderLocator(
+                    chapterIndex = target,
+                    pageIndex = null,
+                    startOffset = 0,
+                    endOffset = 0,
+                    textQuote = null,
+                    cfi = null
+                ),
+                detachFromTts = false
+            )
+            return@LaunchedEffect
+        }
+
+        if (settings.readingMode != ReaderReadingMode.PAGINATED) return@LaunchedEffect
+        val bandPage = mediaOverlayBand?.locator?.pageIndex ?: return@LaunchedEffect
+        if (bandPage < 0 || bandPage == currentPageIndex) return@LaunchedEffect
+        navigate(mediaOverlayBand.locator, detachFromTts = false)
+    }
+
+    // The reader drives the narration: navigating away while narration plays resumes it there.
+    // `RS §9.3.1` requires this — a reader who jumps to another chapter must hear that chapter, not
+    // the one they left.
+    LaunchedEffect(currentChapterIndex) {
+        val session = mediaOverlaySession ?: return@LaunchedEffect
+        if (mediaOverlayFollowedChapter == currentChapterIndex) {
+            mediaOverlayFollowedChapter = null
+            return@LaunchedEffect
+        }
+        mediaOverlayFollowedChapter = null
+        if (!mediaOverlayPlaybackState.hasBook) return@LaunchedEffect
+        if (session.chapterIndex == currentChapterIndex) return@LaunchedEffect
+        val readerOffset = currentLocator
+            ?.takeIf { it.chapterIndex == currentChapterIndex }
+            ?.startOffset
+            ?.takeIf { it >= 0 }
+        session.start(currentChapterIndex, readerOffset)
+    }
+
+    /**
+     * Starts or stops narration from the toolbar.
+     *
+     * Arbitration happens *before* anything is loaded, and through the host rather than by reaching
+     * for another engine: read-aloud and the audiobook own real audio on their own engines, and a
+     * narration started over either would be two voices at once. The host knows what else can make
+     * noise; this screen only states the intent.
+     */
+    // Resolved during composition rather than inside `toggleMediaOverlay`, because
+        // `readerString` is a composable and the toggle runs on a click.
+        val mediaOverlayUnavailableMessage = readerString(
+            "media_overlay_chapter_unavailable",
+            "This chapter has no narration"
+        )
+        fun toggleMediaOverlay() {
+            val session = mediaOverlaySession
+            if (session == null) return
+            if (mediaOverlayPlaybackState.hasBook) {
+                session.stop()
+                onMediaOverlayStopped()
+                return
+            }
+            onMediaOverlayStarting()
+            val chapterIndex = currentChapterIndex
+            val readerOffset = currentLocator
+                ?.takeIf { it.chapterIndex == chapterIndex }
+                ?.startOffset
+                ?.takeIf { it >= 0 }
+            mediaOverlayEngineScope.launch {
+                if (!session.start(chapterIndex, readerOffset)) {
+                    onShowBanner(mediaOverlayUnavailableMessage)
+                }
+            }
+        }
+
+    /**
+     * The reader's highlights plus whichever playback band is live, for the native surfaces.
+     *
+     * One list rather than three, and the precedence is the whole point: narration and read-aloud
+     * never run at once — starting either stops the other through the arbiter — so exactly one band
+     * exists at a time and a surface's single playback parameter always holds the live engine's
+     * position. Without arbitration this ordering would be a guess, and a reader would see the
+     * highlight jump between engines mid-paragraph.
+     */
+    val playbackHighlights: List<UserHighlight> = mediaOverlayBand?.highlight
+        ?.let { highlights + it }
+        ?: activeTtsChunk?.let { chunk -> highlights + chunk.toHighlight(localTts.progress.sessionId) }
+        // Cloud read-aloud paints the same yellow chunk highlight as the local engine (Android parity).
+        ?: activeCloudTtsChunk?.let { chunk -> highlights + chunk.toHighlight(cloudTtsState.progress.sessionId) }
+        ?: highlights
+
 
     // Stuck-highlight clear (vertical WebView) for the cloud engine too:
     // ending a cloud session must push readerSetTtsLocator(null) to the page,
@@ -1842,15 +2126,7 @@ fun SharedMobileEpubReaderScreen(
                                     requestId = navigationRequestId,
                                     readingMode = settings.readingMode
                                 ),
-                                highlights = activeTtsChunk?.let { chunk ->
-                                    highlights + chunk.toHighlight(localTts.progress.sessionId)
-                                }
-                                    // Cloud read-aloud paints the same yellow chunk
-                                    // highlight as the local engine (Android parity).
-                                    ?: activeCloudTtsChunk?.let { chunk ->
-                                        highlights + chunk.toHighlight(cloudTtsState.progress.sessionId)
-                                    }
-                                    ?: highlights,
+                                highlights = playbackHighlights,
                                 // Highlight placement uses the same chapter layout Android does, so a
                                 // repeated sentence resolves to one block on both platforms.
                                 chapterTextIndexes = chapterTextIndexes.value
@@ -2356,15 +2632,7 @@ fun SharedMobileEpubReaderScreen(
                                     requestId = navigationRequestId,
                                     readingMode = settings.readingMode
                                 ),
-                                highlights = activeTtsChunk?.let { chunk ->
-                                    highlights + chunk.toHighlight(localTts.progress.sessionId)
-                                }
-                                    // Cloud read-aloud paints the same yellow chunk
-                                    // highlight as the local engine (Android parity).
-                                    ?: activeCloudTtsChunk?.let { chunk ->
-                                        highlights + chunk.toHighlight(cloudTtsState.progress.sessionId)
-                                    }
-                                    ?: highlights,
+                                highlights = playbackHighlights,
                                 // Same chapter layout Android places highlights against, so scrolling
                                 // and paginating agree on where a highlight is.
                                 chapterTextIndexes = chapterTextIndexes.value
@@ -2528,6 +2796,11 @@ fun SharedMobileEpubReaderScreen(
                                     (activeTtsChunk ?: activeCloudTtsChunk)?.toLocator()
                                 )
                             )
+                            // Narration paints through its own bridge function, and only when it is
+                            // the live engine. Both engines cannot be speaking at once (the arbiter
+                            // stops one to start the other), so one `?: null` here decides which
+                            // surface owns the highlight without a second rule to keep in step.
+                            add(sharedMobileEpubMediaOverlayFragmentScript(mediaOverlayProjection))
                         }.joinToString(separator = "\n")
                         // Android parity (EpubReaderRenderSurfaces): shrink the WebView
                         // by the full PageInfo bar height instead of overlaying it, so the
@@ -2946,6 +3219,15 @@ fun SharedMobileEpubReaderScreen(
                                 showChrome = !autoScrollMusicianMode
                             }
                         },
+                        // Android benchmark (EpubReaderControls.kt:406): offered only when the book
+                        // declares overlays *and* the platform can reach its archive, so a reader who
+                        // cannot hear the narration never sees a control for it.
+                        hasMediaOverlayNarration = sharedMediaOverlayIsOffered(
+                            index = loadedBook?.mediaOverlays,
+                            playButtonVisible = mediaOverlaySession != null
+                        ),
+                        isMediaOverlayActive = mediaOverlayPlaybackState.hasBook,
+                        onToggleMediaOverlay = ::toggleMediaOverlay,
                     )
                 }
                 if (loadedBook != null && pages.isNotEmpty()) {
@@ -3105,6 +3387,44 @@ fun SharedMobileEpubReaderScreen(
                             walletMigrated = walletMigrated,
                         )
                     }
+                }
+                // The narration bar. Android parity (EpubReaderScreen.kt:5901): bottom-aligned,
+                // chrome-gated, and the same composable on both platforms so the two cannot drift.
+                AnimatedVisibility(
+                    visible = mediaOverlayPlaybackState.hasBook && showChrome,
+                    enter = slideInVertically(animationSpec = tween(motionPolicy.durationMillis(200))) { it } + fadeIn(animationSpec = tween(motionPolicy.durationMillis(200))),
+                    exit = slideOutVertically(animationSpec = tween(motionPolicy.durationMillis(200))) { it } + fadeOut(animationSpec = tween(motionPolicy.durationMillis(200))),
+                    modifier = Modifier
+                        .align(BiasAlignment(1f, 1f))
+                        .padding(bottom = epubTtsBottomPadding)
+                        .padding(horizontal = 16.dp)
+                ) {
+                    val session = mediaOverlaySession
+                    val clipCount = session?.clipCount ?: 0
+                    val clipIndex = mediaOverlayPlaybackState.clipIndex
+                    SharedMobileEpubMediaOverlayBar(
+                        title = loadedBook?.mediaOverlays?.narrator
+                            ?.takeIf { it.isNotBlank() }
+                            ?: readerString("media_overlay_title", "Narration"),
+                        subtitle = listOfNotNull(
+                            loadedBook?.mediaOverlays?.narrator?.takeIf { it.isNotBlank() },
+                            if (clipCount > 0) "${clipIndex + 1} / $clipCount" else null
+                        ).joinToString(" · "),
+                        isPlaying = mediaOverlayPlaybackState.isPlaying,
+                        isLoading = mediaOverlayPlaybackState.isLoading,
+                        speed = mediaOverlayPlaybackState.speed,
+                        canSkipPrevious = clipIndex > 0,
+                        canSkipNext = clipCount > 0 && clipIndex < clipCount - 1,
+                        onTogglePlayPause = { session?.togglePlayPause() },
+                        onPreviousClip = { session?.previousClip() },
+                        onNextClip = { session?.nextClip() },
+                        onSpeedSelected = { session?.setSpeed(it) },
+                        onStop = {
+                            session?.stop()
+                            onMediaOverlayStopped()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
                 // Android parity (EpubReaderScreen autoScrollPadding /
                 // autoScrollAlignmentBias): the overlay clears the bottom

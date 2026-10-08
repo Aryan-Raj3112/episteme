@@ -1,17 +1,24 @@
 package com.aryan.reader.shared.reader
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 
 /**
- * iOS has no archive reader for media overlays yet.
+ * iOS's SMIL reader: a reader over the archive the book was loaded through.
  *
- * The iOS engine does not exist either — [IosSharedMediaOverlayPlaybackHolder] holds the seam for
- * it — so a SMIL reader alone would be a reference nobody can act on. Both land together, when the
- * `AVPlayer` engine reads its SMIL bodies through `IosZipEpubArchive`, the same way Android's
- * engine reads them through `SharedJvmEpubArchiveReader`.
+ * Borrowed rather than opened — see [SharedMediaOverlayArchiveReader] for why a second
+ * [com.aryan.reader.shared.ios.IosZipEpubArchive] over a 124 MB book is not a cost worth paying for
+ * a feature the book may never use.
  *
- * Returning null is the in-spec reader behaviour (`RS §9`): a reader that does not support overlays
- * ignores them and opens the book normally. Android is the benchmark; iOS follows it.
+ * Null when no archive is registered at [bookPath], which is the honest answer rather than a
+ * placeholder: it means this platform cannot reach the book, and `RS §9` requires exactly that
+ * degrade — a reader that does not support overlays ignores them and opens the book normally.
+ * Android is the benchmark; iOS follows it.
  */
 @Composable
-actual fun rememberSharedMediaOverlaySmilReader(bookPath: String): ((String) -> String?)? = null
+actual fun rememberSharedMediaOverlaySmilReader(bookPath: String): ((String) -> String?)? =
+    remember(bookPath) {
+        SharedMediaOverlayArchiveReader.at(bookPath)?.let { reader ->
+            { path -> reader.readTextOrNull(path) }
+        }
+    }

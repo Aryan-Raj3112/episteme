@@ -24,6 +24,7 @@ struct ContentView: View {
 
     private let bridge = ReaderIosBridge()
     private let audiobookPlayer = AudiobookPlayerController()
+    private let mediaOverlayPlayer = MediaOverlayPlayerController()
     private let cloudFolderSync = LocalCloudFolderSyncController()
     @StateObject private var localStoreKit = LocalStoreKitController()
     @StateObject private var localAccount = LocalAccountController()
@@ -275,6 +276,87 @@ struct ContentView: View {
             }
             bridge.setAudiobookStopHandler {
                 audiobookPlayer.stop()
+            }
+            // EPUB media overlay narration. The clip table, the clip bounds and the "advance now"
+            // decisions all live in Kotlin; Swift only moves audio and reports where it is, because
+            // AVPlayerItem cannot clip a MediaItem the way ExoPlayer's ClippingConfiguration can.
+            //
+            // The bridge goes first and separately: it is the pipe through which the resource loader
+            // reaches the archive, and the archive is Kotlin's — an IosZipEpubArchive holds the zip in
+            // memory, which is exactly why the recording is never written to disk.
+            mediaOverlayPlayer.bridge = bridge
+            bridge.setMediaOverlayPlayHandler { setup in
+                // The explicit `-> MediaOverlayClipRequest?` is load-bearing. Swift ships two `compactMap`
+                // overloads, one taking an optional-returning closure and one taking a plain one, and
+                // `return nil` makes it pick the plain one and fail. Naming the return type picks the
+                // overload that actually drops the element.
+                let clips: [MediaOverlayClipRequest] = setup.clips.compactMap { clip -> MediaOverlayClipRequest? in
+                    // The plan already dropped clips with no audio, so a nil path here would mean
+                    // the contract was broken upstream. Dropping the clip keeps a bad entry from
+                    // becoming a `reader-epub-audio:` URI naming the empty path, which is the one
+                    // failure that reads as "narration is broken" rather than "one clip is".
+                    guard let audioPath = clip.audioPath, !audioPath.isEmpty else { return nil }
+                    return MediaOverlayClipRequest(
+                        clipIndex: Int(clip.clipIndex),
+                        // The scheme and its percent-encoding are Kotlin's, byte-identical to the
+                        // URI Android's data source routes, so one book is addressed the same way
+                        // on both platforms.
+                        audioUri: SharedMediaOverlayAudioUri.shared.uriFor(entryPath: audioPath),
+                        clipBeginMs: Double(clip.clipBeginMs),
+                        clipEndMs: clip.clipEndMs.map { Double($0.int64Value) }
+                    )
+                }
+                mediaOverlayPlayer.play(
+                    MediaOverlayPlaybackSetup(
+                        spineItemIndex: Int(setup.spineItemIndex),
+                        title: setup.bookTitle,
+                        narrator: setup.narrator,
+                        totalDurationMs: nil,
+                        clips: clips,
+                        startPlaybackIndex: Int(setup.startClipIndex),
+                        playWhenReady: setup.playWhenReady
+                    )
+                )
+            }
+            bridge.setMediaOverlayPauseHandler {
+                mediaOverlayPlayer.pause()
+            }
+            bridge.setMediaOverlayResumeHandler {
+                mediaOverlayPlayer.resume()
+            }
+            bridge.setMediaOverlayStopHandler {
+                mediaOverlayPlayer.stop()
+            }
+            bridge.setMediaOverlaySpeedHandler { speed in
+                mediaOverlayPlayer.setSpeed(speed.floatValue)
+            }
+            bridge.setMediaOverlayRestartClipHandler {
+                mediaOverlayPlayer.restartClip()
+            }
+            bridge.setMediaOverlaySeekToClipHandler { spineItemIndex, clipIndex in
+                mediaOverlayPlayer.seek(
+                    toClip: clipIndex.intValue,
+                    spineItemIndex: spineItemIndex.intValue
+                )
+            }
+            mediaOverlayPlayer.onUpdate = { spineItemIndex, clipIndex, positionMs, isPlaying, isLoading, error in
+                // The other direction of the same asymmetry: a Kotlin `Int` *passed into* Swift is
+                // `Int32`, so going back out converts again. The controller deliberately speaks plain
+                // `Int` so these conversions stay at this one boundary.
+                bridge.updateMediaOverlayPlayback(
+                    spineItemIndex: Int32(spineItemIndex),
+                    clipIndex: Int32(clipIndex),
+                    positionMs: positionMs,
+                    isPlaying: isPlaying,
+                    isLoading: isLoading,
+                    error: error
+                )
+            }
+            mediaOverlayPlayer.onChapterFinished = { spineItemIndex in
+                bridge.notifyMediaOverlayChapterFinished(spineItemIndex: Int32(spineItemIndex))
+            }
+            mediaOverlayPlayer.onPlaybackSessionEnded = {
+                bridge.notifyMediaOverlaySessionEnded()
             }
             bridge.setAudiobookMetadataHandler { filePath, fallbackTitle, completion in
                 audiobookPlayer.extractMetadata(

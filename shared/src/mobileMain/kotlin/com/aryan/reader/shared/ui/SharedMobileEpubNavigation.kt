@@ -64,6 +64,7 @@ import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubTocEntry
+import com.aryan.reader.shared.reader.SharedMediaOverlayProjection
 import com.aryan.reader.shared.reader.findElementOffset
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import kotlinx.coroutines.delay
@@ -811,6 +812,48 @@ internal fun sharedMobileEpubNavigationScript(
           }, 125);
         })();
         """.trimIndent()
+}
+
+/**
+ * The narration band, for the WebView vertical surface.
+ *
+ * Its own bridge function rather than a variant of [sharedMobileEpubTtsNavigationScript] because the
+ * two paint through deliberately different machinery: the read-aloud path repaints a stored
+ * highlight by quote and cfi, while a media overlay anchor is resolved from the same parse that
+ * produced the blocks and so is exact by construction — reaching for the quote repair there would
+ * hide a genuinely wrong offset behind a fuzzy match.
+ *
+ * A null projection clears the band, which is what ends a narration run: without the explicit clear
+ * the last narrated line would stay painted after the audio stopped.
+ */
+internal fun sharedMobileEpubMediaOverlayFragmentScript(
+    projection: SharedMediaOverlayProjection?
+): String {
+    // The chapter comes from the projection rather than the fragment: a fragment is offsets in *a*
+    // chapter, and only the projection knows which one.
+    val chapterIndex = projection?.chapterIndex
+    val fragment = projection?.fragment
+    val fragmentJson = if (chapterIndex != null && fragment != null) {
+        buildJsonObject {
+            put("chapterIndex", chapterIndex)
+            put("startOffset", fragment.startAbs)
+            put("endOffset", fragment.endAbs)
+            fragment.blockCfi?.let { put("cfi", it) }
+        }.toString()
+    } else {
+        "null"
+    }
+    // Always ask, and let the script measure. Android's WebView path asks only on a chapter change
+    // (`EpubReaderScreen.kt:1997`), because it anchors by element id and has no offsets to measure
+    // against, so a chapter change is the only evidence it has. This path carries the real fragment,
+    // and `mediaOverlayFragmentNeedsFollowScroll` compares it against the actual viewport — the same
+    // answer the native surfaces reach by comparing against the page. Asking only on a chapter change
+    // here would be the approximation where the measurement is available.
+    //
+    // Followable is exactly what was sent: the script scrolls by the fragment's own chapter, so a
+    // request without one has nothing to scroll to.
+    val follow = fragmentJson != "null"
+    return "if (window.readerSetMediaOverlayFragment) window.readerSetMediaOverlayFragment($fragmentJson, $follow);"
 }
 
 internal fun sharedMobileEpubTtsNavigationScript(locator: ReaderLocator?): String {

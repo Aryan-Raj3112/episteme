@@ -102,9 +102,11 @@ class PdfHighlightGeometryTest {
         val points = pdfHighlightWavePoints(style, PdfHighlightLine(0f, width, 0f, height))
         assertTrue(points.isNotEmpty())
         // The crest is the true sine value at that phase, not the full amplitude.
+        // `kotlin.math` throughout, not `java.lang.Math`: this is a common test and `Math` does not
+        // exist on Kotlin/Native. `sin` has a Float overload, so no trailing conversion is needed.
         val expected = baseline - style.amplitude * kotlin.math.sin(
-            2f * Math.PI.toFloat() * 0.2f
-        ).toFloat()
+            2f * kotlin.math.PI.toFloat() * 0.2f
+        )
         assertTrue(
             kotlin.math.abs(points.minOf { it.y } - expected) < 0.05f,
             "arc should follow the sine, got ${points.minOf { it.y }} expected ~$expected",

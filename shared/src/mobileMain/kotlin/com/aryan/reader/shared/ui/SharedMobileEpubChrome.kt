@@ -39,6 +39,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
@@ -141,6 +142,14 @@ internal object SharedMobileEpubAxTags {
     const val MORE = "EpubMore"
     const val CONTENT = "EpubReaderContent"
     const val PAGE_INFO = "EpubPageInfo"
+
+    /**
+     * The narration toggle, present only for a book that has media overlays.
+     *
+     * Conditional rather than always-rendered because a book without a publisher's recording must
+     * not show a button that does nothing, so a test has to assert on its presence, not its label.
+     */
+    const val MEDIA_OVERLAY = "EpubMediaOverlay"
 }
 
 /**
@@ -253,6 +262,17 @@ internal fun SharedMobileEpubTopBar(
     onKeepScreenOnChange: (Boolean) -> Unit,
     autoScroll: Boolean,
     onAutoScrollChange: (Boolean) -> Unit,
+    /**
+     * Whether this book narrates itself, and whether it is narrating right now.
+     *
+     * Android benchmark (`EpubReaderControls.kt:406`): the icon renders hardcoded, after the tool
+     * loop and before the overflow button, rather than as a customizable [ReaderTool] — a book
+     * either has a publisher's narration or it does not, so there is nothing for a reader to
+     * arrange. Defaults keep a caller that predates the feature compiling.
+     */
+    hasMediaOverlayNarration: Boolean = false,
+    isMediaOverlayActive: Boolean = false,
+    onToggleMediaOverlay: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showReadingModeExpanded by remember { mutableStateOf(false) }
@@ -394,6 +414,35 @@ internal fun SharedMobileEpubTopBar(
                         Icon(Icons.Default.Ai, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
                     else -> Unit
+                }
+            }
+            if (hasMediaOverlayNarration) {
+                // The icon's description is the *action*, following the read-aloud button above: a
+                // screen reader has to say what pressing this does, and one name for both states
+                // leaves the button reading identically whether narration is running or not. The
+                // tooltip keeps the feature name as its label.
+                val narrationActionDescription = readerString(
+                    if (isMediaOverlayActive) "content_desc_media_overlay_stop" else "content_desc_media_overlay_start",
+                    if (isMediaOverlayActive) "Stop narration" else "Start narration"
+                )
+                IconButton(
+                    onClick = onToggleMediaOverlay,
+                    modifier = Modifier
+                        .testTag(SharedMobileEpubAxTags.MEDIA_OVERLAY)
+                        .semantics { contentDescription = narrationActionDescription }
+                ) {
+                    Icon(
+                        // AutoMirrored because the Android drawable this mirrors declares
+                        // `android:autoMirrored="true"` — the speaker has to face the sound in an RTL
+                        // layout, and a non-mirrored copy would point the wrong way there.
+                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = null,
+                        tint = if (isMediaOverlayActive) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        }
+                    )
                 }
             }
             Box {

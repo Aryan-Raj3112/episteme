@@ -172,6 +172,36 @@ class SharedMediaOverlayPlaybackPlanTest {
     }
 
     /**
+     * The same mapping on a bare clip list, which is what an engine actually holds.
+     *
+     * Pinned separately from the plan because iOS translates a native clip report through this and
+     * Android translates a `par` seek through it, and the failure it guards is silent: using the
+     * source index as a position freezes the reader's highlight on one line from the first dropped
+     * clip onwards, while the voice carries on reading.
+     */
+    @Test
+    fun `a dropped clip shifts every later position`() {
+        val loaded = listOf(clip(0, 0, 2_000), clip(2, 4_000, 6_000), clip(5, 10_000, 12_000))
+        assertEquals(0, loaded.playbackIndexOfSourceClip(0))
+        assertEquals(1, loaded.playbackIndexOfSourceClip(2))
+        assertEquals(2, loaded.playbackIndexOfSourceClip(5))
+    }
+
+    /**
+     * -1, not 0: a clip that is not loaded must not read as the first clip.
+     *
+     * A caller that ignored the sentinel would jump the reader to the top of the chapter on any
+     * unrecognised report, which is the opposite of staying where the voice is.
+     */
+    @Test
+    fun `a clip that was never loaded is absent rather than the first one`() {
+        val loaded = listOf(clip(0, 0, 2_000), clip(2, 4_000, 6_000))
+        assertEquals(-1, loaded.playbackIndexOfSourceClip(1))
+        assertEquals(-1, loaded.playbackIndexOfSourceClip(99))
+        assertEquals(-1, emptyList<SharedMediaOverlayClip>().playbackIndexOfSourceClip(0))
+    }
+
+    /**
      * An unknown media duration means the total is unknown, not zero — a zero would look finished.
      * A *known* duration with a missing `clipEnd` is the opposite case and does resolve: the clip
      * runs to the end of the file, so the total is knowable.
@@ -311,7 +341,7 @@ class SharedMediaOverlayPlaybackPlanTest {
      * spine item — and the item *after* it is still found.
      */
     @Test
-    fun `continuation reads the order it is given, not the spine array`() {
+    fun `continuation reads the order it is given and not the spine array`() {
         val index = index(narrated = listOf(4, 9))
 
         // Chapter order 4, 4, 9 — the caller deduplicates before asking.

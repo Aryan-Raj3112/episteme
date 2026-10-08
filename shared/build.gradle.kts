@@ -286,3 +286,25 @@ val verifyPortableSharedSources by tasks.registering {
 tasks.matching { it.name == "check" }.configureEach {
     dependsOn(verifyPortableSharedSources)
 }
+
+// Gradle 9.3.1 cannot read the Kotlin/Native test-event stream written by Kotlin 2.3.10's plugin:
+// its own `BaseSerializerFactory$EnumSerializer` throws `ArrayIndexOutOfBoundsException` while
+// deserializing a `TestOutputEvent`, from inside `DefaultBuildOperationQueue.markFinished`.
+// That kills the test task *after* the tests have run, so a fully green native suite reports as a
+// failed build — and because report generation is what crashed, neither HTML nor XML is written.
+//
+// Both report formats are therefore turned off for the native test tasks. The suite still gates the
+// build on real failures (the task's exit status), and the console summary still prints counts, so
+// nothing is masked — only the two generated artefacts are lost, and both are redundant with the
+// console.
+//
+// This is a Gradle downgrade away from being fixed properly, and that is deliberately not done here:
+// the wrapper is shared by every module, so trading the whole build's toolchain to recover an HTML
+// page would be a bad trade. Re-check when Gradle or Kotlin is next bumped.
+//
+// `AbstractTestTask`, not `Test`: the Kotlin/Native test tasks extend the former, so a `Test` matcher
+// silently matches nothing and the build fails exactly as before.
+tasks.withType<AbstractTestTask>().matching { it.name.startsWith("ios") }.configureEach {
+    reports.html.required.set(false)
+    reports.junitXml.required.set(false)
+}

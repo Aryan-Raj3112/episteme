@@ -26,6 +26,34 @@ import com.aryan.reader.shared.playbackBandHighlight
  */
 
 /**
+ * The page a fragment sits on, or null when the pages do not cover it.
+ *
+ * The first page of the chapter that reaches past the fragment's start — the same rule as Android's
+ * `IPaginator.findPageForCfiAndOffset`, and for the same reason: a fragment is a point in the
+ * chapter's text, and the page containing that point is the one a reader has to be looking at.
+ *
+ * Offsets rather than cfi because the reader's pages already carry chapter-absolute offsets, so this
+ * needs no second index. The comparison is strict (`endOffset > startAbs`) so a fragment starting
+ * exactly where one page ends belongs to the *next* page, which is where it is actually rendered —
+ * a page's end offset is exclusive, and an inclusive comparison would leave the reader one page
+ * behind for every boundary clip.
+ *
+ * Null rather than a guess when the pages do not cover the fragment: a chapter mid-pagination has no
+ * pages yet, and a wrong page is a needless page turn on every clip.
+ */
+fun sharedMediaOverlayPageForFragment(
+    pages: List<ReaderPage>,
+    chapterIndex: Int?,
+    fragment: SharedPlaybackFragment?
+): Int? {
+    val chapter = chapterIndex ?: return null
+    val target = fragment ?: return null
+    return pages.firstOrNull { page ->
+        page.chapterIndex == chapter && page.endOffset > target.startAbs
+    }?.pageIndex
+}
+
+/**
  * The band for one narration position.
  *
  * @param highlight paint-only; see [UserHighlight.isTransientPlaybackBand].

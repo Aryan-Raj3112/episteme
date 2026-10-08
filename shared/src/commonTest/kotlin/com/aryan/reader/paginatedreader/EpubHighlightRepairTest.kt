@@ -133,7 +133,7 @@ class EpubHighlightRepairTest {
     }
 
     @Test
-    fun `a repeated sentence is repaired to its first occurrence, once`() {
+    fun `a repeated sentence is repaired to its first occurrence exactly once`() {
         val stored = legacy(ReaderLocator(chapterIndex = 0, textQuote = filler))
 
         val repaired = assertNotNull(index().anchorMissingOffsets(stored))
@@ -244,7 +244,7 @@ class EpubHighlightRepairTest {
      * two identical ones.
      */
     @Test
-    fun `repair changes only coordinates, never which highlights exist`() {
+    fun `repair changes only coordinates and never which highlights exist`() {
         val batch = listOf(
             legacy(ReaderLocator(chapterIndex = 0, textQuote = filler)), // placed by text
             legacy(ReaderLocator(chapterIndex = 0, textQuote = "alpha beta")),
@@ -402,7 +402,7 @@ class EpubHighlightRepairTest {
     }
 
     @Test
-    fun `repair is idempotent, so opening a book twice writes the same locator`() {
+    fun `repair is idempotent so opening a book twice writes the same locator`() {
         val stored = legacy(ReaderLocator(chapterIndex = 0, textQuote = filler))
 
         val afterFirstOpen = assertNotNull(index().anchorMissingOffsets(stored))

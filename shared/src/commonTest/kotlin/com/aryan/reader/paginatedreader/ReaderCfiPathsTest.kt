@@ -63,7 +63,7 @@ class ReaderCfiPathsTest {
     }
 
     @Test
-    fun `path part comparison is numeric, not lexicographic`() {
+    fun `path part comparison is numeric and not lexicographic`() {
         assertTrue(readerCompareCfiPathParts(listOf(4, 2), listOf(4, 10)) < 0)
         assertEquals(0, readerCompareCfiPathParts(listOf(4, 2, 6), listOf(4, 2, 6)))
         assertTrue(readerCompareCfiPathParts(listOf(4, 2, 6), listOf(4, 2)) > 0)

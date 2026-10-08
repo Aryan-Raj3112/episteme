@@ -19,6 +19,7 @@ import androidx.media3.session.SessionToken
 import com.aryan.reader.shared.reader.SharedMediaOverlayClip
 import com.aryan.reader.shared.reader.SharedMediaOverlayPlaybackBase
 import com.aryan.reader.shared.reader.SharedMediaOverlayPlaybackRequest
+import com.aryan.reader.shared.reader.playbackIndexOfSourceClip
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -364,11 +365,11 @@ class AndroidSharedMediaOverlayPlayback(
     /**
      * Source clip index -> position in the loaded clip list.
      *
-     * The plan may have dropped clips, so a caller holding a document index cannot use it directly;
-     * the mapping lives on the request rather than being recomputed per seek.
+     * Delegates to the shared rule rather than keeping a second copy: iOS answers the same question
+     * from the same list, and the plan drops clips, so the two indexes are not interchangeable.
      */
     private fun playbackIndexOfSourceClip(clipIndex: Int): Int =
-        clips.indexOfFirst { it.clipIndex == clipIndex }
+        clips.playbackIndexOfSourceClip(clipIndex)
 
     private companion object {
         /** Surfaced when a chapter's every clip is a TTS `par`, so nothing here can narrate it. */

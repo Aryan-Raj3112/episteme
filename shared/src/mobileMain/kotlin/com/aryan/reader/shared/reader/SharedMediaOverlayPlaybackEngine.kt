@@ -16,6 +16,20 @@ interface SharedMediaOverlayPlayback {
     val state: StateFlow<SharedMediaOverlayPlaybackState>
 
     /**
+     * Set by the host to be told the loaded chapter's clips played out, with the spine item that
+     * ended, and to answer by loading the next one.
+     *
+     * On the interface rather than only on [SharedMediaOverlayPlaybackBase] because the host holds
+     * this interface — a continuation hook it cannot see would mean a per-platform session, which is
+     * exactly the duplication the shared session removes.
+     *
+     * "Finished" and "stopped" end in the same state and are not the same event: running off the end
+     * of a chapter should carry the narration into the next one, while a reader who pressed stop must
+     * not be narrated at again. Only a genuine finish calls this.
+     */
+    var onChapterFinished: ((spineItemIndex: Int) -> Unit)?
+
+    /**
      * Loads a chapter and optionally begins playing.
      *
      * Replaces any current session. [SharedMediaOverlayPlaybackRequest.clips] must already be the
@@ -79,18 +93,18 @@ abstract class SharedMediaOverlayPlaybackBase : SharedMediaOverlayPlayback {
     /**
      * Called when the loaded chapter's clips have played out, with the spine item that just ended.
      *
-     * "Finished" and "stopped" end in the same state and are not the same event: running off the end
-     * of a chapter should carry the narration into the next one, while a reader who pressed stop must
-     * not be narrated at again. Only the first calls this — [stop] and [release] do not, and neither
-     * does a failed load, so a host can treat it as "there is more book to read" rather than as a
-     * lifecycle notification.
+     * Overrides the interface property. "Finished" and "stopped" end in the same state and are not
+     * the same event: running off the end of a chapter should carry the narration into the next one,
+     * while a reader who pressed stop must not be narrated at again. Only the first calls this —
+     * [stop] and [release] do not, and neither does a failed load, so a host can treat it as "there is
+     * more book to read" rather than as a lifecycle notification.
      *
      * The host answers by calling [play] with the next chapter's request. It is invoked *after* the
      * state has been reset, so a host that starts the next chapter immediately is not overwritten by
      * this chapter's teardown. A host that leaves it unset simply ends playback, which is how the
      * feature behaved before continuation existed.
      */
-    var onChapterFinished: ((spineItemIndex: Int) -> Unit)? = null
+    override var onChapterFinished: ((spineItemIndex: Int) -> Unit)? = null
 
     protected val mutableState = MutableStateFlow(SharedMediaOverlayPlaybackState())
 

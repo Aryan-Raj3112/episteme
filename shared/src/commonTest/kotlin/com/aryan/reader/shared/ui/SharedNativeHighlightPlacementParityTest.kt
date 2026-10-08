@@ -198,7 +198,7 @@ class SharedNativeHighlightPlacementParityTest {
     }
 
     @Test
-    fun `the legacy chain cannot place a quote-only highlight, which is why the resolver is needed`() {
+    fun `the legacy chain cannot place a quote-only highlight which is why the resolver is needed`() {
         // Pins why the resolver had to be threaded through rather than left as an Android extra: the
         // shared chain has no text fallback, so a highlight created in a WebView surface — which
         // carries only its text — rendered on nothing at all here.

@@ -173,7 +173,8 @@ import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderTtsEngineOverride
 import com.aryan.reader.shared.SharedListeningArbiter
-import com.aryan.reader.shared.reader.IosSharedMediaOverlayPlaybackHolder
+import com.aryan.reader.shared.reader.IosSharedMediaOverlayPlayback
+import com.aryan.reader.shared.reader.SharedMediaOverlayClip
 import com.aryan.reader.shared.SharedListeningSurface
 import com.aryan.reader.shared.SharedTtsEngine
 import com.aryan.reader.shared.sharedListeningSurfaceForTag
@@ -536,6 +537,107 @@ class ReaderIosBridge internal constructor(
     internal var audiobookStopHandler: (() -> Unit)? = null
     internal var audiobookMetadataHandler: ((String, String, (String, String?, String?, Long) -> Unit) -> Unit)? = null
     private var audiobookPositionPersistenceHandler: ((SharedAudiobookPlaybackState) -> Unit)? = null
+
+    // --- EPUB media overlay (publisher narration) -----------------------------------------------
+    //
+    // Kotlin owns the sequencing and Swift owns the AVPlayer, mirroring the audiobook split. The
+    // audio itself never crosses this boundary as bytes: the resource loader asks Kotlin for a byte
+    // range of a zip entry (`mediaOverlayReadEntryRangeHandler`), because the archive is Kotlin's
+    // and a whole recording crossing the bridge per request would be absurd.
+
+    internal var mediaOverlayPlayHandler: ((SharedIosMediaOverlayPlaybackSetup) -> Unit)? = null
+    internal var mediaOverlayPauseHandler: (() -> Unit)? = null
+    internal var mediaOverlayResumeHandler: (() -> Unit)? = null
+    internal var mediaOverlayStopHandler: (() -> Unit)? = null
+    internal var mediaOverlaySpeedHandler: ((Float) -> Unit)? = null
+    internal var mediaOverlayRestartClipHandler: (() -> Unit)? = null
+    internal var mediaOverlaySeekToClipHandler: ((Int, Int) -> Unit)? = null
+    internal var mediaOverlayReadEntryRangeHandler: ((String, Long, Long) -> NSData?)? = null
+    internal var mediaOverlayEntryLengthHandler: ((String) -> Long)? = null
+
+    /**
+     * A native playback transition, as Swift reports it.
+     *
+     * Deliberately *not* a `SharedMediaOverlayPlaybackState`: the clip bounds are not sent, because
+     * the engine that owns the plan is the only thing that can answer them, and a bounds value
+     * crossing the bridge would be a second copy of the plan that could disagree with it. The engine
+     * fills them in from the clips it was handed.
+     */
+    data class SharedIosMediaOverlayUpdate(
+        val spineItemIndex: Int,
+        val clipIndex: Int,
+        val positionMs: Long,
+        val isPlaying: Boolean,
+        val isLoading: Boolean,
+        val error: String?,
+    )
+
+    /**
+     * One chapter's narration, as Swift receives it.
+     *
+     * The clip list arrives whole because `AVPlayer` is told to seek per clip rather than to play a
+     * playlist: `AVPlayerItem` has no clipping configuration, so the bound is enforced from Swift's
+     * periodic observer and the sequence is Kotlin's. Android gets the same list as one `MediaItem`
+     * per clip and lets ExoPlayer do the same job natively.
+     */
+    class SharedIosMediaOverlayPlaybackSetup(
+        val spineItemIndex: Int,
+        val bookTitle: String,
+        val narrator: String?,
+        val startClipIndex: Int,
+        val playWhenReady: Boolean,
+        val clips: List<SharedMediaOverlayClip>,
+    )
+
+    /**
+     * The app-level narration engine, so native reports have somewhere to go.
+     *
+     * Set by the app composable rather than looked up, because there is exactly one engine and it
+     * has to be the same instance the arbiter stops — a second lookup would be a second engine, and
+     * the one being stopped would not be the one making noise.
+     */
+    internal var mediaOverlayEngine: IosSharedMediaOverlayPlayback? = null
+
+    /**
+     * Publishes a native playback transition into shared state.
+     *
+     * Ignored when no engine is installed rather than throwing: Swift's callbacks outlive any single
+     * composition, so a transition can arrive after the reader that owned the engine has gone.
+     */
+    fun updateMediaOverlayPlayback(
+        spineItemIndex: Int,
+        clipIndex: Int,
+        positionMs: Double,
+        isPlaying: Boolean,
+        isLoading: Boolean,
+        error: String?,
+    ) {
+        mediaOverlayEngine?.onNativeUpdate(
+            SharedIosMediaOverlayUpdate(
+                spineItemIndex = spineItemIndex,
+                clipIndex = clipIndex,
+                positionMs = positionMs.toLong().coerceAtLeast(0L),
+                isPlaying = isPlaying,
+                isLoading = isLoading,
+                error = error,
+            )
+        )
+    }
+
+    /**
+     * The loaded chapter's clips played out.
+     *
+     * Reported rather than acted on: whether that means "the next narrated chapter" or "the book is
+     * done" is `SharedMediaOverlaySession`'s decision, and it is the same one Android makes.
+     */
+    fun notifyMediaOverlayChapterFinished(spineItemIndex: Int) {
+        mediaOverlayEngine?.onNativeChapterFinished(spineItemIndex)
+    }
+
+    /** The native player tore itself down; the state must not keep claiming a book is loaded. */
+    fun notifyMediaOverlaySessionEnded() {
+        mediaOverlayEngine?.onNativeSessionEnded()
+    }
 
     /**
      * Native capture of the process unified log for diagnostics export. Swift owns
@@ -1199,6 +1301,77 @@ class ReaderIosBridge internal constructor(
     ) {
         audiobookMetadataHandler = handler
     }
+
+    // --- EPUB media overlay bridge ---------------------------------------------------------------
+
+    fun setMediaOverlayPlayHandler(handler: (SharedIosMediaOverlayPlaybackSetup) -> Unit) {
+        mediaOverlayPlayHandler = handler
+    }
+
+    fun setMediaOverlayPauseHandler(handler: () -> Unit) {
+        mediaOverlayPauseHandler = handler
+    }
+
+    fun setMediaOverlayResumeHandler(handler: () -> Unit) {
+        mediaOverlayResumeHandler = handler
+    }
+
+    fun setMediaOverlayStopHandler(handler: () -> Unit) {
+        mediaOverlayStopHandler = handler
+    }
+
+    fun setMediaOverlaySpeedHandler(handler: (speed: Float) -> Unit) {
+        mediaOverlaySpeedHandler = handler
+    }
+
+    fun setMediaOverlayRestartClipHandler(handler: () -> Unit) {
+        mediaOverlayRestartClipHandler = handler
+    }
+
+    fun setMediaOverlaySeekToClipHandler(handler: (spineItemIndex: Int, clipIndex: Int) -> Unit) {
+        mediaOverlaySeekToClipHandler = handler
+    }
+
+    /**
+     * Installs the archive byte-range service the native resource loader asks for.
+     *
+     * Called by the narration engine when a reader attaches its archive, and deliberately *not* by
+     * Swift: the reader screen owns which book is open, so the source follows the book rather than
+     * the host process. Swift reaches it back through [mediaOverlayReadEntry] and
+     * [mediaOverlayEntryLength].
+     *
+     * Reinstalled on every attach rather than registered once, because the callbacks close over the
+     * engine's current archive — there is then no handler to unregister and nothing to leak, and a
+     * detached engine answers with a null range rather than with stale bytes.
+     *
+     * Callbacks rather than a handed-over archive because the bytes are Kotlin's: an
+     * `IosZipEpubArchive` holds the zip in memory, and giving Swift the whole of it would defeat the
+     * reason the recording is never extracted to disk. One range at a time is what AVFoundation
+     * asks for, in uncompressed coordinates because a clip's `clipBegin` is an offset into decoded
+     * audio.
+     */
+    internal fun setMediaOverlayAudioSource(
+        readEntryRange: (entryPath: String, offset: Long, length: Long) -> NSData?,
+        entryLength: (entryPath: String) -> Long,
+    ) {
+        mediaOverlayReadEntryRangeHandler = readEntryRange
+        mediaOverlayEntryLengthHandler = entryLength
+    }
+
+    /**
+     * Reads a byte range of one archive entry for the native resource loader.
+     *
+     * Null when no archive is attached, which the loader reports as a missing file — the honest
+     * answer for a reader screen that has gone away mid-playback. This is also what detaching is:
+     * the engine keeps its callbacks installed and simply has nothing behind them, so there is no
+     * window in which a loader could still be answered for a book the reader no longer shows.
+     */
+    fun mediaOverlayReadEntry(entryPath: String, offset: Double, length: Long): NSData? =
+        mediaOverlayReadEntryRangeHandler?.invoke(entryPath, offset.toLong(), length)
+
+    /** An entry's uncompressed length, which AVFoundation requires before it can seek. */
+    fun mediaOverlayEntryLength(entryPath: String): Double =
+        (mediaOverlayEntryLengthHandler?.invoke(entryPath) ?: 0L).toDouble()
 
     internal fun replaceFolderManagedFile(folderName: String, managedPath: String): IosFolderReplacement? {
         val fields = folderFileReplacementHandler?.invoke(folderName, managedPath)
@@ -3432,10 +3605,31 @@ private fun ReaderIosApp(
     }
 
     DisposableEffect(ttsListenController) { onDispose(ttsListenController::release) }
+
+    // EPUB media overlay narration. App-level, not reader-level, for the same reason the audiobook
+    // player is: the arbiter below has to be able to stop narration from a surface that is not the
+    // reader, and an engine the reader owned could not be stopped from elsewhere.
+    val mediaOverlayEngine = remember { IosSharedMediaOverlayPlayback(bridge) }
+    DisposableEffect(mediaOverlayEngine) {
+        // Native reports are delivered through the bridge, and the bridge has to reach *this* engine
+        // — the one the arbiter stops. A lookup instead of a registration would be a second engine.
+        bridge.mediaOverlayEngine = mediaOverlayEngine
+        onDispose {
+            bridge.mediaOverlayEngine = null
+            mediaOverlayEngine.release()
+        }
+    }
+
     // Single arbiter for every "one surface claimed the audio output" decision. Callers below
     // state intent and never name an engine to stop; the decision itself is
     // `sharedListeningYield`, which cannot express stopping a surface's own new session.
-    val listeningArbiter = remember(ttsListenController, audiobookPlayer, readerTtsEngine, readerCloudTts) {
+    val listeningArbiter = remember(
+        ttsListenController,
+        audiobookPlayer,
+        readerTtsEngine,
+        readerCloudTts,
+        mediaOverlayEngine
+    ) {
         SharedListeningArbiter(
             listenEngine = { ttsListenController.sessionEngine },
             stopAudiobook = { audiobookPlayer.stop() },
@@ -3443,10 +3637,7 @@ private fun ReaderIosApp(
             releaseListen = { ttsListenController.releaseForHandoff() },
             stopReaderLocal = { readerTtsEngine.stop() },
             stopReaderCloud = { readerCloudTts.stop() },
-            // iOS has no media overlay engine yet, so this is a null-safe seam rather than a player.
-            // Dropping the holder is the stop: a stale engine left installed would keep producing
-            // audio after its surface was gone.
-            stopMediaOverlay = { IosSharedMediaOverlayPlaybackHolder.stop() },
+            stopMediaOverlay = { mediaOverlayEngine.stop() },
         )
     }
     // Android parity (sharedListeningHandoff): cloud read-aloud wins the audio output — stop
@@ -6237,7 +6428,12 @@ private fun ReaderIosApp(
                             walletMicros = state.walletMicros,
                             walletMigrated = state.walletMigrated,
                             externalLocalTts = readerTtsEngine,
-                            onReaderTtsSessionChange = {
+                            mediaOverlayEngine = mediaOverlayEngine,
+            // Arbitration is the host's decision: it owns the audiobook and both TTS engines, and the
+            // reader screen only states the intent that narration is about to claim the output.
+            onMediaOverlayStarting = { listeningArbiter.onMediaOverlayStarting() },
+            onMediaOverlayStopped = { mediaOverlayEngine.stop() },
+            onReaderTtsSessionChange = {
                                 readerTtsMiniBarState = it
                                 // Android parity (sharedListeningHandoff): reader read-aloud
                                 // wins the audio output. Releasing Listen rather than stopping

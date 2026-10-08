@@ -36,8 +36,41 @@ data class SharedMediaOverlayProjection(
      */
     val chapterIndex: Int?,
     val fragment: SharedPlaybackFragment?,
+    /**
+     * The SMIL element id of the active clip, or null.
+     *
+     * The WebView surface's own anchor: it highlights by id in the DOM rather than by offset, and
+     * Android's reader WebView is the one that wants it. Native surfaces resolve through [fragment]
+     * and never read this.
+     */
+    val elementId: String? = null,
 ) {
     val hasFragment: Boolean get() = fragment != null
+}
+
+/**
+ * What a narration session needs from whichever block representation a platform's reader has.
+ *
+ * The three questions are the whole contract, and they are asked at very different frequencies on
+ * purpose: [document] once per chapter change, [project] once per clip — which for a well-produced
+ * book is every couple of seconds, and is why implementations cache anchors — and
+ * [clipIndexForReaderPosition] only when the reader presses play mid-chapter.
+ *
+ * Deliberately suspend on two of the three. Android resolves a chapter's anchors from the paginator's
+ * `ContentBlock`s, which it builds on demand and so can suspend on; iOS resolves from the semantic
+ * blocks the loader already parsed and does not. An interface that forced the iOS side to pretend to
+ * suspend, or the Android side to pretend it does not, would put a lie in the one place a divergence
+ * between the platforms would otherwise be invisible.
+ */
+interface SharedMediaOverlayProjectionSource {
+    /** The parsed overlay document for a spine item, or null when it has none or it is unusable. */
+    fun document(spineItemIndex: Int): SharedMediaOverlayDocument?
+
+    /** Resolves a playback position, or null when the position names no clip at all. */
+    suspend fun project(spineItemIndex: Int, clipIndex: Int): SharedMediaOverlayProjection?
+
+    /** The document clip narrating [readerOffset] in the chapter, or null. */
+    suspend fun clipIndexForReaderPosition(spineItemIndex: Int, readerOffset: Int): Int?
 }
 
 /**
@@ -57,7 +90,7 @@ class SharedMediaOverlayProjector(
     private val cache: SharedMediaOverlayDocumentCache,
     private val chapters: List<SharedEpubChapter>,
     private val spineItemIndexToChapterIndex: Map<Int, Int> = emptyMap(),
-) {
+) : SharedMediaOverlayProjectionSource {
     private var anchorsForSpineItemIndex: Int? = null
     private var anchors: Map<Int, SharedPlaybackFragment> = emptyMap()
 
@@ -96,13 +129,38 @@ class SharedMediaOverlayProjector(
         return anchors
     }
 
+    /** The parsed overlay document for a spine item, or null. See the session's contract. */
+    override fun document(spineItemIndex: Int): SharedMediaOverlayDocument? = cache.document(spineItemIndex)
+
+    /**
+     * The document clip narrating [readerOffset] in the chapter, or null.
+     *
+     * Used to start narration from where the reader is rather than from the top of the chapter. The
+     * first clip whose resolved fragment reaches or passes the offset wins, so tapping play
+     * mid-chapter narrates from there. A clip with no resolvable fragment cannot be placed and is
+     * skipped, which matches how playback will skip it audibly.
+     */
+    override suspend fun clipIndexForReaderPosition(
+        spineItemIndex: Int,
+        readerOffset: Int
+    ): Int? {
+        val document = cache.document(spineItemIndex) ?: return null
+        if (readerOffset < 0) return null
+        val chapterAnchors = anchorsFor(spineItemIndex)
+        if (chapterAnchors.isEmpty()) return null
+        return document.clips.firstOrNull { clip ->
+            val fragment = chapterAnchors[clip.clipIndex]
+            fragment != null && fragment.endAbs > readerOffset
+        }?.clipIndex
+    }
+
     /**
      * Resolves a playback position.
      *
      * Cheap on the hot path: a chapter change re-resolves, a clip change within a chapter is a map
      * lookup. That is the difference between advancing a narration smoothly and stuttering it.
      */
-    fun project(spineItemIndex: Int, clipIndex: Int): SharedMediaOverlayProjection? {
+    override suspend fun project(spineItemIndex: Int, clipIndex: Int): SharedMediaOverlayProjection? {
         val document = cache.document(spineItemIndex) ?: return null
         if (document.clips.getOrNull(clipIndex) == null) return null
         return SharedMediaOverlayProjection(

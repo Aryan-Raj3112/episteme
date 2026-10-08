@@ -6,6 +6,7 @@ import com.aryan.reader.paginatedreader.ContentBlock
 import com.aryan.reader.paginatedreader.ParagraphBlock
 import com.aryan.reader.shared.reader.SharedMediaOverlayDocumentCache
 import com.aryan.reader.shared.reader.SharedMediaOverlayIndex
+import com.aryan.reader.shared.reader.sharedMediaOverlaySpineItemIndexByChapter
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -22,6 +23,21 @@ import org.junit.Test
  * onwards.
  */
 class EpubReaderMediaOverlayTest {
+
+    /**
+     * The mapping under test is shared now — `sharedMediaOverlaySpineItemIndexByChapter` — and the
+     * cases below assert it through Android's own chapter type, because the reader's chapter list is
+     * the thing that has to line up with the package's spine. The shared function takes content paths
+     * precisely so both platforms' chapter types can feed it; see its own tests for the shared
+     * contract.
+     */
+    private fun spineItemIndexByChapter(
+        chapters: List<EpubChapter>,
+        overlayIndex: SharedMediaOverlayIndex
+    ): Map<Int, Int> = sharedMediaOverlaySpineItemIndexByChapter(
+        chapterContentPaths = chapters.map { it.absPath },
+        overlayIndex = overlayIndex
+    )
 
     @Test
     fun `chapters map to spines by content path`() {

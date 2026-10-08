@@ -25,9 +25,14 @@ data class SharedMediaOverlayPlaybackState(
     val isLoading: Boolean = false,
     /** The spine item being narrated, or null when nothing is loaded. */
     val spineItemIndex: Int? = null,
-    /** Index into the loaded chapter's clip list. */
+    /** Index into the loaded chapter's clip list — a *play* index, not the clip's source index. */
     val clipIndex: Int = 0,
-    /** Position **within the current clip**, in milliseconds. */
+    /**
+     * The player clock, in milliseconds: absolute within the media file.
+     *
+     * Absolute rather than within-clip, because that is what both players report and what the bounds
+     * below are measured against — [clipProgress] subtracts [clipStartMs] to get through the clip.
+     */
     val positionMs: Long = 0L,
     /** The active clip's `clipBegin`, so a UI can show absolute file time. */
     val clipStartMs: Long = 0L,
@@ -91,6 +96,21 @@ fun sharedMediaOverlaySpeedLabel(speed: Float): String {
 }
 
 /**
+ * Position of a source clip index in a loaded clip list, or -1 when that clip is not in it.
+ *
+ * The one answer, because the two numbers genuinely differ and an engine holds the list rather than
+ * the plan it came from. `sharedMediaOverlayPlaybackPlan` **drops** clips — a TTS `par`, a `par` with
+ * no audio — and each surviving entry keeps the index it had in the *document*, so position 1 in the
+ * loaded list can be source clip 2. An engine that used a reported clip index as a position would
+ * freeze at the first dropped clip: the highlight would stick to one line while the voice moved on.
+ *
+ * -1 rather than 0 for a clip that is not loaded, so a caller cannot mistake "absent" for "the first
+ * clip" and jump the reader to the top of a chapter.
+ */
+fun List<SharedMediaOverlayClip>.playbackIndexOfSourceClip(clipIndex: Int): Int =
+    indexOfFirst { it.clipIndex == clipIndex }
+
+/**
  * What to play, in what order.
  *
  * Built by [sharedMediaOverlayPlaybackPlan] so both platforms filter identically. A clip the plan
@@ -108,7 +128,7 @@ data class SharedMediaOverlayPlaybackPlan(
     val isEmpty: Boolean get() = entries.isEmpty()
 
     /** Position in [entries] for a source clip index, or -1 when that clip was dropped. */
-    fun playbackIndexOf(clipIndex: Int): Int = sourceClipIndices.indexOf(clipIndex)
+    fun playbackIndexOf(clipIndex: Int): Int = entries.playbackIndexOfSourceClip(clipIndex)
 
     fun clipAt(playbackIndex: Int): SharedMediaOverlayClip? = entries.getOrNull(playbackIndex)
 
