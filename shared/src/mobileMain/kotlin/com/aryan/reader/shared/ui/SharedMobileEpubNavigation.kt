@@ -870,6 +870,27 @@ internal fun sharedMobileEpubTtsNavigationScript(locator: ReaderLocator?): Strin
     return "if (window.readerSetTtsLocator) window.readerSetTtsLocator($locatorJson, true);"
 }
 
+/**
+ * The playback band for the WebView surface: whichever engine is speaking, and nothing if neither is.
+ *
+ * One function because the choice of engine is a single decision with a single answer, and it is
+ * already answered once for the native surfaces by `playbackHighlights`. Starting read-aloud stops a
+ * media overlay and the other way round — the arbiter guarantees only one engine holds the audio — so
+ * at most one of these can be non-null, and picking the same one here keeps the two surfaces from
+ * disagreeing about who owns the highlight.
+ *
+ * This exists because a band is not a navigation. The scripts it composes used to ride
+ * `navigationScript`, which the WebView only evaluates when `navigationRequestId` changes — a page
+ * turn, a chapter change, a session end. A band moves several times a second and none of those are
+ * navigation, so the paint was requested once per chapter load, when the projection was still null,
+ * and never again: no band, on any clip, in either engine.
+ */
+internal fun sharedMobileEpubPlaybackBandScript(
+    mediaOverlayProjection: SharedMediaOverlayProjection?,
+    ttsLocator: ReaderLocator?
+): String = mediaOverlayProjection?.let { sharedMobileEpubMediaOverlayFragmentScript(it) }
+    ?: sharedMobileEpubTtsNavigationScript(ttsLocator)
+
 internal fun sharedMobileEpubSearchNavigationScript(result: SharedMobileEpubSearchResult, query: String, chunkHtml: String?): String {
     val injection = when {
         chunkHtml == null -> ""

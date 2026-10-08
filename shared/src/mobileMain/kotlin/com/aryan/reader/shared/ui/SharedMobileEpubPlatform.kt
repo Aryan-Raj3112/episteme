@@ -85,6 +85,15 @@ internal expect fun SharedMobileEpubWebView(
     navigationScript: String?,
     navigationRequestId: Long,
     highlightsApplyScript: String,
+    /**
+     * The live playback band's paint, pushed whenever it changes.
+     *
+     * Deliberately its own channel rather than part of [navigationScript]: a band advances several
+     * times a second and none of those advances are navigations, so a band that rode the navigation
+     * script was painted once per chapter load and never again. Push it on its own hash, the way
+     * [highlightsApplyScript] is pushed, and re-apply it after a document load.
+     */
+    playbackBandScript: String?,
     onBridgeMessage: (method: String, payload: String) -> Unit,
     positionController: SharedMobileEpubWebViewController? = null,
     streamPageLoader: SharedMobileEpubStreamPageLoader? = null,

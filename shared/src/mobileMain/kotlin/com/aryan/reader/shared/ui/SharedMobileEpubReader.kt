@@ -2769,6 +2769,22 @@ fun SharedMobileEpubReaderScreen(
                         val highlightsApplyScript = remember(highlights) {
                             sharedMobileEpubHighlightsApplyScript(highlights)
                         }
+                        // The live playback band, in the same precedence the native surfaces use in
+                        // `playbackHighlights` above: media overlay first, then local read-aloud, then
+                        // cloud. They cannot both be live — the arbiter stops one engine to start the
+                        // other — so one `?:` decides which surface owns the highlight without a second
+                        // rule to keep in step. Cloud goes through the same bridge as the local engine
+                        // (Android parity), so the WebView paints a cloud chunk too.
+                        val playbackBandScript = remember(
+                            mediaOverlayProjection,
+                            activeTtsChunk,
+                            activeCloudTtsChunk,
+                        ) {
+                            sharedMobileEpubPlaybackBandScript(
+                                mediaOverlayProjection = mediaOverlayProjection,
+                                ttsLocator = (activeTtsChunk ?: activeCloudTtsChunk)?.toLocator()
+                            )
+                        }
                         val navigationScript = buildList {
                             commandScript?.let(::add)
                             (explicitNavigationLocator ?: currentLocator)?.let { locator ->
@@ -2787,20 +2803,11 @@ fun SharedMobileEpubReaderScreen(
                                     )
                                 )
                             }
-                            // Cloud read-aloud highlights through the same
-                            // readerSetTtsLocator bridge as the local engine
-                            // (Android parity), so the WebView branch paints the
-                            // spoken cloud chunk too.
-                            add(
-                                sharedMobileEpubTtsNavigationScript(
-                                    (activeTtsChunk ?: activeCloudTtsChunk)?.toLocator()
-                                )
-                            )
-                            // Narration paints through its own bridge function, and only when it is
-                            // the live engine. Both engines cannot be speaking at once (the arbiter
-                            // stops one to start the other), so one `?: null` here decides which
-                            // surface owns the highlight without a second rule to keep in step.
-                            add(sharedMobileEpubMediaOverlayFragmentScript(mediaOverlayProjection))
+                            // Narration and read-aloud do **not** go here. A band moves several times a
+                            // second and none of those moves are navigations, so riding
+                            // `navigationScript` meant the paint was requested once per chapter load —
+                            // when the projection was still null — and never again. It is its own
+                            // channel below, applied whenever it changes.
                         }.joinToString(separator = "\n")
                         // Android parity (EpubReaderRenderSurfaces): shrink the WebView
                         // by the full PageInfo bar height instead of overlaying it, so the
@@ -2861,6 +2868,7 @@ fun SharedMobileEpubReaderScreen(
                             navigationScript = navigationScript,
                             navigationRequestId = navigationRequestId,
                             highlightsApplyScript = highlightsApplyScript,
+                            playbackBandScript = playbackBandScript,
                             positionController = webViewPositionController,
                             streamPageLoader = streamPageLoader,
                             streamPageUnavailableLabel = streamPageUnavailableLabel,

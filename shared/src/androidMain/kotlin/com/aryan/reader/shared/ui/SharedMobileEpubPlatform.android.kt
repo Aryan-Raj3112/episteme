@@ -107,6 +107,7 @@ internal actual fun SharedMobileEpubWebView(
     navigationScript: String?,
     navigationRequestId: Long,
     highlightsApplyScript: String,
+    playbackBandScript: String?,
     onBridgeMessage: (method: String, payload: String) -> Unit,
     positionController: SharedMobileEpubWebViewController?,
     streamPageLoader: SharedMobileEpubStreamPageLoader?,
@@ -126,7 +127,7 @@ internal actual fun SharedMobileEpubWebView(
         factory = coordinator::createWebView,
         update = { webView -> coordinator.update(
             webView, html, contentChunks, appearanceScript, navigationScript, navigationRequestId,
-            highlightsApplyScript, contentBackgroundArgb,
+            highlightsApplyScript, playbackBandScript, contentBackgroundArgb,
         ) },
         onRelease = coordinator::release,
     )
@@ -150,12 +151,14 @@ private class AndroidEpubWebViewCoordinator(
     private var lastHtml: String? = null
     private var appliedAppearanceHash: Int? = null
     private var appliedHighlightsHash: Int? = null
+    private var appliedPlaybackBandHash: Int? = null
     private var appliedNavigationRequestId = Long.MIN_VALUE
     private var appliedBackgroundArgb: Long? = null
     private var latestAppearanceScript = ""
     private var latestNavigationScript: String? = null
     private var latestNavigationRequestId = Long.MIN_VALUE
     private var latestHighlightsApplyScript = ""
+    private var latestPlaybackBandScript: String? = null
     private var htmlLoadStartMark: kotlin.time.TimeSource.Monotonic.ValueTimeMark? = null
 
     fun createWebView(context: Context): WebView = WebView(context).apply {
@@ -194,6 +197,7 @@ private class AndroidEpubWebViewCoordinator(
                 loadedHtmlLength = -1
                 appliedAppearanceHash = null
                 appliedHighlightsHash = null
+                appliedPlaybackBandHash = null
                 appliedNavigationRequestId = Long.MIN_VALUE
                 val html = lastHtml
                 if (html != null && view == activeWebView) {
@@ -213,31 +217,55 @@ private class AndroidEpubWebViewCoordinator(
         val appearance = latestAppearanceScript.takeIf { it.isNotBlank() }
         val highlights = latestHighlightsApplyScript.takeIf { it.isNotBlank() }
         val navigation = latestNavigationScript
+        val band = latestPlaybackBandScript
         if (appearance == null) {
-            applyHighlightsThenNavigation(view, highlights, navigation)
+            applyHighlightsThenNavigation(view, highlights, navigation, band)
             return
         }
         view.evaluateJavascript(appearance) { _ ->
             appliedAppearanceHash = appearance.hashCode()
-            applyHighlightsThenNavigation(view, highlights, navigation)
+            applyHighlightsThenNavigation(view, highlights, navigation, band)
         }
     }
 
-    private fun applyHighlightsThenNavigation(view: WebView, highlights: String?, navigation: String?) {
+    private fun applyHighlightsThenNavigation(
+        view: WebView,
+        highlights: String?,
+        navigation: String?,
+        band: String?,
+    ) {
         if (highlights == null) {
-            applyNavigationScript(view, navigation)
+            applyNavigationScript(view, navigation, band)
             return
         }
         view.evaluateJavascript(highlights) { _ ->
             appliedHighlightsHash = highlights.hashCode()
-            applyNavigationScript(view, navigation)
+            applyNavigationScript(view, navigation, band)
         }
     }
 
-    private fun applyNavigationScript(view: WebView, navigation: String?) {
-        if (navigation == null) return
+    private fun applyNavigationScript(view: WebView, navigation: String?, band: String?) {
+        if (navigation == null) {
+            applyPlaybackBandScript(view, band)
+            return
+        }
         view.evaluateJavascript(navigation) { _ ->
             appliedNavigationRequestId = latestNavigationRequestId
+            applyPlaybackBandScript(view, band)
+        }
+    }
+
+    /**
+     * The band, last.
+     *
+     * After navigation rather than with it: navigation is what establishes where the document is,
+     * and a band painted before that would resolve against the previous landing position and have to
+     * be corrected a turn later.
+     */
+    private fun applyPlaybackBandScript(view: WebView, band: String?) {
+        if (band == null) return
+        view.evaluateJavascript(band) { _ ->
+            appliedPlaybackBandHash = band.hashCode()
         }
     }
 
@@ -249,6 +277,7 @@ private class AndroidEpubWebViewCoordinator(
         navigationScript: String?,
         navigationRequestId: Long,
         highlightsApplyScript: String,
+        playbackBandScript: String?,
         contentBackgroundArgb: Long,
     ) {
         activeWebView = webView
@@ -261,6 +290,7 @@ private class AndroidEpubWebViewCoordinator(
         latestNavigationScript = navigationScript
         latestNavigationRequestId = navigationRequestId
         latestHighlightsApplyScript = highlightsApplyScript
+        latestPlaybackBandScript = playbackBandScript
         val htmlHash = html.hashCode()
         if (loadedHtmlHash != htmlHash || loadedHtmlLength != html.length) {
             loadedHtmlHash = htmlHash
@@ -268,6 +298,7 @@ private class AndroidEpubWebViewCoordinator(
             lastHtml = html
             appliedAppearanceHash = null
             appliedHighlightsHash = null
+            appliedPlaybackBandHash = null
             appliedNavigationRequestId = Long.MIN_VALUE
             htmlLoadStartMark = sharedEpubOpenTraceMark()
             sharedEpubOpenTrace { "webview loadData start chars=${html.length} chunks=${contentChunks.size}" }
@@ -287,6 +318,13 @@ private class AndroidEpubWebViewCoordinator(
         if (navigationScript != null && appliedNavigationRequestId != navigationRequestId) {
             appliedNavigationRequestId = navigationRequestId
             webView.evaluateJavascript(navigationScript, null)
+        }
+        // Last, and after navigation: a band resolved against a landing position that has not been
+        // established yet lands on the previous one and needs a second pass to correct.
+        val bandHash = playbackBandScript?.hashCode()
+        if (playbackBandScript != null && bandHash != null && appliedPlaybackBandHash != bandHash) {
+            appliedPlaybackBandHash = bandHash
+            webView.evaluateJavascript(playbackBandScript, null)
         }
     }
 

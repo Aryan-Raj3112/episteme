@@ -178,6 +178,7 @@ internal actual fun SharedMobileEpubWebView(
     navigationScript: String?,
     navigationRequestId: Long,
     highlightsApplyScript: String,
+    playbackBandScript: String?,
     onBridgeMessage: (method: String, payload: String) -> Unit,
     positionController: SharedMobileEpubWebViewController?,
     streamPageLoader: SharedMobileEpubStreamPageLoader?,
@@ -212,6 +213,7 @@ internal actual fun SharedMobileEpubWebView(
                 navigationScript = navigationScript,
                 navigationRequestId = navigationRequestId,
                 highlightsApplyScript = highlightsApplyScript,
+                playbackBandScript = playbackBandScript,
                 contentBackgroundArgb = contentBackgroundArgb
             )
         },
@@ -1110,12 +1112,14 @@ private class IosEpubWebViewCoordinator(
     private var lastHtml: String? = null
     private var appliedAppearanceHash: Int? = null
     private var appliedHighlightsHash: Int? = null
+    private var appliedPlaybackBandHash: Int? = null
     private var appliedNavigationRequestId: Long = Long.MIN_VALUE
     private var appliedBackgroundArgb: Long? = null
     private var latestAppearanceScript: String = ""
     private var latestNavigationScript: String? = null
     private var latestNavigationRequestId: Long = Long.MIN_VALUE
     private var latestHighlightsApplyScript: String = ""
+    private var latestPlaybackBandScript: String? = null
     private var htmlLoadStartMark: TimeSource.Monotonic.ValueTimeMark? = null
     private var reportedFirstPosition: Boolean = false
 
@@ -1180,6 +1184,7 @@ private class IosEpubWebViewCoordinator(
         navigationScript: String?,
         navigationRequestId: Long,
         highlightsApplyScript: String,
+        playbackBandScript: String?,
         contentBackgroundArgb: Long
     ) {
         activeWebView = webView
@@ -1195,6 +1200,7 @@ private class IosEpubWebViewCoordinator(
         latestNavigationScript = navigationScript
         latestNavigationRequestId = navigationRequestId
         latestHighlightsApplyScript = highlightsApplyScript
+        latestPlaybackBandScript = playbackBandScript
         val htmlHash = html.hashCode()
         if (loadedHtmlHash != htmlHash || loadedHtmlLength != html.length) {
             // Android parity: highlight changes never reach here — the document
@@ -1236,6 +1242,13 @@ private class IosEpubWebViewCoordinator(
             appliedNavigationRequestId = navigationRequestId
             evaluateReaderScript(webView, navigationScript, "navigation")
         }
+        // Last, and after navigation: a band resolved against a landing position that has not been
+        // established yet lands on the previous one and needs a second pass to correct.
+        val bandHash = playbackBandScript?.hashCode()
+        if (playbackBandScript != null && bandHash != null && appliedPlaybackBandHash != bandHash) {
+            appliedPlaybackBandHash = bandHash
+            evaluateReaderScript(webView, playbackBandScript, "playbackBand")
+        }
     }
 
     private fun evaluateReaderScript(webView: WKWebView, script: String, kind: String) {
@@ -1255,14 +1268,31 @@ private class IosEpubWebViewCoordinator(
         val appearance = latestAppearanceScript.takeIf { it.isNotBlank() }
         val highlights = latestHighlightsApplyScript.takeIf { it.isNotBlank() }
         val navigation = latestNavigationScript
+        val band = latestPlaybackBandScript
+        // The band goes last of all three. Navigation is what establishes where the document is,
+        // so a band resolved before it lands on the previous position and needs a second pass.
+        fun applyBand() {
+            val script = band ?: return
+            webView.evaluateJavaScript(script) { _, error ->
+                if (error != null) {
+                    sharedEpubOpenTrace { "webview evaluateFailed kind=playbackBand chars=${script.length} error=${error.localizedDescription}" }
+                } else {
+                    appliedPlaybackBandHash = script.hashCode()
+                }
+            }
+        }
         fun applyNavigation() {
-            if (navigation == null) return
+            if (navigation == null) {
+                applyBand()
+                return
+            }
             webView.evaluateJavaScript(navigation) { _, error ->
                 if (error != null) {
                     sharedEpubOpenTrace { "webview evaluateFailed kind=navigation chars=${navigation.length} error=${error.localizedDescription}" }
                 } else {
                     appliedNavigationRequestId = latestNavigationRequestId
                 }
+                applyBand()
             }
         }
         fun applyHighlights() {
@@ -1309,6 +1339,7 @@ private class IosEpubWebViewCoordinator(
         loadedHtmlLength = -1
         appliedAppearanceHash = null
         appliedHighlightsHash = null
+        appliedPlaybackBandHash = null
         appliedNavigationRequestId = Long.MIN_VALUE
         val html = lastHtml
         if (html != null && webView == activeWebView) {
@@ -1392,8 +1423,10 @@ private class IosEpubWebViewCoordinator(
         loadedHtmlLength = -1
         lastHtml = null
         appliedHighlightsHash = null
+        appliedPlaybackBandHash = null
         appliedBackgroundArgb = null
         latestHighlightsApplyScript = ""
+        latestPlaybackBandScript = null
         htmlLoadStartMark = null
         reportedFirstPosition = false
     }

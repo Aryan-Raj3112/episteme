@@ -171,8 +171,16 @@ internal fun readerDocumentStyles(
               content-visibility: auto;
               contain-intrinsic-size: auto 1200px;
             }
+            /*
+             * Everything below neutralises publication CSS for the reader's own chapter layout, so
+             * it targets body children that are chapter content. Reader chrome has to be excluded,
+             * and the two playback highlight layers were not: the `position: static !important`
+             * rule here overrode their positioning, which dropped `pointer-events: none` along with
+             * it, leaving the marker divs sitting on the narrated or spoken text and swallowing
+             * taps on it. Both layers are transient overlays, never chapter content.
+             */
             body.reader-vertical > .chapter,
-            body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(script):not(style),
+            body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(#reader-tts-highlight-layer):not(#reader-media-overlay-highlight-layer):not(script):not(style),
             body.reader-vertical > .chapter > :not(.reader-content),
             body.reader-vertical > .chapter > .chapter-title,
             body.reader-vertical > .chapter > .reader-content {
@@ -184,7 +192,7 @@ internal fun readerDocumentStyles(
               max-width: none !important;
               margin: 0 !important;
             }
-            body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(script):not(style),
+            body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(#reader-tts-highlight-layer):not(#reader-media-overlay-highlight-layer):not(script):not(style),
             body.reader-vertical > .chapter > :not(.reader-content),
             body.reader-vertical > .chapter > .chapter-title,
             body.reader-vertical > .chapter > .reader-content {
@@ -193,7 +201,7 @@ internal fun readerDocumentStyles(
               margin-left: auto !important;
               margin-right: auto !important;
             }
-            body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(script):not(style),
+            body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(#reader-tts-highlight-layer):not(#reader-media-overlay-highlight-layer):not(script):not(style),
             body.reader-vertical > .chapter > :not(.reader-content) {
               position: static !important;
               left: auto !important;
@@ -533,6 +541,41 @@ internal fun readerDocumentStyles(
               background: rgba(125, 211, 252, 0.42);
               border-radius: 3px;
               box-shadow: 0 0 0 1px rgba(14, 116, 144, 0.12);
+            }
+            /*
+             * The media overlay's own paint, and it has to be here rather than assumed.
+             *
+             * `ReaderHtmlAnnotationScript` sets a `CSS.highlights` entry and, for WebViews without
+             * the Custom Highlight API, falls back to absolutely positioned marker divs. Neither
+             * paints anything on its own: an unregistered `::highlight()` name has no style at all,
+             * and an unstyled div is transparent and static. So without these rules the overlay
+             * band was computed and set correctly on every clip and simply never appeared, while the
+             * same book on Android — which marks the element itself and injects its own style —
+             * highlighted normally.
+             *
+             * Amber, not read-aloud's blue: Android's WebView band is `rgba(255, 226, 102, 0.45)`
+             * and the native readers paint this band in `HighlightColor.YELLOW`, so this is the
+             * colour the same band already has on every other surface.
+             */
+            ::highlight(reader-media-overlay-highlight) {
+              background: rgba(255, 226, 102, 0.45);
+              color: inherit;
+            }
+            #reader-media-overlay-highlight-layer {
+              position: absolute;
+              inset: 0;
+              z-index: 3;
+              pointer-events: none;
+            }
+            /*
+             * Lighter than the `::highlight()` fill, and for the same reason read-aloud's markers
+             * are: the layer sits *above* the text at z-index 3, so its markers are the only thing
+             * between the reader and the words being narrated.
+             */
+            .reader-media-overlay-highlight-rect {
+              position: absolute;
+              background: rgba(255, 226, 102, 0.38);
+              border-radius: 3px;
             }
             ${HighlightColor.entries.joinToString("\n") { ".${it.cssClass} { background-color: ${it.color.toCssRgba(0.4f)} !important; }" }}
             #reader-selection-menu {

@@ -239,6 +239,9 @@ class MediaOverlayPlayerController {
     /// The loader feeding the current item, held so it outlives the asset that only weakly refers to it.
     private var activeLoader: MediaOverlayResourceLoader?
 
+    /// The recording the live player was built for, so a clip advance within one recording reuses it.
+    private var currentAudioUri: String?
+
     /// Invoked on every clip advance and state change. The five values mirror Android's
     /// `AndroidSharedMediaOverlayPlayback` publishing, so the Kotlin engine's transitions are the
     /// same ones on both platforms.
@@ -335,52 +338,71 @@ class MediaOverlayPlayerController {
     }
 
     private func load(_ spineItemIndex: Int, clip: MediaOverlayClipRequest, autoplay: Bool) {
-        tearDownPlayer()
         lastSpineItemIndex = spineItemIndex
         currentClipIndex = clip.clipIndex
 
-        guard let url = URL(string: clip.audioUri) else {
-            isLoading = false
-            onUpdate?(spineItemIndex, clip.clipIndex, clip.clipBeginMs, false, false, "Narration audio is unavailable")
-            return
+        // One player per *recording*, not per clip.
+        //
+        // A fresh AVURLAsset makes AVFoundation re-index the entry from byte zero through the
+        // resource loader — for a chapter-sized recording that is the whole file, read out of the
+        // archive and across the bridge into Swift, once every clip, several times a second.
+        // Holding the item means advancing a clip is a seek into audio already in memory. It is also
+        // what the file header describes: a clip is a position inside one recording, not an item of
+        // its own.
+        if player == nil || currentAudioUri != clip.audioUri {
+            guard let item = makeItem(for: clip) else { return }
+            let newPlayer = AVPlayer(playerItem: item)
+            player = newPlayer
+            currentAudioUri = clip.audioUri
+            installObservers(for: item)
+            installTimeObserver()
+            refreshNowPlayingInfo()
         }
-        guard let bridge else {
+        guard let target = player else { return }
+        isLoading = true
+        seek(target, toMs: clip.clipBeginMs, autoplay: autoplay)
+    }
+
+    /// The item for a clip's recording, or null having published why there is not one.
+    private func makeItem(for clip: MediaOverlayClipRequest) -> AVPlayerItem? {
+        func unavailable() -> AVPlayerItem? {
             isLoading = false
-            onUpdate?(spineItemIndex, clip.clipIndex, clip.clipBeginMs, false, false, "Narration audio is unavailable")
-            return
+            onUpdate?(lastSpineItemIndex, clip.clipIndex, clip.clipBeginMs, false, false, "Narration audio is unavailable")
+            return nil
         }
+        guard let url = URL(string: clip.audioUri) else { return unavailable() }
+        guard let bridge else { return unavailable() }
         let loader = MediaOverlayResourceLoader(uri: clip.audioUri)
         loader.bridge = bridge
-        guard loader.entryPath != nil else {
-            isLoading = false
-            onUpdate?(spineItemIndex, clip.clipIndex, clip.clipBeginMs, false, false, "Narration audio is unavailable")
-            return
-        }
+        guard loader.entryPath != nil else { return unavailable() }
         // Held for as long as the item is: the asset keeps only a weak reference to its loader, and a
         // loader that deallocated mid-clip would leave every later byte request unhandled.
         activeLoader = loader
         let asset = AVURLAsset(url: url)
         asset.resourceLoader.setDelegate(loader, queue: DispatchQueue(label: "reader.mediaoverlay.loader"))
-        let item = AVPlayerItem(asset: asset)
-        let newPlayer = AVPlayer(playerItem: item)
-        player = newPlayer
-        isLoading = true
-        currentSpeed = playerSpeed
-        installObservers(for: item)
-        installTimeObserver()
-        refreshNowPlayingInfo()
+        return AVPlayerItem(asset: asset)
+    }
 
-        // Seek before playing: the clip's `clipBegin` is rarely the start of the file, and playing
-        // from zero would put a line of unrelated audio under a highlight that names this one.
-        newPlayer.seek(
-            to: CMTime(seconds: clip.clipBeginMs / 1000.0, preferredTimescale: 600),
+    /// Moves the live player to a clip's own beginning and starts it there.
+    ///
+    /// Seek before playing: the clip's `clipBegin` is rarely the start of the file, and playing from
+    /// zero would put a line of unrelated audio under a highlight that names this one.
+    ///
+    /// The completion is guarded on `finished` **and** on this player still being the live one. Both
+    /// are load-bearing: a seek that was superseded by a later one on the same player reports
+    /// `finished == false`, and without the guards the stale completion would `playImmediately` at
+    /// whatever position had since been reached — the incoming clip audibly starting twice, a few
+    /// hundred milliseconds in, from the top of the recording rather than from its `clipBegin`.
+    private func seek(_ target: AVPlayer, toMs positionMs: Double, autoplay: Bool) {
+        target.seek(
+            to: CMTime(seconds: positionMs / 1000.0, preferredTimescale: 600),
             toleranceBefore: .zero,
             toleranceAfter: .zero
-        ) { [weak self] _ in
-            guard let self = self else { return }
+        ) { [weak self, weak target] finished in
+            guard let self = self, let target = target, finished, target === self.player else { return }
             self.isLoading = false
             if autoplay {
-                self.player?.playImmediately(atRate: self.playerSpeed)
+                target.playImmediately(atRate: self.playerSpeed)
             }
             self.publish(isPlaying: autoplay)
         }
@@ -404,9 +426,12 @@ class MediaOverlayPlayerController {
         statusObserver?.invalidate()
         statusObserver = nil
         player = nil
-        // Dropped with the player: the loader belongs to one clip's asset, and a stale one answering
-        // a later request would serve the previous clip's bytes.
+        // Dropped with the player: the loader belongs to one recording's asset, and a stale one
+        // answering a later request would serve the previous recording's bytes. The URI goes with
+        // it, so the next clip for the same recording still builds a fresh player rather than
+        // inheriting one whose loader is gone.
         activeLoader = nil
+        currentAudioUri = nil
     }
 
     private func stopInternal(notifyEnded: Bool) {

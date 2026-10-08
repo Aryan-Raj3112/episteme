@@ -671,7 +671,7 @@ class ReaderHtmlDocumentBuilderTest {
         )
         val verticalExpansionCss = Regex(
             "body\\.reader-vertical > \\.chapter,\\s*" +
-                "body\\.reader-vertical > :not\\(\\.chapter\\):not\\(#reader-selection-menu\\):not\\(\\.reader-selection-handle\\):not\\(script\\):not\\(style\\),\\s*" +
+                "body\\.reader-vertical > :not\\(\\.chapter\\):not\\(#reader-selection-menu\\):not\\(\\.reader-selection-handle\\):not\\(#reader-tts-highlight-layer\\):not\\(#reader-media-overlay-highlight-layer\\):not\\(script\\):not\\(style\\),\\s*" +
                 "body\\.reader-vertical > \\.chapter > :not\\(\\.reader-content\\),\\s*" +
                 "body\\.reader-vertical > \\.chapter > \\.chapter-title,\\s*" +
                 "body\\.reader-vertical > \\.chapter > \\.reader-content \\{\\s*" +
@@ -685,7 +685,7 @@ class ReaderHtmlDocumentBuilderTest {
                 "margin: 0 !important;"
         )
         val verticalContentCss = Regex(
-            "body\\.reader-vertical > :not\\(\\.chapter\\):not\\(#reader-selection-menu\\):not\\(\\.reader-selection-handle\\):not\\(script\\):not\\(style\\),\\s*" +
+            "body\\.reader-vertical > :not\\(\\.chapter\\):not\\(#reader-selection-menu\\):not\\(\\.reader-selection-handle\\):not\\(#reader-tts-highlight-layer\\):not\\(#reader-media-overlay-highlight-layer\\):not\\(script\\):not\\(style\\),\\s*" +
                 "body\\.reader-vertical > \\.chapter > :not\\(\\.reader-content\\),\\s*" +
                 "body\\.reader-vertical > \\.chapter > \\.chapter-title,\\s*" +
                 "body\\.reader-vertical > \\.chapter > \\.reader-content \\{\\s*" +

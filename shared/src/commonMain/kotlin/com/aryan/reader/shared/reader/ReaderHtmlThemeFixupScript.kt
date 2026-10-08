@@ -56,7 +56,11 @@ internal fun readerHtmlThemeFixupScript(): String = """
           if (element.closest) {
             if (element.closest('svg')) return true;
             if (element.closest('a[href]')) return true;
-            if (element.closest('#reader-selection-menu, .reader-selection-handle, #reader-tts-highlight-layer')) return true;
+            // Both playback highlight layers are exempt. They are emptied and refilled on every
+            // spoken chunk or narrated clip, so each repaint is an `addedNodes` mutation and would
+            // schedule a full-document contrast pass over a layer that holds no author styling to
+            // correct in the first place.
+            if (element.closest('#reader-selection-menu, .reader-selection-handle, #reader-tts-highlight-layer, #reader-media-overlay-highlight-layer')) return true;
             if (element.closest('span[class*="user-highlight-"], mark.reader-user-highlight, .reader-highlight')) return true;
           }
           return false;

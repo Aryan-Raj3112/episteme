@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.ui
 
+import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.reader.SharedMediaOverlayProjection
 import com.aryan.reader.shared.reader.SharedPlaybackFragment
 import kotlin.test.Test
@@ -84,6 +85,48 @@ class SharedMobileEpubMediaOverlayFollowTest {
             sharedMobileEpubMediaOverlayFragmentScript(projection = null)
                 .startsWith("if (window.readerSetMediaOverlayFragment) ")
         )
+    }
+
+    // --- which engine owns the band -----------------------------------------------------------
+
+    /**
+     * Narration wins over read-aloud, and only one of them can be live anyway.
+     *
+     * The arbiter stops one engine to start the other, so at most one of these is ever non-null in
+     * practice. The order still has to be pinned rather than left to argument order, because the
+     * native surfaces already answer this question the other way round in `playbackHighlights` —
+     * and a WebView band owned by a different engine than the native band on the same book is the
+     * kind of divergence that only shows up as "the highlight is on the wrong words".
+     */
+    @Test
+    fun `narration owns the band over read-aloud`() {
+        val script = sharedMobileEpubPlaybackBandScript(
+            mediaOverlayProjection = projection(fragment = fragment(start = 10)),
+            ttsLocator = ReaderLocator(chapterIndex = 2, startOffset = 99, textQuote = "spoken")
+        )
+        assertTrue(script.contains("readerSetMediaOverlayFragment"), script)
+        assertFalse(script.contains("readerSetTtsLocator"), script)
+    }
+
+    /** Read-aloud still paints through its own bridge call, local or cloud engine alike. */
+    @Test
+    fun `read-aloud owns the band when nothing is narrated`() {
+        val script = sharedMobileEpubPlaybackBandScript(
+            mediaOverlayProjection = null,
+            ttsLocator = ReaderLocator(chapterIndex = 2, startOffset = 99, textQuote = "spoken")
+        )
+        assertTrue(script.contains("readerSetTtsLocator"), script)
+        assertTrue(script.contains("\"startOffset\":99"), script)
+    }
+
+    /** Nothing live is an explicit clear for whichever engine last held the band, not a no-op. */
+    @Test
+    fun `neither engine running clears the band`() {
+        val script = sharedMobileEpubPlaybackBandScript(
+            mediaOverlayProjection = null,
+            ttsLocator = null
+        )
+        assertTrue(script.contains("readerSetTtsLocator(null, true)"), script)
     }
 
     private fun projection(
