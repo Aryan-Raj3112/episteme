@@ -7,9 +7,25 @@
 //  Kotlin owns the sequencing — which clip plays next, where narration is anchored, when the run
 //  ends — and drives this controller through ReaderIosBridge handlers, exactly as it drives
 //  AudiobookPlayerController. The difference is the unit of playback: a clip is one sentence inside
-//  a long recording, so there is no item-per-clip to advance through. `AVPlayerItem` has no
-//  clipping configuration, so the controller seeks to each clip's `clipBegin` and enforces each
-//  clip's end itself, advancing on a periodic observer rather than on an item transition.
+//  a long recording.
+//
+//  The mechanism is Android's as far as AVFoundation allows. Android hands ExoPlayer one `MediaItem`
+//  per clip with a `ClippingConfiguration`, so `onMediaItemTransition` *is* the active-fragment
+//  signal. Here each clip gets its own `AVPlayerItem` over a shared asset carrying the clip's end as
+//  `forwardPlaybackEndTime`, and `AVPlayerItemDidPlayToEndTime` is that same transition.
+//
+//  One asymmetry is real and is the only one left: `AVPlayerItem` has no start counterpart to
+//  `forwardPlaybackEndTime`, so a clip's beginning is a seek rather than a property. It must be a
+//  *paused* seek, and that ordering is load-bearing. A seek issued while the player is playing does
+//  not stop it — playback runs on from where it was until the target is ready — so at every clip
+//  boundary the reader heard the opening of the next line, and then heard it again once the seek
+//  landed: a word doubled on every line. Pausing first makes the run-on impossible.
+//
+//  Which follows a rule worth stating once: whether to *start* the next clip is [shouldPlay], the
+//  reader's intent, and never `timeControlStatus`. A player whose item has played to its end is
+//  `.paused`, so asking it there answers "no" at every boundary and every line lands silent.
+//
+//  The 250 ms observer publishes position only. The sequence needs no polling on either platform.
 //
 //  The audio is not a file. `reader-epub-audio:` URIs name entries inside the EPUB's zip, served by
 //  an AVAssetResourceLoader whose data requests are answered by Kotlin, which holds the archive.
@@ -221,26 +237,58 @@ class MediaOverlayPlayerController {
     private var statusObserver: NSKeyValueObservation?
     private var interruptionObserver: NSObjectProtocol?
     private var routeChangeObserver: NSObjectProtocol?
+    /// Whether the reader asked for narration to be playing.
+    ///
+    /// Intent, not observation, and it has to be. The advance comes from
+    /// `AVPlayerItemDidPlayToEndTime`, and a player whose item has played to its end is `.paused` —
+    /// so asking `timeControlStatus` there answers "no" at every clip boundary, and each line is
+    /// installed, seeked and left silent until the reader presses play. Android never has to answer
+    /// this question: `playWhenReady` is its own state and `onMediaItemTransition` carries it
+    /// through. This flag is the equivalent, and it is also the only answer that survives a pause
+    /// caused by buffering rather than by the reader.
+    private var shouldPlay = false
+
     private var isLoading = false
     private var currentSpeed: Float = 1
     private var wasPlayingBeforeInterruption = false
     private var nowPlayingTitle: String = ""
     private var nowPlayingSubtitle: String?
 
-    /// The loaded chapter's clips, and the index the engine is on. The engine owns the *decision*
+    /// The clips actually queued, and the index the engine is on. The engine owns the *decision*
     /// to advance; this is only the table it advances through.
-    private var clips: [MediaOverlayClipRequest] = []
+    ///
+    /// Holds the **playable** subset, in plan order, one entry per element of `items` — appended
+    /// together so the two cannot drift. A clip whose recording cannot be addressed gets no item and
+    /// so no queue entry either, which is Android's `playableClipIndices` arrived at by
+    /// construction rather than by a second map that has to be kept in step.
+    private var queue: [MediaOverlayClipRequest] = []
     private var currentClipIndex: Int = 0
 
-    /// Guards against two advances from one boundary: the tick that sees the clip end and the
-    /// item-ended notification can both fire for the same instant.
+    /// One item per queued clip, in the same order, and how far through them playback is.
+    ///
+    /// This is ExoPlayer's playlist, spelled for `AVPlayer`: Android hands media3 one `MediaItem` per
+    /// clip with a `ClippingConfiguration` and lets `onMediaItemTransition` announce the active
+    /// fragment. Each item here carries the clip's end as `forwardPlaybackEndTime`, which is what
+    /// AVFoundation offers instead, and the item-ended notification is the same transition.
+    private var items: [AVPlayerItem] = []
+    private var queueIndex: Int = 0
+
+    /// Counts activations, so a superseded clip's seek completion cannot start the clip that replaced it.
+    private var activation: Int = 0
+
+    /// Guards against two advances from one boundary.
     private var advanceScheduled = false
 
-    /// The loader feeding the current item, held so it outlives the asset that only weakly refers to it.
-    private var activeLoader: MediaOverlayResourceLoader?
-
-    /// The recording the live player was built for, so a clip advance within one recording reuses it.
-    private var currentAudioUri: String?
+    /// The asset and resource loader for each recording the chapter draws on, by URI.
+    ///
+    /// Keyed rather than single because a chapter's clips can span recordings — DAISY's Moby Dick
+    /// has one mp4 across two chapters — and several clips usually share one file. One asset per
+    /// recording means the resource loader is asked to index each entry once per chapter instead of
+    /// once per clip, which for a chapter-sized mp3 is the difference between reading the file once
+    /// and reading it once per line.
+    private var assets: [String: AVURLAsset] = [:]
+    private var loaders: [MediaOverlayResourceLoader] = []
+    private var unavailablePaths: Set<String> = []
 
     /// Invoked on every clip advance and state change. The five values mirror Android's
     /// `AndroidSharedMediaOverlayPlayback` publishing, so the Kotlin engine's transitions are the
@@ -265,10 +313,7 @@ class MediaOverlayPlayerController {
 
     func play(_ setup: MediaOverlayPlaybackSetup) {
         stopInternal(notifyEnded: false)
-        guard let first = setup.clips.indices.contains(Int(setup.startPlaybackIndex))
-            ? setup.clips[Int(setup.startPlaybackIndex)]
-            : setup.clips.first
-        else {
+        guard !setup.clips.isEmpty else {
             onUpdate?(-1, 0, 0, false, false, "This chapter has no narration audio")
             return
         }
@@ -280,22 +325,124 @@ class MediaOverlayPlayerController {
             try? AVAudioSession.sharedInstance().setActive(true)
         }
 
-        clips = setup.clips
-        currentClipIndex = first.clipIndex
-        isLoading = true
         nowPlayingTitle = setup.title
         nowPlayingSubtitle = setup.narrator
         installRemoteCommands()
         installAudioSessionObservers()
-        load(setup.spineItemIndex, clip: first, autoplay: setup.playWhenReady)
+
+        // The whole playlist up front, exactly as Android hands ExoPlayer its `MediaItem`s: the
+        // clip's end belongs to the item, so advancing is the player announcing the boundary and not
+        // arithmetic on a clock this class has to time. Clip and item are appended together, so a
+        // recording that cannot be addressed drops out of both and leaves no gap to mis-index.
+        queue = []
+        items = []
+        for clip in setup.clips {
+            guard let item = item(for: clip) else { continue }
+            queue.append(clip)
+            items.append(item)
+        }
+        guard !items.isEmpty else {
+            onUpdate?(-1, 0, 0, false, false, "This chapter has no narration audio")
+            return
+        }
+        let startIndex = min(max(setup.startPlaybackIndex, 0), items.count - 1)
+        shouldPlay = setup.playWhenReady
+        let newPlayer = AVPlayer()
+        player = newPlayer
+        installTimeObserver()
+        activate(index: startIndex, autoplay: shouldPlay)
+    }
+
+    /// Makes the clip at a queue position the current one and starts it.
+    ///
+    /// [autoplay] is the reader's intent, never the player's momentary state: see [shouldPlay].
+    private func activate(index: Int, autoplay: Bool) {
+        guard items.indices.contains(index) else {
+            finishChapter()
+            return
+        }
+        let clip = queue[index]
+        queueIndex = index
+        currentClipIndex = clip.clipIndex
+        isLoading = true
+        installObservers(for: items[index])
+        refreshNowPlayingInfo()
+        // **Paused before the seek**, and that ordering is the entire fix for a doubled word. A seek
+        // issued while the player is playing does not stop it: playback runs on from where it was
+        // until the target is ready. Issued at a clip boundary that means the reader hears the
+        // opening of the next line, and then hears it again once the seek lands. Pausing first makes
+        // the run-on impossible, because there is nothing left running.
+        player?.pause()
+        player?.replaceCurrentItem(with: items[index])
+        activation += 1
+        let token = activation
+        player?.seek(
+            to: Self.time(clip.clipBeginMs),
+            toleranceBefore: .zero,
+            toleranceAfter: .zero
+        ) { [weak self] finished in
+            guard let self = self, finished, token == self.activation else { return }
+            self.isLoading = false
+            if autoplay {
+                self.player?.playImmediately(atRate: self.playerSpeed)
+            }
+            self.publish(isPlaying: autoplay, positionMs: clip.clipBeginMs)
+        }
+    }
+
+    /// One clip as an item carrying its own end.
+    ///
+    /// `forwardPlaybackEndTime` is most of `ClippingConfiguration`: the item posts
+    /// `AVPlayerItemDidPlayToEndTime` when it reaches it, so the clip's end is the player's to
+    /// announce rather than a subtraction on a polled clock.
+    ///
+    /// It is not all of it, and the gap is worth naming. `AVPlayerItem` declares
+    /// `forwardPlaybackEndTime` and `reversePlaybackEndTime` and **no start counterpart**, so a
+    /// clip's beginning cannot be expressed on its item the way ExoPlayer's `setStartPositionMs`
+    /// expresses it. It is a seek — see [activate]. A nil `clipEnd` is left unset, which runs the
+    /// clip to the end of the media, the same choice Android makes by not calling
+    /// `setEndPositionMs`.
+    private func item(for clip: MediaOverlayClipRequest) -> AVPlayerItem? {
+        guard let asset = asset(for: clip.audioUri) else { return nil }
+        let item = AVPlayerItem(asset: asset)
+        if let end = clip.clipEndMs, end > clip.clipBeginMs {
+            item.forwardPlaybackEndTime = Self.time(end)
+        }
+        return item
+    }
+
+    /// The asset for a recording, built once per chapter and kept for as long as it is in play.
+    private func asset(for audioUri: String) -> AVURLAsset? {
+        if let existing = assets[audioUri] { return existing }
+        guard !unavailablePaths.contains(audioUri) else { return nil }
+        guard let url = URL(string: audioUri), let bridge else { return nil }
+        let loader = MediaOverlayResourceLoader(uri: audioUri)
+        loader.bridge = bridge
+        guard loader.entryPath != nil else {
+            unavailablePaths.insert(audioUri)
+            return nil
+        }
+        // Held for as long as the chapter: the asset keeps only a weak reference to its loader, and a
+        // loader that deallocated mid-chapter would leave every later byte request unhandled.
+        loaders.append(loader)
+        let asset = AVURLAsset(url: url)
+        asset.resourceLoader.setDelegate(loader, queue: DispatchQueue(label: "reader.mediaoverlay.loader"))
+        assets[audioUri] = asset
+        return asset
+    }
+
+    private static func time(_ ms: Double) -> CMTime {
+        CMTime(seconds: ms / 1000.0, preferredTimescale: 600)
     }
 
     func pause() {
+        shouldPlay = false
         player?.pause()
         publish(isPlaying: false)
     }
 
     func resume() {
+        shouldPlay = true
         guard player != nil else { return }
         player?.playImmediately(atRate: currentSpeed)
         publish(isPlaying: true)
@@ -310,9 +457,13 @@ class MediaOverlayPlayerController {
     }
 
     /// Restarts the active clip from its own beginning.
+    ///
+    /// Re-installing the item rather than seeking within it, which is what Android does for the same
+    /// gesture (`onRestartRequested` -> `onClipChanged`). The item is seeked to its own `clipBegin`,
+    /// so this cannot start from anywhere else, and [shouldPlay] decides whether it starts at all.
     func restartClip() {
-        guard let clip = clip(at: currentClipIndex) else { return }
-        load(lastSpineItemIndex, clip: clip, autoplay: player?.timeControlStatus == .playing)
+        guard items.indices.contains(queueIndex) else { return }
+        activate(index: queueIndex, autoplay: shouldPlay)
     }
 
     /// Moves to a clip the engine named, by its *document* clip index.
@@ -321,10 +472,9 @@ class MediaOverlayPlayerController {
     /// AVFoundation's own callbacks, so there is no re-entrancy to avoid — and a reader pressing
     /// "next passage" should hear it now rather than a turn later.
     func seek(toClip clipIndex: Int, spineItemIndex: Int) {
-        guard let clip = clip(at: clipIndex) else { return }
+        guard let index = queue.firstIndex(where: { $0.clipIndex == clipIndex }) else { return }
         lastSpineItemIndex = spineItemIndex
-        currentClipIndex = clipIndex
-        load(spineItemIndex, clip: clip, autoplay: true)
+        activate(index: index, autoplay: true)
     }
 
     func stop() {
@@ -332,81 +482,6 @@ class MediaOverlayPlayerController {
     }
 
     private var lastSpineItemIndex: Int = -1
-
-    private func clip(at clipIndex: Int) -> MediaOverlayClipRequest? {
-        clips.first { $0.clipIndex == clipIndex }
-    }
-
-    private func load(_ spineItemIndex: Int, clip: MediaOverlayClipRequest, autoplay: Bool) {
-        lastSpineItemIndex = spineItemIndex
-        currentClipIndex = clip.clipIndex
-
-        // One player per *recording*, not per clip.
-        //
-        // A fresh AVURLAsset makes AVFoundation re-index the entry from byte zero through the
-        // resource loader — for a chapter-sized recording that is the whole file, read out of the
-        // archive and across the bridge into Swift, once every clip, several times a second.
-        // Holding the item means advancing a clip is a seek into audio already in memory. It is also
-        // what the file header describes: a clip is a position inside one recording, not an item of
-        // its own.
-        if player == nil || currentAudioUri != clip.audioUri {
-            guard let item = makeItem(for: clip) else { return }
-            let newPlayer = AVPlayer(playerItem: item)
-            player = newPlayer
-            currentAudioUri = clip.audioUri
-            installObservers(for: item)
-            installTimeObserver()
-            refreshNowPlayingInfo()
-        }
-        guard let target = player else { return }
-        isLoading = true
-        seek(target, toMs: clip.clipBeginMs, autoplay: autoplay)
-    }
-
-    /// The item for a clip's recording, or null having published why there is not one.
-    private func makeItem(for clip: MediaOverlayClipRequest) -> AVPlayerItem? {
-        func unavailable() -> AVPlayerItem? {
-            isLoading = false
-            onUpdate?(lastSpineItemIndex, clip.clipIndex, clip.clipBeginMs, false, false, "Narration audio is unavailable")
-            return nil
-        }
-        guard let url = URL(string: clip.audioUri) else { return unavailable() }
-        guard let bridge else { return unavailable() }
-        let loader = MediaOverlayResourceLoader(uri: clip.audioUri)
-        loader.bridge = bridge
-        guard loader.entryPath != nil else { return unavailable() }
-        // Held for as long as the item is: the asset keeps only a weak reference to its loader, and a
-        // loader that deallocated mid-clip would leave every later byte request unhandled.
-        activeLoader = loader
-        let asset = AVURLAsset(url: url)
-        asset.resourceLoader.setDelegate(loader, queue: DispatchQueue(label: "reader.mediaoverlay.loader"))
-        return AVPlayerItem(asset: asset)
-    }
-
-    /// Moves the live player to a clip's own beginning and starts it there.
-    ///
-    /// Seek before playing: the clip's `clipBegin` is rarely the start of the file, and playing from
-    /// zero would put a line of unrelated audio under a highlight that names this one.
-    ///
-    /// The completion is guarded on `finished` **and** on this player still being the live one. Both
-    /// are load-bearing: a seek that was superseded by a later one on the same player reports
-    /// `finished == false`, and without the guards the stale completion would `playImmediately` at
-    /// whatever position had since been reached — the incoming clip audibly starting twice, a few
-    /// hundred milliseconds in, from the top of the recording rather than from its `clipBegin`.
-    private func seek(_ target: AVPlayer, toMs positionMs: Double, autoplay: Bool) {
-        target.seek(
-            to: CMTime(seconds: positionMs / 1000.0, preferredTimescale: 600),
-            toleranceBefore: .zero,
-            toleranceAfter: .zero
-        ) { [weak self, weak target] finished in
-            guard let self = self, let target = target, finished, target === self.player else { return }
-            self.isLoading = false
-            if autoplay {
-                target.playImmediately(atRate: self.playerSpeed)
-            }
-            self.publish(isPlaying: autoplay)
-        }
-    }
 
     private var playerSpeed: Float { currentSpeed > 0 ? currentSpeed : 1 }
 
@@ -426,12 +501,17 @@ class MediaOverlayPlayerController {
         statusObserver?.invalidate()
         statusObserver = nil
         player = nil
-        // Dropped with the player: the loader belongs to one recording's asset, and a stale one
-        // answering a later request would serve the previous recording's bytes. The URI goes with
-        // it, so the next clip for the same recording still builds a fresh player rather than
-        // inheriting one whose loader is gone.
-        activeLoader = nil
-        currentAudioUri = nil
+        // Dropped with the player: a loader belongs to one recording's asset, and a stale one
+        // answering a later chapter's request would serve the wrong recording's bytes.
+        assets.removeAll()
+        loaders.removeAll()
+        unavailablePaths.removeAll()
+        items.removeAll()
+        queueIndex = 0
+        activation = 0
+        // Cleared here as well as by the callers: a session that ran to its end leaves the last clip's
+        // end notification in flight, and a stale `true` there would start a chapter nobody asked for.
+        shouldPlay = false
     }
 
     private func stopInternal(notifyEnded: Bool) {
@@ -450,7 +530,7 @@ class MediaOverlayPlayerController {
             NotificationCenter.default.removeObserver(routeChangeObserver)
         }
         routeChangeObserver = nil
-        clips = []
+        queue = []
         currentClipIndex = 0
         lastSpineItemIndex = -1
         isLoading = false
@@ -465,13 +545,12 @@ class MediaOverlayPlayerController {
 
     // MARK: - Observers
 
-    /// How often the clip bound is checked, and how often the position is published.
+    /// How often the position is published.
     ///
-    /// A clip is a sentence, so this is the granularity at which a boundary can be overshot by
-    /// anything audible: at 250 ms the worst overshoot is a quarter second of the *next* line under
-    /// this line's highlight, against a clip typically two seconds long. Finer polling would cost
-    /// main-thread work per clip for no perceptible gain, and coarser would make the boundary itself
-    /// the visible artefact.
+    /// Position only. The *sequence* needs no polling — the item's own end is the boundary, exactly
+    /// as ExoPlayer's `onMediaItemTransition` is — and this exists because the shared state exposes a
+    /// millisecond position that a `MediaController` could not push either. A missed tick costs a
+    /// slightly stale readout, never a wrong fragment, which is the same bargain Android's poll makes.
     private static let tickInterval = CMTime(seconds: 0.25, preferredTimescale: 600)
 
     private func installTimeObserver() {
@@ -480,35 +559,23 @@ class MediaOverlayPlayerController {
             queue: .main
         ) { [weak self] time in
             guard let self = self else { return }
-            let positionMs = time.seconds * 1000.0
-            let isPlaying = self.player?.timeControlStatus == .playing
-            self.publish(isPlaying: isPlaying, positionMs: positionMs)
-            self.enforceClipEnd(atMs: positionMs)
+            let seconds = time.seconds
+            guard seconds.isFinite, seconds >= 0 else { return }
+            self.publish(
+                isPlaying: self.player?.timeControlStatus == .playing,
+                positionMs: seconds * 1000.0
+            )
         }
-    }
-
-    /// The clip bound `AVPlayerItem` cannot express.
-    ///
-    /// This is the counterpart to Android handing ExoPlayer a `ClippingConfiguration`: with no
-    /// clipping, a clip would otherwise run past its `clipEnd` and the highlight would keep moving
-    /// over text the narrator has already left.
-    private func enforceClipEnd(atMs positionMs: Double) {
-        guard let clip = clip(at: currentClipIndex), let end = clip.clipEndMs, end > 0 else { return }
-        guard positionMs >= end else { return }
-        advanceAfterCurrentClip()
     }
 
     /// Moves to the next clip in the loaded chapter, or reports the chapter finished.
     ///
-    /// Deferred to the next main-loop turn rather than run inside the caller. The caller is usually the
-    /// periodic observer or the item-ended notification — i.e. AVFoundation is dispatching *to* this
-    /// controller — and replacing the player from inside one of its own callbacks is the re-entrancy
-    /// Android's `AndroidSharedMediaOverlayPlayback.notifyChapterFinished` exists to avoid. The failure
-    /// is not a crash: the next chapter loads, reports its first clip, and then never plays a note.
-    /// Android sees the same thing through ExoPlayer's listener dispatch, so both platforms defer.
-    ///
-    /// A chapter that ends and waits a turn is inaudible, so the gap concern that would argue for
-    /// doing it synchronously does not apply at a 250 ms tick.
+    /// Deferred to the next main-loop turn rather than run inside the caller. The caller is the
+    /// item-ended notification — i.e. AVFoundation is dispatching *to* this controller — and
+    /// installing the next item from inside one of its own callbacks is the re-entrancy Android's
+    /// `AndroidSharedMediaOverlayPlayback.notifyChapterFinished` exists to avoid. The failure is not a
+    /// crash: the next chapter loads, reports its first clip, and then never plays a note. Android
+    /// sees the same thing through ExoPlayer's listener dispatch, so both platforms defer.
     private func advanceAfterCurrentClip() {
         guard !advanceScheduled else { return }
         advanceScheduled = true
@@ -520,24 +587,15 @@ class MediaOverlayPlayerController {
     }
 
     private func performAdvance() {
-        guard let index = clips.firstIndex(where: { $0.clipIndex == currentClipIndex }) else {
-            finishChapter()
-            return
-        }
-        let nextIndex = index + 1
-        guard clips.indices.contains(nextIndex) else {
-            finishChapter()
-            return
-        }
-        let next = clips[nextIndex]
-        let wasPlaying = player?.timeControlStatus == .playing
-        load(lastSpineItemIndex, clip: next, autoplay: wasPlaying)
+        // [shouldPlay], not `timeControlStatus`: an item that has played to its end leaves the
+        // player `.paused`, so the state answer here is always "no".
+        activate(index: queueIndex + 1, autoplay: shouldPlay)
     }
 
     private func finishChapter() {
         let finished = lastSpineItemIndex
         tearDownPlayer()
-        clips = []
+        queue = []
         currentClipIndex = 0
         lastSpineItemIndex = -1
         isLoading = false
@@ -546,14 +604,28 @@ class MediaOverlayPlayerController {
     }
 
     private func installObservers(for item: AVPlayerItem) {
+        // Re-installed on every clip, so the previous item's observers go first. Left in place they
+        // would accumulate one set per clip for the length of the chapter.
+        if let endObserver {
+            NotificationCenter.default.removeObserver(endObserver)
+        }
+        endObserver = nil
+        if let failureObserver {
+            NotificationCenter.default.removeObserver(failureObserver)
+        }
+        failureObserver = nil
+        statusObserver?.invalidate()
+        statusObserver = nil
         let center = NotificationCenter.default
         endObserver = center.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
             object: item,
             queue: .main
         ) { [weak self] _ in
-            // The end of the *media*, not of the clip: a clip whose `clipEnd` is null runs to here,
-            // and one that has an end is normally advanced by the periodic observer first.
+            // The clip boundary, announced by the player rather than worked out from a clock. An item
+            // with a `forwardPlaybackEndTime` posts this when it reaches its `clipEnd`; one without
+            // posts it at the end of the recording. Both are the right moment to move on, which is
+            // what ExoPlayer's own item transition gives Android for the same two cases.
             self?.advanceAfterCurrentClip()
         }
         failureObserver = center.addObserver(
@@ -591,7 +663,10 @@ class MediaOverlayPlayerController {
             guard let self = self else { return }
             let typeRaw = (notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue ?? 0
             if typeRaw == AVAudioSession.InterruptionType.began.rawValue {
-                self.wasPlayingBeforeInterruption = self.player?.timeControlStatus == .playing
+                // [shouldPlay] rather than the player's state, for the same reason as every other
+                // advance: a clip that had just ended leaves it `.paused`, and an interruption there
+                // should not be mistaken for the reader having stopped.
+                self.wasPlayingBeforeInterruption = self.shouldPlay
                 if self.wasPlayingBeforeInterruption {
                     self.player?.pause()
                 }
@@ -599,7 +674,8 @@ class MediaOverlayPlayerController {
             } else if typeRaw == AVAudioSession.InterruptionType.ended.rawValue {
                 let optionsRaw = (notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? NSNumber)?.uintValue ?? 0
                 let shouldResume = AVAudioSession.InterruptionOptions(rawValue: optionsRaw).contains(.shouldResume)
-                if self.wasPlayingBeforeInterruption && shouldResume {
+                self.shouldPlay = self.wasPlayingBeforeInterruption && shouldResume
+                if self.shouldPlay {
                     DispatchQueue.global(qos: .userInitiated).async {
                         try? AVAudioSession.sharedInstance().setActive(true)
                     }
@@ -676,11 +752,11 @@ class MediaOverlayPlayerController {
         }
         commands.skipBackwardCommand.addTarget { [weak self] _ in
             guard let self = self else { return .commandFailed }
-            guard let index = self.clips.firstIndex(where: { $0.clipIndex == self.currentClipIndex }),
+            guard let index = self.queue.firstIndex(where: { $0.clipIndex == self.currentClipIndex }),
                   index > 0
             else { return .commandFailed }
             self.seek(
-                toClip: self.clips[index - 1].clipIndex,
+                toClip: self.queue[index - 1].clipIndex,
                 spineItemIndex: self.lastSpineItemIndex
             )
             return .success

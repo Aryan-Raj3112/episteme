@@ -14,15 +14,21 @@ import platform.posix.memcpy
 /**
  * iOS media overlay playback.
  *
- * **AVPlayer cannot clip, so this engine is the sequencer as well as the transport.** Android hands
- * ExoPlayer one `MediaItem` per clip with a `ClippingConfiguration`, and `onMediaItemTransition`
- * *is* the active-fragment signal — no polling, no arithmetic, nothing to get wrong at a boundary.
- * iOS has one player and no clipping configuration at all, so each clip is a seek and the bound is
- * enforced from a periodic observer, with the item-ended notification covering the clip whose end is
- * the media's own.
+ * **The mechanism is Android's, as far as AVFoundation allows.** Android hands ExoPlayer one
+ * `MediaItem` per clip with a `ClippingConfiguration`, and `onMediaItemTransition` *is* the
+ * active-fragment signal — no polling, no arithmetic, nothing to get wrong at a boundary. iOS builds
+ * one `AVPlayerItem` per clip over a shared asset, carrying the clip's end as
+ * `forwardPlaybackEndTime`, and `AVPlayerItemDidPlayToEndTime` is that same transition.
  *
- * That is a real difference in mechanism, and the reason it is safe is that it is not a difference
- * in behaviour: every decision about *which* clip comes next lives in
+ * One asymmetry is real. `AVPlayerItem` declares `forwardPlaybackEndTime` and
+ * `reversePlaybackEndTime` and **no start counterpart**, so a clip's beginning cannot be a property
+ * the way ExoPlayer's `setStartPositionMs` is; it is a seek. That seek must be issued while the
+ * player is paused, and the first iOS design got that wrong in the way that is easiest to get wrong:
+ * it sought while still playing, which does not stop playback, so at every boundary the reader heard
+ * the opening of the next line and then heard it again once the seek landed. A word doubled on every
+ * line. Pausing before the seek fixes it, and the end of a clip no longer needs polling at all.
+ *
+ * Every decision about *which* clip comes next still lives in
  * [SharedMediaOverlayPlaybackPlan] and [SharedMediaOverlaySession], both platform-free, and this
  * class only moves audio and reports where it is. A drift between platforms would be a highlight
  * that does not match the voice, which is the one bug this feature exists to avoid.

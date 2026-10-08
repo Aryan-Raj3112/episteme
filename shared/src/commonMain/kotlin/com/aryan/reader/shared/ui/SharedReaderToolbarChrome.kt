@@ -239,8 +239,57 @@ val SharedReaderEpubBottomBarHeight = 45.dp
 val SharedReaderPdfBottomBarHeight = 56.dp
 val SharedReaderJumpBarHeight = 40.dp
 
+/**
+ * The narration card's height, and the gap it keeps above whatever it floats over.
+ *
+ * The height is the bar's own `heightIn(min = 64.dp)`; it grows past that only if the
+ * title/subtitle column wraps to two lines each at the largest accessibility text size, which
+ * reserving for exactly one line would then let overlap again.
+ */
+val SharedReaderNarrationBarHeight = 64.dp
+
+/** The breathing room between the narration card and the chrome below it. */
+val SharedReaderNarrationBarGap = 16.dp
+
+/** Where the card sits when the chrome it floats over is hidden. */
+private val SharedReaderNarrationBarHiddenBottomPadding = 32.dp
+
 fun sharedMobileEpubBottomChromePadding(bottomInset: Dp): Dp =
     SharedReaderEpubBottomBarHeight + bottomInset
+
+/**
+ * Bottom padding for the media overlay control card, so it floats clear of the whole bottom stack.
+ *
+ * This is the one bottom card that used to reserve for the toolbar and nothing else — it reused the
+ * read-aloud overlay's lift, which is `inset + 45.dp + 16.dp`. That put its lower ~24.dp underneath
+ * the jump bar and its lower third underneath a bottom-positioned page info bar, with no `zIndex`
+ * anywhere in either reader to hide the damage: later declarations simply paint over earlier ones,
+ * and the jump bar is declared after the narration card.
+ *
+ * The order is the reader's own: toolbar, then jump bar, then page info, then a gap, then the card.
+ * That is exactly where [SharedMobileEpubReader] puts the page info bar in the bottom column, so
+ * summing them in this order cannot drift from the layout it is meant to clear.
+ *
+ * @param pageInfoReserve the page info bar's height when it is visible at the bottom, else 0.dp.
+ *   A page info bar at the top is nowhere near the card and must not lift it.
+ * @param jumpBarVisible whether the jump history bar is showing. It is a sibling overlay, not a
+ *   sibling row, so the only way to clear it is to lift the card by its height.
+ * @param chromeVisible whether the bottom chrome is showing at all. Hidden, the card drops to a
+ *   fixed inset rather than tracking a stack that is not there.
+ */
+fun sharedMobileEpubMediaOverlayBottomPadding(
+    bottomChromePadding: Dp,
+    pageInfoReserve: Dp = 0.dp,
+    jumpBarVisible: Boolean = false,
+    chromeVisible: Boolean = true,
+): Dp = if (chromeVisible) {
+    bottomChromePadding +
+        pageInfoReserve +
+        (if (jumpBarVisible) SharedReaderJumpBarHeight else 0.dp) +
+        SharedReaderNarrationBarGap
+} else {
+    SharedReaderNarrationBarHiddenBottomPadding
+}
 
 fun sharedMobileEpubJumpBottomPadding(
     bottomChromePadding: Dp,

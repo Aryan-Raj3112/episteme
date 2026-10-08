@@ -280,6 +280,8 @@ import com.aryan.reader.shared.ui.SharedMobileReaderRecoveryGate
 import com.aryan.reader.shared.ui.rememberReaderMotionPolicy
 import com.aryan.reader.shared.ui.SharedReaderPageInfoBarRow
 import com.aryan.reader.shared.ui.SharedReaderPageInfoBarSidePadding
+import com.aryan.reader.shared.ui.sharedMobileEpubBottomChromePadding
+import com.aryan.reader.shared.ui.sharedMobileEpubMediaOverlayBottomPadding
 import com.aryan.reader.shared.ui.sharedMobileEpubPageInfoBarContentHeight
 import com.aryan.reader.shared.ui.sharedMobileEpubPageInfoCornerClearance
 import com.aryan.reader.shared.ui.SharedMobileEpubLoading
@@ -5846,6 +5848,29 @@ fun EpubReaderHost(
                     label = "TtsOverlayPadding"
                 )
 
+                // The narration card's own lift, which unlike the read-aloud overlay's has to clear
+                // the jump bar and a bottom-positioned page info bar as well as the toolbar. It was
+                // sharing `ttsOverlayPadding`, which reserves for the toolbar only, so the jump bar
+                // painted over the card's lower ~24dp.
+                val mediaOverlayBottomPadding by animateDpAsState(
+                    targetValue = sharedMobileEpubMediaOverlayBottomPadding(
+                        bottomChromePadding = sharedMobileEpubBottomChromePadding(bottomPadding),
+                        // Same condition the page info bar itself uses to sit at the bottom, so the
+                        // reserve and the thing it reserves for can never disagree.
+                        pageInfoReserve = if (
+                            prefs.pageInfoPosition == PageInfoPosition.BOTTOM && showBars
+                        ) {
+                            pageInfoBarHeight
+                        } else {
+                            0.dp
+                        },
+                        jumpBarVisible = isEpubJumpHistoryVisible,
+                        chromeVisible = showBars
+                    ),
+                    animationSpec = tween(motionPolicy.durationMillis(200)),
+                    label = "MediaOverlayBottomPadding"
+                )
+
                 val ttsAlignmentBias by animateFloatAsState(
                     targetValue = readerTtsOverlayAlignmentBias(ttsOverlaySize),
                     animationSpec = tween(motionPolicy.durationMillis(200)),
@@ -5894,8 +5919,10 @@ fun EpubReaderHost(
                     )
                 }
 
-                // The narration bar. Same place and animation as the read-aloud overlay, and shown
-                // only while a narration session is loaded, so an idle reader is unchanged.
+                // The narration bar. Same animation as the read-aloud overlay, and shown only
+                // while a narration session is loaded, so an idle reader is unchanged. Gated on
+                // `showBars` so it goes down with the bottom app bar rather than hanging on its own
+                // over the text, which is what iOS already does.
                 val mediaOverlayClipCount = mediaOverlaySession?.clipCount ?: 0
                 val mediaOverlayClipIndex = mediaOverlayPlaybackState.clipIndex
                 val mediaOverlayBarSubtitle = listOfNotNull(
@@ -5903,7 +5930,7 @@ fun EpubReaderHost(
                     if (mediaOverlayClipCount > 0) "${mediaOverlayClipIndex + 1} / $mediaOverlayClipCount" else null
                 ).joinToString(" · ")
                 AnimatedVisibility(
-                    visible = mediaOverlayPlaybackState.hasBook,
+                    visible = mediaOverlayPlaybackState.hasBook && showBars,
                     enter = if (motionPolicy.reduceMotion) {
                         androidx.compose.animation.EnterTransition.None
                     } else {
@@ -5916,7 +5943,7 @@ fun EpubReaderHost(
                     },
                     modifier = Modifier
                         .align(BiasAlignment(1f, 1f))
-                        .padding(bottom = ttsOverlayPadding)
+                        .padding(bottom = mediaOverlayBottomPadding)
                         .padding(horizontal = 16.dp)
                 ) {
                     SharedMobileEpubMediaOverlayBar(

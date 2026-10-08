@@ -11,12 +11,17 @@ import kotlin.math.roundToInt
  * sounds: two platforms advancing differently is a highlight that drifts from the voice, which is
  * the one bug this whole feature exists to avoid.
  *
- * The engines differ in mechanism and must agree in behaviour:
+ * The engines differ in mechanism and must agree in behaviour. Both now give the boundary to the
+ * player, which is the point:
  *
- * - **Android** builds one ExoPlayer `MediaItem` per clip with a clipping configuration, so
+ * - **Android** builds one ExoPlayer `MediaItem` per clip with a `ClippingConfiguration`, so
  *   `onMediaItemTransition` *is* the active-fragment signal — no polling, no drift.
- * - **iOS** has one `AVPlayer` and seeks per clip, advancing from a periodic time observer and the
- *   item-ended notification. `AVPlayerItem` has no clipping, so the bound is enforced here.
+ * - **iOS** builds one `AVPlayerItem` per clip over a shared asset, carrying the clip's end as
+ *   `forwardPlaybackEndTime`, and `AVPlayerItemDidPlayToEndTime` is the transition. `AVPlayerItem`
+ *   has no start counterpart to that property, so the clip's beginning is a seek — which must be
+ *   issued paused, because a seek issued while playing does not stop playback and doubles the opening
+ *   of every line. It used to seek while playing, from a periodic observer that also had to do the
+ *   boundary arithmetic; both are gone.
  */
 
 /** Where playback is, and how it is going. */

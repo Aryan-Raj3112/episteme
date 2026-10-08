@@ -3324,6 +3324,21 @@ fun SharedMobileEpubReaderScreen(
                 } else {
                     0.dp
                 }
+                // The bottom stack, derived once. The jump bar and the narration card are both
+                // overlays floating over the same chrome, so each needs the others' heights, and
+                // computing them in two places is how they came to overlap: the card was placed
+                // before the jump bar was, so the jump bar painted over its lower edge.
+                val epubBottomChromePadding = sharedMobileEpubBottomChromePadding(epubEffectiveBottomInset)
+                val epubJumpVisible = showChrome && !showSearch && jumpHistory.hasJumpTargets
+                val epubPageInfoBottomVisible = pageInfoVisible &&
+                    settings.pageInfoPosition == PageInfoPosition.BOTTOM
+                // PageInfo lives in the bottom Column directly above the
+                // toolbar, so overlays must clear it to avoid overlap.
+                val epubPageInfoReserve = if (epubPageInfoBottomVisible) {
+                    pageInfoBarContentHeight
+                } else {
+                    0.dp
+                }
                 // Android parity (EpubReaderScreen TTS overlay): session AND chrome
                 // gate, slide+fade with the shared 200ms spec, and bottom
                 // padding above the toolbar (inset + 45dp bar + 16dp gap) so
@@ -3337,6 +3352,19 @@ fun SharedMobileEpubReaderScreen(
                     },
                     animationSpec = tween(motionPolicy.durationMillis(200)),
                     label = "EpubTtsBottomPadding"
+                )
+                // The narration card's own lift. It shares the read-aloud overlay's numbers, which
+                // reserve for the toolbar alone, but it is taller and has to clear the jump bar and
+                // a bottom page info bar as well — so it gets the whole stack rather than a guess.
+                val epubNarrationBottomPadding by animateDpAsState(
+                    targetValue = sharedMobileEpubMediaOverlayBottomPadding(
+                        bottomChromePadding = epubBottomChromePadding,
+                        pageInfoReserve = epubPageInfoReserve,
+                        jumpBarVisible = epubJumpVisible,
+                        chromeVisible = showChrome
+                    ),
+                    animationSpec = tween(motionPolicy.durationMillis(200)),
+                    label = "EpubNarrationBottomPadding"
                 )
                 val epubTtsAlignBias by animateFloatAsState(
                     targetValue = readerTtsOverlayAlignmentBias(ttsOverlaySize),
@@ -3397,14 +3425,15 @@ fun SharedMobileEpubReaderScreen(
                     }
                 }
                 // The narration bar. Android parity (EpubReaderScreen.kt:5901): bottom-aligned,
-                // chrome-gated, and the same composable on both platforms so the two cannot drift.
+                // chrome-gated, the same composable on both platforms so the two cannot drift, and
+                // lifted clear of the jump bar and a bottom page info bar.
                 AnimatedVisibility(
                     visible = mediaOverlayPlaybackState.hasBook && showChrome,
                     enter = slideInVertically(animationSpec = tween(motionPolicy.durationMillis(200))) { it } + fadeIn(animationSpec = tween(motionPolicy.durationMillis(200))),
                     exit = slideOutVertically(animationSpec = tween(motionPolicy.durationMillis(200))) { it } + fadeOut(animationSpec = tween(motionPolicy.durationMillis(200))),
                     modifier = Modifier
                         .align(BiasAlignment(1f, 1f))
-                        .padding(bottom = epubTtsBottomPadding)
+                        .padding(bottom = epubNarrationBottomPadding)
                         .padding(horizontal = 16.dp)
                 ) {
                     val session = mediaOverlaySession
@@ -3700,18 +3729,9 @@ fun SharedMobileEpubReaderScreen(
                 // it, slider above the jump bar. Fixed 52/60.dp offsets ignored
                 // the home-indicator inset and overlapped when both bars showed,
                 // so derive the stack from the toolbar + safe inset like the
-                // benchmark (bottomPadding + 45.dp + jump).
-                val epubBottomChromePadding = sharedMobileEpubBottomChromePadding(epubEffectiveBottomInset)
-                val epubJumpVisible = showChrome && !showSearch && jumpHistory.hasJumpTargets
-                val epubPageInfoBottomVisible = pageInfoVisible &&
-                    settings.pageInfoPosition == PageInfoPosition.BOTTOM
-                // PageInfo lives in the bottom Column directly above the
-                // toolbar, so overlays must clear it to avoid overlap.
-                val epubPageInfoReserve = if (epubPageInfoBottomVisible) {
-                    pageInfoBarContentHeight
-                } else {
-                    0.dp
-                }
+                // benchmark (bottomPadding + 45.dp + jump). The stack itself —
+                // chrome padding, jump visibility, page info reserve — is derived
+                // once above, so the narration card and this bar cannot disagree.
                 // Preserve the existing TTS/auto-scroll lift so the jump bar
                 // still clears the floating TTS controls.
                 val epubTtsLift = if (localTts.isSessionActive || autoScrollModeActive) 68.dp else 0.dp
