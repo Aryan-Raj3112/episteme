@@ -1,7 +1,7 @@
 <div align="center">
 
   <h1>
-    <img src="docs/ICON.png" height="48" width="48" align="absmiddle" alt="Episteme Reader Icon"/>
+    <img src="branding/app-icon/png/branding/icon-128.png" height="48" width="48" align="absmiddle" alt="Episteme Reader Icon"/>
     <span>&nbsp;Episteme Reader</span>
   </h1>
 
