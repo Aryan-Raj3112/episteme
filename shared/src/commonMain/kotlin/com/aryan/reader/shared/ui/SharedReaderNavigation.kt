@@ -68,6 +68,7 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.filterReaderTocEntries
 import com.aryan.reader.shared.ReaderHighlightPalette
@@ -1138,107 +1139,39 @@ internal fun ReaderWorkspaceLeftSection.readerNavigationTabLabel(): String {
 }
 
 /**
- * Highlight palette editor: four ARGB slots, each edited through the shared HSV picker.
+ * Highlight palette editor for the reader's four ARGB slots.
  *
- * Android benchmark (`EpubReaderAnnotations.kt` PaletteManagerDialog): tap a slot, edit hue /
- * saturation / value with hex and RGB inputs, reset the slot to its stock colour, then Save or
- * Cancel. The picker itself is [SharedHsvColorPickerDialog] — the same component the PDF
- * highlighter palette editor uses and the one documented as Android parity for
- * `ColorPickerDialog` / `HighlightColorPickerDialog` — so the spectrum/slider/inputs/reset
- * machinery has exactly one implementation.
+ * Android benchmark (`EpubReaderAnnotations.kt` PaletteManagerDialog): one screen with the slot
+ * row and the HSV editor together — every slot stays visible while one is edited — plus hex/RGB
+ * inputs, a reset of the selected slot to its stock colour, and Save / Cancel. The body is
+ * [SharedHighlightPaletteSlotDialog], which is also what the Android hosts now mount, so the
+ * spectrum/slider/inputs/reset machinery has exactly one implementation across all three.
  */
 @Composable
-internal fun SharedReaderHighlightPaletteDialog(
+fun SharedReaderHighlightPaletteDialog(
     palette: ReaderHighlightPalette,
     onDismiss: () -> Unit,
     onSave: (ReaderHighlightPalette) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    initialSelection: Int = 0,
+    maxDialogHeight: Dp = 600.dp
 ) {
-    var draft by remember(palette) { mutableStateOf(palette.sanitized()) }
-    var editingSlot by remember { mutableStateOf<Int?>(null) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        modifier = modifier,
-        title = {
-            Text(
-                readerString("highlight_customize_title", "Customize palette"),
-                style = MaterialTheme.typography.titleMedium
+    SharedHighlightPaletteSlotDialog(
+        title = readerString("highlight_customize_title", "Customize palette"),
+        slots = palette.sanitized().colors.map { Color(it) },
+        defaultSlots = ReaderHighlightPalette.defaultColors.map { Color(it) },
+        initialSelection = initialSelection,
+        maxDialogHeight = maxDialogHeight,
+        onSave = { saved ->
+            onSave(
+                palette.sanitized().let { base ->
+                    saved.foldIndexed(base) { index, acc, color -> acc.withColorAt(index, color.toArgb()) }
+                }
             )
         },
-        text = {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    readerString("palette_tap_slot_to_edit", "Tap a slot to edit it."),
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Row(
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    draft.colors.indices.forEach { slot ->
-                        val slotArgb = draft.argbAt(slot)
-                        val slotColor = Color(slotArgb)
-                        val isSelected = editingSlot == slot
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(CircleShape)
-                                .background(slotColor)
-                                .border(
-                                    width = if (isSelected) 3.dp else 1.dp,
-                                    color = if (isSelected) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.outline.copy(alpha = 0.30f)
-                                    },
-                                    shape = CircleShape
-                                )
-                                .clickable { editingSlot = slot }
-                        ) {
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = readerString("content_desc_selected", "Selected"),
-                                    tint = if (slotColor.luminance() > 0.5f) Color.Black else Color.White,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onSave(draft); onDismiss() }) {
-                Text(readerString("action_save", "Save"))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(readerString("action_cancel", "Cancel"))
-            }
-        }
+        onDismiss = onDismiss,
+        modifier = modifier
     )
-
-    editingSlot?.let { slot ->
-        SharedHsvColorPickerDialog(
-            initialColor = Color(draft.argbAt(slot)),
-            title = readerString("desktop_highlight_color_format", "Highlight color %1\$d", slot + 1),
-            onDismiss = { editingSlot = null },
-            onSave = { color ->
-                draft = draft.withColorAt(slot, color.toArgb())
-                editingSlot = null
-            },
-            resetColor = Color(ReaderHighlightPalette.defaultColors.getOrElse(slot) { ReaderHighlightPalette.defaultColors.first() }),
-            stateKey = slot
-        )
-    }
 }
 
 @Composable

@@ -35,8 +35,15 @@ class SharedTtsWordReplacementsSheetTest {
             }
         }
 
+        // The enable switch starts ON — `ReaderTtsReplacementPreferences.isEnabled` defaults to true —
+        // so clicking it turns replacements off. Assert the toggle, not a fixed direction, and wait
+        // for the sheet's enter animation to settle before injecting the touch.
+        val enabledBefore = ReaderTtsReplacementPreferences().isEnabled
+        assertThat(enabledBefore).isTrue()
+
+        composeTestRule.waitForIdle()
         composeTestRule.onNode(isToggleable()).performClick()
-        composeTestRule.runOnIdle { assertThat(updated.isEnabled).isTrue() }
+        composeTestRule.runOnIdle { assertThat(updated.isEnabled).isEqualTo(!enabledBefore) }
     }
 
     private fun labels() = SharedTtsWordReplacementLabels(

@@ -10,83 +10,54 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.edit
 import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.pdf.PdfHighlightColor
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
+import com.aryan.reader.shared.ui.SharedHighlightPaletteSlotDialog
 import com.aryan.reader.shared.ReaderTextureFilePrefix
-import com.aryan.reader.shared.ui.SharedHsvColor
-import com.aryan.reader.shared.ui.toSharedHsvColor
-import com.aryan.reader.shared.ui.SharedSpectrumBox
-import com.aryan.reader.shared.ui.SharedBrightnessSlider
-import com.aryan.reader.shared.ui.SharedRgbInputColumn
-import com.aryan.reader.shared.ui.SharedHexInput
-import com.aryan.reader.shared.ui.SharedColorComparePill
 import kotlinx.coroutines.launch
 import org.commonmark.node.Text
-import kotlin.math.max
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -337,6 +308,14 @@ fun ThemeColorPickerDialog(
     )
 }
 
+/**
+ * PDF highlighter palette editor.
+ *
+ * A thin adapter over the shared [SharedHighlightPaletteSlotDialog], which carries the layout this
+ * dialog had: every [PdfHighlightColor] visible while one is edited, hex + RGB inputs, reset of
+ * the selected slot to its stock colour, Save / Cancel. The ~190 lines of inline spectrum
+ * machinery it used to hold now live in shared, with a single implementation.
+ */
 @Composable
 fun HighlightColorPickerDialog(
     initialColors: Map<PdfHighlightColor, Color>,
@@ -344,195 +323,15 @@ fun HighlightColorPickerDialog(
     onDismiss: () -> Unit,
     onSave: (Map<PdfHighlightColor, Color>) -> Unit
 ) {
-    var currentColors by remember { mutableStateOf(initialColors) }
-    var selectedSlot by remember { mutableStateOf(initialSelection) }
-
-    val initialActiveColor = currentColors[selectedSlot] ?: selectedSlot.color
-    val initialHsv = remember(initialActiveColor) { initialActiveColor.toSharedHsvColor() }
-
-    var hue by remember { mutableFloatStateOf(initialHsv.hue) }
-    var saturation by remember { mutableFloatStateOf(initialHsv.saturation) }
-    var value by remember { mutableFloatStateOf(initialHsv.value) }
-
-    LaunchedEffect(selectedSlot) {
-        val color = currentColors[selectedSlot] ?: selectedSlot.color
-        val hsv = color.toSharedHsvColor()
-        hue = hsv.hue
-        saturation = hsv.saturation
-        value = hsv.value
-    }
-
-    val currentColor by remember {
-        derivedStateOf {
-            SharedHsvColor(hue, saturation, value).toComposeColor()
-        }
-    }
-
-    LaunchedEffect(currentColor) {
-        currentColors = currentColors + (selectedSlot to currentColor)
-    }
-
-    fun updateFromColor(color: Color) {
-        val hsv = color.toSharedHsvColor()
-        hue = hsv.hue
-        saturation = hsv.saturation
-        value = hsv.value
-    }
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        val configuration = LocalConfiguration.current
-        val maxDialogHeight = readerModalMaxHeightDp(configuration.screenHeightDp).dp
-
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = Color(0xFF2C2C2C),
-            modifier = Modifier
-                .fillMaxWidth(0.9f)
-                .padding(16.dp)
-                .heightIn(max = maxDialogHeight)
-        ) {
-            Column(
-                modifier = Modifier
-                    .padding(20.dp)
-                    .verticalScroll(rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Box(
-                    modifier = Modifier
-                        .background(Color(0xFF3E3E3E), RoundedCornerShape(16.dp))
-                        .padding(horizontal = 24.dp, vertical = 8.dp)
-                ) {
-                    Text(
-                        text = stringResource(R.string.highlight_customize_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White
-                    )
-                }
-
-                Spacer(Modifier.height(20.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    PdfHighlightColor.entries.forEach { slot ->
-                        val slotColor = currentColors[slot] ?: slot.color
-                        val isSelected = selectedSlot == slot
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(CircleShape)
-                                .background(slotColor)
-                                .clickable { selectedSlot = slot }
-                                .border(
-                                    width = if (isSelected) 3.dp else 1.dp,
-                                    color = if (isSelected) Color.White else Color.Gray,
-                                    shape = CircleShape
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = stringResource(R.string.content_desc_selected),
-                                    tint = if (slotColor.luminance() > 0.5f) Color.Black else Color.White
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(20.dp))
-
-                SharedSpectrumBox(
-                    hue = hue,
-                    saturation = saturation,
-                    currentColor = currentColor,
-                    onHueSatChanged = { h, s -> hue = h; saturation = s },
-                    modifier = Modifier.fillMaxWidth().height(220.dp)
-                )
-
-                Spacer(Modifier.height(20.dp))
-
-                SharedBrightnessSlider(
-                    hue = hue,
-                    saturation = saturation,
-                    value = value,
-                    onValueChanged = { value = it },
-                    modifier = Modifier.fillMaxWidth().height(24.dp).clip(RoundedCornerShape(12.dp))
-                )
-
-                Spacer(Modifier.height(24.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    SharedColorComparePill(
-                        oldColor = selectedSlot.color,
-                        newColor = currentColor,
-                        modifier = Modifier.width(64.dp).height(36.dp)
-                    )
-
-                    Column(
-                        modifier = Modifier.weight(1.6f),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(stringResource(R.string.theme_color_hex), color = Color.Gray, fontSize = 12.sp, maxLines = 1)
-                        Spacer(Modifier.height(4.dp))
-                        SharedHexInput(color = currentColor, onHexChanged = { updateFromColor(it) })
-                    }
-
-                    Row(
-                        modifier = Modifier.weight(2.4f),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        SharedRgbInputColumn(label = stringResource(R.string.color_r), value = currentColor.red,
-                            onValueChange = { r -> updateFromColor(currentColor.copy(red = r)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        SharedRgbInputColumn(label = stringResource(R.string.color_g), value = currentColor.green,
-                            onValueChange = { g -> updateFromColor(currentColor.copy(green = g)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        SharedRgbInputColumn(label = stringResource(R.string.color_b), value = currentColor.blue,
-                            onValueChange = { b -> updateFromColor(currentColor.copy(blue = b)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(24.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = { updateFromColor(selectedSlot.color) }) {
-                        Text(stringResource(R.string.action_reset), color = Color(0xFFFF5252))
-                    }
-                    Row {
-                        TextButton(onClick = onDismiss) {
-                            Text(stringResource(R.string.action_cancel), color = Color.Gray)
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        Button(
-                            onClick = { onSave(currentColors) },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color.White
-                            )
-                        ) {
-                            Text(stringResource(R.string.action_save), color = Color.Black, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            }
-        }
-    }
+    SharedHighlightPaletteSlotDialog(
+        title = stringResource(R.string.highlight_customize_title),
+        slots = PdfHighlightColor.entries.map { initialColors[it] ?: it.color },
+        defaultSlots = PdfHighlightColor.entries.map { it.color },
+        initialSelection = PdfHighlightColor.entries.indexOf(initialSelection),
+        maxDialogHeight = readerModalMaxHeightDp(LocalConfiguration.current.screenHeightDp).dp,
+        onSave = { saved ->
+            onSave(PdfHighlightColor.entries.mapIndexed { index, slot -> slot to saved[index] }.toMap())
+        },
+        onDismiss = onDismiss
+    )
 }

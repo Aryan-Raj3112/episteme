@@ -5159,13 +5159,20 @@ fun EpubReaderHost(
                     }
                 }
 
-                BookmarkButton(
+                com.aryan.reader.shared.ui.SharedReaderBookmarkButton(
                     isBookmarked = isBookmarked,
                     onClick = onBookmarkClick,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(end = 16.dp)
-                )
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.bookmark),
+                        contentDescription = stringResource(R.string.content_desc_bookmark_icon),
+                        modifier = Modifier.size(24.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
 
                 val pageInfoChromeTopPadding =
                     if (prefs.pageInfoPosition == PageInfoPosition.TOP && showBars) 55.dp else 0.dp

@@ -30,12 +30,8 @@ import android.view.View
 import android.widget.TextView
 import android.widget.Toast
 import timber.log.Timber
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
@@ -43,7 +39,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,7 +59,6 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -74,21 +68,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.edit
 import androidx.core.text.HtmlCompat
 import androidx.core.net.toUri
 import com.aryan.reader.R
 import com.aryan.reader.copyPlainTextToClipboard
-import com.aryan.reader.readerModalMaxHeightDp
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.shared.EpubAnnotationSerializer
-import com.aryan.reader.shared.ui.SharedSpectrumBox
-import com.aryan.reader.shared.ui.SharedBrightnessSlider
-import com.aryan.reader.shared.ui.SharedRgbInputColumn
-import com.aryan.reader.shared.ui.SharedHexInput
-import com.aryan.reader.shared.ui.SharedColorComparePill
+import com.aryan.reader.shared.ReaderHighlightPalette
+import com.aryan.reader.shared.ui.SharedReaderHighlightPaletteDialog
 import com.aryan.reader.shared.ui.SharedReaderHighlightPaletteSpectrumButton
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.DefaultEpubHighlightPaletteArgb
@@ -99,6 +87,7 @@ import com.aryan.reader.shared.epubHighlightColorTag
 import com.aryan.reader.shared.epubHighlightColorFromToken
 import com.aryan.reader.paginatedreader.isReaderExternalHref
 import com.aryan.reader.paginatedreader.readerExternalHrefForDisplay
+import com.aryan.reader.readerModalMaxHeightDp
 
 private const val BOOKMARK_PREFS_NAME = "epub_reader_bookmarks"
 
@@ -252,39 +241,15 @@ fun processAndAddHighlight(
 
 // --- UI Components ---
 
-@Composable
-fun BookmarkButton(
-    isBookmarked: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier
-            .width(48.dp)
-            .height(48.dp)
-            .clip(RectangleShape)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick
-            ),
-        contentAlignment = Alignment.TopCenter
-    ) {
-        AnimatedVisibility(
-            visible = isBookmarked,
-            enter = fadeIn(),
-            exit = fadeOut()
-        ) {
-            Icon(
-                painter = painterResource(id = R.drawable.bookmark),
-                contentDescription = stringResource(R.string.content_desc_bookmark_icon),
-                modifier = Modifier.size(24.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
-        }
-    }
-}
-
+/**
+ * EPUB highlight palette editor.
+ *
+ * Now a thin adapter over the shared [SharedHighlightPaletteSlotDialog]: this dialog was the
+ * original implementation, and the shared one carries the identical layout (all slots visible
+ * while one is edited, hex + RGB inputs, reset of the selected slot, Save / Cancel). Android stays
+ * the benchmark for behaviour — [initialSelection] and the ARGB list shape are preserved — while
+ * the ~200 lines of inline spectrum machinery now live in shared with a single implementation.
+ */
 @Composable
 fun PaletteManagerDialog(
     currentPalette: List<Int>,
@@ -292,203 +257,13 @@ fun PaletteManagerDialog(
     onSave: (List<Int>) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var currentColors by remember { mutableStateOf(sanitizeHighlightPalette(currentPalette)) }
-    var selectedSlot by remember { mutableIntStateOf(initialSelection.coerceIn(0, currentColors.lastIndex)) }
-
-    val initialActiveColor = Color(currentColors[selectedSlot])
-    val initialHsv = remember(initialActiveColor) {
-        val hsv = FloatArray(3)
-        android.graphics.Color.colorToHSV(initialActiveColor.toArgb(), hsv)
-        hsv
-    }
-
-    var hue by remember { mutableFloatStateOf(initialHsv[0]) }
-    var saturation by remember { mutableFloatStateOf(initialHsv[1]) }
-    var value by remember { mutableFloatStateOf(initialHsv[2]) }
-
-    LaunchedEffect(selectedSlot) {
-        val color = Color(currentColors[selectedSlot])
-        val hsv = FloatArray(3)
-        android.graphics.Color.colorToHSV(color.toArgb(), hsv)
-        hue = hsv[0]
-        saturation = hsv[1]
-        value = hsv[2]
-    }
-
-    val currentColor by remember {
-        derivedStateOf {
-            Color(android.graphics.Color.HSVToColor(255, floatArrayOf(hue, saturation, value)))
-        }
-    }
-
-    LaunchedEffect(currentColor) {
-        val next = currentColors.toMutableList()
-        next[selectedSlot] = currentColor.toArgb()
-        currentColors = next
-    }
-
-    fun updateFromColor(color: Color) {
-        val hsv = FloatArray(3)
-        android.graphics.Color.colorToHSV(color.toArgb(), hsv)
-        hue = hsv[0]
-        saturation = hsv[1]
-        value = hsv[2]
-    }
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        val configuration = LocalConfiguration.current
-        val maxDialogHeight = readerModalMaxHeightDp(configuration.screenHeightDp).dp
-
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = Color(0xFF2C2C2C),
-            modifier = Modifier
-                .fillMaxWidth(0.9f)
-                .padding(16.dp)
-                .heightIn(max = maxDialogHeight)
-        ) {
-            Column(
-                modifier = Modifier
-                    .padding(20.dp)
-                    .verticalScroll(rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Box(
-                    modifier = Modifier
-                        .background(Color(0xFF3E3E3E), RoundedCornerShape(16.dp))
-                        .padding(horizontal = 24.dp, vertical = 8.dp)
-                ) {
-                    Text(
-                        text = stringResource(R.string.highlight_customize_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White
-                    )
-                }
-
-                Spacer(Modifier.height(20.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    currentColors.forEachIndexed { index, argb ->
-                        val slotColor = Color(argb)
-                        val isSelected = selectedSlot == index
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(CircleShape)
-                                .background(slotColor)
-                                .clickable { selectedSlot = index }
-                                .border(
-                                    width = if (isSelected) 3.dp else 1.dp,
-                                    color = if (isSelected) Color.White else Color.Gray,
-                                    shape = CircleShape
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = stringResource(R.string.content_desc_selected),
-                                    tint = if (slotColor.luminance() > 0.5f) Color.Black else Color.White
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(20.dp))
-
-                SharedSpectrumBox(
-                    hue = hue,
-                    saturation = saturation,
-                    currentColor = currentColor,
-                    onHueSatChanged = { h, s -> hue = h; saturation = s },
-                    modifier = Modifier.fillMaxWidth().height(220.dp)
-                )
-
-                Spacer(Modifier.height(20.dp))
-
-                SharedBrightnessSlider(
-                    hue = hue,
-                    saturation = saturation,
-                    value = value,
-                    onValueChanged = { value = it },
-                    modifier = Modifier.fillMaxWidth().height(24.dp).clip(RoundedCornerShape(12.dp))
-                )
-
-                Spacer(Modifier.height(24.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    SharedColorComparePill(
-                        oldColor = Color(currentPalette.getOrNull(selectedSlot) ?: DefaultHighlightPaletteArgb[selectedSlot]),
-                        newColor = currentColor,
-                        modifier = Modifier.width(64.dp).height(36.dp)
-                    )
-
-                    Column(
-                        modifier = Modifier.weight(1.6f),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(stringResource(R.string.theme_color_hex), color = Color.Gray, style = MaterialTheme.typography.labelSmall, maxLines = 1)
-                        Spacer(Modifier.height(4.dp))
-                        SharedHexInput(color = currentColor, onHexChanged = { updateFromColor(it) })
-                    }
-
-                    Row(
-                        modifier = Modifier.weight(2.4f),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        SharedRgbInputColumn(label = stringResource(R.string.color_r), value = currentColor.red,
-                            onValueChange = { r -> updateFromColor(currentColor.copy(red = r)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        SharedRgbInputColumn(label = stringResource(R.string.color_g), value = currentColor.green,
-                            onValueChange = { g -> updateFromColor(currentColor.copy(green = g)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        SharedRgbInputColumn(label = stringResource(R.string.color_b), value = currentColor.blue,
-                            onValueChange = { b -> updateFromColor(currentColor.copy(blue = b)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(24.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = { updateFromColor(Color(DefaultHighlightPaletteArgb[selectedSlot])) }) {
-                        Text(stringResource(R.string.action_reset), color = Color(0xFFFF5252))
-                    }
-                    Row {
-                        TextButton(onClick = onDismiss) {
-                            Text(stringResource(R.string.action_cancel), color = Color.Gray)
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        Button(
-                            onClick = { onSave(sanitizeHighlightPalette(currentColors)) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color.White)
-                        ) {
-                            Text(stringResource(R.string.action_save), color = Color.Black, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            }
-        }
-    }
+    SharedReaderHighlightPaletteDialog(
+        palette = ReaderHighlightPalette(colors = currentPalette),
+        onDismiss = onDismiss,
+        onSave = { saved -> onSave(saved.sanitized().colors) },
+        initialSelection = initialSelection,
+        maxDialogHeight = readerModalMaxHeightDp(LocalConfiguration.current.screenHeightDp).dp
+    )
 }
 
 fun highlightStyleIconRes(style: HighlightStyle): Int {

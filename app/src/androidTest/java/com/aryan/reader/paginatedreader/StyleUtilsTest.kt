@@ -117,7 +117,10 @@ class StyleUtilsTest {
 
     @Test
     fun parseCssDimensionToTextUnit_handlesZeroDensity() {
-        assertThat(parseCssDimensionToTextUnit("100px", containerWidthPx, 0f).isUnspecified).isTrue()
+        // Zero density only matters where the parser actually divides by it, which is the
+        // percentage branch (`px / density`). `px` maps 1:1 to sp by design — see
+        // parseCssDimensionToTextUnit_handlesPxValues, which pins 18px -> 18f even at density 3.
+        assertThat(parseCssDimensionToTextUnit("50%", containerWidthPx, 0f).isUnspecified).isTrue()
     }
 
     @Test

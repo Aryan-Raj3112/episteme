@@ -1136,6 +1136,9 @@ private fun SharedPdfSettingsToolItem(
             .width(44.dp)
             .height(150.dp)
             .scale(scale)
+            // Stable handle for the PDF annotation instrumentation tests; the panel carried this
+            // tag in Android before it moved into shared.
+            .testTag("SettingsItem_${tool.name}")
             .semantics { selected = isSelected }
             .clickable(onClick = onClick),
         contentAlignment = Alignment.BottomCenter
@@ -1175,6 +1178,9 @@ fun SharedPdfStyledPropertySlider(
         Box(
             modifier = Modifier
                 .size(32.dp)
+                // Stable handles for the PDF annotation instrumentation tests, which drove the
+                // thickness stepper before this panel moved from Android into shared.
+                .testTag("Property_Minus")
                 .clickable(enabled = canDecrease) {
                     onValueChange((value - onePercentDelta).coerceAtLeast(valueRange.start))
                 },
@@ -1291,6 +1297,7 @@ fun SharedPdfStyledPropertySlider(
         Box(
             modifier = Modifier
                 .size(32.dp)
+                .testTag("Property_Plus")
                 .clickable(enabled = canIncrease) {
                     onValueChange((value + onePercentDelta).coerceAtMost(valueRange.endInclusive))
                 },

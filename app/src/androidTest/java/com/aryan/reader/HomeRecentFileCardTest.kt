@@ -109,7 +109,10 @@ class HomeRecentFileCardTest {
         val unavailableHeight = composeTestRule.onNodeWithTag("HomeRecentFileCard_same_height_unavailable")
             .fetchSemanticsNode().boundsInRoot.height
 
-        assertThat(availableHeight).isEqualTo(unavailableHeight)
+        // Two weight(1f) cards split the row's width, which can differ by a single pixel when the total
+        // width is odd; the aspect-ratio cover then differs by ~1px. The point of the test is that
+        // the unavailable overlay does not change the card's height, not that it is pixel-identical.
+        assertThat(availableHeight).isWithin(1f).of(unavailableHeight)
     }
 
     private fun setRecentFileCard(

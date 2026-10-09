@@ -40,7 +40,8 @@ class SharedOpdsScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("Add catalog").performClick()
-        composeTestRule.onNodeWithText("Add OPDS catalog").assertExists()
+        // The FAB merges its label into the clickable node, so the label is only in the unmerged tree.
+        composeTestRule.onNodeWithText("Add catalog", useUnmergedTree = true).performClick()
+        composeTestRule.onNodeWithText("Add OPDS catalog", useUnmergedTree = true).assertExists()
     }
 }
