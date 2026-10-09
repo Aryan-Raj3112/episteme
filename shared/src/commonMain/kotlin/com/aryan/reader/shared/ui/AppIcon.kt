@@ -238,7 +238,15 @@ internal fun Color.hueAndSaturation(): Pair<Float, Float> {
         green -> (blue - red) / delta + 2f
         else -> (red - green) / delta + 4f
     } * 60f
-    return ((hue + 360f) % 360f) to saturation
+    // Saturation is a ratio of channel distances, so it can only leave 0..1 by
+    // a rounding step rather than by intent -- and it does: on a colour with a
+    // channel at 0 or 255 the numerator and the denominator above are
+    // mathematically equal (saturation is exactly one), and Float can still
+    // make them differ in the last bit, which puts the quotient a hair over
+    // one. `Color.hsl` rejects that outright, so such colours -- Material You
+    // primaries among them, since its tone-40 shades and tone-80 tints clip a
+    // channel -- are pulled back to the value the formula already claims.
+    return ((hue + 360f) % 360f) to saturation.coerceIn(0f, 1f)
 }
 
 /**

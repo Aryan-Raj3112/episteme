@@ -1,8 +1,11 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.ui.graphics.Color
+import kotlin.math.abs
+import kotlin.math.min
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class AppIconThemeColourTest {
 
@@ -46,5 +49,42 @@ class AppIconThemeColourTest {
         // the lightness ladder is the artwork's, not the theme's
         assertEquals(Color(0xFFE7EFFB).hslLightness(), pale.hslLightness(), 0.01f)
         assertEquals(Color(0xFF3F5786).hslLightness(), deep.hslLightness(), 0.01f)
+    }
+
+    /**
+     * A theme primary with a channel pinned at 0 or 255 has a saturation that
+     * rounds a hair over one -- the numerator and denominator of the formula are
+     * mathematically equal on those colours, and Float can still make them
+     * differ in the last bit. `Color.hsl` rejects that with an
+     * IllegalArgumentException, which is what crashed the fan's brush on the
+     * devices whose Material You primary happened to clip: #B6E2FF is the
+     * primary from the crash report, and the other two are the same shape at
+     * the ends of the gamut that a tone-80 tint and a tone-40 shade reach.
+     */
+    @Test
+    fun `a primary with a clipped channel repaints instead of throwing`() {
+        val clippedPrimaries = listOf(
+            Color(0xFFB6E2FF),   // blue at 255 -- the reported crash
+            Color(0xFF0037A0),   // blue at 0 -- a dark tone-40 shade
+            Color(0xFFFB003C),   // red at 255 -- a saturated tone-80 tint
+        )
+        val stop = Color(0xFFE7EFFB)
+
+        for (primary in clippedPrimaries) {
+            val (hue, saturation) = primary.hueAndSaturation()
+            assertTrue(saturation in 0f..1f, "saturation of $primary is $saturation")
+
+            // no exception, and the repaint is the same one the theme asked for:
+            // the stop keeps its own lightness and lands on the theme's hue
+            val painted = stop.inHueOf(primary)
+            assertEquals(Color(0xFFE7EFFB).hslLightness(), painted.hslLightness(), 0.02f)
+            assertTrue(hueDistance(hue, painted.hueAndSaturation().first) < 1f)
+        }
+    }
+
+    /** Hue is circular: 359 degrees and 1 degree are two degrees apart. */
+    private fun hueDistance(a: Float, b: Float): Float {
+        val direct = abs(a - b)
+        return min(direct, 360f - direct)
     }
 }
