@@ -27,6 +27,8 @@ import org.w3c.dom.Element
  *     `SAFEZONE_SCALE = 66f / 72f`).
  *  3. A themed icon is recoloured by the launcher, so its layer must be a single flat
  *     colour with no gradient baked in.
+ *  4. The public surfaces — the README header and the Play listing — must serve the
+ *     generated icon, never a private copy of it.
  *
  * The monochrome vector also serves as the TTS notification's small icon, which is why it
  * has to stay a VectorDrawable rather than becoming a raster.
@@ -292,6 +294,29 @@ class AndroidLauncherIconContractTest {
         }
     }
 
+    @Test
+    fun publicSurfacesServeTheGeneratedIcon() {
+        // Both of these used to hold a private copy of the icon, outside the generator's
+        // deploy table, so nothing refreshed them: the README header and the Play listing
+        // kept serving the old mark while the app itself had moved on. The README now
+        // points at the generated branding ladder by reference, and the listing is
+        // deployed from the generated store asset.
+        val referenced = Regex("""<img src="(branding/app-icon/png/branding/icon-\d+\.png)"""")
+            .find(readGeneratedFile("README.md"))?.groupValues?.get(1)
+            ?: error("the README header icon must be referenced from branding/app-icon/png/branding/")
+        assertTrue("the README references $referenced, which is not in the repo", projectFile(referenced).isFile)
+
+        val listing = projectFile("fastlane/metadata/android/en-US/images/icon.png")
+        assertTrue("the Play listing icon is missing", listing.isFile)
+        assertTrue(
+            "the Play listing icon is not the generated store asset — re-run " +
+                "scripts/generate_app_icons.py --deploy",
+            listing.readBytes().contentEquals(
+                projectFile("branding/app-icon/png/store/play-store-512.png").readBytes(),
+            ),
+        )
+    }
+
     // ------------------------------------------------------------------ helpers
     private fun parse(relativePath: String): Element {
         val factory = DocumentBuilderFactory.newInstance()
@@ -302,17 +327,15 @@ class AndroidLauncherIconContractTest {
     private fun readText(relativePath: String) = file(relativePath).readText()
 
     /**
-     * A generated file that lives outside `res/`: the artwork in shared and
-     * the SVGs in branding. The unit test's working directory is either the
-     * module or the project root, so both are tried.
+     * A generated file that lives outside `res/`: the artwork in shared, the SVGs in
+     * branding, the README. The unit test's working directory is either the module or the
+     * project root, so both are tried.
      */
-    private fun readGeneratedFile(relativePath: String): String {
-        return sequenceOf(
-            File(relativePath),
-            File("../$relativePath"),
-        ).firstOrNull(File::isFile)?.readText()
-            ?: File(relativePath).readText()   // fail with the expected path
-    }
+    private fun readGeneratedFile(relativePath: String): String = projectFile(relativePath).readText()
+
+    private fun projectFile(relativePath: String): File =
+        sequenceOf(File(relativePath), File("../$relativePath"))
+            .firstOrNull(File::isFile) ?: File(relativePath)   // fail with the expected path
 
     /** The value of a `const val name = <number>f` in generated Kotlin. */
     private fun String.constValue(name: String): Double =

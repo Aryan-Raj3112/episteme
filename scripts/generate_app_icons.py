@@ -1035,6 +1035,10 @@ ANDROID_RES = ROOT / "app/src/main/res"
 SHARED_UI = ROOT / "shared/src/commonMain/kotlin/com/aryan/reader/shared/ui"
 IOS_APPICON = ROOT / "iosApp/Reader/Assets.xcassets/AppIcon.appiconset"
 DESKTOP_RES = ROOT / "desktopApp/src/desktopMain/resources"
+# the Play listing uploads this file verbatim, so it is deployed rather than kept as a
+# hand-copied duplicate: a copy outside this table is exactly how the listing went on
+# serving the old mark after the app itself moved to the new one
+PLAY_LISTING_ICON = ROOT / "fastlane/metadata/android/en-US/images/icon.png"
 # superseded by the full-colour adaptive layers, which carry their own artwork
 # the legacy icons ship as PNG: byte-identical to the reviewed asset, with no re-encode
 # step that could drop the alpha channel the baked-in outline depends on
@@ -1087,6 +1091,7 @@ def deploy() -> list[pathlib.Path]:
         put(f"../{name}", ANDROID_RES / "drawable" / name)
     put_generated("AppIconArtwork.kt", SHARED_UI / "AppIconArtwork.kt")
     put("store/play-store-512.png", ROOT / "app/src/main/ic_launcher-playstore.png")
+    put("store/play-store-512.png", PLAY_LISTING_ICON)
 
     for _, name in IOS_SIZES:
         put(f"ios/{name}", IOS_APPICON / name)
@@ -1290,7 +1295,8 @@ def main() -> int:
     ap.add_argument("--source", default="blue_default.svg", help="file in branding/app-icon/source")
     ap.add_argument("--svg-only", action="store_true", help="skip PNG previews and vectors")
     ap.add_argument("--deploy", action="store_true",
-                    help="also copy the generated assets into app/, iosApp/ and desktopApp/")
+                    help="also copy the generated assets into app/, iosApp/, desktopApp/ "
+                         "and fastlane/")
     args = ap.parse_args()
 
     src = parse_source(SOURCE_DIR / args.source)
