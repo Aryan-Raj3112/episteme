@@ -239,7 +239,7 @@ import com.aryan.reader.tts.loadReaderTtsOverlaySize
 import com.aryan.reader.tts.loadTtsMode
 import com.aryan.reader.tts.readerTtsOverlayAlignmentBias
 import com.aryan.reader.tts.saveReaderTtsOverlaySize
-import com.aryan.reader.tts.splitTextIntoChunks
+import com.aryan.reader.tts.splitTextIntoChunksWithSourceOffsets
 import com.aryan.reader.withTtsReplacements
 import java.io.File
 import kotlin.math.ceil
@@ -875,8 +875,12 @@ internal fun EpubReaderRenderSurfaces(
                                         val baseUrl =
                                             "file://${epubBook.extractionBasePath}/$chapterDirectoryPath/"
 
-                                        val topPaddingPx =
-                                            with(LocalDensity.current) { 16.dp.toPx() }
+                                        // The page lays its CSS pixels out one per dp, so the number
+                                        // the page reads is the dp value itself. Dp.toPx() scales by
+                                        // the display density, which hands the page a reading-area
+                                        // top several times too large and pushes every line lookup
+                                        // below the first lines of the chapter.
+                                        val topPaddingCssPx = 16.dp.value
 
                                         var isWebViewReady by remember(chapterKeyForWebView) {
                                             mutableStateOf(
@@ -1391,7 +1395,7 @@ internal fun EpubReaderRenderSurfaces(
                                                     )
                                                 }
                                                 webView.evaluateJavascript(
-                                                    "javascript:window.setViewportPadding(${topPaddingPx}, 0);",
+                                                    "javascript:window.setViewportPadding(${topPaddingCssPx}, 0);",
                                                     null
                                                 )
                                             },
@@ -1427,18 +1431,22 @@ internal fun EpubReaderRenderSurfaces(
                                                             Timber.tag("TTS_LIST_DIAG").d("Processing Chunk[$i]: text='${text.take(40)}...' cfi='$cfi'")
                                                             val baseOffset = jsonObject.optInt("startOffset", 0)
 
+                                                            // The document reports where its text
+                                                            // starts, so every sub-chunk is placed
+                                                            // relative to that instead of by
+                                                            // accumulating lengths, which skips the
+                                                            // whitespace the split removed.
                                                             val subChunks =
-                                                                splitTextIntoChunks(text)
-                                                            var currentOffset = baseOffset
+                                                                splitTextIntoChunksWithSourceOffsets(text)
                                                             for (subChunk in subChunks) {
                                                                 ttsChunks.add(
                                                                     TtsChunk(
-                                                                        text = subChunk,
+                                                                        text = subChunk.text,
                                                                         sourceCfi = cfi,
-                                                                        startOffsetInSource = currentOffset
+                                                                        startOffsetInSource =
+                                                                            baseOffset + subChunk.startOffsetInSource
                                                                     )
                                                                 )
-                                                                currentOffset += subChunk.length
                                                             }
                                                         }
 

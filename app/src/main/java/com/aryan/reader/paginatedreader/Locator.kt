@@ -274,25 +274,20 @@ class LocatorConverter(
         fun traverse(blocks: List<SemanticBlock>) {
             for (block in blocks) {
                 if (block is SemanticTextBlock && block.cfi != null && block.text.isNotBlank()) {
-                    val subChunks = com.aryan.reader.tts.splitTextIntoChunks(block.text)
-                    var currentSearchIndex = 0
-                    for (chunkText in subChunks) {
-                        val firstWord = chunkText.trim().substringBefore(' ')
-                        val relativeOffset = if (firstWord.isNotEmpty()) {
-                            val idx = block.text.indexOf(firstWord, currentSearchIndex)
-                            if (idx != -1) idx else currentSearchIndex
-                        } else {
-                            currentSearchIndex
-                        }
-                        chunks.add(
-                            TtsChunk(
-                                text = chunkText,
-                                sourceCfi = block.cfi!!,
-                                startOffsetInSource = block.startCharOffsetInSource + relativeOffset
+                    // Offsets come from the splitter rather than a search for each chunk's first
+                    // word, which drifts by the whitespace the split removed and so records a
+                    // position earlier than the text it names.
+                    com.aryan.reader.tts.splitTextIntoChunksWithSourceOffsets(block.text)
+                        .forEach { span ->
+                            chunks.add(
+                                TtsChunk(
+                                    text = span.text,
+                                    sourceCfi = block.cfi!!,
+                                    startOffsetInSource =
+                                        block.startCharOffsetInSource + span.startOffsetInSource
+                                )
                             )
-                        )
-                        currentSearchIndex = relativeOffset + chunkText.length
-                    }
+                        }
                 }
                 when (block) {
                     is SemanticFlexContainer -> traverse(block.children)

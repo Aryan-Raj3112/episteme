@@ -1909,6 +1909,77 @@
         return "JS: Chunk " + chunkIndex + " not found.";
     };
 
+    /**
+     * The raw character position [node]:[offset] occupies inside [root].
+     *
+     * This is the walker's own coordinate system: it counts every character between elements,
+     * whitespace included. It is only ever a hint — the reader stores offsets in the text
+     * pagination produced, which is not this space.
+     */
+    function readerTtsRawOffsetForPosition(root, node, offset) {
+        if (!root || !node) return -1;
+        const nodes = readerTtsBlockTextNodes(root);
+        let raw = 0;
+        for (let i = 0; i < nodes.length; i++) {
+            if (nodes[i] === node) return raw + offset;
+            raw += (nodes[i].nodeValue || '').length;
+        }
+        return -1;
+    }
+
+    /**
+     * The range [text] occupies inside [root], or null when the text is not there.
+     *
+     * Whitespace is the one thing two coordinate systems disagree about: a stored offset is
+     * measured in the text pagination produced, while a DOM walk counts the raw characters between
+     * elements, so every whitespace run and every line break moves them apart. Comparing with
+     * whitespace removed lets either space find the same words, and [hintOffset] - the raw position
+     * the stored offset points at - keeps a repeated sentence on the occurrence the reader is
+     * actually reading rather than on the first one in the block.
+     */
+    function readerTtsRangeForText(root, text, hintOffset) {
+        if (!root || !text) return null;
+        const target = text.replace(/\s+/g, '');
+        if (!target) return null;
+
+        const nodes = readerTtsBlockTextNodes(root);
+        let flat = '';
+        const positions = [];
+        let rawCursor = 0;
+        for (let i = 0; i < nodes.length; i++) {
+            const value = nodes[i].nodeValue || '';
+            for (let j = 0; j < value.length; j++) {
+                if (/\s/.test(value.charAt(j))) continue;
+                flat += value.charAt(j);
+                positions.push({ node: nodes[i], offset: j, raw: rawCursor + j });
+            }
+            rawCursor += value.length;
+        }
+
+        let best = null;
+        let bestDistance = 0;
+        let from = 0;
+        for (;;) {
+            const found = flat.indexOf(target, from);
+            if (found < 0) break;
+            const start = positions[found];
+            const end = positions[found + target.length - 1];
+            if (start && end) {
+                const distance = hintOffset < 0 ? 0 : Math.abs(start.raw - hintOffset);
+                if (!best || distance < bestDistance) {
+                    const range = document.createRange();
+                    range.setStart(start.node, start.offset);
+                    range.setEnd(end.node, end.offset + 1);
+                    best = range;
+                    bestDistance = distance;
+                }
+            }
+            if (best && hintOffset < 0) break;
+            from = found + 1;
+        }
+        return best;
+    }
+
     window.removeHighlight = function () {
         var highlightNode;
         var removedCount = 0;
@@ -2018,6 +2089,29 @@
 
             const baseNode = location.node;
             const highlightRoot = getTtsHighlightBlock(baseNode);
+
+            // 1. Find the range to highlight.
+            //
+            // The stored offset lands the range in the block but cannot place it exactly: it is
+            // measured in the text pagination produced, and a text-node walk counts raw
+            // characters, so the two drift by every whitespace run and <br> in between. The spoken
+            // text is present in the very same block, so it places the range itself, and the
+            // offset only chooses between repeated occurrences.
+            const hintOffset = readerTtsRawOffsetForPosition(highlightRoot, baseNode, startOffset);
+            let range = readerTtsRangeForText(highlightRoot, textToHighlight, hintOffset);
+            let remainingTextLength = 0;
+
+            if (range) {
+                console.log(`$ {
+                    TTS_HIGHLIGHT_LOG_TAG
+                }
+
+                : Spoken text located directly. rawHint=$ {
+                    hintOffset
+                }
+
+                `);
+            } else {
             let remainingOffset = startOffset;
 
             const treeWalker = document.createTreeWalker(highlightRoot, NodeFilter.SHOW_TEXT, null, false);
@@ -2056,11 +2150,11 @@
 
             `);
 
-            const range = document.createRange();
+            range = document.createRange();
             range.setStart(currentNode, remainingOffset);
 
             // 2. Find the ending text node and character position
-            let remainingTextLength = textToHighlight.length;
+            remainingTextLength = textToHighlight.length;
             let endNode = currentNode;
             let endOffset = remainingOffset;
             let sanityCheck = 0;
@@ -2122,6 +2216,7 @@
                 }
             } else {
                 range.setEnd(endNode, endOffset);
+            }
             }
 
             const highlightSpan = document.createElement("span");
@@ -2266,6 +2361,152 @@
         return { show: show, clear: clear };
     })();
 
+    /**
+     * The text nodes of a block, in reading order.
+     */
+    function readerTtsBlockTextNodes(block) {
+        const nodes = [];
+        const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null, false);
+        let node;
+        while ((node = walker.nextNode()) !== null) {
+            if (node.nodeValue && node.nodeValue.length > 0) nodes.push(node);
+        }
+        return nodes;
+    }
+
+    /**
+     * The first line box that reaches past [readingTop].
+     *
+     * A block owns the viewport top once it starts there, but where inside the block the reading
+     * position is depends on the line, not the block: a chapter whose prose is a single element
+     * (fan-fiction and one-paragraph chapters are common) would otherwise always start from the
+     * chapter's first word, however far the reader had scrolled. Line boxes come back in reading
+     * order, so the first one reaching the top of the reading area is the line the reader is
+     * looking at, whether it straddles that top or starts below it.
+     */
+    function readerTtsFirstVisibleLineRect(nodes, readingTop) {
+        for (let i = 0; i < nodes.length; i++) {
+            const range = document.createRange();
+            range.selectNodeContents(nodes[i]);
+            const rects = range.getClientRects();
+            range.detach && range.detach();
+            for (let r = 0; r < rects.length; r++) {
+                const rect = rects[r];
+                // A zero-sized rect is collapsed or unrendered content and carries no line.
+                if (rect.width <= 0 || rect.height <= 0) continue;
+                if (rect.bottom <= readingTop) continue;
+                return rect;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * A collapsed caret position at the start of [lineRect].
+     *
+     * The point is placed at the line's leading edge, which snaps the caret to the first character
+     * of that line rather than to wherever the line's middle happens to be.
+     */
+    function readerTtsCaretAtLineStart(lineRect, block) {
+        let direction = 'ltr';
+        try {
+            direction = window.getComputedStyle(block).direction || 'ltr';
+        } catch (error) {}
+        const x = direction === 'rtl'
+            ? Math.max(0, lineRect.right - 1)
+            : Math.max(0, lineRect.left + 1);
+        const y = (lineRect.top + lineRect.bottom) / 2;
+        if (document.caretRangeFromPoint) {
+            return document.caretRangeFromPoint(x, y);
+        }
+        if (document.caretPositionFromPoint) {
+            const position = document.caretPositionFromPoint(x, y);
+            if (position && position.offsetNode) {
+                const range = document.createRange();
+                range.setStart(position.offsetNode, position.offset);
+                range.collapse(true);
+                return range;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Where [node]:[offset] sits in the block's rendered text.
+     *
+     * innerText collapses the whitespace a raw text-node walk counts and writes a newline for every
+     * line break element, so a DOM position cannot index the extracted text directly. Rendering the
+     * prefix and reading it back is the only way to measure it in the same coordinate system as the
+     * text being sliced, which is the coordinate system pagination stores offsets in.
+     */
+    function readerTtsRenderedTextOffset(block, node, offset) {
+        try {
+            const range = document.createRange();
+            range.setStart(block, 0);
+            range.setEnd(node, offset);
+            const holder = document.createElement('div');
+            // Rendered: innerText is a layout-dependent property, and an unrendered element
+            // answers with its raw text instead of the whitespace layout decided.
+            holder.setAttribute('style', 'position:fixed;top:0;left:0;opacity:0;pointer-events:none;');
+            holder.style.whiteSpace = window.getComputedStyle(block).whiteSpace || 'normal';
+            holder.appendChild(range.cloneContents());
+            document.body.appendChild(holder);
+            let prefixLength = 0;
+            try {
+                prefixLength = (holder.innerText || '').length;
+            } finally {
+                document.body.removeChild(holder);
+            }
+            // A rendered prefix keeps none of the whitespace that separates it from what follows,
+            // so stepping over it lands on the first character of the line that was found.
+            const fullText = (block.innerText || '').trim();
+            let index = Math.max(0, Math.min(prefixLength, fullText.length));
+            while (index < fullText.length && /\s/.test(fullText.charAt(index))) index++;
+            return index;
+        } catch (error) {
+            return 0;
+        }
+    }
+
+    /**
+     * The offset in the block's own text where its first visible line begins, or 0 when the block
+     * starts at the top of the reading area. [readingTop] is where the reading area begins.
+     */
+    function topVisibleOffsetWithinBlock(block, readingTop) {
+        if (!Number.isFinite(readingTop)) {
+            readingTop = typeof window.VIEWPORT_PADDING_TOP === 'number' ? window.VIEWPORT_PADDING_TOP : 0;
+        }
+        const nodes = readerTtsBlockTextNodes(block);
+        if (!nodes.length) return 0;
+
+        const lineRect = readerTtsFirstVisibleLineRect(nodes, readingTop);
+        if (!lineRect) return 0;
+
+        const caret = readerTtsCaretAtLineStart(lineRect, block);
+        if (caret && caret.startContainer && block.contains(caret.startContainer)) {
+            const offset = readerTtsRenderedTextOffset(block, caret.startContainer, caret.startOffset);
+            if (offset > 0) {
+                console.log("TTS_CHAPTER_CHANGE_DIAG: Top visible line resolved at text offset " + offset);
+                return offset;
+            }
+        }
+
+        // Without a caret position the line's first text node is the closest answer there is.
+        for (let i = 0; i < nodes.length; i++) {
+            const range = document.createRange();
+            range.selectNodeContents(nodes[i]);
+            const rects = range.getClientRects();
+            range.detach && range.detach();
+            for (let r = 0; r < rects.length; r++) {
+                const rect = rects[r];
+                if (rect.width <= 0 || rect.height <= 0) continue;
+                if (rect.bottom <= lineRect.top + 0.5 || rect.top >= lineRect.bottom - 0.5) continue;
+                return readerTtsRenderedTextOffset(block, nodes[i], 0);
+            }
+        }
+        return 0;
+    }
+
     window.extractTextWithCfiFromTop = function () {
         console.log("TTS_CHAPTER_CHANGE_DIAG: Starting extractTextWithCfiFromTop");
         try {
@@ -2275,21 +2516,24 @@
 
             console.log("TTS_CHAPTER_CHANGE_DIAG: Total nodes found: " + allContentNodes.length);
 
-            let startBlock = null;
+            // The reading area starts below the content's top padding, and the reading position is
+            // the first line that reaches past that point: a line straddling the top of the reading
+            // area is the line the reader is looking at, so it is chosen rather than the next one
+            // down. Block and line must use the same top, because a block rejected here is never
+            // searched for a visible line.
+            const viewportTop = typeof window.VIEWPORT_PADDING_TOP === 'number' ? window.VIEWPORT_PADDING_TOP : 0;
             let startIndex = -1;
 
             for (let i = 0; i < allContentNodes.length; i++) {
-                const node = allContentNodes[i];
-                const rect = node.getBoundingClientRect();
+                const rect = allContentNodes[i].getBoundingClientRect();
 
-                if (rect.bottom > (window.VIEWPORT_PADDING_TOP + 10)) {
-                    startBlock = node;
+                if (rect.bottom > viewportTop) {
                     startIndex = i;
                     break;
                 }
             }
 
-            if (!startBlock) {
+            if (startIndex === -1) {
                 console.log("TTS_CHAPTER_CHANGE_DIAG: No visible start block found in viewport.");
                 return window.extractTextWithCfi();
             }
@@ -2299,16 +2543,27 @@
             const nodesToProcess = allContentNodes.slice(startIndex);
             const results =[];
 
-            nodesToProcess.forEach((node) => {
+            nodesToProcess.forEach((node, index) => {
                 const text = node.innerText ? node.innerText.trim() : "";
-                if (text.length > 0 && node.offsetParent !== null) {
-                    try {
-                        const cfiObj = getCfiPathForElement(node, 0);
-                        if (cfiObj && cfiObj.cfi) {
-                            results.push({ cfi: cfiObj, text: text });
+                if (text.length === 0 || node.offsetParent === null) return;
+                try {
+                    const cfiObj = getCfiPathForElement(node, 0);
+                    if (!cfiObj || !cfiObj.cfi) return;
+                    // The block the viewport starts in is sliced at its first visible line, so a
+                    // chapter of one long element still begins reading where the reader is looking
+                    // rather than at the chapter's first word.
+                    if (index === 0) {
+                        const lineOffset = topVisibleOffsetWithinBlock(node, viewportTop);
+                        if (lineOffset > 0) {
+                            const sliced = text.substring(lineOffset);
+                            if (sliced.trim().length > 0) {
+                                results.push({ cfi: cfiObj, text: sliced, startOffset: lineOffset });
+                                return;
+                            }
                         }
-                    } catch (e) {}
-                }
+                    }
+                    results.push({ cfi: cfiObj, text: text });
+                } catch (e) {}
             });
 
             return JSON.stringify(results);

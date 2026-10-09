@@ -1,5 +1,6 @@
 package com.aryan.reader.epubreader
 
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -16,6 +17,44 @@ class EpubReaderTtsHighlightAssetTest {
         assertTrue(js.contains("text-align-last: auto !important;"))
         assertTrue(js.contains("letter-spacing: normal !important;"))
         assertTrue(js.contains("word-spacing: normal !important;"))
+    }
+
+    @Test
+    fun `vertical webview tts starts at the top visible line of its block`() {
+        val js = epubReaderAsset().readText()
+
+        // A chapter whose prose is one element has no per-line element to start from, so the block
+        // the viewport starts in must be sliced at its first visible line instead of at its start.
+        assertTrue(js.contains("function topVisibleOffsetWithinBlock(block, readingTop)"))
+        assertTrue(js.contains("const lineOffset = topVisibleOffsetWithinBlock(node, viewportTop);"))
+        assertTrue(js.contains("results.push({ cfi: cfiObj, text: sliced, startOffset: lineOffset });"))
+        // The line is found from layout, not from document order, and the offset it produces is
+        // measured in the text that is emitted.
+        assertTrue(js.contains("function readerTtsFirstVisibleLineRect(nodes, readingTop)"))
+        assertTrue(js.contains("function readerTtsRenderedTextOffset(block, node, offset)"))
+        // Block and line read the same top, and that top is the reading area itself. Pushing it
+        // further down skips the line straddling the top, which is the line the reader is looking
+        // at - the rule native vertical uses when it takes the line containing the viewport top.
+        assertTrue(js.contains("if (rect.bottom <= readingTop) continue;"))
+        assertTrue(js.contains("if (rect.bottom > viewportTop) {"))
+        val extraction = js
+            .substringAfter("window.extractTextWithCfiFromTop = function ()")
+            .substringBefore("\n    window.")
+        assertFalse(
+            "the reading-area top must be used as given, without a guard that skips the top line",
+            extraction.contains("+ 10") || extraction.contains("+10")
+        )
+    }
+
+    @Test
+    fun `vertical webview tts highlight is placed by the text it narrates`() {
+        val js = epubReaderAsset().readText()
+
+        // Stored offsets are measured in the text pagination produced while a text-node walk
+        // counts raw characters, so the offset places the range approximately. The spoken text is
+        // in the same block and places it exactly.
+        assertTrue(js.contains("function readerTtsRangeForText(root, text, hintOffset)"))
+        assertTrue(js.contains("let range = readerTtsRangeForText(highlightRoot, textToHighlight, hintOffset);"))
     }
 
     @Test

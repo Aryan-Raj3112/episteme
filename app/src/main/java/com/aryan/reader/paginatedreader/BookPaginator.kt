@@ -56,7 +56,7 @@ import com.aryan.reader.paginatedreader.data.SerializableEpubChapter
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.ReaderBookReplacementPreferencesJson
 import com.aryan.reader.tts.PageCharacterRange
-import com.aryan.reader.tts.splitTextIntoChunks
+import com.aryan.reader.tts.splitTextIntoChunksWithSourceOffsets
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -869,25 +869,18 @@ class BookPaginator(
             if (block.cfi != null) {
                 val blockText = block.content.text
                 if (blockText.isNotBlank()) {
-                    val textChunksInBlock = splitTextIntoChunks(blockText)
+                    // Offsets come from the splitter rather than a search for each chunk's first
+                    // word: a search drifts by the whitespace the split removed, and every stored
+                    // offset then points earlier than the text it names.
+                    val chunkSpans = splitTextIntoChunksWithSourceOffsets(blockText)
 
-                    var currentSearchIndex = 0
-                    textChunksInBlock.forEach { chunkText ->
-                        val firstWord = chunkText.trim().substringBefore(' ')
-                        val relativeOffset = if (firstWord.isNotEmpty()) {
-                            val idx = blockText.indexOf(firstWord, currentSearchIndex)
-                            if (idx != -1) idx else currentSearchIndex
-                        } else {
-                            currentSearchIndex
-                        }
-
+                    chunkSpans.forEach { span ->
                         val chunk = TtsChunk(
-                            text = chunkText,
+                            text = span.text,
                             sourceCfi = block.cfi!!,
-                            startOffsetInSource = block.startCharOffsetInSource + relativeOffset
+                            startOffsetInSource = block.startCharOffsetInSource + span.startOffsetInSource
                         )
                         allTtsChunks.add(chunk)
-                        currentSearchIndex = relativeOffset + chunkText.length
                     }
                 } else {
                     Timber.d("PAGINATOR: Skipping blank text block. CFI: ${block.cfi}, startOffset: ${block.startCharOffsetInSource}")
