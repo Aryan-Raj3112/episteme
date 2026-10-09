@@ -221,7 +221,13 @@ class AppIconTest {
         return min(direct, 360f - direct)
     }
 
-    /** The HSL hue in degrees and saturation of a colour. */
+    /**
+     * The HSL hue in degrees and saturation of a colour. A copy of
+     * [com.aryan.reader.shared.ui.hueAndSaturation], which is `internal` to the
+     * shared module and therefore out of reach from here. It has to stay a copy
+     * -- saturation clamped included -- or the hues asserted on below drift from
+     * the ones the icon is actually painted in.
+     */
     private fun Color.hueAndSaturation(): Pair<Float, Float> {
         val max = maxOf(red, green, blue)
         val min = minOf(red, green, blue)
@@ -234,7 +240,7 @@ class AppIconTest {
             green -> (blue - red) / delta + 2f
             else -> (red - green) / delta + 4f
         } * 60f
-        return ((hue + 360f) % 360f) to saturation
+        return ((hue + 360f) % 360f) to saturation.coerceIn(0f, 1f)
     }
 
     private companion object {

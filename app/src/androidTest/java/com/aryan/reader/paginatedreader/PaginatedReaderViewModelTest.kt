@@ -9,7 +9,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.test.core.app.ApplicationProvider
@@ -19,16 +21,22 @@ import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.paginatedreader.TextContentBlock
 import com.google.common.truth.Truth.assertThat
-import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+
+/**
+ * `initialize` returns early when a paginator already exists, so the measurer is never called.
+ * A real instance avoids `mockk`, whose inline agent throws ExceptionInInitializerError when it
+ * cannot initialise on an instrumented device — that was the whole failure here.
+ */
 
 private class FakePaginator(
     initiallyLoading: Boolean,
@@ -84,6 +92,9 @@ class PaginatedReaderViewModelTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule()
 
+    @get:Rule
+    val composeTestRule = createComposeRule()
+
     private lateinit var viewModel: PaginatedReaderViewModel
     private lateinit var fakePaginator: FakePaginator
 
@@ -134,9 +145,11 @@ class PaginatedReaderViewModelTest {
 
         fakePaginator.generation = 5
         Snapshot.sendApplyNotifications()
-        advanceUntilIdle()
 
-        assertThat(viewModel.uiState.value.generation).isEqualTo(5)
+        // Wait for the observation to land rather than racing it: `snapshotFlow` collects on the
+        // viewModelScope dispatcher, so a bare advanceUntilIdle() can observe the write before the
+        // collector has resubscribed, which is what made this test intermittent.
+        assertThat(viewModel.uiState.first { it.generation == 5 }.generation).isEqualTo(5)
     }
 
     @Test
@@ -155,6 +168,16 @@ class PaginatedReaderViewModelTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val existingPaginator = viewModel.paginator
 
+        // `initialize` returns early when a paginator already exists, so neither collaborator is
+        // touched. Both are supplied for real rather than with `mockk`: mockk's inline agent needs
+        // `java.lang.instrument.ClassFileTransformer`, which does not exist on Android, so every
+        // mockk call in an instrumentation test dies with ExceptionInInitializerError.
+        // TextMeasurer has no public constructor-based factory outside composition either, so it
+        // is captured from `rememberTextMeasurer`.
+        lateinit var textMeasurer: TextMeasurer
+        composeTestRule.setContent { textMeasurer = rememberTextMeasurer() }
+        composeTestRule.waitForIdle()
+
         viewModel.initialize(
             book = EpubBook(
                 fileName = "test.epub",
@@ -163,7 +186,7 @@ class PaginatedReaderViewModelTest {
                 language = "en",
                 coverImage = null
             ),
-            textMeasurer = mockk<TextMeasurer>(relaxed = true),
+            textMeasurer = textMeasurer,
             textConstraints = Constraints(maxWidth = 1080, maxHeight = 1920),
             textStyle = TextStyle.Default,
             density = Density(1f),
@@ -172,7 +195,7 @@ class PaginatedReaderViewModelTest {
             themeTextColor = Color.Black,
             context = context,
             initialChapterToPaginate = 0,
-            mathMLRenderer = mockk<MathMLRenderer>(relaxed = true),
+            mathMLRenderer = MathMLRenderer(context),
             paragraphGapMultiplier = 1.0f
         )
         advanceUntilIdle()

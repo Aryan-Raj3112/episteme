@@ -477,6 +477,10 @@ internal fun readerHtmlAnnotationScript(): String = """
                 var locator = (highlight && highlight.locator) || {};
                 if ((entry.styleId || 'background') !== (highlight.style || 'background')) return false;
                 if ((entry.colorId || 'yellow') !== (highlight.colorId || 'yellow')) return false;
+                // See markerMatchesHighlight: the id cannot distinguish two custom colours.
+                var incomingArgb = readerHighlightArgbValue(highlight.colorArgb);
+                var entryArgb = readerHighlightArgbValue(entry.colorArgb);
+                if (incomingArgb !== null && entryArgb !== null && incomingArgb !== entryArgb) return false;
                 var s = locator.startOffset;
                 var e = locator.endOffset;
                 if (s === undefined || s === null || e === undefined || e === null) return true;
@@ -534,6 +538,8 @@ internal fun readerHtmlAnnotationScript(): String = """
                       paintName: p.paintName, ranges: [], spans: [],
                       chapterIndex: p.chapterIndex, startOffset: p.startOffset, endOffset: p.endOffset,
                       cfi: p.cfi, colorId: p.colorId, styleId: p.styleId,
+                      // Recorded so paintedEntryMatches can see a recolour; see markerMatchesHighlight.
+                      colorArgb: readerHighlightArgbValue(p.colorArgb),
                       temp: !p.realId, id: p.realId || ''
                     };
                     readerUserHighlightsPainted[p.key] = entry;
@@ -564,6 +570,7 @@ internal fun readerHtmlAnnotationScript(): String = """
                   startOffset: segStart, endOffset: segEnd,
                   cfi: ((highlight.locator || {}).cfi || highlight.cfi || ''),
                   colorId: highlight.colorId || 'yellow', styleId: highlight.style || 'background',
+                  colorArgb: highlight.colorArgb,
                   colorCss: colorCss, markerFactory: markerFactory, ctx: ctx
                 };
               }
@@ -1037,10 +1044,23 @@ internal fun readerHtmlAnnotationScript(): String = """
                 var match = String(marker.className || '').match(/user-highlight-([a-z]+)/);
                 return match ? match[1] : '';
               }
+              function readerHighlightArgbValue(value) {
+                if (value === undefined || value === null || value === '') return null;
+                var number = Number(value);
+                if (!Number.isFinite(number)) return null;
+                return number >>> 0;
+              }
               function markerMatchesHighlight(marker, highlight) {
                 var locator = highlight.locator || {};
                 if ((marker.getAttribute('data-reader-highlight-style') || 'background') !== (highlight.style || 'background')) return false;
                 if (readerHighlightColorIdFromMarker(marker) !== (highlight.colorId || 'yellow')) return false;
+                // The named colour alone cannot decide this. Every custom palette colour reports the
+                // same fallback id, so a recolour between two of them left the marker looking current
+                // and the repaint was skipped. Compare the ARGB the marker was painted with whenever
+                // both sides have one; neither having one keeps the old id-only behaviour.
+                var incomingArgb = readerHighlightArgbValue(highlight.colorArgb);
+                var markerArgb = readerHighlightArgbValue(marker.getAttribute('data-reader-highlight-color-argb'));
+                if (incomingArgb !== null && markerArgb !== null && incomingArgb !== markerArgb) return false;
                 var start = locator.startOffset;
                 var end = locator.endOffset;
                 if (start === undefined || start === null || end === undefined || end === null) return true;

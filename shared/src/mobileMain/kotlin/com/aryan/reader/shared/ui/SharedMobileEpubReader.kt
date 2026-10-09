@@ -2025,12 +2025,10 @@ fun SharedMobileEpubReaderScreen(
                             },
                             onHighlightEdit = { editingHighlight = it },
                             onHighlightColorChange = { highlight, colorArgb ->
+                                // recoloredTo, not a bare copy: the WebView reconciles by the named
+                                // colour, so writing only the ARGB left it skipping the repaint.
                                 highlights = highlights.map { current ->
-                                    if (current.id == highlight.id) {
-                                        current.copy(colorArgb = colorArgb)
-                                    } else {
-                                        current
-                                    }
+                                    if (current.id == highlight.id) current.recoloredTo(colorArgb) else current
                                 }
                             },
                             onDeleteHighlight = { highlight ->

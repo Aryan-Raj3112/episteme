@@ -2420,6 +2420,31 @@ internal fun DrawScope.drawPaginatedHighlightLineStyle(
     }
 }
 
+/**
+ * Identity of what a block's highlight paint is built from: which highlights, in what colour, with
+ * what style.
+ *
+ * The paint cache used to be keyed on ranges alone. Ranges are ids and offsets, and a recolour
+ * changes neither, so every key stayed equal, Compose skipped the block, and the highlight kept its
+ * old colour on screen while the model already held the new one. The colour and style are resolved
+ * *inside* the cached block, so they have to be part of its identity.
+ *
+ * Only the highlights this block actually paints are folded in, so editing an unrelated highlight
+ * does not invalidate every block on the page. Ids are sorted so map iteration order cannot make the
+ * key flap; `effectiveArgb` covers both named and custom palette colours.
+ */
+internal fun paginatedHighlightPaintKey(
+    highlightRanges: Map<String, List<IntRange>>,
+    highlightById: Map<String, UserHighlight>
+): String = buildString {
+    highlightRanges.keys.sorted().forEach { id ->
+        val highlight = highlightById[id]
+        append(id).append('=')
+        append(highlight?.effectiveArgb ?: 0).append(':')
+        append(highlight?.style?.id.orEmpty()).append(';')
+    }
+}
+
 @Composable
 internal fun TextWithEmphasis(
     text: AnnotatedString,
@@ -2454,6 +2479,16 @@ internal fun TextWithEmphasis(
     val highlightById = remember(userHighlights) {
         userHighlights.associateBy { it.id }
     }
+    // What the cached paint below actually depends on.
+    //
+    // Ranges are ids and offsets, which a recolour does not change, so keying the cache on them alone
+    // meant a recolour left every key equal: Compose skipped the block and the highlight kept its old
+    // colour on screen even though the model had the new one. The colour and style are resolved
+    // *inside* the cache, so they have to appear in its identity. Only the highlights this block
+    // paints are folded in, so editing an unrelated highlight does not invalidate every block.
+    val highlightPaintKey = remember(highlightRanges, highlightById) {
+        paginatedHighlightPaintKey(highlightRanges, highlightById)
+    }
     val latestTextLayoutResult = rememberUpdatedState(textLayoutResult)
     val latestOnLinkClick = rememberUpdatedState(onLinkClick)
     val latestOnGeneralTap = rememberUpdatedState(onGeneralTap)
@@ -2485,7 +2520,7 @@ internal fun TextWithEmphasis(
     // Ranges are resolved by the caller against the whole chapter and arrive ready to paint. Resolving
     // them here instead, per block, is what let a sentence repeated across a chapter paint on every
     // block holding a copy of it.
-    val cachedHighlights = remember(block, highlightRanges, textLayoutResult, pressedHighlightCfi) {
+    val cachedHighlights = remember(block, highlightRanges, textLayoutResult, pressedHighlightCfi, highlightPaintKey) {
         val startTime = System.currentTimeMillis()
         val paths = mutableListOf<HighlightDrawInfo>()
         val layout = textLayoutResult

@@ -446,6 +446,22 @@ data class UserHighlight(
             if (storedAlpha >= 0xFF) storedColor.copy(alpha = legacyAlpha) else storedColor
         }
     }
+
+    /**
+     * This highlight recoloured to [argb], with both colour fields moved together.
+     *
+     * Android benchmark ([com.aryan.reader.shared.reader.ReaderEngine.updateHighlight]): an ARGB write
+     * also refreshes the named entry, because plenty of consumers still read [color] rather than
+     * [colorArgb] — the WebView's `colorId`, the export label, the CSS class. Writing only the ARGB
+     * leaves [color] stale, and the WebView then sends the old `colorId`, which its
+     * `markerMatchesHighlight` treats as "already painted": the recolour is applied to the model and
+     * silently skipped on screen. Two writers did that independently (the iOS reader and the iOS
+     * highlight sheet), so the rule lives here instead of being repeated at each call site.
+     */
+    fun recoloredTo(argb: Int): UserHighlight = copy(
+        color = legacyEpubHighlightColorForArgb(argb),
+        colorArgb = argb
+    )
 }
 
 fun escapeJsString(value: String): String {

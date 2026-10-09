@@ -809,7 +809,9 @@ internal fun SharedMobileEpubHighlightSheet(
                                 color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                                 shape = CircleShape
                             )
-                            .clickable { onUpdate(highlight.copy(colorArgb = slotArgb)) }
+                            // recoloredTo, not copy(colorArgb): the named colour has to move too, or the WebView's
+                            // reconcile treats the old marker as current and skips the repaint.
+                            .clickable { onUpdate(highlight.recoloredTo(slotArgb)) }
                     )
                 }
             }

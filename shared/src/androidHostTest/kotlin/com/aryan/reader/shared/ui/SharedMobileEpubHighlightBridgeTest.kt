@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.ui.graphics.toArgb
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.UserHighlight
@@ -93,5 +94,24 @@ class SharedMobileEpubHighlightBridgeTest {
         assertTrue(script.contains("\"startOffset\":100"))
         assertTrue(script.contains("\"endOffset\":110"))
         assertTrue(script.contains("\"cfi\":\"/4/2/2:0|/4/2/2:10\""))
+    }
+
+    @Test
+    fun `apply script carries the recoloured name so the webview does not skip the repaint`() {
+        // The WebView reconciles by colorId. A recolour that wrote only the ARGB left colorId on the
+        // old colour, so the reconcile judged the existing marker current and never repainted it.
+        val original = UserHighlight(
+            id = "h1",
+            cfi = "/4/2",
+            text = "alpha",
+            color = HighlightColor.YELLOW,
+            chapterIndex = 0
+        )
+        val recoloured = original.recoloredTo(HighlightColor.GREEN.color.toArgb())
+
+        val script = sharedMobileEpubHighlightsApplyScript(listOf(recoloured))
+
+        assertTrue(script.contains("\"colorId\":\"green\""))
+        assertTrue(script.contains("\"colorArgb\":${HighlightColor.GREEN.color.toArgb().toLong()}"))
     }
 }

@@ -64,7 +64,12 @@ internal fun UserHighlight.highlightAttributes(): String {
 internal fun highlightAttributes(style: HighlightStyle, colorArgb: Int?): String {
     val declarations = highlightStyleDeclarations(style, colorArgb)
     val styleAttribute = declarations.takeIf { it.isNotBlank() }?.let { " style=\"$it\"" }.orEmpty()
-    return "$styleAttribute data-reader-highlight-style=\"${style.id}\""
+    // The ARGB is recorded on the marker so the reconcile can tell one colour from another. The CSS
+    // class only carries the *named* colour, so two different custom palette colours both read as the
+    // same id and the marker looks unchanged when it is not. Written unsigned, matching what the
+    // script writes on a marker it creates itself, so the two never disagree.
+    val colorAttribute = colorArgb?.let { " data-reader-highlight-color-argb=\"${it.toUInt()}\"" }.orEmpty()
+    return "$styleAttribute data-reader-highlight-style=\"${style.id}\"$colorAttribute"
 }
 
 internal fun highlightStyleDeclarations(style: HighlightStyle, colorArgb: Int?): String {

@@ -103,6 +103,37 @@ class EpubAnnotationSerializerTest {
     }
 
     @Test
+    fun `recoloredTo moves the named colour and the argb together`() {
+        val original = UserHighlight(
+            id = "h",
+            cfi = "epubcfi(/6/2)",
+            text = "text",
+            color = HighlightColor.YELLOW,
+            chapterIndex = 0
+        )
+
+        val stock = original.recoloredTo(HighlightColor.GREEN.color.toArgb())
+
+        // Both fields, or the WebView's reconcile keeps sending the old colorId and skips the repaint.
+        assertEquals(HighlightColor.GREEN, stock.color)
+        assertEquals(HighlightColor.GREEN.color.toArgb(), stock.colorArgb)
+
+        // A colour outside the named palette still refreshes the name to its documented fallback,
+        // rather than leaving it pointing at the colour the highlight no longer is.
+        val custom = original.recoloredTo(0xFF654321.toInt())
+        assertEquals(0xFF654321.toInt(), custom.colorArgb)
+        assertEquals(HighlightColor.YELLOW, custom.color)
+
+        // A recolour is a colour change only: everything else survives it.
+        assertEquals(original.id, custom.id)
+        assertEquals(original.cfi, custom.cfi)
+        assertEquals(original.text, custom.text)
+        assertEquals(original.style, custom.style)
+        assertEquals(original.chapterIndex, custom.chapterIndex)
+        assertEquals(original.locator, custom.locator)
+    }
+
+    @Test
     fun `processAndAddHighlight updates exact matches and appends new highlights`() {
         val highlights = mutableListOf<UserHighlight>()
         val cfi = EpubAnnotationSerializer.processAndAddHighlight(

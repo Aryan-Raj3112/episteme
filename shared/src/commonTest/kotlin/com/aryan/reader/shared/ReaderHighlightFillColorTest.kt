@@ -1,6 +1,7 @@
 package com.aryan.reader.shared
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import com.aryan.reader.shared.ui.SharedNativeHighlightPaintPlan
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -88,6 +89,26 @@ class ReaderHighlightFillColorTest {
         val invisible = palette(HighlightColor.YELLOW, 0x003366CC)
 
         assertEquals("rgba(51,102,204,0.0)", invisible.fillCssColor())
+    }
+
+    @Test
+    fun `a recolour fills with the same tone as the colour it landed on`() {
+        // The recolour path used to format its own `#RRGGBB` for the WebView, which carries no alpha,
+        // so recolouring shifted the tone while the same highlight sat correctly tinted everywhere
+        // else. The rule that matters is that a recoloured highlight and a freshly created one of the
+        // same colour resolve identically.
+        HighlightColor.entries.forEach { color ->
+            val argb = color.color.toArgb()
+            val recoloured = palette(HighlightColor.YELLOW).recoloredTo(argb)
+            val created = palette(color, argb)
+
+            assertEquals(
+                created.fillCssColor(),
+                recoloured.fillCssColor(),
+                "recolouring to $color changed the fill"
+            )
+            assertTrue(recoloured.fillCssColor().endsWith(",0.4)"))
+        }
     }
 
     @Test

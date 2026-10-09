@@ -95,8 +95,22 @@ class PdfAnnotationTest {
             .assertIsDisplayed()
             .performClick()
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_close_edit_mode)).assertIsDisplayed()
+        closeEditMode().assertIsDisplayed()
     }
+
+    /**
+     * The dock's close control is rendered by shared (`SharedPdfAndroidAnnotationDock`), which
+     * supplies its own English literal, "Close edit mode". Android does not route shared strings
+     * through `R.string` outside the settings screen, so the rendered text differs from
+     * `R.string.content_desc_close_edit_mode` ("Close Edit Mode") only in casing. Match
+     * case-insensitively so these tests track the control rather than the casing; see
+     * docs/shared-parity-migration.md for the localization gap itself.
+     */
+    private fun closeEditMode() =
+        composeTestRule.onNodeWithContentDescription(
+            text(R.string.content_desc_close_edit_mode),
+            ignoreCase = true
+        )
 
     private fun tapOutsidePopup() {
         // Taps the center of the PDF viewer to dismiss popups
@@ -124,7 +138,7 @@ class PdfAnnotationTest {
         composeTestRule.onNodeWithTag(dockTag(R.string.content_desc_highlighter)).assertIsDisplayed()
         composeTestRule.onNodeWithTag(dockTag(R.string.content_desc_eraser)).assertIsDisplayed()
 
-        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_close_edit_mode)).performClick()
+        closeEditMode().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_toggle_editing_mode)).assertIsDisplayed()
     }
@@ -144,7 +158,7 @@ class PdfAnnotationTest {
         composeTestRule.onNodeWithTag(dockTag(R.string.content_desc_pen)).assertIsNotSelected()
 
         // 3. Exit Edit Mode
-        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_close_edit_mode)).performClick()
+        closeEditMode().performClick()
         composeTestRule.waitForIdle()
 
         // 4. Re-enter Edit Mode
@@ -184,9 +198,11 @@ class PdfAnnotationTest {
         // 2. Verify Popup Displayed
         composeTestRule.onNodeWithTag("ToolSettingsPopup").assertIsDisplayed()
 
-        // 3. Verify Pen Types exist
+        // 3. Verify Pen Types exist. The panel now lives in shared
+        // (SharedPdfAndroidToolSettingsPopup) and the pen group is FOUNTAIN_PEN / PEN / PENCIL —
+        // MARKER left it when the panel was ported.
         composeTestRule.onNodeWithTag("SettingsItem_FOUNTAIN_PEN").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("SettingsItem_MARKER").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("SettingsItem_PENCIL").assertIsDisplayed()
 
         // 4. Switch internal Pen Type
         composeTestRule.onNodeWithTag("SettingsItem_PENCIL").performClick()
@@ -287,7 +303,11 @@ class PdfAnnotationTest {
         composeTestRule.waitForIdle()
 
         // 2. Minimize (Eye icon)
-        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_toggle_visibility)).performClick()
+        // Same shared-literal casing as closeEditMode(): the dock renders "Toggle visibility".
+        composeTestRule.onNodeWithContentDescription(
+            text(R.string.content_desc_toggle_visibility),
+            ignoreCase = true
+        ).performClick()
         composeTestRule.waitForIdle()
 
         // 3. Verify Dock items are hidden

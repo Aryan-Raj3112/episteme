@@ -1175,6 +1175,11 @@ internal fun readerHtmlSelectionScript(): String = """
                 if (styleDeclarations) marker.style.cssText = styleDeclarations;
                 if (highlightId) marker.setAttribute('data-reader-highlight-id', highlightId);
                 marker.setAttribute('data-reader-highlight-style', styleId || 'background');
+                // Recorded so a reconcile can tell two colours apart: the CSS class only carries the
+                // named colour, so two custom palette colours both read as the same id.
+                if (colorArgb !== undefined && colorArgb !== null && Number.isFinite(Number(colorArgb))) {
+                  marker.setAttribute('data-reader-highlight-color-argb', String(Number(colorArgb) >>> 0));
+                }
                 if (startOffset !== undefined && startOffset !== null) {
                   marker.setAttribute('data-reader-start-offset', String(startOffset));
                 }

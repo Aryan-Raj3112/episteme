@@ -63,7 +63,7 @@ val verifyCodebaseArchitecture by tasks.registering {
             "shared/src/mobileMain/kotlin/com/aryan/reader/shared/ui/SharedMobileEpubReader.kt" to 1_707,
             "shared/src/commonMain/kotlin/androidx/compose/material/icons/filled/FilledIcons.kt" to 1_603,
             "app/src/main/java/com/aryan/reader/epubreader/ChapterWebView.kt" to 1_573,
-            "shared/src/commonMain/kotlin/com/aryan/reader/shared/ui/SharedAppThemeSettings.kt" to 1_507,
+            
             "shared/src/commonMain/kotlin/com/aryan/reader/shared/ui/ReaderWorkspaceShell.kt" to 1_505,
         )
         val retiredDumpingGrounds = setOf("Common.kt")
