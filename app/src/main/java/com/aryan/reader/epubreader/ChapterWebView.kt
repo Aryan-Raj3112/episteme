@@ -101,6 +101,7 @@ import com.aryan.reader.shared.normalizeReaderHref
 import com.aryan.reader.shared.ui.SharedSelectionMenuRect
 import com.aryan.reader.shared.ui.SharedSelectionMenuSize
 import com.aryan.reader.shared.ui.SharedSelectionMenuViewport
+import com.aryan.reader.shared.ui.SharedReaderHighlightPaletteSpectrumButton
 import com.aryan.reader.shared.ui.sharedSelectionMenuPlacement
 import com.aryan.reader.paginatedreader.resolveEpubNoteHtml
 import kotlinx.coroutines.CoroutineScope
@@ -1842,7 +1843,7 @@ fun ChapterWebView(
                             }
 
                             Spacer(modifier = Modifier.width(8.dp))
-                            SpectrumButton(
+                            SharedReaderHighlightPaletteSpectrumButton(
                                 onClick = { showPaletteManager = true }, size = 28.dp
                             )
                         }

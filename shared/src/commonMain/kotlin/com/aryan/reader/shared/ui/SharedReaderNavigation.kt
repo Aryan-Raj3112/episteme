@@ -1242,7 +1242,12 @@ internal fun SharedReaderHighlightPaletteDialog(
 }
 
 @Composable
-internal fun SharedReaderHighlightPaletteSpectrumButton(
+/**
+ * Rainbow spectrum swatch that opens the highlight palette editor. The single implementation:
+ * the PDF selection overlay, the EPUB library sheets, reader navigation and search chrome all
+ * use it, and Android's reader WebView used to keep a byte-identical local copy.
+ */
+fun SharedReaderHighlightPaletteSpectrumButton(
     onClick: () -> Unit,
     size: androidx.compose.ui.unit.Dp,
     modifier: Modifier = Modifier

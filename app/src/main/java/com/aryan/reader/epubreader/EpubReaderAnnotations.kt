@@ -52,9 +52,6 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -67,7 +64,6 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.testTag
@@ -93,6 +89,7 @@ import com.aryan.reader.shared.ui.SharedBrightnessSlider
 import com.aryan.reader.shared.ui.SharedRgbInputColumn
 import com.aryan.reader.shared.ui.SharedHexInput
 import com.aryan.reader.shared.ui.SharedColorComparePill
+import com.aryan.reader.shared.ui.SharedReaderHighlightPaletteSpectrumButton
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.DefaultEpubHighlightPaletteArgb
 import com.aryan.reader.shared.sanitizeEpubHighlightPalette
@@ -286,28 +283,6 @@ fun BookmarkButton(
             )
         }
     }
-}
-
-@Composable
-fun SpectrumButton(
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    size: androidx.compose.ui.unit.Dp = 32.dp
-) {
-    val rainbowColors = listOf(
-        Color.Red, Color(0xFFFF7F00), Color.Yellow, Color.Green,
-        Color.Blue, Color(0xFF4B0082), Color(0xFF8B00FF)
-    )
-
-    Box(
-        modifier = modifier
-            .size(size)
-            .background(
-                brush = Brush.sweepGradient(rainbowColors),
-                shape = CircleShape
-            )
-            .clickable(onClick = onClick)
-    )
 }
 
 @Composable
@@ -798,7 +773,7 @@ fun HighlightColorRow(
 
         if (onOpenPaletteManager != null) {
             Spacer(modifier = Modifier.width(6.dp))
-            SpectrumButton(
+            SharedReaderHighlightPaletteSpectrumButton(
                 onClick = onOpenPaletteManager,
                 size = 28.dp
             )
