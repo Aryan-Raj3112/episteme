@@ -26,6 +26,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import androidx.compose.ui.graphics.toArgb
 
 class ReaderHtmlDocumentBuilderTest {
 
@@ -1033,15 +1034,16 @@ class ReaderHtmlDocumentBuilderTest {
 
     @Test
     fun `vertical selection menu renders every configured highlight palette slot`() {
+        val customArgb = 0xFF123456.toInt()
         val html = ReaderHtmlDocumentBuilder.verticalDocument(
             book = repeatedWordBook("alpha beta"),
             settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
             highlightPalette = ReaderHighlightPalette(
                 listOf(
-                    HighlightColor.CYAN,
-                    HighlightColor.MAGENTA,
-                    HighlightColor.LIME,
-                    HighlightColor.PINK
+                    HighlightColor.CYAN.color.toArgb(),
+                    HighlightColor.MAGENTA.color.toArgb(),
+                    customArgb,
+                    HighlightColor.PINK.color.toArgb()
                 )
             )
         )
@@ -1049,6 +1051,10 @@ class ReaderHtmlDocumentBuilderTest {
         assertEquals(4, Regex("""class="reader-selection-color"""").findAll(html).count())
         assertTrue(html.contains("""data-color-id="cyan""""))
         assertTrue(html.contains("""data-color-id="pink""""))
+        // A slot the named enum cannot express keeps its own token and its own hex, which is the
+        // point of the palette being ARGB slots.
+        assertTrue(html.contains("""data-color-id="custom_ff123456""""))
+        assertTrue(html.contains("--selection-color:#123456"))
         assertTrue(html.contains("""class="reader-selection-spectrum""""))
         assertTrue(html.contains("""data-action="palette""""))
     }
@@ -1058,10 +1064,10 @@ class ReaderHtmlDocumentBuilderTest {
         val script = ReaderHtmlDocumentBuilder.highlightPaletteUpdateScript(
             ReaderHighlightPalette(
                 listOf(
-                    HighlightColor.CYAN,
-                    HighlightColor.MAGENTA,
-                    HighlightColor.LIME,
-                    HighlightColor.PINK
+                    HighlightColor.CYAN.color.toArgb(),
+                    HighlightColor.MAGENTA.color.toArgb(),
+                    HighlightColor.LIME.color.toArgb(),
+                    HighlightColor.PINK.color.toArgb()
                 )
             )
         )

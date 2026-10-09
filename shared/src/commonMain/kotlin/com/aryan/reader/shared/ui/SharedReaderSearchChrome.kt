@@ -70,13 +70,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
-import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiFeature
@@ -328,7 +328,7 @@ internal fun SharedReaderHighlightSheet(
     highlight: UserHighlight,
     palette: ReaderHighlightPalette,
     onDismiss: () -> Unit,
-    onColorChange: (HighlightColor) -> Unit,
+    onColorChange: (Int) -> Unit,
     onStyleChange: (HighlightStyle) -> Unit,
     onOpenPaletteManager: () -> Unit,
     onSaveNote: (String) -> Unit,
@@ -363,22 +363,25 @@ internal fun SharedReaderHighlightSheet(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            palette.sanitized().colors.forEach { color ->
+            palette.sanitized().colors.indices.forEach { slot ->
+                val slotArgb = palette.sanitized().argbAt(slot)
+                val slotColor = Color(slotArgb)
+                val isSelected = highlight.effectiveArgb == slotArgb
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .padding(horizontal = 4.dp)
                         .size(28.dp)
                         .clip(CircleShape)
-                        .background(color.color)
-                        .clickable { onColorChange(color) },
+                        .background(slotColor)
+                        .clickable { onColorChange(slotArgb) },
                 ) {
                     Box(
                         modifier = Modifier
                             .matchParentSize()
                             .border(
-                                width = if (highlight.color == color) 3.dp else 1.dp,
-                                color = if (highlight.color == color) {
+                                width = if (isSelected) 3.dp else 1.dp,
+                                color = if (isSelected) {
                                     MaterialTheme.colorScheme.onSurface
                                 } else {
                                     MaterialTheme.colorScheme.outline.copy(alpha = 0.30f)
@@ -386,11 +389,11 @@ internal fun SharedReaderHighlightSheet(
                                 shape = CircleShape
                             )
                     )
-                    if (highlight.color == color) {
+                    if (isSelected) {
                         Icon(
                             imageVector = Icons.Default.Check,
                             contentDescription = null,
-                            tint = if (color == HighlightColor.WHITE || color == HighlightColor.YELLOW) Color.Black else Color.White,
+                            tint = if (slotColor.luminance() > 0.5f) Color.Black else Color.White,
                             modifier = Modifier.size(16.dp)
                         )
                     }

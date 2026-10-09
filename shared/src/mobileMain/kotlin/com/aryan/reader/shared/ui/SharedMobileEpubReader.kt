@@ -1825,7 +1825,8 @@ fun SharedMobileEpubReaderScreen(
             id = "ios_epub_note_$timestamp",
             cfi = locator.cfi ?: "desktop:$chapterIndex:$startOffset:$endOffset",
             text = text,
-            color = readerHighlightPalette.sanitized().colors.first(),
+            color = readerHighlightPalette.sanitized().namedColorAt(0),
+            colorArgb = readerHighlightPalette.sanitized().argbAt(0),
             chapterIndex = chapterIndex,
             locator = locator.withFallbacks(
                 chapterIndex = chapterIndex,
@@ -2023,10 +2024,10 @@ fun SharedMobileEpubReaderScreen(
                                 scope.launch { drawerState.close() }
                             },
                             onHighlightEdit = { editingHighlight = it },
-                            onHighlightColorChange = { highlight, color ->
+                            onHighlightColorChange = { highlight, colorArgb ->
                                 highlights = highlights.map { current ->
                                     if (current.id == highlight.id) {
-                                        current.copy(color = color, colorArgb = null)
+                                        current.copy(colorArgb = colorArgb)
                                     } else {
                                         current
                                     }

@@ -79,6 +79,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -89,7 +90,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.HighlightStyle
-import com.aryan.reader.shared.HighlightColor
+import com.aryan.reader.shared.CUSTOM_HIGHLIGHT_COLOR_ID_PREFIX
 import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.ReaderHighlightListAction
 import com.aryan.reader.shared.UserHighlight
@@ -461,7 +462,7 @@ fun SharedMobileEpubHighlights(
     palette: ReaderHighlightPalette,
     onHighlightClick: (UserHighlight) -> Unit,
     onHighlightEdit: (UserHighlight) -> Unit,
-    onHighlightColorChange: (UserHighlight, HighlightColor) -> Unit,
+    onHighlightColorChange: (UserHighlight, Int) -> Unit,
     onDeleteHighlight: (UserHighlight) -> Unit,
     onOpenPaletteManager: (() -> Unit)? = null,
     onExportAnnotations: (() -> Unit)? = null,
@@ -594,8 +595,8 @@ fun SharedMobileEpubHighlights(
                                         } else {
                                             null
                                         },
-                                        onColorSelect = { color ->
-                                            onHighlightColorChange(highlight, color)
+                                        onColorSelect = { colorArgb ->
+                                            onHighlightColorChange(highlight, colorArgb)
                                             menuHighlight = null
                                         }
                                     )
@@ -662,8 +663,9 @@ private fun SharedMobileEpubHighlightColorRow(
     palette: ReaderHighlightPalette,
     selectedHighlight: UserHighlight,
     onOpenPaletteManager: (() -> Unit)?,
-    onColorSelect: (HighlightColor) -> Unit,
+    onColorSelect: (Int) -> Unit,
 ) {
+    val sanitizedPalette = palette.sanitized()
     Row(
         modifier = Modifier
             .padding(vertical = 8.dp, horizontal = 10.dp)
@@ -671,14 +673,20 @@ private fun SharedMobileEpubHighlightColorRow(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        palette.sanitized().colors.forEach { color ->
-            val selected = selectedHighlight.color == color && selectedHighlight.colorArgb == null
+        sanitizedPalette.colors.indices.forEach { slot ->
+            val slotArgb = sanitizedPalette.argbAt(slot)
+            val selected = selectedHighlight.effectiveArgb == slotArgb
             // Swatches are pure colour, so they were unlabelled: TalkBack announced
             // an unlabelled button and tests had no stable handle to select one by.
             // Resolved here because the semantics lambda is not @Composable.
+            val colorId = sanitizedPalette.colorIdAt(slot)
             val colorLabel = readerString(
-                "color_${color.id}",
-                color.id.replaceFirstChar { it.uppercase() }
+                "color_$colorId",
+                if (colorId.startsWith(CUSTOM_HIGHLIGHT_COLOR_ID_PREFIX)) {
+                    "#${colorId.removePrefix(CUSTOM_HIGHLIGHT_COLOR_ID_PREFIX).uppercase()}"
+                } else {
+                    colorId.replaceFirstChar { it.uppercase() }
+                }
             )
             Box(
                 contentAlignment = Alignment.Center,
@@ -686,7 +694,7 @@ private fun SharedMobileEpubHighlightColorRow(
                     .padding(horizontal = 4.dp)
                     .size(28.dp)
                     .clip(CircleShape)
-                    .background(color.color)
+                    .background(Color(slotArgb))
                     .border(
                         width = if (selected) 3.dp else 1.dp,
                         color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
@@ -696,14 +704,14 @@ private fun SharedMobileEpubHighlightColorRow(
                     // announced an unlabelled button and tests had no stable handle
                     // to select one by.
                     .semantics { contentDescription = colorLabel }
-                    .testTag("HighlightColor_${color.id}")
-                    .clickable { onColorSelect(color) },
+                    .testTag("HighlightColor_$colorId")
+                    .clickable { onColorSelect(slotArgb) },
             ) {
                 if (selected) {
                     Icon(
                         imageVector = Icons.Default.Check,
                         contentDescription = readerString("content_desc_selected_color", "Selected color"),
-                        tint = if (color == HighlightColor.WHITE) Color.Black else Color.White,
+                        tint = if (Color(slotArgb).luminance() > 0.5f) Color.Black else Color.White,
                         modifier = Modifier.size(16.dp),
                     )
                 }
@@ -738,6 +746,7 @@ internal fun SharedMobileEpubHighlightSheet(
     val clipboardErrorMessage = readerString("error_copy_to_clipboard", "Could not copy to clipboard")
     var note by remember(highlight.id, highlight.note) { mutableStateOf(highlight.note.orEmpty()) }
     var confirmDelete by remember(highlight.id) { mutableStateOf(false) }
+    val sanitizedPalette = palette.sanitized()
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
             modifier = Modifier
@@ -787,18 +796,20 @@ internal fun SharedMobileEpubHighlightSheet(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                palette.sanitized().colors.forEach { color ->
+                sanitizedPalette.colors.indices.forEach { slot ->
+                    val slotArgb = sanitizedPalette.argbAt(slot)
+                    val isSelected = highlight.effectiveArgb == slotArgb
                     Box(
                         modifier = Modifier
                             .size(30.dp)
                             .clip(CircleShape)
-                            .background(color.color)
+                            .background(Color(slotArgb))
                             .border(
-                                width = if (color == highlight.color) 3.dp else 1.dp,
-                                color = if (color == highlight.color) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                                width = if (isSelected) 3.dp else 1.dp,
+                                color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                                 shape = CircleShape
                             )
-                            .clickable { onUpdate(highlight.copy(color = color, colorArgb = null)) }
+                            .clickable { onUpdate(highlight.copy(colorArgb = slotArgb)) }
                     )
                 }
             }

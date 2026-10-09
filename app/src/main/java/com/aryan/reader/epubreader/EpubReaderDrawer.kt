@@ -53,7 +53,6 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.graphicsLayer
@@ -369,14 +368,12 @@ private fun HighlightsList(
         chapterTitleOf = { chapterIndex ->
             chapters.getOrNull(chapterIndex)?.title ?: unknownChapter
         },
-        palette = com.aryan.reader.shared.ReaderHighlightPalette(
-            colors = activeHighlightPalette.mapNotNull { argb ->
-                HighlightColor.entries.firstOrNull { it.color.toArgb() == argb }
-            }
-        ),
+        // Android's palette is already ARGB slots, so it passes straight through — the shared
+        // model no longer launders it through the named-color enum.
+        palette = com.aryan.reader.shared.ReaderHighlightPalette(colors = activeHighlightPalette),
         onHighlightClick = onNavigateToHighlight,
         onHighlightEdit = onEditNote,
-        onHighlightColorChange = { highlight, color -> onHighlightColorChange(highlight, color.color.toArgb()) },
+        onHighlightColorChange = onHighlightColorChange,
         onDeleteHighlight = onDeleteHighlight,
         onOpenPaletteManager = onOpenPaletteManager,
         onExportAnnotations = onExportAnnotations,

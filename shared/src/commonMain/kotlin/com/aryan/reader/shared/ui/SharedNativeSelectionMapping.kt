@@ -37,10 +37,11 @@ import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.readerCfiPathStrictlyBetween
 import com.aryan.reader.paginatedreader.readerCfiPointOrNull
-import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.UserHighlight
+import com.aryan.reader.shared.epubHighlightColorTag
+import com.aryan.reader.shared.legacyEpubHighlightColorForArgb
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedEpubCutoffDiagnosticsTag
@@ -1280,15 +1281,17 @@ internal fun sharedNativeCfiPathsEquivalent(first: String, second: String): Bool
 
 internal fun sharedNativeReaderHighlightForSelection(
     selection: SharedNativeReaderTextSelection,
-    color: HighlightColor,
+    colorArgb: Int,
     style: HighlightStyle = HighlightStyle.BACKGROUND
 ): UserHighlight {
     val locator = selection.toReaderLocator()
+    val colorToken = epubHighlightColorTag(colorArgb)
     return UserHighlight(
-        id = "native-${selection.chapterIndex}-${selection.startPageIndex}-${selection.startBlockIndex}-${selection.startLocalOffset}-${selection.endPageIndex}-${selection.endBlockIndex}-${selection.endLocalOffset}-${color.id}",
+        id = "native-${selection.chapterIndex}-${selection.startPageIndex}-${selection.startBlockIndex}-${selection.startLocalOffset}-${selection.endPageIndex}-${selection.endBlockIndex}-${selection.endLocalOffset}-$colorToken",
         cfi = selection.cfi,
         text = selection.text,
-        color = color,
+        color = legacyEpubHighlightColorForArgb(colorArgb),
+        colorArgb = colorArgb,
         chapterIndex = selection.chapterIndex,
         style = style,
         locator = locator

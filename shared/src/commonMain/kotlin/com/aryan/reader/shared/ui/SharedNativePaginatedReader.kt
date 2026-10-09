@@ -68,6 +68,7 @@ import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.readerLookupUsesAiDictionary
 
 import com.aryan.reader.shared.UserHighlight
+import com.aryan.reader.shared.epubHighlightColorTag
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.isTwoPageSpreadEnabled
@@ -504,7 +505,7 @@ fun SharedNativePaginatedReader(
                 )
             }
             if (!selectionGestureActive && !selectionHandleDragging) {
-                val highlightPalette = renderPlan.highlightPalette.sanitized().colors
+                val highlightPalette = renderPlan.highlightPalette
                 SharedNativeSelectionMenu(
                     selection = selection,
                     highlightPalette = highlightPalette,
@@ -519,11 +520,11 @@ fun SharedNativePaginatedReader(
                         onSelectionAction(action, selection.text, selection.toReaderLocator())
                         updateActiveSelection(null)
                     },
-                    onHighlight = { color, style ->
-                        val highlight = sharedNativeReaderHighlightForSelection(selection, color, style)
+                    onHighlight = { colorArgb, style ->
+                        val highlight = sharedNativeReaderHighlightForSelection(selection, colorArgb, style)
                         logSharedReaderDiagnostic(DesktopHighlightMapLogTag) {
                             "native_highlight_create_click id=\"${highlight.id.sharedNativeLogPreview(64)}\" " +
-                                "color=${color.id} style=${style.id} chapter=${highlight.chapterIndex} page=${highlight.locator.pageIndex} " +
+                                "color=${epubHighlightColorTag(highlight.effectiveArgb)} style=${style.id} chapter=${highlight.chapterIndex} page=${highlight.locator.pageIndex} " +
                                 "offsets=${highlight.locator.startOffset}..${highlight.locator.endOffset} " +
                                 "block=${highlight.locator.blockIndex} char=${highlight.locator.charOffset} " +
                                 "cfi=\"${highlight.cfi.sharedNativeLogPreview(160)}\" text=\"${highlight.text.sharedNativeLogPreview(120)}\""
@@ -540,7 +541,7 @@ fun SharedNativePaginatedReader(
                                 selection = selection,
                                 readerCoordinates = readerCoordinates,
                                 density = readerDensity,
-                                highlightPaletteSize = highlightPalette.size,
+                                highlightPaletteSize = highlightPalette.colors.size,
                                 actionCount = enabledSelectionActions.size + 2
                             )
                         }
@@ -1248,7 +1249,7 @@ fun SharedNativeVerticalReader(
                 )
             }
             if (!selectionGestureActive && !selectionHandleDragging) {
-                val highlightPalette = renderPlan.highlightPalette.sanitized().colors
+                val highlightPalette = renderPlan.highlightPalette
                 SharedNativeSelectionMenu(
                     selection = selection,
                     highlightPalette = highlightPalette,
@@ -1263,8 +1264,8 @@ fun SharedNativeVerticalReader(
                         onSelectionAction(action, selection.text, selection.toReaderLocator())
                         updateActiveSelection(null)
                     },
-                    onHighlight = { color, style ->
-                        onHighlightCreated(sharedNativeReaderHighlightForSelection(selection, color, style))
+                    onHighlight = { colorArgb, style ->
+                        onHighlightCreated(sharedNativeReaderHighlightForSelection(selection, colorArgb, style))
                         updateActiveSelection(null)
                     },
                     onOpenHighlightPaletteManager = onOpenHighlightPaletteManager,
@@ -1276,7 +1277,7 @@ fun SharedNativeVerticalReader(
                                 selection = selection,
                                 readerCoordinates = readerCoordinates,
                                 density = density,
-                                highlightPaletteSize = highlightPalette.size,
+                                highlightPaletteSize = highlightPalette.colors.size,
                                 actionCount = enabledSelectionActions.size + 2
                             )
                         }

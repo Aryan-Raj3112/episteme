@@ -13,6 +13,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import androidx.compose.ui.graphics.toArgb
 
 class SharedLibrarySnapshotJsonTest {
 
@@ -261,7 +262,12 @@ class SharedLibrarySnapshotJsonTest {
                 bottomToolIds = setOf(ReaderTool.BOOKMARK.id)
             ).sanitized(),
             readerHighlightPalette = ReaderHighlightPalette(
-                colors = listOf(HighlightColor.YELLOW, HighlightColor.CYAN, HighlightColor.CYAN, HighlightColor.WHITE)
+                colors = listOf(
+                    HighlightColor.YELLOW.color.toArgb(),
+                    HighlightColor.CYAN.color.toArgb(),
+                    0xFF123456.toInt(),
+                    HighlightColor.WHITE.color.toArgb()
+                )
             ),
             readerTtsReplacementPreferences = ReaderTtsReplacementPreferences(
                 globalRules = listOf(

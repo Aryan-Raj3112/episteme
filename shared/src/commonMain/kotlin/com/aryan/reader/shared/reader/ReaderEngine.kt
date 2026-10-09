@@ -12,6 +12,7 @@ import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.UserHighlight
+import com.aryan.reader.shared.legacyEpubHighlightColorForArgb
 import com.aryan.reader.shared.isReaderExternalHref
 import com.aryan.reader.shared.normalizeReaderHref
 import com.aryan.reader.shared.readerHrefScheme
@@ -694,6 +695,7 @@ class ReaderEngine(
         state: ReaderSessionState,
         highlightId: String,
         color: HighlightColor? = null,
+        colorArgb: Int? = null,
         note: String? = null,
         style: HighlightStyle? = null
     ): ReaderSessionState {
@@ -701,8 +703,15 @@ class ReaderEngine(
             highlights = state.highlights.map { highlight ->
                 if (highlight.id == highlightId) {
                     highlight.copy(
-                        color = color ?: highlight.color,
-                        colorArgb = if (color != null) null else highlight.colorArgb,
+                        // Android benchmark (EpubReaderScreen onHighlightColorChange): an ARGB
+                        // write also refreshes the named entry, so legacy consumers that only
+                        // read `color` keep agreeing with what is painted.
+                        color = when {
+                            colorArgb != null -> legacyEpubHighlightColorForArgb(colorArgb)
+                            color != null -> color
+                            else -> highlight.color
+                        },
+                        colorArgb = colorArgb ?: highlight.colorArgb,
                         note = if (note != null) note.takeIf { it.isNotBlank() } else highlight.note,
                         style = style ?: highlight.style
                     )

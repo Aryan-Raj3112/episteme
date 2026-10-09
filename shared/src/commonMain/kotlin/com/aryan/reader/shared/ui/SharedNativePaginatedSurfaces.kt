@@ -69,8 +69,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.paginatedreader.SemanticImage
-import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.HighlightStyle
+import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.paintOnlyColorOverlayText
 import com.aryan.reader.shared.reader.withoutForegroundColorSpans
@@ -363,13 +363,13 @@ internal fun SharedNativePaginatedPage(
 internal fun SharedNativeSelectionMenu(
     @Suppress("UNUSED_PARAMETER")
     selection: SharedNativeReaderTextSelection,
-    highlightPalette: List<HighlightColor>,
+    highlightPalette: ReaderHighlightPalette,
     enabledSelectionActions: Set<SharedNativeReaderSelectionAction>,
     background: Color,
     foreground: Color,
     onCopy: () -> Unit,
     onSelectionAction: (SharedNativeReaderSelectionAction) -> Unit,
-    onHighlight: (HighlightColor, HighlightStyle) -> Unit,
+    onHighlight: (Int, HighlightStyle) -> Unit,
     onOpenHighlightPaletteManager: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
@@ -456,7 +456,7 @@ internal fun SharedNativeSelectionMenu(
                 .widthIn(max = 280.dp)
                 .padding(bottom = 6.dp)
         ) {
-            if (highlightPalette.isNotEmpty()) {
+            if (highlightPalette.sanitized().colors.isNotEmpty()) {
                 // WebView parity (#reader-selection-menu styles + colors divs):
                 // two centered rows instead of one combined scrolling row, so
                 // swatches never squeeze off the menu edge on narrow screens.
@@ -485,19 +485,20 @@ internal fun SharedNativeSelectionMenu(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    highlightPalette.forEach { color ->
+                    highlightPalette.sanitized().colors.indices.forEach { slot ->
+                        val slotArgb = highlightPalette.sanitized().argbAt(slot)
                         Box(
                             modifier = Modifier
                                 .padding(horizontal = 4.dp)
                                 .size(28.dp)
                                 .clip(CircleShape)
-                                .background(color.color)
+                                .background(Color(slotArgb))
                                 .border(
                                     width = 1.dp,
                                     color = borderColor,
                                     shape = CircleShape
                                 )
-                                .clickable { onHighlight(color, selectedStyle) }
+                                .clickable { onHighlight(slotArgb, selectedStyle) }
                         )
                     }
                     Spacer(modifier = Modifier.width(6.dp))

@@ -14,6 +14,7 @@ import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.UserHighlight
+import androidx.compose.ui.graphics.Color
 import kotlin.math.roundToInt
 
 internal fun String.applyUserHighlights(
@@ -617,8 +618,10 @@ internal fun readerSelectionActionButton(action: String, label: String, pathData
 }
 
 internal fun ReaderHighlightPalette.toSelectionColorButtons(): String {
-    return sanitized().colors.joinToString("\n") { color ->
-        """<button type="button" class="reader-selection-color" data-action="highlight" data-color-id="${color.id}" title="Highlight ${color.id.escapeHtml()}" style="--selection-color:${color.color.toCssHex()}"><span></span></button>"""
+    return sanitized().colors.indices.joinToString("\n") { slot ->
+        val colorId = colorIdAt(slot)
+        val cssHex = Color(argbAt(slot)).toCssHex()
+        """<button type="button" class="reader-selection-color" data-action="highlight" data-color-id="$colorId" title="Highlight ${colorId.escapeHtml()}" style="--selection-color:$cssHex"><span></span></button>"""
     }
 }
 

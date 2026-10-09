@@ -16,8 +16,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -53,7 +51,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -64,6 +61,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -71,7 +70,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.filterReaderTocEntries
-import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.ReaderTool
@@ -393,7 +391,7 @@ internal fun SharedReaderSidebar(
     onGoToHighlight: (UserHighlight) -> Unit,
     onEditHighlight: (UserHighlight) -> Unit,
     highlightPalette: ReaderHighlightPalette,
-    onHighlightColorChange: (UserHighlight, HighlightColor) -> Unit,
+    onHighlightColorChange: (UserHighlight, Int) -> Unit,
     onOpenHighlightPaletteManager: () -> Unit,
     onDeleteHighlight: (UserHighlight) -> Unit
 ) {
@@ -919,7 +917,7 @@ internal fun SharedReaderAnnotationsTab(
     onGoToHighlight: (UserHighlight) -> Unit,
     onEditHighlight: (UserHighlight) -> Unit,
     highlightPalette: ReaderHighlightPalette,
-    onHighlightColorChange: (UserHighlight, HighlightColor) -> Unit,
+    onHighlightColorChange: (UserHighlight, Int) -> Unit,
     onOpenHighlightPaletteManager: () -> Unit,
     onDeleteHighlight: (UserHighlight) -> Unit
 ) {
@@ -929,7 +927,7 @@ internal fun SharedReaderAnnotationsTab(
         val listState = rememberLazyListState()
         var menuExpandedFor by remember { mutableStateOf<UserHighlight?>(null) }
         var deleteConfirmFor by remember { mutableStateOf<UserHighlight?>(null) }
-        val colors = highlightPalette.sanitized().colors
+        val colors = highlightPalette.sanitized()
         Box(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.fillMaxSize()) {
                 LazyColumn(
@@ -997,25 +995,28 @@ internal fun SharedReaderAnnotationsTab(
                                                 horizontalArrangement = Arrangement.Center,
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                colors.forEach { color ->
+                                                colors.colors.indices.forEach { slot ->
+                                                    val slotArgb = colors.argbAt(slot)
+                                                    val slotColor = Color(slotArgb)
+                                                    val isSelected = highlight.effectiveArgb == slotArgb
                                                     Box(
                                                         contentAlignment = Alignment.Center,
                                                         modifier = Modifier
                                                             .padding(horizontal = 4.dp)
                                                             .size(28.dp)
                                                             .clip(CircleShape)
-                                                            .background(color.color)
+                                                            .background(slotColor)
                                                             .clickable {
                                                                 menuExpandedFor = null
-                                                                onHighlightColorChange(highlight, color)
+                                                                onHighlightColorChange(highlight, slotArgb)
                                                             }
                                                     ) {
                                                         Box(
                                                             modifier = Modifier
                                                                 .matchParentSize()
                                                                 .border(
-                                                                    width = if (highlight.color == color) 3.dp else 1.dp,
-                                                                    color = if (highlight.color == color) {
+                                                                    width = if (isSelected) 3.dp else 1.dp,
+                                                                    color = if (isSelected) {
                                                                         MaterialTheme.colorScheme.onSurface
                                                                     } else {
                                                                         MaterialTheme.colorScheme.outline.copy(alpha = 0.30f)
@@ -1023,11 +1024,11 @@ internal fun SharedReaderAnnotationsTab(
                                                                     shape = CircleShape
                                                                 )
                                                         )
-                                                        if (highlight.color == color) {
+                                                        if (isSelected) {
                                                             Icon(
                                                                 imageVector = Icons.Default.Check,
                                                                 contentDescription = null,
-                                                                tint = if (color == HighlightColor.WHITE || color == HighlightColor.YELLOW) Color.Black else Color.White,
+                                                                tint = if (slotColor.luminance() > 0.5f) Color.Black else Color.White,
                                                                 modifier = Modifier.size(16.dp)
                                                             )
                                                         }
@@ -1136,28 +1137,32 @@ internal fun ReaderWorkspaceLeftSection.readerNavigationTabLabel(): String {
     }
 }
 
+/**
+ * Highlight palette editor: four ARGB slots, each edited through the shared HSV picker.
+ *
+ * Android benchmark (`EpubReaderAnnotations.kt` PaletteManagerDialog): tap a slot, edit hue /
+ * saturation / value with hex and RGB inputs, reset the slot to its stock colour, then Save or
+ * Cancel. The picker itself is [SharedHsvColorPickerDialog] — the same component the PDF
+ * highlighter palette editor uses and the one documented as Android parity for
+ * `ColorPickerDialog` / `HighlightColorPickerDialog` — so the spectrum/slider/inputs/reset
+ * machinery has exactly one implementation.
+ */
 @Composable
 internal fun SharedReaderHighlightPaletteDialog(
     palette: ReaderHighlightPalette,
     onDismiss: () -> Unit,
-    onSave: (ReaderHighlightPalette) -> Unit
+    onSave: (ReaderHighlightPalette) -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    var draftColors by remember(palette) { mutableStateOf(palette.sanitized().colors) }
-    var selectedSlotIndex by remember { mutableIntStateOf(0) }
-
-    fun replaceSlot(color: HighlightColor) {
-        if (draftColors.isEmpty()) return
-        val next = draftColors.toMutableList()
-        val slot = selectedSlotIndex.coerceIn(0, next.lastIndex)
-        next[slot] = color
-        draftColors = next
-    }
+    var draft by remember(palette) { mutableStateOf(palette.sanitized()) }
+    var editingSlot by remember { mutableStateOf<Int?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        modifier = modifier,
         title = {
             Text(
-                readerString("dialog_customize_palette", "Customize palette"),
+                readerString("highlight_customize_title", "Customize palette"),
                 style = MaterialTheme.typography.titleMedium
             )
         },
@@ -1175,61 +1180,42 @@ internal fun SharedReaderHighlightPaletteDialog(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    draftColors.forEachIndexed { index, color ->
-                        val selected = index == selectedSlotIndex
+                    draft.colors.indices.forEach { slot ->
+                        val slotArgb = draft.argbAt(slot)
+                        val slotColor = Color(slotArgb)
+                        val isSelected = editingSlot == slot
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier = Modifier
                                 .size(48.dp)
-                                .background(color.color, CircleShape)
+                                .clip(CircleShape)
+                                .background(slotColor)
                                 .border(
-                                    width = if (selected) 3.dp else 1.dp,
-                                    color = if (selected) {
+                                    width = if (isSelected) 3.dp else 1.dp,
+                                    color = if (isSelected) {
                                         MaterialTheme.colorScheme.primary
                                     } else {
-                                        Color.Transparent
+                                        MaterialTheme.colorScheme.outline.copy(alpha = 0.30f)
                                     },
                                     shape = CircleShape
                                 )
-                                .clip(CircleShape)
-                                .clickable { selectedSlotIndex = index },
+                                .clickable { editingSlot = slot }
                         ) {
-                            if (selected) {
+                            if (isSelected) {
                                 Icon(
                                     imageVector = Icons.Default.Check,
-                                    contentDescription = null,
-                                    tint = if (color == HighlightColor.WHITE) Color.Black else Color.White,
+                                    contentDescription = readerString("content_desc_selected", "Selected"),
+                                    tint = if (slotColor.luminance() > 0.5f) Color.Black else Color.White,
                                     modifier = Modifier.size(24.dp)
                                 )
                             }
                         }
                     }
                 }
-                HorizontalDivider()
-                Text(
-                    readerString("palette_select_color_for_slot", "Select a color for the slot."),
-                    style = MaterialTheme.typography.bodySmall
-                )
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 40.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.height(200.dp)
-                ) {
-                    items(HighlightColor.entries) { color ->
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .background(color.color, CircleShape)
-                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.20f), CircleShape)
-                                .clickable { replaceSlot(color) }
-                        )
-                    }
-                }
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(ReaderHighlightPalette(draftColors).sanitized()) }) {
+            TextButton(onClick = { onSave(draft); onDismiss() }) {
                 Text(readerString("action_save", "Save"))
             }
         },
@@ -1239,6 +1225,20 @@ internal fun SharedReaderHighlightPaletteDialog(
             }
         }
     )
+
+    editingSlot?.let { slot ->
+        SharedHsvColorPickerDialog(
+            initialColor = Color(draft.argbAt(slot)),
+            title = readerString("desktop_highlight_color_format", "Highlight color %1\$d", slot + 1),
+            onDismiss = { editingSlot = null },
+            onSave = { color ->
+                draft = draft.withColorAt(slot, color.toArgb())
+                editingSlot = null
+            },
+            resetColor = Color(ReaderHighlightPalette.defaultColors.getOrElse(slot) { ReaderHighlightPalette.defaultColors.first() }),
+            stateKey = slot
+        )
+    }
 }
 
 @Composable

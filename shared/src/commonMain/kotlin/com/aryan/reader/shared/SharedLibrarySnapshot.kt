@@ -798,9 +798,13 @@ private fun JsonElement.asReaderToolbarPreferencesOrNull(): ReaderToolbarPrefere
 
 private fun JsonElement.asReaderHighlightPaletteOrNull(): ReaderHighlightPalette? {
     val obj = runCatching { jsonObject }.getOrNull() ?: return null
-    val colors = obj.stringArray("colorIds")
-        .mapNotNull { colorId -> HighlightColor.entries.firstOrNull { it.id == colorId || it.name == colorId } }
-    return ReaderHighlightPalette(colors = colors).sanitized()
+    // Custom colours live in colorsArgb; the legacy colorIds key stays readable so snapshots
+    // written before ARGB slots existed still load.
+    val argbColors = obj.intArray("colorsArgb")
+    val legacyColors = obj.stringArray("colorIds").mapNotNull { colorId ->
+        HighlightColor.entries.firstOrNull { it.id == colorId || it.name == colorId }?.color?.toArgb()
+    }
+    return ReaderHighlightPalette(colors = argbColors.ifEmpty { legacyColors }).sanitized()
 }
 
 private fun JsonElement.asSharedPdfHighlighterPaletteOrNull(): SharedPdfHighlighterPalette? {
@@ -951,9 +955,13 @@ private fun ReaderToolbarPreferences.toJsonObject(): JsonObject {
 }
 
 private fun ReaderHighlightPalette.toJsonObject(): JsonObject {
+    val sanitized = sanitized()
     return JsonObject(
         mapOf(
-            "colorIds" to sanitized().colors.map { it.id }.asJsonArray()
+            "colorsArgb" to sanitized.colors.asIntJsonArray(),
+            // Legacy key kept for readers that only know named colors; unknown tokens are dropped
+            // there and the palette falls back to its defaults, which is the safe direction.
+            "colorIds" to sanitized.colors.indices.map { sanitized.colorIdAt(it) }.asJsonArray()
         )
     )
 }

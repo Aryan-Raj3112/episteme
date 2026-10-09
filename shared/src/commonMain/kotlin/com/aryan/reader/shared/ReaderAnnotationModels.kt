@@ -70,8 +70,12 @@ fun legacyEpubHighlightColorForArgb(argb: Int): HighlightColor =
 fun legacyEpubHighlightColorOrNull(argb: Int): HighlightColor? =
     HighlightColor.entries.firstOrNull { it.color.toArgb() == argb }
 
+/** Prefix of the palette/selection token for a colour that is not one of the named [HighlightColor] entries. */
+const val CUSTOM_HIGHLIGHT_COLOR_ID_PREFIX = "custom_"
+
 fun epubHighlightColorTag(argb: Int): String =
-    legacyEpubHighlightColorOrNull(argb)?.id ?: "custom_${argb.toUInt().toString(16)}"
+    legacyEpubHighlightColorOrNull(argb)?.id
+        ?: "$CUSTOM_HIGHLIGHT_COLOR_ID_PREFIX${argb.toUInt().toString(16)}"
 
 fun epubHighlightColorFromToken(token: String): Pair<HighlightColor, Int?> {
     val trimmed = token.trim()
@@ -276,36 +280,48 @@ fun ReaderLocator.toStablePositionCfi(): String? {
     }
 }
 
+/**
+ * Reader highlight palette: four ARGB slots the reader can recolor.
+ *
+ * Android benchmark: the palette is a list of ARGB slots (persisted as `List<Int>` via
+ * [DefaultEpubHighlightPaletteArgb]), not a selection of the named [HighlightColor] entries, so a
+ * custom colour is a first-class slot rather than something the model cannot express. The named
+ * entries survive as the defaults and as the token a stock colour maps to
+ * ([epubHighlightColorTag] yields the named id, `custom_<hex>` otherwise).
+ */
 data class ReaderHighlightPalette(
-    val colors: List<HighlightColor> = defaultColors
+    val colors: List<Int> = DefaultEpubHighlightPaletteArgb
 ) {
     fun sanitized(): ReaderHighlightPalette {
-        val knownColors = colors.filter { it in HighlightColor.entries }
-        return copy(colors = knownColors.takeIf { it.size == PaletteSize } ?: defaultColors)
+        return copy(colors = colors.takeIf { it.size == PaletteSize } ?: DefaultEpubHighlightPaletteArgb)
     }
 
-    fun contains(color: HighlightColor): Boolean {
-        return color in sanitized().colors
+    /** ARGB of a slot; falls back to the first default when the index is out of range. */
+    fun argbAt(slotIndex: Int): Int {
+        return sanitized().colors.getOrNull(slotIndex) ?: DefaultEpubHighlightPaletteArgb.first()
     }
 
-    fun withColor(color: HighlightColor, enabled: Boolean): ReaderHighlightPalette {
-        val next = if (enabled) {
-            colors + color
-        } else {
-            colors - color
-        }
-        return copy(colors = next).sanitized()
+    /** Named colour a slot currently holds, for consumers that still speak the enum. */
+    fun namedColorAt(slotIndex: Int): HighlightColor {
+        return legacyEpubHighlightColorForArgb(argbAt(slotIndex))
+    }
+
+    /** JS/CSS token for a slot: the named id for a stock colour, `custom_<hex>` otherwise. */
+    fun colorIdAt(slotIndex: Int): String {
+        return epubHighlightColorTag(argbAt(slotIndex))
+    }
+
+    fun withColorAt(slotIndex: Int, colorArgb: Int): ReaderHighlightPalette {
+        val nextColors = sanitized().colors.toMutableList()
+        if (slotIndex !in nextColors.indices) return sanitized()
+        nextColors[slotIndex] = colorArgb
+        return copy(colors = nextColors)
     }
 
     companion object {
         const val PaletteSize: Int = 4
-        val defaultColors: List<HighlightColor>
-            get() = listOf(
-                HighlightColor.YELLOW,
-                HighlightColor.GREEN,
-                HighlightColor.BLUE,
-                HighlightColor.RED
-            )
+        val defaultColors: List<Int>
+            get() = DefaultEpubHighlightPaletteArgb
     }
 }
 
@@ -406,6 +422,10 @@ data class UserHighlight(
 ) {
     val effectiveColor: Color
         get() = colorArgb?.let { Color(it) } ?: color.color
+
+    /** ARGB the highlight paints with; [colorArgb] when set, else the named colour's value. */
+    val effectiveArgb: Int
+        get() = colorArgb ?: color.color.toArgb()
 
     /**
      * Whether this is a transient reading-position band rather than something the reader owns.
