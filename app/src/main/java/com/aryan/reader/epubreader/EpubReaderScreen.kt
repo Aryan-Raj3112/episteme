@@ -179,6 +179,7 @@ import com.aryan.reader.shared.hasSpendableBalance
 import com.aryan.reader.shared.spendableDisplayText
 import com.aryan.reader.shared.parseSpendGuardSentinel
 import com.aryan.reader.shared.formatSpendGuardCountdown
+import com.aryan.reader.shared.highlightFillCss
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.TtsWordReplacementsSheet
@@ -1525,13 +1526,14 @@ fun EpubReaderHost(
             val legacyColor = legacyHighlightColorForArgb(newColorArgb)
             // Applied to the entry in the list, not to the snapshot the sheet was opened with: a
             // locator repaired while the sheet was open would otherwise be reverted by this write.
-            userHighlights[index] = userHighlights[index].copy(
-                color = legacyColor,
-                colorArgb = newColorArgb
-            )
+            userHighlights[index] = userHighlights[index].recoloredTo(newColorArgb)
             if (currentRenderMode == RenderMode.VERTICAL_SCROLL && targetHighlight.chapterIndex == currentChapterIndex) {
                 val cssClass = legacyColor.cssClass
-                val colorCss = String.format("#%06X", 0xFFFFFF and newColorArgb)
+                // The shared fill rule, not a local #RRGGBB. The bridge applies this as an inline
+                // background-color with !important, so an opaque hex here beat the stylesheet's
+                // tinted rule and a recoloured highlight jumped to a solid slab in a different tone
+                // from the same highlight in pagination — while an unrecoloured one stayed correct.
+                val colorCss = newColorArgb.highlightFillCss()
                 val jsCommand = "javascript:window.HighlightBridgeHelper.updateHighlightStyle('${escapeJsString(targetHighlight.cfi)}', '$cssClass', '$newColorArgb', '$colorCss', '${targetHighlight.style.id}');"
                 webViewRefForTts?.evaluateJavascript(jsCommand, null)
             }
@@ -1546,7 +1548,8 @@ fun EpubReaderHost(
             if (currentRenderMode == RenderMode.VERTICAL_SCROLL && targetHighlight.chapterIndex == currentChapterIndex) {
                 val colorArgb = current.colorArgb ?: current.color.color.toArgb()
                 val cssClass = current.color.cssClass
-                val colorCss = String.format("#%06X", 0xFFFFFF and colorArgb)
+                // Same shared rule as the recolour above; see the note there.
+                val colorCss = colorArgb.highlightFillCss()
                 val jsCommand = "javascript:window.HighlightBridgeHelper.updateHighlightStyle('${escapeJsString(targetHighlight.cfi)}', '$cssClass', '$colorArgb', '$colorCss', '${newStyle.id}');"
                 webViewRefForTts?.evaluateJavascript(jsCommand, null)
             }
