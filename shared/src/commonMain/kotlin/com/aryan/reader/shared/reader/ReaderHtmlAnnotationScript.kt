@@ -401,7 +401,12 @@ internal fun readerHtmlAnnotationScript(): String = """
                 } catch (error) {}
                 return 'reader-hl-' + color + '-' + style + suffix;
               }
-              function readerUserHighlightPaintColor(colorId, colorArgb) {
+              function readerUserHighlightPaintColor(colorId, colorArgb, fillCss) {
+                // Prefer the colour resolved by the native side. It carries the fill alpha, so the
+                // highlight has the same tone here as it does in the paginated and scrolling readers.
+                // Deriving it here instead meant emitting #RRGGBB, which has no alpha and painted the
+                // highlight as an opaque slab.
+                if (typeof fillCss === 'string' && fillCss) return fillCss;
                 try {
                   if (colorArgb !== undefined && colorArgb !== null && Number.isFinite(Number(colorArgb))) {
                     var rgb = (Number(colorArgb) >>> 0) & 0xFFFFFF;
@@ -496,9 +501,20 @@ internal fun readerHtmlAnnotationScript(): String = """
                 } catch (error) {}
                 delete readerUserHighlightsPainted[key];
               }
+              function logHighlightWebDecision(highlight, stage, detail) {
+                // Highlight decisions reach logcat through onConsoleMessage, which routes on a prefix.
+                // One helper so every stage is reported the same way.
+                try {
+                  console.log('WEB_HIGHLIGHT ' + stage +
+                    ' id=' + ((highlight && highlight.id) || 'range') + ' ' + (detail || ''));
+                } catch (error) {}
+              }
               function paintRangeWithUserHighlightRegistry(range, p) {
                 try {
                   if (!range || range.collapsed) return false;
+                  logHighlightWebDecision(null, 'paint',
+                    'key=' + p.key + ' colorCss=' + (p.colorCss || 'none') +
+                    ' registryUsable=' + userHighlightRegistryUsable());
                   if (!userHighlightRegistryUsable()) return wrapRangeTextSegments(range, p.markerFactory, p.ctx);
                   readerEnsureUserHighlightPaint(p.paintName, p.styleId, p.colorCss);
                   if (!readerUserHighlightPaints[p.paintName]) {
@@ -540,7 +556,7 @@ internal fun readerHtmlAnnotationScript(): String = """
                 }
               }
               function paintParamsForHighlight(highlight, chapterIndex, segStart, segEnd, key, realId, markerFactory, ctx) {
-                var colorCss = readerUserHighlightPaintColor(highlight.colorId || 'yellow', highlight.colorArgb);
+                var colorCss = readerUserHighlightPaintColor(highlight.colorId || 'yellow', highlight.colorArgb, highlight.fillCss);
                 return {
                   paintName: readerUserHighlightPaintName(highlight.colorId || 'yellow', highlight.style || 'background', highlight.colorArgb),
                   key: key, realId: !!realId,
@@ -697,7 +713,7 @@ internal fun readerHtmlAnnotationScript(): String = """
                     range.selectNodeContents(marker);
                     if (highlight && highlight.id && !range.collapsed) {
                       var locator = highlight.locator || {};
-                      var colorCss = readerUserHighlightPaintColor(highlight.colorId || 'yellow', highlight.colorArgb);
+                      var colorCss = readerUserHighlightPaintColor(highlight.colorId || 'yellow', highlight.colorArgb, highlight.fillCss);
                       var paintName = readerUserHighlightPaintName(highlight.colorId || 'yellow', highlight.style || 'background', highlight.colorArgb);
                       readerEnsureUserHighlightPaint(paintName, highlight.style || 'background', colorCss);
                       if (readerUserHighlightPaints[paintName]) {
@@ -833,7 +849,6 @@ internal fun readerHtmlAnnotationScript(): String = """
                     );
                   }
                 }
-                var hasPreciseOffsets = !(chapterIndex === undefined || chapterIndex === null || startOffset === undefined || startOffset === null || endOffset === undefined || endOffset === null || endOffset <= startOffset);
                 if (chapterIndex === undefined || chapterIndex === null || startOffset === undefined || startOffset === null || endOffset === undefined || endOffset === null || endOffset <= startOffset) {
                   readerDesktopHighlightMapLog(
                     'web_apply_fallback_request id=' + (highlight.id || '') +
@@ -851,7 +866,15 @@ internal fun readerHtmlAnnotationScript(): String = """
                     ' reason=no_target_chapters chapter=' + chapterIndex +
                     ' offsets=' + startOffset + '..' + endOffset
                   );
-                  if (hasPreciseOffsets) return;
+                  logHighlightWebDecision(highlight, 'no_target_chapters',
+                    'chapter=' + chapterIndex + ' offsets=' + startOffset + '..' + endOffset);
+                  // Fall back even when the offsets look precise. Those offsets say where the highlight
+                  // was *recorded*; these hosts are what this document happens to be built from, and a
+                  // chapter split differently here has no host covering that range. Giving up left a
+                  // highlight unpainted in this surface and fine everywhere else, because it was placed
+                  // from those same offsets in pagination. The stored text can still place it, and the
+                  // text search is the one the native surfaces use, so it cannot disagree with them
+                  // about which occurrence this is.
                   applyHighlightTextFallback(highlight);
                   return;
                 }
@@ -925,7 +948,7 @@ internal fun readerHtmlAnnotationScript(): String = """
                     highlight, chapterIndex, segmentStart, segmentEnd, highlight.id || ('cfi:' + (sourceCfi || highlight.cfi || '')),
                     highlight.id,
                     function () {
-                      var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', segmentStart, segmentEnd, highlight.colorArgb, highlight.style || 'background');
+                      var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', segmentStart, segmentEnd, highlight.colorArgb, highlight.style || 'background', highlight.fillCss);
                       marker.setAttribute('data-cfi', sourceCfi || highlight.cfi || ('desktop:' + chapterIndex + ':' + startOffset + ':' + endOffset));
                       return marker;
                     },
@@ -949,7 +972,12 @@ internal fun readerHtmlAnnotationScript(): String = """
                     ' reason=no_segments_applied chapter=' + chapterIndex +
                     ' offsets=' + startOffset + '..' + endOffset
                   );
-                  if (hasPreciseOffsets) return;
+                  logHighlightWebDecision(highlight, 'no_segments_applied',
+                    'chapter=' + chapterIndex + ' offsets=' + startOffset + '..' + endOffset);
+                  // Same reasoning as the no-target-chapters case: no segment applied means the
+                  // offsets do not address anything in this document, not that the highlight is
+                  // unplaceable. Guarded by `applied`, so this cannot double-paint a highlight that did
+                  // land on the offsets path.
                   applyHighlightTextFallback(highlight);
                 }
               }
@@ -979,6 +1007,8 @@ internal fun readerHtmlAnnotationScript(): String = """
                   ' cfi=' + readerTtsPreview(sourceCfi, 160)
                 );
                 var range = normalizedRangeForText(content, expectedText, false);
+                logHighlightWebDecision(highlight, range ? 'text_fallback_range_found' : 'text_fallback_no_range',
+                  'chapter=' + chapterIndex + ' expectedChars=' + expectedText.length);
                 if (!range || range.collapsed) {
                   readerDesktopHighlightMapLog(
                     'web_text_fallback_result id=' + ((highlight && highlight.id) || '') +
@@ -990,7 +1020,7 @@ internal fun readerHtmlAnnotationScript(): String = """
                   highlight, chapterIndex, null, null, highlight.id || ('cfi:' + (locator.cfi || highlight.cfi || '')),
                   highlight.id,
                   function () {
-                    var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', null, null, highlight.colorArgb, highlight.style || 'background');
+                    var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', null, null, highlight.colorArgb, highlight.style || 'background', highlight.fillCss);
                     marker.setAttribute('data-cfi', locator.cfi || highlight.cfi || '');
                     return marker;
                   },
@@ -1199,11 +1229,63 @@ internal fun readerHtmlAnnotationScript(): String = """
               window.readerSetTtsLocator = function (locator, follow) {
                 try {
                   applyTtsLocator(locator);
-                  if (follow && locator) scrollToLocator(locator, { align: 'center', trackRestore: false });
+                  if (follow && locator) {
+                    // Android parity (EpubReaderScreen TTS follow): the follow
+                    // scroll is keep-visible, not unconditional. Centering the
+                    // spoken chunk on every chunk change yanked the page
+                    // around mid-sentence, which read as a stutter; scrolling
+                    // only when the chunk has drifted out of the comfortable
+                    // band matches the native vertical follow's
+                    // `keepVisible = true`.
+                    if (ttsLocatorNeedsFollowScroll(locator)) {
+                      scrollToLocator(locator, { align: 'nearest', smooth: true, trackRestore: false });
+                    } else {
+                      readerTtsLog('locator_follow_skipped reason=already_visible');
+                    }
+                  }
                 } catch (error) {
                   readerTtsLog('locator_exception error=' + readerTtsPreview(error, 180));
                 }
               };
+              /**
+               * True when the spoken chunk is not already comfortably on screen.
+               *
+               * Bands mirror what a reader can actually read without scrolling:
+               * content must sit inside the viewport with a small margin, so a
+               * chunk that is merely a line away is left alone instead of being
+               * re-centered every chunk.
+               */
+              function ttsLocatorNeedsFollowScroll(locator) {
+                if (!isVerticalReaderDocument()) return true;
+                var chapterIndex = locator.chapterIndex;
+                if (chapterIndex === undefined || chapterIndex === null || chapterIndex === '') {
+                  chapterIndex = document.body.getAttribute('data-reader-active-chapter-index');
+                }
+                var startOffset = locatorStartOffset(locator);
+                if (startOffset === undefined || startOffset === null) startOffset = numberAttribute(document.body, 'data-reader-active-start-offset', null);
+                if (chapterIndex === undefined || chapterIndex === null || chapterIndex === '') return true;
+                var chapter = document.querySelector('[data-reader-page-index="' + selectorValue(locator.pageIndex) + '"]') || readerHostForLocator(chapterIndex, startOffset, locator.endOffset);
+                if (!chapter) return true;
+                var rect = null;
+                if (startOffset !== undefined && startOffset !== null) {
+                  var end = locator.endOffset === undefined || locator.endOffset === null ? startOffset : locator.endOffset;
+                  var range = rangeForOffsets(parseInt(chapterIndex, 10), parseInt(startOffset, 10), Number(end) > Number(startOffset) ? Number(end) : Number(startOffset) + 1, locator.cfi, true);
+                  if (range) {
+                    rect = range.getClientRects().length ? range.getClientRects()[0] : range.getBoundingClientRect();
+                    if (range.detach) range.detach();
+                  }
+                }
+                if (!rect || (rect.top === 0 && rect.bottom === 0)) {
+                  rect = chapter.getBoundingClientRect();
+                }
+                if (!rect) return true;
+                var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+                if (!viewportHeight) return true;
+                var margin = Math.max(24, Math.round(viewportHeight * readerTtsFollowViewportMarginRatio));
+                var visible = rect.top >= margin && rect.bottom <= viewportHeight - margin;
+                readerTtsLog('locator_follow_check top=' + Math.round(rect.top) + ' bottom=' + Math.round(rect.bottom) + ' viewport=' + Math.round(viewportHeight) + ' visible=' + visible);
+                return !visible;
+              }
               function refreshTtsHighlight() {
                 if (!readerTtsLocator) return;
                 applyTtsLocator(readerTtsLocator);
@@ -1211,7 +1293,142 @@ internal fun readerHtmlAnnotationScript(): String = """
               window.addEventListener('resize', function () {
                 if (readerTtsOverlayTimer !== null) window.clearTimeout(readerTtsOverlayTimer);
                 readerTtsOverlayTimer = window.setTimeout(refreshTtsHighlight, 80);
+                if (readerMediaOverlayOverlayTimer !== null) window.clearTimeout(readerMediaOverlayOverlayTimer);
+                readerMediaOverlayOverlayTimer = window.setTimeout(refreshMediaOverlayHighlight, 80);
               });
+
+              // --- EPUB media overlays -------------------------------------------------------------
+              //
+              // A publisher's pre-recorded narration, highlighted where it is speaking. Kept apart
+              // from the read-aloud machinery above on purpose, in three ways:
+              //
+              //   - its own CSS highlight name and its own overlay layer, so an overlay and a spoken
+              //     chunk can be mid-handoff without one deleting the other's paint;
+              //   - no quote fallback, because an overlay anchor is resolved from the same parse
+              //     that produced the blocks, so offsets and cfi are already exact. The quote path
+              //     above exists to *repair* anchors recorded against a different reflow, and
+              //     reaching for it here would hide a genuinely wrong offset behind a fuzzy match;
+              //   - its own visibility check, because a clip is a line: the comfortable-band margin
+              //     read-aloud uses is tuned for sentences, and a line leaves it on almost every
+              //     clip, which would re-centre the page continuously.
+              var readerMediaOverlayFragment = null;
+              var readerMediaOverlayOverlayTimer = null;
+              function ensureMediaOverlayLayer() {
+                var layer = document.getElementById('reader-media-overlay-highlight-layer');
+                if (!layer) {
+                  layer = document.createElement('div');
+                  layer.id = 'reader-media-overlay-highlight-layer';
+                  document.body.appendChild(layer);
+                }
+                return layer;
+              }
+              function clearMediaOverlayHighlight() {
+                if (window.CSS && CSS.highlights && CSS.highlights.delete) {
+                  CSS.highlights.delete('reader-media-overlay-highlight');
+                }
+                var layer = document.getElementById('reader-media-overlay-highlight-layer');
+                if (layer) layer.innerHTML = '';
+              }
+              function paintMediaOverlayOverlay(range) {
+                var layer = ensureMediaOverlayLayer();
+                layer.innerHTML = '';
+                var rects = Array.prototype.slice.call(range.getClientRects());
+                var painted = 0;
+                rects.forEach(function (rect) {
+                  if (!rect || rect.width <= 0 || rect.height <= 0) return;
+                  var marker = document.createElement('div');
+                  marker.className = 'reader-media-overlay-highlight-rect';
+                  marker.style.left = (rect.left + window.scrollX) + 'px';
+                  marker.style.top = (rect.top + window.scrollY) + 'px';
+                  marker.style.width = rect.width + 'px';
+                  marker.style.height = rect.height + 'px';
+                  layer.appendChild(marker);
+                  painted++;
+                });
+                readerTtsLog('media_overlay_paint rects=' + rects.length + ' painted=' + painted);
+              }
+              /**
+               * True when the narrated line has left the comfortable band.
+               *
+               * A tighter band than read-aloud's, and for the same reason the clip size differs: a
+               * line only has to be on screen, not comfortably inside it. Following on
+               * "not comfortably visible" would scroll on nearly every clip.
+               */
+              function mediaOverlayFragmentNeedsFollowScroll(fragment) {
+                if (!isVerticalReaderDocument()) return true;
+                var range = mediaOverlayRange(fragment);
+                if (!range) return true;
+                var rect = range.getClientRects().length ? range.getClientRects()[0] : range.getBoundingClientRect();
+                if (!rect || (rect.top === 0 && rect.bottom === 0)) return true;
+                var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+                if (!viewportHeight) return true;
+                // Far smaller than the read-aloud margin on purpose: see the note above.
+                var margin = Math.max(4, Math.round(viewportHeight * readerMediaOverlayFollowViewportMarginRatio));
+                return rect.top < margin || rect.bottom > viewportHeight - margin;
+              }
+              function mediaOverlayRange(fragment) {
+                if (!fragment) return null;
+                var chapterIndex = fragment.chapterIndex;
+                var startOffset = fragment.startOffset;
+                var endOffset = fragment.endOffset;
+                if (chapterIndex === undefined || chapterIndex === null || chapterIndex === '') {
+                  chapterIndex = document.body.getAttribute('data-reader-active-chapter-index');
+                }
+                if (startOffset === undefined || startOffset === null) {
+                  startOffset = numberAttribute(document.body, 'data-reader-active-start-offset', null);
+                }
+                if (chapterIndex === undefined || chapterIndex === null || chapterIndex === '') return null;
+                if (startOffset === undefined || startOffset === null) return null;
+                var end = endOffset === undefined || endOffset === null ? startOffset : endOffset;
+                var range = rangeForOffsets(
+                  parseInt(chapterIndex, 10),
+                  parseInt(startOffset, 10),
+                  Number(end) > Number(startOffset) ? Number(end) : Number(startOffset) + 1,
+                  fragment.cfi,
+                  true
+                );
+                if (range && !range.collapsed) return range;
+                if (range && range.detach) range.detach();
+                return null;
+              }
+              function applyMediaOverlayFragment(fragment) {
+                clearMediaOverlayHighlight();
+                readerMediaOverlayFragment = fragment || null;
+                if (!readerMediaOverlayFragment) return;
+                var range = mediaOverlayRange(readerMediaOverlayFragment);
+                if (!range) {
+                  readerTtsLog('media_overlay_no_range');
+                  return;
+                }
+                if (window.CSS && window.Highlight && CSS.highlights && CSS.highlights.set) {
+                  CSS.highlights.set('reader-media-overlay-highlight', new Highlight(range));
+                }
+                paintMediaOverlayOverlay(range);
+              }
+              /**
+               * Sets the narrated fragment. `follow` asks for a scroll when the line is off screen;
+               * callers decide whether to ask at all, which is how a chapter change scrolls and a
+               * line change does not.
+               */
+              window.readerSetMediaOverlayFragment = function (fragment, follow) {
+                try {
+                  applyMediaOverlayFragment(fragment);
+                  if (follow && fragment && mediaOverlayFragmentNeedsFollowScroll(fragment)) {
+                    scrollToLocator({
+                      chapterIndex: fragment.chapterIndex,
+                      startOffset: fragment.startOffset,
+                      endOffset: fragment.endOffset,
+                      cfi: fragment.cfi
+                    }, { align: 'nearest', smooth: true, trackRestore: false });
+                  }
+                } catch (error) {
+                  readerTtsLog('media_overlay_exception error=' + readerTtsPreview(error, 180));
+                }
+              };
+              function refreshMediaOverlayHighlight() {
+                if (!readerMediaOverlayFragment) return;
+                applyMediaOverlayFragment(readerMediaOverlayFragment);
+              }
               function highlightRange(colorId) {
                 if (!restoreRange()) return;
                 var selection = window.getSelection();
@@ -1571,6 +1788,18 @@ internal fun readerHtmlAnnotationScript(): String = """
               });
               scrollToActiveLocator();
               reportVisiblePage();
+              // Re-assert the restore landing once webfonts settle: the exact
+              // scroll measures against fallback metrics while fonts swap, and
+              // the reflow drifts the anchor. The landing is only dropped by a
+              // takeover (gesture/transient scroll) or after its bound, and it
+              // is re-asserted exact-only — never parked at the chapter top.
+              if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
+                document.fonts.ready.then(function () {
+                  if (typeof reassertRestoreLanding === 'function') {
+                    reassertRestoreLanding('fonts_ready');
+                  }
+                });
+              }
               window.setTimeout(function () { readerPaginationLayoutLog('initial_timeout'); }, 80);
               window.addEventListener('load', scrollToActiveLocator, { once: true });
               window.addEventListener('load', reportVisiblePage, { once: true });

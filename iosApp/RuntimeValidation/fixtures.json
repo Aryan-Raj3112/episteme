@@ -34,6 +34,7 @@
         "position-restore",
         "search",
         "tts",
+        "media-overlay",
         "diagnostic-performance"
       ]
     },
@@ -158,6 +159,20 @@
       ]
     },
     {
+      "id": "media-overlay-narration",
+      "surface": "epub-reader",
+      "expected": [
+        "A narrated book shows the speaker button in the top bar, after the tool row and before the overflow menu, and a book with no media overlays shows no button at all.",
+        "Tapping it starts the publisher's recording from the chapter the reader is in, and the narration bar matches Android: narrator as the title, 'clip / total' as the subtitle, transport, a speed menu whose labels read like Android's (1x, 1.25x), and a stop button.",
+        "The narrated line is highlighted as it speaks, in both reading modes, and the highlight is not selectable - tapping it does not open the selection menu.",
+        "Chapter 1 reports 1 / 3 and chapter 2 reports 1 / 2, so narration carried into the next chapter rather than restarting the one it was in; navigating the reader to another chapter restarts narration there.",
+        "Chapter 3 has no overlay, so the bar disappears at the end of chapter 2 instead of narrating something that was never recorded.",
+        "The narration button's accessibility label is the action ('Start narration' / 'Stop narration') and its tint goes primary while playing, matching Android.",
+        "Starting narration stops read-aloud and an audiobook; starting read-aloud or an audiobook stops narration. Only one voice at a time.",
+        "Locking the device or pulling headphones out pauses narration and resumes only when iOS allows it."
+      ]
+    },
+    {
       "id": "home-language-selection",
       "surface": "settings-language",
       "expected": [
@@ -197,6 +212,7 @@
         "With Any App selected, Dict/Translate/Search present the iOS share sheet listing installed apps; when Smart AI is selected but AI is unavailable, Dict falls back to the app chooser instead of doing nothing.",
         "Web engines (Google/Bing/DuckDuckGo) open the matching site via the modern openURL API.",
         "The PDF selection menu shows five highlight colors plus the spectrum palette button, which opens the highlight palette editor and persists slot changes.",
+        "The EPUB highlight palette editor shows four ARGB slots; tapping a slot opens the shared HSV picker (spectrum, brightness, hex, RGB, reset to the stock color), and Save persists every slot including custom colors, which then appear in the selection menu and the highlights drawer.",
         "The PDF annotation bottom sheet tool row uses localized Android labels (Copy/Dict/Translate/Search) and the Note/Comments tabs are localized."
       ]
     }

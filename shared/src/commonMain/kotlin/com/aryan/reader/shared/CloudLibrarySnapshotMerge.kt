@@ -148,6 +148,31 @@ fun mergeCloudReadingState(
     )
 }
 
+/**
+ * The local books that [merged]'s effective tombstones actually removed, so the
+ * platform can delete their bytes instead of only dropping the library card.
+ *
+ * Android applies a winning remote delete with
+ * `bookStore.deleteFilePermanently(bookId)`, which deletes the file plus every
+ * local artifact (cached cover, PDF sidecars, text and pagination caches). iOS
+ * rebuilt the snapshot, which removed the row but left all of that on disk, and
+ * because import identity is the file content hash a later re-import matched the
+ * orphan and resurrected the "deleted" book.
+ *
+ * Only books present in `local` are returned, and only for tombstones that
+ * survived [mergeCloudLibrarySnapshotWithDownloadedBooks] — a tombstone that lost
+ * the LWW race to a newer edit is absent from `merged.bookTombstones` and so must
+ * not delete anything.
+ */
+fun booksRemovedByCloudTombstones(
+    local: SharedLibrarySnapshot,
+    merged: SharedLibrarySnapshot,
+): List<BookItem> {
+    val tombstonedIds = merged.bookTombstones.mapTo(mutableSetOf(), CloudBookTombstone::bookId)
+    if (tombstonedIds.isEmpty()) return emptyList()
+    return local.books.filter { it.id in tombstonedIds }
+}
+
 fun mergeCloudLibrarySnapshotWithDownloadedBooks(
     local: SharedLibrarySnapshot,
     remote: SharedLibrarySnapshot,

@@ -1,5 +1,6 @@
 package com.aryan.reader.epubreader
 
+import com.aryan.reader.shared.readerTtsChunkLabel
 import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.annotation.StringRes
@@ -72,6 +73,7 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -138,7 +140,6 @@ import com.aryan.reader.tts.loadTtsSpeakerName
 import com.aryan.reader.tts.normalizeTtsSpeakerId
 import com.aryan.reader.tts.ReaderTtsOverlaySize
 import com.aryan.reader.tts.TtsPlaybackManager.TtsState
-import com.aryan.reader.tts.formatReaderTtsChunkLabel
 import kotlin.math.roundToInt
 
 typealias ReaderTool = com.aryan.reader.shared.ReaderTool
@@ -189,13 +190,15 @@ internal fun epubOverflowMenuSections(
     hasHiddenToolbarTools: Boolean,
     hasToggleReflow: Boolean,
     hasDeleteReflow: Boolean,
-    hasFileInfo: Boolean = true
+    hasFileInfo: Boolean = true,
+    hasExportAnnotations: Boolean = false,
 ): List<EpubOverflowMenuSection> = com.aryan.reader.shared.epubOverflowMenuSections(
     hiddenTools = hiddenTools,
     hasHiddenToolbarTools = hasHiddenToolbarTools,
     hasToggleReflow = hasToggleReflow,
     hasDeleteReflow = hasDeleteReflow,
     hasFileInfo = hasFileInfo,
+    hasExportAnnotations = hasExportAnnotations,
 )
 
 internal fun defaultReaderHiddenTools(): Set<String> = setOf(
@@ -217,6 +220,15 @@ fun EpubReaderTopBar(
     currentRenderMode: RenderMode,
     isBookmarked: Boolean,
     isTtsActive: Boolean,
+    /**
+     * Whether this book narrates itself, i.e. its OPF declares media overlays.
+     *
+     * The button is hidden rather than disabled for a book without overlays: narration is a
+     * property of the book, and a permanently dead control on every book in the library is a
+     * worse answer than no control.
+     */
+    hasMediaOverlayNarration: Boolean = false,
+    isMediaOverlayActive: Boolean = false,
     isSliderActive: Boolean,
     tapToNavigateEnabled: Boolean,
     volumeScrollEnabled: Boolean,
@@ -249,6 +261,7 @@ fun EpubReaderTopBar(
     onToggleSearch: () -> Unit,
     onOpenAiHub: () -> Unit,
     onToggleTts: () -> Unit,
+    onToggleMediaOverlay: () -> Unit = {},
     onOpenFileInfo: () -> Unit,
     searchFocusRequester: androidx.compose.ui.focus.FocusRequester,
     hiddenTools: Set<String>,
@@ -258,6 +271,7 @@ fun EpubReaderTopBar(
     modifier: Modifier = Modifier,
     onToggleReflow: (() -> Unit)? = null,
     onDeleteReflow: (() -> Unit)? = null,
+    onExportAnnotations: (() -> Unit)? = null,
     readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
     com.aryan.reader.shared.ui.SharedReaderBarVisibility(
@@ -389,6 +403,34 @@ fun EpubReaderTopBar(
                                 else -> Unit
                             }
                         }
+                    if (hasMediaOverlayNarration) {
+                        // The icon's description is the *action*, following the read-aloud button
+                        // above: a screen reader has to say what pressing this does, and one name
+                        // for both states leaves the button reading identically whether narration is
+                        // running or not. The tooltip keeps the feature name as its label.
+                        val narrationActionDescription = stringResource(
+                            if (isMediaOverlayActive) {
+                                R.string.content_desc_media_overlay_stop
+                            } else {
+                                R.string.content_desc_media_overlay_start
+                            }
+                        )
+                        TooltipIconButton(
+                            text = stringResource(R.string.media_overlay_title),
+                            description = narrationActionDescription,
+                            onClick = onToggleMediaOverlay
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.volume_up),
+                                contentDescription = narrationActionDescription,
+                                tint = if (isMediaOverlayActive) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                }
+                            )
+                        }
+                    }
                     Box {
                         val overflowMenuState = com.aryan.reader.shared.ui.rememberSharedReaderOverflowMenuState()
                         var showMoreMenu by overflowMenuState.menuExpanded
@@ -415,6 +457,7 @@ fun EpubReaderTopBar(
                                     hasHiddenToolbarTools = hiddenToolbarTools.isNotEmpty(),
                                     hasToggleReflow = onToggleReflow != null,
                                     hasDeleteReflow = onDeleteReflow != null,
+                                    hasExportAnnotations = onExportAnnotations != null,
                                 ),
                             ) { section ->
                                 when (section) {
@@ -763,6 +806,22 @@ fun EpubReaderTopBar(
                                                 )
                                             }
                                         }
+                                    }
+                                    EpubOverflowMenuSection.EXPORT_ANNOTATIONS -> {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.action_export_annotations)) },
+                                            onClick = {
+                                                showMoreMenu = false
+                                                onExportAnnotations?.invoke()
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    Icons.Default.Share,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        )
                                     }
                                 }
                             }
@@ -1739,7 +1798,7 @@ fun TtsOverlayControls(
         }
     }
     val chunkLabel = remember(ttsState.currentChunkIndex, ttsState.totalChunks) {
-        formatReaderTtsChunkLabel(ttsState.currentChunkIndex, ttsState.totalChunks)
+        readerTtsChunkLabel(ttsState.currentChunkIndex, ttsState.totalChunks)
     }
     val miniBarTitle = ttsState.bookTitle
         ?.takeIf { it.isNotBlank() }

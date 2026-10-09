@@ -9,6 +9,8 @@
 // plain open polylines with no area fill and no auto-closing segment.
 package com.aryan.reader.pdf
 
+import com.aryan.reader.shared.ui.SharedPdfStyledPropertySlider
+import com.aryan.reader.shared.ui.SharedHsvColorPickerDialog
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -57,6 +59,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.R
 import com.aryan.reader.pdf.data.PdfAnnotation
@@ -384,7 +387,7 @@ private fun PdfSelectionStylePanel(
         }
     }
     Column(modifier = Modifier.width(300.dp).padding(horizontal = 12.dp, vertical = 8.dp)) {
-        StyledPropertySlider(
+        SharedPdfStyledPropertySlider(
             value = thickness,
             onValueChange = onThicknessChange,
             valueRange = thicknessRange,
@@ -498,20 +501,21 @@ private fun PdfSelectionStylePanel(
         }
     }
     if (showSpectrum) {
-        ColorPickerDialog(
+        SharedHsvColorPickerDialog(
             initialColor = selectedColor ?: Color.Black,
+            title = stringResource(R.string.label_spectrum),
             // Slot edit like the ink settings popup: saving rewrites the
             // selected palette slot (persisted via onPaletteChange) and
             // applies it; with no circle selected it applies a custom color
             // live without touching the palette.
             onDismiss = { showSpectrum = false },
-            onColorSelected = {
+            onSave = { picked ->
                 if (selectedIndex in selectionPalette.indices) {
                     onPaletteChange(
-                        selectionPalette.toMutableList().also { next -> next[selectedIndex] = it }
+                        selectionPalette.toMutableList().also { next -> next[selectedIndex] = picked }
                     )
                 }
-                onPaletteColorPicked(it)
+                onPaletteColorPicked(picked)
                 showSpectrum = false
             },
         )

@@ -100,9 +100,9 @@ class NonReaderLayoutModelsTest {
             books = listOf(beta, outsideFolder, alpha),
             filter = MobileUnifiedLibraryFilter.ALL,
             query = "",
-            libraryFilters = LibraryFilters(sourceFolders = setOf(folder.uriString))
-                .withIosFolderFilterIdentities(listOf(folder)),
+            libraryFilters = LibraryFilters(sourceFolders = setOf(folder.uriString)),
             sortOrder = SortOrder.TITLE_ASC,
+            folderAliases = mapOf(folder.name to folder.uriString),
         )
 
         assertEquals(listOf("alpha", "beta"), visible.map { it.id })
@@ -166,23 +166,46 @@ class NonReaderLayoutModelsTest {
     }
 
     @Test
-    fun `ios folder filters normalize legacy uri selections to scanned book identities`() {
+    fun `folder filters store the canonical uri and still match ios name-bearing books`() {
         val folder = SyncedFolder("ios-local-folder://downloads", "Downloads", lastScanTime = 0L)
+        val aliases = mapOf(folder.name to folder.uriString)
 
-        assertEquals(
-            setOf("Downloads", IN_APP_STORAGE_SOURCE),
-            LibraryFilters(sourceFolders = setOf(folder.uriString, IN_APP_STORAGE_SOURCE))
-                .withIosFolderFilterIdentities(listOf(folder))
-                .sourceFolders,
-        )
-        val selected = LibraryFilters().toggleIosFolderFilter(folder)
-        assertEquals(setOf("Downloads"), selected.sourceFolders)
-        assertTrue(book("folder-book", sourceFolder = "Downloads").matchesSourceFolders(selected.sourceFolders))
-        assertTrue(selected.toggleIosFolderFilter(folder).sourceFolders.isEmpty())
+        // Android is the benchmark, so the uriString is what gets stored.
+        val selected = LibraryFilters().toggleFolderFilter(folder)
+        assertEquals(setOf(folder.uriString), selected.sourceFolders)
+
+        // An Android book carries the uri, an iOS book carries the name. Both must match.
+        assertTrue(book("android", sourceFolder = folder.uriString).matchesSourceFolders(selected.sourceFolders, aliases))
+        assertTrue(book("ios", sourceFolder = folder.name).matchesSourceFolders(selected.sourceFolders, aliases))
+        assertFalse(book("other", sourceFolder = "Elsewhere").matchesSourceFolders(selected.sourceFolders, aliases))
+
+        // Toggling again deselects it, whichever spelling it was stored under.
+        assertTrue(selected.toggleFolderFilter(folder).sourceFolders.isEmpty())
     }
 
     @Test
-    fun `removing an ios folder clears both uri and name filter identities`() {
+    fun `legacy name-based folder selections are normalized to the canonical uri`() {
+        val folder = SyncedFolder("ios-local-folder://downloads", "Downloads", lastScanTime = 0L)
+
+        // A selection persisted by the old iOS dialog stored the name; it must be rewritten
+        // so it keeps matching after the canonical model landed.
+        assertEquals(
+            setOf(folder.uriString, IN_APP_STORAGE_SOURCE),
+            LibraryFilters(sourceFolders = setOf(folder.name, IN_APP_STORAGE_SOURCE))
+                .withCanonicalFolderFilterIdentities(listOf(folder))
+                .sourceFolders,
+        )
+        // An already-canonical selection is left alone.
+        assertEquals(
+            setOf(folder.uriString),
+            LibraryFilters(sourceFolders = setOf(folder.uriString))
+                .withCanonicalFolderFilterIdentities(listOf(folder))
+                .sourceFolders,
+        )
+    }
+
+    @Test
+    fun `removing a folder clears both uri and name filter identities`() {
         val folder = SyncedFolder("ios-local-folder://downloads", "Downloads", lastScanTime = 0L)
 
         assertEquals(
@@ -194,7 +217,7 @@ class NonReaderLayoutModelsTest {
                     IN_APP_STORAGE_SOURCE,
                     "Other",
                 )
-            ).withoutIosFolderFilter(folder).sourceFolders,
+            ).withoutFolderFilter(folder).sourceFolders,
         )
     }
 

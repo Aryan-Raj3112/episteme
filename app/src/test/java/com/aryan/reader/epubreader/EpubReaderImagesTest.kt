@@ -68,6 +68,57 @@ class EpubReaderImagesTest {
         assertArrayEquals("Hi".toByteArray(), image.readDownloadBytes())
     }
 
+    @Test
+    fun `name type and filename all derive from the resolved source`() {
+        // Parity item B9. These three used to read different fields: the name preferred
+        // `originalSource` while the extension and MIME preferred `sourcePath`, so one
+        // image could be named after one source and typed from another. With a real
+        // percent-encoded src that mismatch is user-visible in the drawer's download row.
+        // The resolver percent-decodes, so the two spellings genuinely differ in the
+        // file name the user is shown: "cover%20art.png" vs "cover art.png".
+        val reference = EpubReaderImageReference(
+            id = "img",
+            index = 0,
+            sourcePath = "/books/OEBPS/Images/cover art.png",
+            originalSource = "Images/cover%20art.png",
+            altText = null,
+            chapterIndex = 0,
+            chapterTitle = "One",
+            elementId = null,
+            ordinalInChapter = 0,
+            chunkIndex = null,
+            intrinsicWidth = null,
+            intrinsicHeight = null,
+        )
+
+        assertEquals("cover art.png", reference.sourceName())
+        assertEquals("image/png", reference.mimeType())
+        // One base, one extension — they cannot disagree now.
+        assertEquals("cover art.png", reference.suggestedDownloadFileName())
+    }
+
+    @Test
+    fun `mime type and download name follow a data uri with no file extension`() {
+        val reference = EpubReaderImageReference(
+            id = "img",
+            index = 0,
+            sourcePath = "data:image/gif;base64,R0lG",
+            originalSource = "data:image/gif;base64,R0lG",
+            altText = "Spinner",
+            chapterIndex = 0,
+            chapterTitle = "One",
+            elementId = null,
+            ordinalInChapter = 0,
+            chunkIndex = null,
+            intrinsicWidth = null,
+            intrinsicHeight = null,
+        )
+
+        assertEquals("image/gif", reference.mimeType())
+        assertEquals("Spinner.gif", reference.suggestedDownloadFileName())
+        assertEquals(null, reference.sourceName())
+    }
+
     private fun writeFile(root: File, relativePath: String, content: String) {
         val file = File(root, relativePath)
         file.parentFile?.mkdirs()

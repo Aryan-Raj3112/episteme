@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.ui
 
+import com.aryan.reader.paginatedreader.EpubChapterTextIndex
 import androidx.compose.ui.graphics.Color
 import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.ReaderLocator
@@ -43,7 +44,16 @@ sealed interface ReaderContentRenderPlan {
         override val background: Color,
         override val foreground: Color,
         override val navigationTarget: ReaderContentNavigationTarget,
-        override val highlights: List<UserHighlight>
+        override val highlights: List<UserHighlight>,
+        /**
+         * Each chapter's text laid out in one coordinate space, keyed by chapter.
+         *
+         * Highlight placement needs this: block offsets as parsed are element-relative (§4), so
+         * placing a highlight by comparing a stored range against a block's reported offsets compares
+         * two unrelated spaces. Null or missing for a chapter falls back to the legacy per-block
+         * chain, which is what desktop still uses.
+         */
+        val chapterTextIndexes: Map<Int, EpubChapterTextIndex> = emptyMap()
     ) : ReaderContentRenderPlan
 
     data class NativeVerticalPages(
@@ -57,6 +67,8 @@ sealed interface ReaderContentRenderPlan {
         override val background: Color,
         override val foreground: Color,
         override val navigationTarget: ReaderContentNavigationTarget,
-        override val highlights: List<UserHighlight>
+        override val highlights: List<UserHighlight>,
+        /** See [NativePaginatedPages.chapterTextIndexes]. */
+        val chapterTextIndexes: Map<Int, EpubChapterTextIndex> = emptyMap()
     ) : ReaderContentRenderPlan
 }

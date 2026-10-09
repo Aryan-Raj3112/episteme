@@ -148,14 +148,17 @@ import com.aryan.reader.epubreader.HighlightColor
 import com.aryan.reader.epubreader.PaginatedTextSelectionMenu
 import com.aryan.reader.epubreader.PaletteManagerDialog
 import com.aryan.reader.epubreader.ReaderTextAlign
-import com.aryan.reader.epubreader.TtsHighlightInfo
 import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
+import com.aryan.reader.shared.reader.SharedPlaybackFragment
 import com.aryan.reader.shared.reader.paintOnlyColorOverlayText
 import com.aryan.reader.shared.reader.withoutForegroundColorSpans
+import com.aryan.reader.shared.ui.PaintableHighlight
+import com.aryan.reader.shared.ui.highlightHitsAt
+import com.aryan.reader.shared.ui.SharedNativeHighlightPaintPlan
 import com.aryan.reader.shared.ui.sharedAcceleratedLazyWheelScroll
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -205,7 +208,7 @@ fun NativeVerticalReaderScreen(
     textAlign: ReaderTextAlign,
     bookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
     bookReplacementFileId: String? = bookId,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     initialLocator: Locator? = null,
     initialPageIndexInBook: Int = 0,
     scrollRequestPage: Int? = null,
@@ -243,6 +246,14 @@ fun NativeVerticalReaderScreen(
     onHighlightDeleted: (String) -> Unit,
     activeHighlightPalette: List<Int>,
     onUpdatePalette: (Int, Int) -> Unit,
+    /**
+     * The whole chapter's text blocks, for placing highlights that carry no absolute offsets.
+     *
+     * Every highlight created in a WebView surface stores only its selected text. Resolving that
+     * against a single block is what lost multi-paragraph selections entirely, so this returns the
+     * chapter. Suspends because the chapter may still need parsing.
+     */
+    chapterHighlightIndexes: ChapterHighlightIndexes,
     activeTextureId: String? = null,
     activeTextureAlpha: Float = 0.55f
 ) {
@@ -1055,9 +1066,17 @@ fun NativeVerticalReaderScreen(
                                     themeTextColor = effectiveText
                                 ).content.first()
                             }
-                            val pageUserHighlights = highlightsForPaginatedPage(
-                                pageChapterIndex = chapterIndex,
-                                userHighlights = userHighlights
+                            // The vertical flow shows one block at a time, so scoping is by that block alone. Highlights
+                            // created in a WebView surface have no absolute offsets, so they are
+                            // located against the whole chapter first and then narrowed to this block.
+                            val chapterTextIndex = chapterHighlightIndexes.forChapter(chapterIndex)
+                            val pageUserHighlights = resolvePaginatedPageHighlights(
+                                scope = PaginatedPageScope(
+                                    chapterIndex = chapterIndex,
+                                    textBlocks = listOfNotNull(block as? TextContentBlock)
+                                ),
+                                highlights = userHighlights,
+                                chapterTextIndex = chapterTextIndex
                             )
 
                             Box(
@@ -1088,7 +1107,8 @@ fun NativeVerticalReaderScreen(
                                     textMeasurer = textMeasurer,
                                     onLinkClickCallback = onLinkClickCallback,
                                     onGeneralTapCallback = onGeneralTapCallback,
-                                    userHighlights = pageUserHighlights,
+                                    userHighlights = pageUserHighlights.highlights,
+                                    highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
                                     activeSelection = activeSelection,
                                     onSelectionChange = { activeSelection = it },
                                     onHighlightClick = { highlight, _ ->
@@ -1174,70 +1194,54 @@ fun NativeVerticalReaderScreen(
                                 activeSelection = null
                             },
                             onHighlight = { color, style ->
-                                val startAbsoluteOffset = sel.startBlockCharOffset + sel.startOffset
-                                val endAbsoluteOffset = sel.endBlockCharOffset + sel.endOffset
                                 val finalCfi =
                                     "${sel.startBaseCfi}:${sel.startOffset}|${sel.endBaseCfi}:${sel.endOffset}"
-                                val absoluteCandidateCfi =
-                                    "${sel.startBaseCfi}:$startAbsoluteOffset|${sel.endBaseCfi}:$endAbsoluteOffset"
                                 val locator = sel.toSharedHighlightLocator(
                                     chapterIndex = sel.startPageIndex,
                                     cfi = finalCfi
                                 )
                                 Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
                                     "create_request source=native_vertical_highlight_menu colorArgb=$color " +
-                                        "savedCfi=$finalCfi absoluteCandidateCfi=$absoluteCandidateCfi " +
+                                        "savedCfi=$finalCfi " +
                                         "startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
                                         "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
                                         "localOffsets=${sel.startOffset}..${sel.endOffset} " +
-                                        "blockAbsStarts=${sel.startBlockCharOffset}..${sel.endBlockCharOffset} " +
-                                        "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
-                                        "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                                                                                                                        "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                 )
                                 Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
                                     "create_request surface=native_vertical action=highlight colorArgb=$color " +
-                                        "savedCfi=$finalCfi absoluteCandidateCfi=$absoluteCandidateCfi " +
+                                        "savedCfi=$finalCfi " +
                                         "startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
                                         "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
                                         "localOffsets=${sel.startOffset}..${sel.endOffset} " +
-                                        "blockAbsStarts=${sel.startBlockCharOffset}..${sel.endBlockCharOffset} " +
-                                        "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
-                                        "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                                                                                                                        "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                 )
                                 onHighlightCreated(finalCfi, sel.text, color.toString(), locator, style)
                                 activeSelection = null
                             },
                             onNote = { style ->
                                 onNoteRequested(null)
-                                val startAbsoluteOffset = sel.startBlockCharOffset + sel.startOffset
-                                val endAbsoluteOffset = sel.endBlockCharOffset + sel.endOffset
                                 val finalCfi =
                                     "${sel.startBaseCfi}:${sel.startOffset}|${sel.endBaseCfi}:${sel.endOffset}"
-                                val absoluteCandidateCfi =
-                                    "${sel.startBaseCfi}:$startAbsoluteOffset|${sel.endBaseCfi}:$endAbsoluteOffset"
                                 val locator = sel.toSharedHighlightLocator(
                                     chapterIndex = sel.startPageIndex,
                                     cfi = finalCfi
                                 )
                                 Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
                                     "create_request source=native_vertical_note_menu color=${HighlightColor.YELLOW.id} " +
-                                        "savedCfi=$finalCfi absoluteCandidateCfi=$absoluteCandidateCfi " +
+                                        "savedCfi=$finalCfi " +
                                         "startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
                                         "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
                                         "localOffsets=${sel.startOffset}..${sel.endOffset} " +
-                                        "blockAbsStarts=${sel.startBlockCharOffset}..${sel.endBlockCharOffset} " +
-                                        "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
-                                        "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                                                                                                                        "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                 )
                                 Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
                                     "create_request surface=native_vertical action=note color=${HighlightColor.YELLOW.id} " +
-                                        "savedCfi=$finalCfi absoluteCandidateCfi=$absoluteCandidateCfi " +
+                                        "savedCfi=$finalCfi " +
                                         "startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
                                         "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
                                         "localOffsets=${sel.startOffset}..${sel.endOffset} " +
-                                        "blockAbsStarts=${sel.startBlockCharOffset}..${sel.endBlockCharOffset} " +
-                                        "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
-                                        "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                                                                                                                        "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                 )
                                 onHighlightCreated(finalCfi, sel.text, (activeHighlightPalette.firstOrNull() ?: HighlightColor.YELLOW.color.toArgb()).toString(), locator, style)
                                 activeSelection = null
@@ -1481,12 +1485,13 @@ internal fun NativeVerticalPage(
     hideImages: Boolean = false,
     searchQuery: String,
     searchHighlightColor: Color,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     ttsHighlightColor: Color,
     textMeasurer: TextMeasurer,
     onLinkClickCallback: (String) -> Unit,
     onGeneralTapCallback: (Offset) -> Unit,
     userHighlights: List<UserHighlight>,
+    highlightRanges: Map<String, List<IntRange>>,
     activeSelection: PaginatedSelection?,
     onSelectionChange: (PaginatedSelection?) -> Unit,
     onHighlightClick: (UserHighlight, Rect) -> Unit,
@@ -1524,6 +1529,7 @@ internal fun NativeVerticalPage(
                 onLinkClickCallback = onLinkClickCallback,
                 onGeneralTapCallback = onGeneralTapCallback,
                 userHighlights = userHighlights,
+                highlightRanges = highlightRanges,
                 activeSelection = activeSelection,
                 onSelectionChange = onSelectionChange,
                 onHighlightClick = onHighlightClick,
@@ -1549,12 +1555,13 @@ internal fun NativeVerticalContentBlock(
     hideImages: Boolean = false,
     searchQuery: String,
     searchHighlightColor: Color,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     ttsHighlightColor: Color,
     textMeasurer: TextMeasurer,
     onLinkClickCallback: (String) -> Unit,
     onGeneralTapCallback: (Offset) -> Unit,
     userHighlights: List<UserHighlight>,
+    highlightRanges: Map<String, List<IntRange>>,
     activeSelection: PaginatedSelection?,
     onSelectionChange: (PaginatedSelection?) -> Unit,
     onHighlightClick: (UserHighlight, Rect) -> Unit,
@@ -1625,6 +1632,7 @@ internal fun NativeVerticalContentBlock(
                     onLinkClickCallback = onLinkClickCallback,
                     onGeneralTapCallback = onGeneralTapCallback,
                     userHighlights = userHighlights,
+                    highlightRanges = highlightRanges,
                     activeSelection = activeSelection,
                     onSelectionChange = onSelectionChange,
                     onHighlightClick = onHighlightClick,
@@ -1680,6 +1688,7 @@ internal fun NativeVerticalContentBlock(
                     onLinkClickCallback = onLinkClickCallback,
                     onGeneralTapCallback = onGeneralTapCallback,
                     userHighlights = userHighlights,
+                    highlightRanges = highlightRanges,
                     activeSelection = activeSelection,
                     onSelectionChange = onSelectionChange,
                     onHighlightClick = onHighlightClick,
@@ -1795,501 +1804,6 @@ internal fun parseEmphasisAnnotation(annotation: String, defaultColor: Color): T
     return emphasis
 }
 
-internal fun findFuzzyMatch(source: String, target: String, ignoreCase: Boolean = true): IntRange? {
-    if (target.isBlank()) return null
-    val targetWords = target.split("\\s+".toRegex()).filter { it.isNotEmpty() }
-    if (targetWords.isEmpty()) return null
-
-    var searchStart = 0
-    while (searchStart < source.length) {
-        val firstIdx = source.indexOf(targetWords[0], searchStart, ignoreCase = ignoreCase)
-        if (firstIdx == -1) return null
-
-        var currentIdx = firstIdx + targetWords[0].length
-        var allMatch = true
-
-        for (i in 1 until targetWords.size) {
-            while (currentIdx < source.length && source[currentIdx].isWhitespace()) {
-                currentIdx++
-            }
-            if (currentIdx >= source.length) {
-                allMatch = false
-                break
-            }
-
-            val word = targetWords[i]
-            if (source.regionMatches(currentIdx, word, 0, word.length, ignoreCase = ignoreCase)) {
-                currentIdx += word.length
-            } else {
-                allMatch = false
-                break
-            }
-        }
-
-        if (allMatch) return firstIdx until currentIdx
-        searchStart = firstIdx + 1
-    }
-    return null
-}
-
-internal fun getHighlightOffsetsInBlock(
-    block: TextContentBlock, highlight: UserHighlight
-): IntRange? {
-    @Suppress("REDUNDANT_ELSE_IN_WHEN") val blockStartAbs = when (block) {
-        is ParagraphBlock -> block.startCharOffsetInSource
-        is HeaderBlock -> block.startCharOffsetInSource
-        is QuoteBlock -> block.startCharOffsetInSource
-        is ListItemBlock -> block.startCharOffsetInSource
-        else -> 0
-    }
-    val blockEndAbs = block.endCharOffsetInSource
-        .takeIf { it > blockStartAbs }
-        ?: (blockStartAbs + block.content.text.length)
-    val blockText = block.content.text
-    Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-        "map_start blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-            "blockAbs=$blockStartAbs..$blockEndAbs blockLen=${blockText.length} " +
-            "hasPreciseLocator=${highlight.locator.hasTextRange} " +
-            highlight.androidHighlightRenderLabel()
-    )
-
-    locatorHighlightOffsetsInBlock(
-        blockText = blockText,
-        blockStartAbs = blockStartAbs,
-        blockEndAbs = blockEndAbs,
-        blockIndex = block.blockIndex,
-        blockCfi = block.cfi,
-        highlight = highlight
-    )?.let { return it }
-
-    if (block.cfi == null) {
-        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-            "map_skip reason=missing_block_cfi blockIndex=${block.blockIndex} blockAbs=$blockStartAbs..$blockEndAbs " +
-                highlight.androidHighlightRenderLabel()
-        )
-        return null
-    }
-
-    val blockPath = CfiUtils.getPath(block.cfi!!)
-    val sourceCfi = highlight.locator.cfi?.takeIf { it.isNotBlank() } ?: highlight.cfi
-    val parts = sourceCfi.split('|')
-    val startCfi = parts.firstOrNull() ?: highlight.cfi
-    val endCfi = parts.lastOrNull()
-    val isMultipartHighlight = endCfi != null && endCfi != startCfi
-
-    Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-        "map_check blockCfi=${block.cfi} blockPath=$blockPath " +
-            "blockAbs=$blockStartAbs..$blockEndAbs blockLen=${block.content.text.length} " +
-            "highlightId=${highlight.id} highlightChapter=${highlight.chapterIndex} " +
-            "highlightCfi=$sourceCfi startCfi=$startCfi endCfi=$endCfi " +
-            "highlightTextLen=${highlight.text.length} highlightText='${highlightDiagSnippet(highlight.text)}'"
-    )
-
-    val relevantPart = parts.find { cfiPart ->
-        val highlightPath = CfiUtils.getPath(cfiPart)
-
-        if (highlightPath.startsWith(blockPath)) return@find true
-
-        val highlightSegments = highlightPath.split('/').filter { it.isNotEmpty() }
-        val blockSegments = blockPath.split('/').filter { it.isNotEmpty() }
-
-        if (highlightSegments.size > blockSegments.size) {
-            val pathWithoutFirst = "/" + highlightSegments.drop(1).joinToString("/")
-            if (pathWithoutFirst.startsWith(blockPath)) return@find true
-        }
-
-        if (highlightSegments.isNotEmpty() && blockSegments.isNotEmpty()) {
-            if (highlightSegments[0] != blockSegments[0]) {
-                val highlightTail = highlightSegments.drop(1)
-                val blockTail = blockSegments.drop(1)
-                if (blockTail.isNotEmpty() && highlightTail.size >= blockTail.size) {
-                    var match = true
-                    for (i in blockTail.indices) {
-                        if (blockTail[i] != highlightTail[i]) {
-                            match = false
-                            break
-                        }
-                    }
-                    if (match) return@find true
-                }
-            }
-        }
-        false
-    }
-
-    if (relevantPart != null) {
-        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-            "map_relevant_part blockCfi=${block.cfi} highlightId=${highlight.id} part=$relevantPart"
-        )
-    }
-
-    val highlightText = highlight.text
-
-    if (blockText.isEmpty() || highlightText.isEmpty()) {
-        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-            "map_skip reason=empty_text blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                "blockTextLen=${blockText.length} highlightTextLen=${highlightText.length} " +
-                highlight.androidHighlightRenderLabel()
-        )
-        return null
-    }
-
-    val isIntermediateBlock = relevantPart == null &&
-        isMultipartHighlight &&
-        CfiUtils.isPathStrictlyBetween(block.cfi!!, startCfi, endCfi!!)
-
-    Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-        "map_decision blockCfi=${block.cfi} highlightId=${highlight.id} " +
-            "relevantPart=$relevantPart isIntermediateBlock=$isIntermediateBlock"
-    )
-
-    if (relevantPart == null) {
-        if (!isIntermediateBlock) {
-            Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-                "map_skip reason=no_relevant_cfi_part blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                    "startCfi=$startCfi endCfi=$endCfi " +
-                    highlight.androidHighlightRenderLabel()
-            )
-            return null
-        }
-        if (highlightText.contains(blockText, ignoreCase = false)) {
-            val range = 0 until blockText.length
-            Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-                "map_result reason=intermediate_exact blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                    "range=$range " + highlight.androidHighlightRenderLabel()
-            )
-            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                "map_result reason=intermediate_exact blockCfi=${block.cfi} " +
-                    "blockAbs=$blockStartAbs..$blockEndAbs highlightId=${highlight.id} range=$range"
-            )
-            return range
-        }
-        if (highlightText.contains(blockText, ignoreCase = true)) {
-            val range = 0 until blockText.length
-            Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-                "map_result reason=intermediate_exact_ignore_case blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                    "range=$range " + highlight.androidHighlightRenderLabel()
-            )
-            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                "map_result reason=intermediate_exact_ignore_case blockCfi=${block.cfi} " +
-                    "blockAbs=$blockStartAbs..$blockEndAbs highlightId=${highlight.id} range=$range"
-            )
-            return range
-        }
-        val normBlock = blockText.filter { !it.isWhitespace() }
-        val normHighlight = highlightText.filter { !it.isWhitespace() }
-        return if (normBlock.isNotBlank() && normHighlight.contains(normBlock, ignoreCase = true)) {
-            val range = 0 until blockText.length
-            Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-                "map_result reason=intermediate_normalized blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                    "range=$range " + highlight.androidHighlightRenderLabel()
-            )
-            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                "map_result reason=intermediate_normalized blockCfi=${block.cfi} " +
-                    "blockAbs=$blockStartAbs..$blockEndAbs highlightId=${highlight.id} range=$range"
-            )
-            range
-        } else {
-            Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-                "map_skip reason=intermediate_text_miss blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                    "blockText='${highlightDiagSnippet(blockText)}' " +
-                    highlight.androidHighlightRenderLabel()
-            )
-            null
-        }
-    }
-
-    if (relevantPart != null) {
-        fun arePathsEquivalent(path1: String, path2: String): Boolean {
-            val p1 = CfiUtils.getPath(path1).split('/').filter { it.isNotEmpty() }
-            val p2 = CfiUtils.getPath(path2).split('/').filter { it.isNotEmpty() }
-
-            if (p1 == p2) return true
-
-            if (p1.size == p2.size && p1.isNotEmpty()) {
-                return p1.drop(1) == p2.drop(1)
-            }
-            return false
-        }
-
-        val startMatches = arePathsEquivalent(startCfi, block.cfi!!)
-        val endMatches = if (endCfi != null) arePathsEquivalent(endCfi, block.cfi!!) else false
-
-        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-            "map_path_equivalence blockCfi=${block.cfi} highlightId=${highlight.id} " +
-                "startMatches=$startMatches endMatches=$endMatches"
-        )
-
-        if (startMatches || endMatches) {
-            val startAbs = CfiUtils.getOffsetOrNull(startCfi)
-            val endAbs = endCfi?.let { CfiUtils.getOffsetOrNull(it) }
-            val startLocal = startAbs?.let {
-                cfiOffsetToBlockLocal(
-                    offset = it,
-                    blockStartAbs = blockStartAbs,
-                    blockEndAbs = blockEndAbs,
-                    textLength = blockText.length
-                )
-            }
-            val endLocal = endAbs?.let {
-                cfiOffsetToBlockLocal(
-                    offset = it,
-                    blockStartAbs = blockStartAbs,
-                    blockEndAbs = blockEndAbs,
-                    textLength = blockText.length
-                )
-            }
-            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                "map_offset_inputs blockCfi=${block.cfi} highlightId=${highlight.id} " +
-                    "blockAbs=$blockStartAbs..$blockEndAbs cfiOffsets=$startAbs..$endAbs " +
-                    "localOffsets=$startLocal..$endLocal"
-            )
-            if (startMatches && endMatches && startLocal != null && endLocal != null) {
-                val rangeStartLocal = minOf(startLocal, endLocal)
-                val rangeEndLocal = maxOf(startLocal, endLocal)
-                if (rangeEndLocal <= 0 || rangeStartLocal >= blockText.length) {
-                    Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-                        "map_skip reason=same_path_split_outside_offsets blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                            "highlightLocal=$rangeStartLocal..$rangeEndLocal blockLen=${blockText.length} " +
-                            highlight.androidHighlightRenderLabel()
-                    )
-                    Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                        "map_skip reason=same_path_split_outside_offsets blockCfi=${block.cfi} " +
-                            "highlightId=${highlight.id} highlightLocal=$rangeStartLocal..$rangeEndLocal " +
-                            "blockAbs=$blockStartAbs..$blockEndAbs"
-                    )
-                    return null
-                }
-            } else {
-                if (startMatches && startLocal != null && startLocal >= blockText.length) {
-                    Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-                        "map_skip reason=start_offset_after_block blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                            "startLocal=$startLocal blockLen=${blockText.length} " +
-                            highlight.androidHighlightRenderLabel()
-                    )
-                    return null
-                }
-                if (endMatches && endLocal != null && endLocal <= 0) {
-                    Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-                        "map_skip reason=end_offset_before_block blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                            "endLocal=$endLocal blockLen=${blockText.length} " +
-                            highlight.androidHighlightRenderLabel()
-                    )
-                    return null
-                }
-            }
-            var s = 0
-            var e = blockText.length
-
-            if (startMatches) {
-                val rawOffset = startAbs ?: CfiUtils.getOffset(startCfi)
-                val relOffset = cfiOffsetToBlockLocal(
-                    offset = rawOffset,
-                    blockStartAbs = blockStartAbs,
-                    blockEndAbs = blockEndAbs,
-                    textLength = blockText.length
-                )
-                if (relOffset == null) {
-                    Timber.tag(TAG_HIGHLIGHT_DIAG).d(
-                        "map_skip reason=start_offset_outside_block blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                            "rawOffset=$rawOffset blockAbs=$blockStartAbs..$blockEndAbs " +
-                            highlight.androidHighlightRenderLabel()
-                    )
-                    return null
-                }
-
-                if (relOffset < 0) {
-                    s = 0
-                } else {
-                    val safeStart = (relOffset - 50).coerceAtLeast(0)
-                    val safeEnd = (relOffset + 50).coerceAtMost(blockText.length)
-
-                    if (safeStart < safeEnd) {
-                        val windowText = blockText.substring(safeStart, safeEnd)
-                        val prefix = highlightText.trim().take(20).trim()
-
-                        var snapped = false
-                        if (prefix.isNotEmpty()) {
-                            val matches = mutableListOf<Int>()
-                            var idx = windowText.indexOf(prefix, ignoreCase = true)
-                            while (idx != -1) {
-                                matches.add(idx)
-                                idx = windowText.indexOf(prefix, idx + 1, ignoreCase = true)
-                            }
-
-                            if (matches.isNotEmpty()) {
-                                val targetRel = relOffset - safeStart
-                                val bestRel = matches.minByOrNull { abs(it - targetRel) }!!
-                                val newS = safeStart + bestRel
-                                Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                                    "map_snap_start blockCfi=${block.cfi} highlightId=${highlight.id} " +
-                                        "fromRel=$relOffset toRel=$newS prefix='$prefix'"
-                                )
-                                s = newS
-                                snapped = true
-                            }
-                        }
-
-                        if (!snapped) {
-                            s = relOffset
-                        }
-                    } else {
-                        s = relOffset
-                    }
-                }
-            }
-
-            if (endMatches) {
-                val rawOffset = endAbs ?: CfiUtils.getOffset(endCfi!!)
-                val relOffset = cfiOffsetToBlockLocal(
-                    offset = rawOffset,
-                    blockStartAbs = blockStartAbs,
-                    blockEndAbs = blockEndAbs,
-                    textLength = blockText.length
-                )
-                if (relOffset == null) {
-                    Timber.tag(TAG_HIGHLIGHT_DIAG).d(
-                        "map_skip reason=end_offset_outside_block blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                            "rawOffset=$rawOffset blockAbs=$blockStartAbs..$blockEndAbs " +
-                            highlight.androidHighlightRenderLabel()
-                    )
-                    return null
-                }
-
-                Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                    "map_end_match blockCfi=${block.cfi} highlightId=${highlight.id} " +
-                        "rawOffset=$rawOffset relOffset=$relOffset blockLen=${blockText.length}"
-                )
-
-                e = if (relOffset > blockText.length) {
-                    blockText.length
-                } else {
-                    relOffset
-                }
-            }
-
-            s = s.coerceIn(0, blockText.length)
-            e = e.coerceIn(0, blockText.length)
-
-            if (s < e) {
-                val range = s until e
-                Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-                    "map_result reason=cfi_offsets blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                        "range=$range startMatches=$startMatches endMatches=$endMatches " +
-                        "startAbs=$startAbs endAbs=$endAbs startLocal=$startLocal endLocal=$endLocal " +
-                        highlight.androidHighlightRenderLabel()
-                )
-                Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                    "map_result reason=cfi_offsets blockCfi=${block.cfi} " +
-                        "blockAbs=$blockStartAbs..$blockEndAbs highlightId=${highlight.id} range=$range"
-                )
-                return range
-            } else {
-                Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-                    "map_skip reason=invalid_cfi_range blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                        "range=$s..$e startMatches=$startMatches endMatches=$endMatches " +
-                        highlight.androidHighlightRenderLabel()
-                )
-                Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).w(
-                    "map_skip reason=invalid_range blockCfi=${block.cfi} " +
-                        "blockAbs=$blockStartAbs..$blockEndAbs highlightId=${highlight.id} range=$s..$e"
-                )
-                return null
-            }
-        }
-    }
-
-    // Structural gate: highlights carrying an absolute text range already had their chance
-    // via absolute-offset intersection and CFI-offset resolution above (both page-safe after
-    // page-level scoping). Falling through to text-quote search here is how repeated
-    // sentences paint on unrelated blocks/pages. Quote/fuzzy recovery stays available for
-    // legacy highlights without an absolute range. Mirrors the shared structural-scope rule.
-    if (highlight.locator.hasTextRange) {
-        Timber.tag(TAG_HIGHLIGHT_DIAG).d(
-            "map_skip reason=structural_quote_skip blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                "blockAbs=$blockStartAbs..$blockEndAbs sourceCfi=$sourceCfi " +
-                highlight.androidHighlightRenderLabel()
-        )
-        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-            "map_skip reason=precise_locator_and_cfi_miss blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                "sourceCfi=$sourceCfi " + highlight.androidHighlightRenderLabel()
-        )
-        return null
-    }
-
-    if (highlightText.contains(blockText, ignoreCase = false)) {
-        val range = 0 until blockText.length
-        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-            "map_result reason=block_inside_highlight_text blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                "range=$range " + highlight.androidHighlightRenderLabel()
-        )
-        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-            "map_result reason=block_inside_highlight_text blockCfi=${block.cfi} " +
-                "blockAbs=$blockStartAbs..$blockEndAbs highlightId=${highlight.id} range=$range"
-        )
-        return range
-    }
-    if (highlightText.contains(blockText, ignoreCase = true)) {
-        val range = 0 until blockText.length
-        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-            "map_result reason=block_inside_highlight_text_ignore_case blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                "range=$range " + highlight.androidHighlightRenderLabel()
-        )
-        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-            "map_result reason=block_inside_highlight_text_ignore_case blockCfi=${block.cfi} " +
-                "blockAbs=$blockStartAbs..$blockEndAbs highlightId=${highlight.id} range=$range"
-        )
-        return range
-    }
-
-    var startIndex = blockText.indexOf(highlightText, ignoreCase = false)
-    if (startIndex == -1) {
-        startIndex = blockText.indexOf(highlightText, ignoreCase = true)
-    }
-
-    if (startIndex >= 0) {
-        val range = startIndex until (startIndex + highlightText.length)
-        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-            "map_result reason=highlight_text_inside_block blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                "range=$range startIndex=$startIndex " + highlight.androidHighlightRenderLabel()
-        )
-        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-            "map_result reason=highlight_text_inside_block blockCfi=${block.cfi} " +
-                "blockAbs=$blockStartAbs..$blockEndAbs highlightId=${highlight.id} range=$range"
-        )
-        return range
-    }
-
-    val match = findFuzzyMatch(blockText, highlightText)
-    if (match != null) {
-        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-            "map_result reason=fuzzy_text blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                "range=$match " + highlight.androidHighlightRenderLabel()
-        )
-        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-            "map_result reason=fuzzy_text blockCfi=${block.cfi} " +
-                "blockAbs=$blockStartAbs..$blockEndAbs highlightId=${highlight.id} range=$match"
-        )
-        return match
-    }
-
-    if (relevantPart != null) {
-        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-            "map_skip reason=cfi_match_text_miss blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                "relevantPart=$relevantPart " + highlight.androidHighlightRenderLabel()
-        )
-        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-            "map_skip reason=cfi_match_text_miss blockCfi=${block.cfi} " +
-                "highlightId=${highlight.id} highlightCfi=${highlight.cfi}"
-        )
-    }
-
-    Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-        "map_skip reason=no_mapping_match blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-            highlight.androidHighlightRenderLabel()
-    )
-    return null
-}
 
 internal fun androidHighlightSourceCfi(highlight: UserHighlight): String {
     return highlight.locator.cfi?.takeIf { it.isNotBlank() } ?: highlight.cfi
@@ -2341,83 +1855,6 @@ internal fun cfiOffsetToBlockLocal(
     }
 }
 
-internal fun locatorHighlightOffsetsInBlock(
-    blockText: String,
-    blockStartAbs: Int,
-    blockEndAbs: Int,
-    blockIndex: Int,
-    blockCfi: String?,
-    highlight: UserHighlight
-): IntRange? {
-    if (blockText.isEmpty()) {
-        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-            "locator_check_skip reason=empty_block_text blockAbs=$blockStartAbs..$blockEndAbs " +
-                highlight.androidHighlightRenderLabel()
-        )
-        return null
-    }
-    if (androidHighlightHasMultipartCfiRange(highlight)) {
-        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-            "locator_check_skip reason=multipart_cfi_uses_cfi_mapper blockIndex=$blockIndex blockCfi=$blockCfi " +
-                highlight.androidHighlightRenderLabel()
-        )
-        return null
-    }
-    val locatorBlockIndex = highlight.locator.blockIndex
-    val blockMatchesLocator = locatorBlockIndex != null && locatorBlockIndex == blockIndex
-    val cfiMatchesBlock = androidHighlightCfiTouchesBlock(highlight, blockCfi)
-    val hasStructuralScope = locatorBlockIndex != null || androidHighlightSourceCfi(highlight).startsWith("/")
-    if (hasStructuralScope && !blockMatchesLocator && !cfiMatchesBlock) {
-        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-            "locator_check_miss reason=structural_scope_miss blockIndex=$blockIndex blockCfi=$blockCfi " +
-                "blockMatchesLocator=$blockMatchesLocator cfiMatchesBlock=$cfiMatchesBlock " +
-                highlight.androidHighlightRenderLabel()
-        )
-        return null
-    }
-    val start = highlight.locator.startOffset ?: run {
-        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-            "locator_check_skip reason=missing_start blockAbs=$blockStartAbs..$blockEndAbs " +
-                highlight.androidHighlightRenderLabel()
-        )
-        return null
-    }
-    val end = highlight.locator.endOffset ?: run {
-        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-            "locator_check_skip reason=missing_end blockAbs=$blockStartAbs..$blockEndAbs " +
-                highlight.androidHighlightRenderLabel()
-        )
-        return null
-    }
-    val rangeStartAbs = minOf(start, end)
-    val rangeEndAbs = maxOf(start, end)
-    if (rangeEndAbs <= blockStartAbs || rangeStartAbs >= blockEndAbs) {
-        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-            "locator_check_miss reason=no_intersection blockAbs=$blockStartAbs..$blockEndAbs " +
-                "highlightAbs=$rangeStartAbs..$rangeEndAbs " +
-                highlight.androidHighlightRenderLabel()
-        )
-        return null
-    }
-    val localStart = (rangeStartAbs - blockStartAbs).coerceIn(0, blockText.length)
-    val localEnd = (rangeEndAbs - blockStartAbs).coerceIn(localStart, blockText.length)
-    return if (localStart < localEnd) {
-        val range = localStart until localEnd
-        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-            "map_result reason=locator_offsets blockAbs=$blockStartAbs..$blockEndAbs " +
-                "range=$range highlightAbs=$rangeStartAbs..$rangeEndAbs " +
-                highlight.androidHighlightRenderLabel()
-        )
-        range
-    } else {
-        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-            "locator_check_miss reason=invalid_local_range blockAbs=$blockStartAbs..$blockEndAbs " +
-                "local=$localStart..$localEnd highlightAbs=$rangeStartAbs..$rangeEndAbs " +
-                highlight.androidHighlightRenderLabel()
-        )
-        null
-    }
-}
 
 internal fun List<ContentBlock>.extractTextBlocks(): List<TextContentBlock> {
     val result = mutableListOf<TextContentBlock>()
@@ -2993,6 +2430,7 @@ internal fun TextWithEmphasis(
     onLinkClick: (String) -> Unit,
     onGeneralTap: (Offset) -> Unit,
     block: TextContentBlock,
+    highlightRanges: Map<String, List<IntRange>>,
     userHighlights: List<UserHighlight>,
     activeSelection: PaginatedSelection?,
     @Suppress("unused") onSelectionChange: (PaginatedSelection?) -> Unit,
@@ -3013,6 +2451,9 @@ internal fun TextWithEmphasis(
     val scope = rememberCoroutineScope()
     var pressedHighlightCfi by remember { mutableStateOf<String?>(null) }
     val density = LocalDensity.current
+    val highlightById = remember(userHighlights) {
+        userHighlights.associateBy { it.id }
+    }
     val latestTextLayoutResult = rememberUpdatedState(textLayoutResult)
     val latestOnLinkClick = rememberUpdatedState(onLinkClick)
     val latestOnGeneralTap = rememberUpdatedState(onGeneralTap)
@@ -3041,40 +2482,63 @@ internal fun TextWithEmphasis(
     data class UnderlineDrawInfo(val path: Path?, val effect: PathEffect?, val minX: Float, val maxX: Float, val y: Float, val decoStyle: String, val decoColor: Color)
 
     // --- CACHING DECORATIONS FOR PERFORMANCE ---
-    val cachedHighlights = remember(block, userHighlights, textLayoutResult, pressedHighlightCfi) {
+    // Ranges are resolved by the caller against the whole chapter and arrive ready to paint. Resolving
+    // them here instead, per block, is what let a sentence repeated across a chapter paint on every
+    // block holding a copy of it.
+    val cachedHighlights = remember(block, highlightRanges, textLayoutResult, pressedHighlightCfi) {
         val startTime = System.currentTimeMillis()
         val paths = mutableListOf<HighlightDrawInfo>()
         val layout = textLayoutResult
-        if (layout != null && userHighlights.isNotEmpty()) {
-            userHighlights.forEach { highlight ->
-                val range = getHighlightOffsetsInBlock(block, highlight)
-                if (range != null) {
+        if (layout != null && highlightRanges.isNotEmpty()) {
+            // One plan for both platforms. Merging same-colour, same-style ranges here means an
+            // overlap is filled once instead of once per highlight, so two translucent highlights over
+            // the same words no longer compound into a darker patch than either one alone.
+            val paintable = highlightRanges.mapNotNull { (highlightId, ranges) ->
+                highlightById[highlightId]?.let { PaintableHighlight(it, ranges) }
+            }
+            val plan = SharedNativeHighlightPaintPlan.build(paintable)
+            for (group in plan.groups) {
+                for (range in group.ranges) {
                     try {
-                        val blockStartAbs = getTextBlockCharOffset(block)
-                        val blockEndAbs = block.endCharOffsetInSource
-                            .takeIf { it > blockStartAbs }
-                            ?: (blockStartAbs + block.content.text.length)
-                        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                            "draw_highlight page=$pageIndex blockCfi=${block.cfi} " +
-                                "blockIndex=${block.blockIndex} blockAbs=$blockStartAbs..$blockEndAbs " +
-                                "highlightId=${highlight.id} highlightChapter=${highlight.chapterIndex} " +
-                                "highlightCfi=${highlight.cfi} range=$range " +
-                                "blockText='${highlightDiagSnippet(block.content.text)}'"
-                        )
-                        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-                            "draw_highlight surface=native_or_paginated page=$pageIndex blockIndex=${block.blockIndex} " +
-                                "blockCfi=${block.cfi} blockAbs=$blockStartAbs..$blockEndAbs range=$range " +
-                                "blockText='${highlightDiagSnippet(block.content.text)}' " +
-                                highlight.androidHighlightRenderLabel()
-                        )
                         val path = layout.getPathForRange(range.first, range.last + 1)
-                        paths.add(HighlightDrawInfo(path, highlight.renderColor(legacyAlpha = 0.4f), highlight.style, range))
-                        if (highlight.cfi == pressedHighlightCfi) {
-                            paths.add(HighlightDrawInfo(path, Color.Black.copy(alpha = 0.1f), HighlightStyle.BACKGROUND, range))
-                        }
+                        paths.add(HighlightDrawInfo(path, group.color, group.style, range))
                     } catch (e: Exception) {
                         Timber.tag("DecorationsDiag").e(e, "Highlight path out of bounds")
                     }
+                }
+            }
+            // Pressed state is drawn over the finished fills, not merged into them: it is a transient
+            // overlay on the highlight under the finger, and folding it into a group would recolour the
+            // neighbours it happens to overlap.
+            val pressed = highlightRanges
+                .mapNotNull { (highlightId, ranges) ->
+                    val highlight = highlightById[highlightId]
+                    if (highlight != null && highlight.cfi == pressedHighlightCfi) highlight to ranges else null
+                }
+                .map { (highlight, ranges) -> PaintableHighlight(highlight, ranges) }
+            for (range in SharedNativeHighlightPaintPlan.build(pressed).groups.flatMap { it.ranges }) {
+                try {
+                    paths.add(
+                        HighlightDrawInfo(
+                            path = layout.getPathForRange(range.first, range.last + 1),
+                            color = Color.Black.copy(alpha = 0.1f),
+                            style = HighlightStyle.BACKGROUND,
+                            range = range
+                        )
+                    )
+                } catch (e: Exception) {
+                    Timber.tag("DecorationsDiag").e(e, "Highlight path out of bounds")
+                }
+            }
+            highlightRanges.forEach { (highlightId, ranges) ->
+                val highlight = highlightById[highlightId] ?: return@forEach
+                ranges.forEach { range ->
+                    Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                        "draw_highlight page=$pageIndex blockCfi=${block.cfi} " +
+                            "blockIndex=${block.blockIndex} range=$range " +
+                            "highlightId=${highlight.id} highlightChapter=${highlight.chapterIndex} " +
+                            "blockText='${highlightDiagSnippet(block.content.text)}'"
+                    )
                 }
             }
         }
@@ -3349,9 +2813,13 @@ internal fun TextWithEmphasis(
         }
     }
 
+    /**
+     * The topmost highlight under [offset], or null.
+ *
+     * Hit-testing reads the same resolved ranges the draw pass paints, so the tappable area always
+     * matches what is visible. It walks them in reverse so a later highlight wins where two overlap.
+     */
     fun getHighlightAt(offset: Offset, layout: TextLayoutResult): Pair<UserHighlight, Rect>? {
-        if (block.cfi == null) return null
-
         // Optimization: Quick bounds check
         val charOffset = layout.getOffsetForPosition(offset)
         val lineIndex = layout.getLineForOffset(charOffset)
@@ -3364,24 +2832,24 @@ internal fun TextWithEmphasis(
             return null
         }
 
-        // Iterate highlights reversed (topmost first)
-        for (highlight in userHighlights.reversed()) {
-            val range = getHighlightOffsetsInBlock(block, highlight) ?: continue
-
-            if (charOffset in range) {
-                val blockStartAbs = getTextBlockCharOffset(block)
-                Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                    "tap_highlight page=$pageIndex blockCfi=${block.cfi} " +
-                        "blockIndex=${block.blockIndex} blockAbsStart=$blockStartAbs " +
-                        "charOffset=$charOffset absoluteCharOffset=${blockStartAbs + charOffset} " +
-                        "highlightId=${highlight.id} highlightCfi=${highlight.cfi} range=$range"
-                )
-                val path = layout.getPathForRange(range.first, range.last)
-                val bounds = path.getBounds()
-                return highlight to bounds
+        val blockStartAbs = getTextBlockCharOffset(block)
+        val hits = highlightHitsAt(
+            offset = charOffset,
+            highlights = highlightRanges.mapNotNull { (highlightId, ranges) ->
+                highlightById[highlightId]?.let { PaintableHighlight(it, ranges) }
             }
-        }
-        return null
+        )
+        val hit = hits.lastOrNull() ?: return null
+        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+            "tap_highlight page=$pageIndex blockCfi=${block.cfi} " +
+                "blockIndex=${block.blockIndex} blockAbsStart=$blockStartAbs " +
+                "charOffset=$charOffset absoluteCharOffset=${blockStartAbs + charOffset} " +
+                "highlightId=${hit.highlight.id} highlightCfi=${hit.highlight.cfi} range=${hit.range} " +
+                // Every highlight under the tap, not just the one opened. An overlap used to make the
+                // other one unreachable, so this is how that stays visible.
+                "overlapping=${hits.size}"
+        )
+        return hit.highlight to layout.getPathForRange(hit.range.first, hit.range.last + 1).getBounds()
     }
 
     fun logCutoffIfNeeded(

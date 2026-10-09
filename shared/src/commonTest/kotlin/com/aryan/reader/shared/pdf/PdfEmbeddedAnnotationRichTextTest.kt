@@ -44,4 +44,25 @@ class PdfEmbeddedAnnotationRichTextTest {
     fun `cdata payload is preserved as text`() {
         assertEquals("Kept", sharedPdfEmbeddedAnnotationRichText("<body><![CDATA[Kept]]></body>"))
     }
+
+    @Test
+    fun `multi-line comment containing a greater-than sign is removed whole`() {
+        // Needs BOTH properties to hold. A single-line comment is matched even without spanning
+        // newlines, because `.` already matches `>`, so `<!-- a > b -->` is fine either way. A
+        // multi-line comment with no `>` is also fine, because the generic `<[^>]*>` stripper
+        // spans newlines and eats it. Only the combination breaks: the prelude fails to match,
+        // and `<[^>]*>` then stops at the `>` mid-comment, leaking the rest of it into the note
+        // the user reads. PDF producers do emit comments like this.
+        val markup = "<body><!-- audited: score > 4\n     reviewed 2026 --><p>Kept</p></body>"
+
+        assertEquals("Kept", sharedPdfEmbeddedAnnotationRichText(markup).trimEnd())
+    }
+
+    @Test
+    fun `a greater-than sign inside cdata stays as text`() {
+        assertEquals(
+            "a > b",
+            sharedPdfEmbeddedAnnotationRichText("<body><![CDATA[a > b]]></body>"),
+        )
+    }
 }

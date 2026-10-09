@@ -74,6 +74,7 @@ import com.aryan.reader.shared.reader.MOBILE_EPUB_MAX_CACHED_BOOK_METADATA_BYTES
 import com.aryan.reader.shared.reader.MobileEpubExtractionCacheManifest
 import com.aryan.reader.shared.reader.MOBILE_EPUB_EXTRACTION_CACHE_VERSION
 import com.aryan.reader.shared.reader.matchesMobileEpubExtractionCache
+import com.aryan.reader.shared.reader.sharedMediaOverlayIndex
 import com.aryan.reader.shared.reader.toMobileEpubExtractionCacheChapter
 import com.aryan.reader.shared.reader.MobileEpubExtractionDirectoryMode
 import com.aryan.reader.shared.reader.mobileEpubExtractionLifecycle
@@ -486,22 +487,23 @@ class EpubParser(private val context: Context) {
         parseContent: Boolean = true
     ): EpubBook = withContext(Dispatchers.IO) {
         val metadataNodes = document.metadata.selectChildTagsByLocalName("meta")
+        val metaElements = metadataNodes.map { meta ->
+            MobileEpubMetaElement(
+                id = meta.getAttributeValue("id"),
+                name = meta.getAttributeValue("name"),
+                property = meta.getAttributeValue("property"),
+                content = meta.getAttributeValue("content"),
+                text = meta.textContent.trim().takeIf { it.isNotEmpty() },
+                refines = meta.getAttributeValue("refines")
+            )
+        }.toList()
         val metadata = resolveMobileEpubMetadata(
             sourceFileName = originalFilePathOrKey,
             title = document.metadata.selectFirstChildTag("dc:title")?.textContent,
             author = document.metadata.selectFirstChildTag("dc:creator")?.textContent,
             language = document.metadata.selectFirstChildTag("dc:language")?.textContent,
             description = document.metadata.selectFirstChildTag("dc:description")?.textContent,
-            metaElements = metadataNodes.map { meta ->
-                MobileEpubMetaElement(
-                    id = meta.getAttributeValue("id"),
-                    name = meta.getAttributeValue("name"),
-                    property = meta.getAttributeValue("property"),
-                    content = meta.getAttributeValue("content"),
-                    text = meta.textContent.trim().takeIf { it.isNotEmpty() },
-                    refines = meta.getAttributeValue("refines")
-                )
-            }.toList()
+            metaElements = metaElements
         )
         val metadataCoverId = getMetadataCoverId(document.metadata)
 
@@ -510,6 +512,18 @@ class EpubParser(private val context: Context) {
         val opfRelativePath = document.opfFilePath
         val opfParentDir = File(opfRelativePath).parentFile ?: File("")
         val manifestItems = getManifestItems(document.manifest, opfParentDir)
+        // Package-level overlay facts: which spine items narrate, total runtime, narrator. Read
+        // from the OPF alone, so a book with narration costs nothing here beyond what parsing the
+        // manifest already cost. Shared with the iOS loader so both platforms answer identically.
+        val mediaOverlays = sharedMediaOverlayIndex(
+            manifest = manifestItems,
+            spineIds = mobileEpubSpineItemIds(
+                document.spine.selectChildTagsByLocalName("itemref")
+                    .map { it.getAttributeValue("idref") }
+                    .toList()
+            ),
+            metaElements = metaElements
+        )
         var pageTargets: List<EpubPageTarget> = emptyList()
         val ncxMetadataMap = mutableMapOf<String, NcxMetadata>()
         val extractionRoot = File(extractionBasePath)
@@ -610,7 +624,8 @@ class EpubParser(private val context: Context) {
             css = cssContent,
             seriesName = metadata.seriesName,
             seriesIndex = metadata.seriesIndex,
-            description = metadata.description
+            description = metadata.description,
+            mediaOverlays = mediaOverlays
         )
     }
 
@@ -808,7 +823,12 @@ class EpubParser(private val context: Context) {
                     id = itemElement.getAttribute("id"),
                     absPath = pathRelativeToEpubRoot,
                     mediaType = itemElement.getAttribute("media-type"),
-                    properties = itemElement.getAttribute("properties")
+                    properties = itemElement.getAttribute("properties"),
+                    // Media overlays: the smil item that narrates this one. Additive only --
+                    // `EPUB RS §9` requires a reader without overlay support to ignore both this
+                    // attribute and the smil items.
+                    mediaOverlay = itemElement.getAttributeValue("media-overlay")
+                        ?.trim()?.takeIf(String::isNotEmpty)
                 )
             }.associateBy { it.id }
     }

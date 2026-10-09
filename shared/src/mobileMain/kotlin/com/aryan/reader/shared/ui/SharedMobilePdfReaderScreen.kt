@@ -15,6 +15,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -78,6 +79,7 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Fonts
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
@@ -99,7 +101,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -151,6 +152,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -201,6 +203,8 @@ import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.DockLocation
 import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderExternalLookupAction
+import com.aryan.reader.shared.ReaderRecapRequest
+import com.aryan.reader.shared.ReaderRecapSection
 import com.aryan.reader.shared.SharedSummaryCache
 import com.aryan.reader.shared.ReaderAiResultState
 import com.aryan.reader.shared.ReaderExtrasState
@@ -259,7 +263,9 @@ import com.aryan.reader.shared.pdf.resolveSharedPdfBarDropX
 import com.aryan.reader.shared.pdf.resolveSharedPdfDockSnapLocation
 import com.aryan.reader.shared.pdf.resolveSharedPdfSideWheelClearOfBarBand
 import com.aryan.reader.shared.pdf.resolveSharedPdfSideWheelDropY
+import com.aryan.reader.shared.pdf.sharedPdfPopupClearanceAboveBarPx
 import com.aryan.reader.shared.pdf.sharedPdfPopupMaxHeightDp
+import com.aryan.reader.shared.pdf.sharedPdfSideWheelPopupSidePadPx
 import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockSticky
 import com.aryan.reader.shared.pdf.launchSharedPdfDockGlide
 import com.aryan.reader.shared.pdf.pdfTextDockKeyboardLiftPx
@@ -398,6 +404,19 @@ fun SharedMobilePdfReaderScreen(
     cloudTtsVoiceId: String = com.aryan.reader.shared.DEFAULT_CLOUD_TTS_SPEAKER_ID,
     onCloudTtsVoiceChange: (String) -> Unit = {},
     onClearCloudTtsCache: () -> Unit = {},
+    // Android benchmark (AiVoicesTab): Fish catalog + favorites + language
+    // filter for the reader TTS sheet. Defaulted; iOS passes live values.
+    cloudFishVoices: List<com.aryan.reader.shared.ReaderFishVoice> = emptyList(),
+    expectCloudFishVoices: Boolean = false,
+    cloudFishVoicesLoading: Boolean = false,
+    favoriteCloudVoiceIds: Set<String> = emptySet(),
+    onToggleFavoriteCloudVoice: (String) -> Unit = {},
+    cloudVoiceLanguage: String? = null,
+    onCloudVoiceLanguageChange: (String) -> Unit = {},
+    onClearCloudVoiceSamples: () -> Unit = {},
+    // Android parity (executeRecapLogic): chained recap with cache
+    // read-through + progress. Null keeps the legacy single-shot path.
+    onAiRecapAction: ((ReaderRecapRequest) -> Unit)? = null,
     onAiAction: (ReaderAiFeature, String) -> Unit = { _, _ -> },
     onAiResultDismiss: () -> Unit = {},
     onOpenAiHub: () -> Unit = {},
@@ -489,6 +508,15 @@ fun SharedMobilePdfReaderScreen(
         cloudTtsVoiceId = cloudTtsVoiceId,
         onCloudTtsVoiceChange = onCloudTtsVoiceChange,
         onClearCloudTtsCache = onClearCloudTtsCache,
+        cloudFishVoices = cloudFishVoices,
+        expectCloudFishVoices = expectCloudFishVoices,
+        cloudFishVoicesLoading = cloudFishVoicesLoading,
+        favoriteCloudVoiceIds = favoriteCloudVoiceIds,
+        onToggleFavoriteCloudVoice = onToggleFavoriteCloudVoice,
+        cloudVoiceLanguage = cloudVoiceLanguage,
+        onCloudVoiceLanguageChange = onCloudVoiceLanguageChange,
+        onClearCloudVoiceSamples = onClearCloudVoiceSamples,
+        onAiRecapAction = onAiRecapAction,
         onAiAction = onAiAction,
         onAiResultDismiss = onAiResultDismiss,
         onOpenAiHub = onOpenAiHub,
@@ -579,6 +607,19 @@ fun SharedMobilePdfReaderHost(
     cloudTtsVoiceId: String = com.aryan.reader.shared.DEFAULT_CLOUD_TTS_SPEAKER_ID,
     onCloudTtsVoiceChange: (String) -> Unit = {},
     onClearCloudTtsCache: () -> Unit = {},
+    // Android benchmark (AiVoicesTab): Fish catalog + favorites + language
+    // filter for the reader TTS sheet. Defaulted; iOS passes live values.
+    cloudFishVoices: List<com.aryan.reader.shared.ReaderFishVoice> = emptyList(),
+    expectCloudFishVoices: Boolean = false,
+    cloudFishVoicesLoading: Boolean = false,
+    favoriteCloudVoiceIds: Set<String> = emptySet(),
+    onToggleFavoriteCloudVoice: (String) -> Unit = {},
+    cloudVoiceLanguage: String? = null,
+    onCloudVoiceLanguageChange: (String) -> Unit = {},
+    onClearCloudVoiceSamples: () -> Unit = {},
+    // Android parity (executeRecapLogic): chained recap with cache
+    // read-through + progress. Null keeps the legacy single-shot path.
+    onAiRecapAction: ((ReaderRecapRequest) -> Unit)? = null,
     onAiAction: (ReaderAiFeature, String) -> Unit = { _, _ -> },
     onAiResultDismiss: () -> Unit = {},
     onOpenAiHub: () -> Unit = {},
@@ -917,6 +958,22 @@ fun SharedMobilePdfReaderHost(
     var pendingTtsStartAtLastChunk by remember(readerSessionKey) { mutableStateOf(false) }
     var pendingTtsPlayWhenReady by remember(readerSessionKey) { mutableStateOf(true) }
     var ttsHighlightBounds by remember(readerSessionKey) { mutableStateOf<List<PdfPageBounds>>(emptyList()) }
+    var lastCloudTtsCompletionCount by remember(readerSessionKey) { mutableStateOf(cloudTtsState.completionCount) }
+    // Pins cloud chaining to this book (engines are app-shared, like EPUB's
+    // ttsSessionBookId): a cloud session finishing in another book must not
+    // hijack this reader's page turn.
+    var pdfCloudTtsBookId by remember(readerSessionKey) { mutableStateOf<String?>(null) }
+    // Clean->raw mapping for the active TTS page (Android indexMap parity).
+    // Chunk offsets are clean-text offsets; highlight must map them back
+    // through this before `rectsForRangeNormalized`, else highlights land on
+    // the wrong glyphs / vanish on hyphenated pages.
+    var ttsProcessed by remember(readerSessionKey) {
+        mutableStateOf<com.aryan.reader.shared.pdf.PdfProcessedText?>(null)
+    }
+    // True when the queued `pendingTtsStart` belongs to a cloud start that is
+    // waiting on the async text session (see toggleCloudTts). Local starts
+    // via requestTts always use the local engine.
+    var pendingTtsCloud by remember(readerSessionKey) { mutableStateOf(false) }
     var lastTtsCompletionCount by remember(readerSessionKey) { mutableStateOf(pdfTts.completionCount) }
     var hasOwnedTts by remember(readerSessionKey) { mutableStateOf(false) }
     LaunchedEffect(readerSessionKey, ownsTts) {
@@ -930,7 +987,10 @@ fun SharedMobilePdfReaderHost(
             hasOwnedTts = false
             pendingTtsStart = null
             pendingTtsStartAtLastChunk = false
+            pendingTtsCloud = false
+            pdfCloudTtsBookId = null
             ttsHighlightBounds = emptyList()
+            ttsProcessed = null
         }
     }
     val ttsTextSession = rememberPdfTextPageSession(book, ttsPageIndex, pdfPassword)
@@ -1104,6 +1164,11 @@ fun SharedMobilePdfReaderHost(
     val isPdfTtsPlayingOrLoading =
         pdfTts.state == SharedMobileEpubLocalTtsState.SPEAKING || pendingTtsStart != null ||
             cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
+    // Highlight + page gating (renderers, FAB): a paused local session keeps
+    // its highlight, and cloud speech counts exactly like device speech —
+    // otherwise cloud highlights never reach the page surface.
+    val isPdfTtsHighlightActive = pdfTts.isSessionActive || pendingTtsStart != null ||
+        cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
     val pdfSliderBottomPadding = sharedMobilePdfSliderBottomPadding(pdfBottomChromePadding, isJumpHistoryVisible)
     // In Always Show mode vertical content is anchored below the status bar
     // so the first page never draws underneath it. In Sync with Menus the
@@ -1223,7 +1288,10 @@ fun SharedMobilePdfReaderHost(
         if (ownsTts) cloudTts?.stop()
         pendingTtsStart = null
         pendingTtsStartAtLastChunk = false
+        pendingTtsCloud = false
+        pdfCloudTtsBookId = null
         ttsHighlightBounds = emptyList()
+        ttsProcessed = null
     }
 
     fun dispatchNativePdfAction(
@@ -1329,15 +1397,26 @@ fun SharedMobilePdfReaderHost(
         }
     }
 
+    /**
+     * Starts local PDF TTS.
+     *
+     * A null [pageIndex] means "the most visible page" (center-based
+     * `currentPdfHistoryPage()`), not the last committed `readerState.pageIndex`
+     * which lags while scrolling. Toolbar TTS passes null; selection TTS
+     * passes an explicit display page + raw Pdfium char index. [startCharIndex]
+     * is a RAW Pdfium index and is mapped to clean speech text inside
+     * `pageFromRawPdfium` (Android `indexMap` parity).
+     */
     fun requestTts(
-        pageIndex: Int = readerState.pageIndex,
+        pageIndex: Int? = null,
         startCharIndex: Int = 0,
         startAtLastChunk: Boolean = false,
         playWhenReady: Boolean = true
     ) {
         if (!ownsTts) return
         cloudTts?.stop()
-        val target = pageIndex.coerceIn(0, (displayPageCount - 1).coerceAtLeast(0))
+        val target = (pageIndex ?: currentPdfHistoryPage())
+            .coerceIn(0, (displayPageCount - 1).coerceAtLeast(0))
         pdfTts.prepare()
         ttsPageIndex = sharedPdfPdfPageIndexAt(virtualLayout, target)
             ?: sharedPdfNearestPdfPageIndex(virtualLayout, target)
@@ -1355,11 +1434,33 @@ fun SharedMobilePdfReaderHost(
             cloudTtsState.isPlaying || cloudTtsState.isLoading -> controller.pause()
             cloudTtsState.isPaused -> controller.resume()
             else -> {
-                val session = ttsTextSession ?: return
+                // Cloud starts from the most visible page too (not the stale
+                // committed page), honoring a pending selection start when
+                // one was just requested.
+                val targetDisplay = currentPdfHistoryPage()
+                    .coerceIn(0, (displayPageCount - 1).coerceAtLeast(0))
+                val targetPdf = sharedPdfPdfPageIndexAt(virtualLayout, targetDisplay)
+                    ?: sharedPdfNearestPdfPageIndex(virtualLayout, targetDisplay)
+                    ?: targetDisplay.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+                val session = ttsTextSession?.takeIf { ttsPageIndex == targetPdf }
+                ttsPageIndex = targetPdf
+                navigateToPage(targetDisplay, recordHistory = false, reason = PdfNavigationReason.TTS)
+                if (session == null) {
+                    // Text session for the new page loads async; queue the
+                    // cloud start behind it like the local path.
+                    pendingTtsStart = pendingTtsStart ?: 0
+                    pendingTtsStartAtLastChunk = false
+                    pendingTtsCloud = true
+                    return
+                }
                 pdfTts.stop()
-                val source = session.textForRange(0, session.pageCharCount).orEmpty()
-                val planned = PdfTtsSessionPlanner.page(ttsPageIndex, source, 0)
+                val raw = session.textForRange(0, session.pageCharCount).orEmpty()
+                val rawStart = pendingTtsStart ?: 0
+                pendingTtsStart = null
+                val planned = PdfTtsSessionPlanner.pageFromRawPdfium(targetPdf, raw, rawStart)
+                ttsProcessed = planned.processed
                 if (planned.chunks.isNotEmpty()) {
+                    pdfCloudTtsBookId = book.id
                     controller.start(planned.chunks, pdfCardTitle, book.id)
                 }
             }
@@ -2147,20 +2248,35 @@ fun SharedMobilePdfReaderHost(
         if (!ownsTts) return@LaunchedEffect
         val start = pendingTtsStart ?: return@LaunchedEffect
         val session = ttsTextSession ?: return@LaunchedEffect
-        val source = session.textForRange(0, session.pageCharCount).orEmpty()
-        val planned = PdfTtsSessionPlanner.page(ttsPageIndex, source, start)
+        // Raw Pdfium text + raw start index; planning normalizes and maps
+        // via indexMap (Android parity). Never plan on raw text directly.
+        val raw = session.textForRange(0, session.pageCharCount).orEmpty()
+        val planned = PdfTtsSessionPlanner.pageFromRawPdfium(ttsPageIndex, raw, start)
         if (planned.chunks.isEmpty()) {
             val next = PdfTtsSessionPlanner.nextPage(ttsPageIndex, pageCount)
             if (next == null) {
                 pendingTtsStart = null
+                pendingTtsCloud = false
+                ttsProcessed = null
                 pdfTts.stop()
             } else {
                 ttsPageIndex = next
                 pendingTtsStart = 0
+                // Keep the queued engine (cloud vs local) across the skip.
                 navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, next), recordHistory = false, reason = PdfNavigationReason.TTS)
             }
+        } else if (pendingTtsCloud && cloudTts != null) {
+            pendingTtsStart = null
+            pendingTtsStartAtLastChunk = false
+            pendingTtsCloud = false
+            ttsProcessed = planned.processed
+            pdfTts.stop()
+            pdfCloudTtsBookId = book.id
+            cloudTts.start(planned.chunks, pdfCardTitle, book.id)
         } else {
             pendingTtsStart = null
+            pendingTtsCloud = false
+            ttsProcessed = planned.processed
             pdfTts.start(
                 chunks = planned.chunks,
                 bookTitle = pdfCardTitle,
@@ -2172,16 +2288,27 @@ fun SharedMobilePdfReaderHost(
         }
     }
 
-    LaunchedEffect(readerSessionKey, pdfTts.progress.currentChunk, ttsTextSession, ttsPageIndex, ownsTts) {
+    // Device TTS wins while it has a chunk; otherwise the cloud chunk drives
+    // highlight + follow, so cloud speech highlights exactly like device TTS.
+    val activePdfTtsChunk = PdfTtsSessionPlanner.activeChunk(
+        pdfTts.progress.currentChunk, cloudTtsState.progress.currentChunk
+    )
+    LaunchedEffect(readerSessionKey, pdfTts.progress.currentChunk, cloudTtsState.progress.currentChunk, ttsTextSession, ttsPageIndex, ttsProcessed, ownsTts) {
         if (!ownsTts) return@LaunchedEffect
         val session = ttsTextSession
-        val range = PdfTtsSessionPlanner.highlightRange(pdfTts.progress.currentChunk, session?.pageCharCount ?: 0)
+        // Chunk offsets are clean-text offsets; map back to raw Pdfium via
+        // the stored indexMap (Android parity). Without this the highlight
+        // rects miss on hyphenated / newline-heavy pages.
+        val range = PdfTtsSessionPlanner.rawHighlightRange(ttsProcessed, activePdfTtsChunk)
+            ?: PdfTtsSessionPlanner.highlightRange(activePdfTtsChunk, session?.pageCharCount ?: 0)
         ttsHighlightBounds = if (session != null && range != null) {
             session.rectsForRangeNormalized(range.start, range.length)
         } else {
             emptyList()
         }
         if (range != null) {
+            // Animated TTS follow (see vertical animateNavigation): an
+            // instant snap on every chunk change reads as jarring stutter.
             navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, ttsPageIndex), recordHistory = false, centerFraction = ttsHighlightBounds.centerYFraction(), reason = PdfNavigationReason.TTS)
         }
     }
@@ -2193,12 +2320,14 @@ fun SharedMobilePdfReaderHost(
         val next = PdfTtsSessionPlanner.nextPage(ttsPageIndex, pageCount)
         if (next != null) {
             ttsPageIndex = next
+            ttsProcessed = null
             navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, next), recordHistory = false, reason = PdfNavigationReason.TTS)
             val prefetched = prefetchedTtsTextSession.takeIf { prefetchedTtsPageIndex == next }
-            val source = prefetched?.textForRange(0, prefetched.pageCharCount).orEmpty()
-            val planned = PdfTtsSessionPlanner.page(next, source)
+            val raw = prefetched?.textForRange(0, prefetched.pageCharCount).orEmpty()
+            val planned = PdfTtsSessionPlanner.pageFromRawPdfium(next, raw, 0)
             if (planned.chunks.isNotEmpty()) {
                 pendingTtsStart = null
+                ttsProcessed = planned.processed
                 pdfTts.start(planned.chunks, pdfCardTitle, bookId = book.id)
             } else {
                 pendingTtsStart = 0
@@ -2206,6 +2335,48 @@ fun SharedMobilePdfReaderHost(
         } else {
             pdfTts.stop()
             ttsHighlightBounds = emptyList()
+            ttsProcessed = null
+        }
+    }
+
+    // Cloud parity with the local chain above (and EPUB's cloudChain): a page
+    // finishing naturally starts the next page as a continued session. Without
+    // this cloud speech stopped at the first page end.
+    LaunchedEffect(readerSessionKey, cloudTtsState.completionCount, ownsTts) {
+        if (!ownsTts) return@LaunchedEffect
+        if (cloudTtsState.completionCount == lastCloudTtsCompletionCount) return@LaunchedEffect
+        lastCloudTtsCompletionCount = cloudTtsState.completionCount
+        val controller = cloudTts ?: return@LaunchedEffect
+        if (pdfCloudTtsBookId != book.id) return@LaunchedEffect
+        val next = PdfTtsSessionPlanner.nextPage(ttsPageIndex, pageCount)
+        if (next != null) {
+            ttsPageIndex = next
+            ttsProcessed = null
+            navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, next), recordHistory = false, reason = PdfNavigationReason.TTS)
+            val prefetched = prefetchedTtsTextSession.takeIf { prefetchedTtsPageIndex == next }
+            if (prefetched != null) {
+                val planned = PdfTtsSessionPlanner.pageFromRawPdfium(
+                    next, prefetched.textForRange(0, prefetched.pageCharCount).orEmpty(), 0
+                )
+                if (planned.chunks.isNotEmpty()) {
+                    pendingTtsStart = null
+                    ttsProcessed = planned.processed
+                    controller.start(planned.chunks, pdfCardTitle, book.id, continueSession = true)
+                } else {
+                    pendingTtsStart = 0
+                    pendingTtsCloud = true
+                }
+            } else {
+                // Text session for the next page loads async; queue the
+                // continued start behind it via the pending effect.
+                pendingTtsStart = 0
+                pendingTtsCloud = true
+            }
+        } else {
+            controller.stop()
+            pdfCloudTtsBookId = null
+            ttsHighlightBounds = emptyList()
+            ttsProcessed = null
         }
     }
 
@@ -2677,10 +2848,14 @@ fun SharedMobilePdfReaderHost(
                         navigationRequestPage = navigationRequestPage,
                         navigationRequestToken = navigationRequestToken,
                         navigationCenterFraction = navigationCenterFraction,
+                        // TTS follow animates in vertical mode too (paginated
+                        // already animates via animatesPagination); instant
+                        // snaps on every chunk read as jarring stutter.
+                        animateNavigation = navigationReason == PdfNavigationReason.TTS,
                         showPageGap = showVerticalPageGap,
                         showPageNumberOverlay = showPageNumberOverlay,
                         searchResults = searchResults,
-                        ttsPageIndex = ttsPageIndex.takeIf { pdfTts.isSessionActive || pendingTtsStart != null },
+                        ttsPageIndex = ttsPageIndex.takeIf { isPdfTtsHighlightActive },
                         ttsHighlightBounds = ttsHighlightBounds,
                         activeStroke = activeStroke,
                         activeStrokeOwnerPdfPage = activeStrokeOwnerPdfPage,
@@ -2775,7 +2950,7 @@ fun SharedMobilePdfReaderHost(
                         rightToLeftPagination = rightToLeftPagination,
                         showPageNumberOverlay = showPageNumberOverlay,
                         searchResults = searchResults,
-                        ttsPageIndex = ttsPageIndex.takeIf { pdfTts.isSessionActive || pendingTtsStart != null },
+                        ttsPageIndex = ttsPageIndex.takeIf { isPdfTtsHighlightActive },
                         ttsHighlightBounds = ttsHighlightBounds,
                         activeStroke = activeStroke,
                         activeStrokeOwnerPdfPage = activeStrokeOwnerPdfPage,
@@ -2959,8 +3134,19 @@ fun SharedMobilePdfReaderHost(
                     exit = slideOutVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeOut(tween(PdfChromeMotionDurationMillis)),
                     modifier = Modifier.align(Alignment.BottomCenter)
                 ) {
+                    // Captured so the (non-composable) caption lambda can still localize.
+                    // String.format is JVM-only, so it cannot be used on Kotlin/Native.
+                    val jumpBarStrings = LocalSharedStringResolver.current
+                    val jumpBarLabels = SharedPdfJumpHistoryBarLabels(
+                        jumpBack = jumpBarStrings.string("content_desc_jump_back", "Previous jump"),
+                        jumpForward = jumpBarStrings.string("content_desc_jump_forward", "Next jump"),
+                        clear = jumpBarStrings.string("action_clear", "Clear"),
+                        page = { page -> jumpBarStrings.string("pdf_page_short", "Page %1\$d", page) }
+                    )
                     SharedMobilePdfJumpHistoryBar(
-                        history = jumpHistory,
+                        backPage = jumpHistory.backPage,
+                        forwardPage = jumpHistory.forwardPage,
+                        labels = jumpBarLabels,
                         onBack = {
                             val refreshedHistory = jumpHistory.updateCurrentLocation(
                                 currentPageIndex = currentPdfHistoryPage(),
@@ -3038,7 +3224,10 @@ fun SharedMobilePdfReaderHost(
                             if (ownsTts) pdfTts.stop()
                             pendingTtsStart = null
                             pendingTtsStartAtLastChunk = false
+                            pendingTtsCloud = false
+                            pdfCloudTtsBookId = null
                             ttsHighlightBounds = emptyList()
+                            ttsProcessed = null
                         },
                         overlaySize = ttsOverlaySize,
                         onOverlaySizeChange = {
@@ -3277,6 +3466,9 @@ fun SharedMobilePdfReaderHost(
                                 }
                             },
                             modifier = Modifier.padding(bottom = ttsBottomPadding),
+                            credits = aiCredits,
+                            walletMicros = walletMicros,
+                            walletMigrated = walletMigrated,
                         )
                     }
                 }
@@ -3445,8 +3637,22 @@ fun SharedMobilePdfReaderHost(
                     modifier = Modifier.align(Alignment.BottomCenter)
                 ) {
                     SharedMobilePdfSearchNavigationPill(
-                        activeIndex = readerState.activeSearchResultIndex,
-                        resultCount = searchResults.size,
+                        text = if (readerState.activeSearchResultIndex in searchResults.indices) {
+                            readerString(
+                                "pdf_search_result_position",
+                                "Result %1\$d / %2\$d",
+                                readerState.activeSearchResultIndex + 1,
+                                searchResults.size
+                            )
+                        } else {
+                            readerQuantityString(
+                                "search_results_count",
+                                searchResults.size,
+                                "%d result",
+                                "%d results",
+                                searchResults.size
+                            )
+                        },
                         highlightMode = readerState.searchHighlightMode,
                         onToggleHighlightMode = {
                             dispatch(SharedPdfReaderAction.SearchHighlightModeToggled)
@@ -3454,6 +3660,8 @@ fun SharedMobilePdfReaderHost(
                         onPrevious = { navigateToSearchResult(readerState.activeSearchResultIndex - 1) },
                         onNext = { navigateToSearchResult(readerState.activeSearchResultIndex + 1) },
                         onShowResults = { dispatch(SharedPdfReaderAction.SearchResultsPanelToggled) },
+                        isPrevEnabled = readerState.activeSearchResultIndex > 0,
+                        isNextEnabled = readerState.activeSearchResultIndex < searchResults.size - 1,
                         modifier = Modifier
                             .padding(bottom = 24.dp)
                     )
@@ -3563,7 +3771,12 @@ fun SharedMobilePdfReaderHost(
                             0.dp
                         }
                         val popupBottomPad = if (popupAboveDock && !isAnnotationSideDocked) {
-                            with(density) { (boxMaxHeightPx - dockTopYPx).toDp() } + popupDockBottomInset + popupMargin
+                            with(density) {
+                                sharedPdfPopupClearanceAboveBarPx(
+                                    dockTopYPx = dockTopYPx,
+                                    boxHeightPx = boxMaxHeightPx,
+                                ).toDp()
+                            } + popupDockBottomInset + popupMargin
                         } else {
                             0.dp
                         }
@@ -3578,12 +3791,26 @@ fun SharedMobilePdfReaderHost(
                             0.dp
                         }
                         val popupSideTopPad = if (isAnnotationSideDocked && !annotationWheelInBottomHalf) {
-                            with(density) { annotationWheelYpx.toDp() }
+                            with(density) {
+                                sharedPdfSideWheelPopupSidePadPx(
+                                    wheelYPx = annotationWheelYpx,
+                                    wheelHeightPx = annotationWheelHeightPx,
+                                    boxHeightPx = boxMaxHeightPx,
+                                    wheelInBottomHalf = false,
+                                ).toDp()
+                            }
                         } else {
                             0.dp
                         }
                         val popupSideBottomPad = if (isAnnotationSideDocked && annotationWheelInBottomHalf) {
-                            with(density) { (boxMaxHeightPx - annotationWheelYpx - annotationWheelHeightPx).toDp() }
+                            with(density) {
+                                sharedPdfSideWheelPopupSidePadPx(
+                                    wheelYPx = annotationWheelYpx,
+                                    wheelHeightPx = annotationWheelHeightPx,
+                                    boxHeightPx = boxMaxHeightPx,
+                                    wheelInBottomHalf = true,
+                                ).toDp()
+                            }
                         } else {
                             0.dp
                         }
@@ -4677,7 +4904,6 @@ fun SharedMobilePdfReaderHost(
                     isMainTtsActive = isPdfTtsPlayingOrLoading,
                     ttsBookTitle = book.title?.takeIf { it.isNotBlank() } ?: book.displayName,
                     onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
-                    showUsageBadge = aiCredits != null,
                     walletMigrated = walletMigrated,
                 )
             }
@@ -4695,8 +4921,11 @@ fun SharedMobilePdfReaderHost(
                     noteAnnotationId = null
                 },
                 onReadAloud = {
+                    // Annotations are keyed by PDF page; requestTts takes a
+                    // display page, so map once here (not inside requestTts).
                     requestTts(
-                        pageIndex = annotation.pageIndex,
+                        pageIndex = sharedPdfDisplayIndexFor(virtualLayout, annotation.pageIndex)
+                            ?: annotation.pageIndex,
                         startCharIndex = annotation.rangeStartIndex ?: 0,
                     )
                     noteAnnotationId = null
@@ -4775,10 +5004,37 @@ fun SharedMobilePdfReaderHost(
                 }
             },
             onGenerateRecap = {
-                val pages = hubPageSessions.map { session ->
-                    session?.let { it.textForRange(0, it.pageCharCount) }
+                val chainedRecap = onAiRecapAction
+                if (chainedRecap != null) {
+                    // Window sessions are newest-first; past pages resolve
+                    // oldest-first so cache indices ascend like chapters.
+                    val texts = hubPageSessions.map { session ->
+                        session?.let { it.textForRange(0, it.pageCharCount) }.orEmpty()
+                    }
+                    val pastPairs = texts.drop(1)
+                        .mapIndexed { back, text -> (hubBasePage - 1 - back) to text }
+                        .reversed()
+                    chainedRecap(
+                        ReaderRecapRequest(
+                            bookTitle = hubBookTitle,
+                            sectionIndex = hubBasePage,
+                            pastSections = pastPairs.map { (pageIndex, text) ->
+                                ReaderRecapSection(
+                                    title = "Page ${pageIndex + 1}",
+                                    text = text,
+                                )
+                            },
+                            currentText = texts.firstOrNull().orEmpty(),
+                            currentTitle = hubPageTitle,
+                            summaryCache = summaryCache,
+                        )
+                    )
+                } else {
+                    val pages = hubPageSessions.map { session ->
+                        session?.let { it.textForRange(0, it.pageCharCount) }
+                    }
+                    buildPdfAiHubRecapText(pages)?.let { onAiAction(ReaderAiFeature.RECAP, it) }
                 }
-                buildPdfAiHubRecapText(pages)?.let { onAiAction(ReaderAiFeature.RECAP, it) }
             },
             onClearAiResult = { pendingSummarySave = null; onAiResultDismiss() },
             onDeleteCached = { entry ->
@@ -4802,6 +5058,15 @@ fun SharedMobilePdfReaderHost(
             result.title == ReaderAiFeature.SUMMARIZE.displayName
         ) {
             summaryCache?.saveSummary(pending.first, pending.second, pending.third, result.text)
+            aiCacheRevision++
+        }
+    }
+    // Android parity (executeRecapLogic cache backfill): chained recaps save
+    // past-page summaries into the shared cache, so refresh the hub's cache
+    // view when a recap finishes.
+    LaunchedEffect(readerExtrasState.aiResult.isLoading, readerExtrasState.aiResult.title) {
+        val result = readerExtrasState.aiResult
+        if (!result.isLoading && result.title == ReaderAiFeature.RECAP.displayName) {
             aiCacheRevision++
         }
     }
@@ -5000,6 +5265,14 @@ fun SharedMobilePdfReaderHost(
             cloudTtsVoiceId = cloudTtsVoiceId,
             onCloudTtsVoiceChange = onCloudTtsVoiceChange,
             onClearCloudTtsCache = onClearCloudTtsCache,
+            fishVoices = cloudFishVoices,
+            expectFishVoices = expectCloudFishVoices,
+            fishVoicesLoading = cloudFishVoicesLoading,
+            favoriteCloudVoiceIds = favoriteCloudVoiceIds,
+            onToggleFavoriteCloudVoice = onToggleFavoriteCloudVoice,
+            cloudVoiceLanguage = cloudVoiceLanguage,
+            onCloudVoiceLanguageChange = onCloudVoiceLanguageChange,
+            onClearCloudVoiceSamples = onClearCloudVoiceSamples,
         )
     }
     if (showNewPdfTabSheet) {
@@ -5313,7 +5586,7 @@ private fun SharedMobilePdfReaderTopBar(
                 }) {
                     Icon(Icons.Default.MoreVert, contentDescription = readerString("tooltip_more_options", "PDF options"))
                 }
-                DropdownMenu(
+                SharedDropdownMenu(
                     expanded = showMoreMenu,
                     onDismissRequest = { showMoreMenu = false }
                 ) {
@@ -5771,10 +6044,12 @@ private fun SharedMobilePdfToolbarCustomizationSheet(
     }
 }
 
+/**
+ * Non-blocking top strip shown while a PDF text-view reflow is generated.
+ * Android benchmark (`pdf/PdfToolbars.kt`).
+ */
 @Composable
-private fun SharedMobilePdfReflowProgressOverlay(progress: Float) {
-    // Android parity (PdfToolbars.ReflowProgressOverlay): a top strip card
-    // with title, percent and linear progress — non-blocking.
+fun SharedMobilePdfReflowProgressOverlay(progress: Float) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         modifier = Modifier.fillMaxWidth(),
@@ -6302,9 +6577,8 @@ private fun SharedMobilePdfPagesDrawerPage(
                     }
                 }
             }
-            SharedMobileLazyListScrollbar(
-                state = listState,
-                itemCount = pageRows.size,
+            SharedDrawerScrollbar(
+                listState = listState,
                 modifier = Modifier.align(Alignment.CenterEnd)
             )
         }
@@ -6414,50 +6688,11 @@ private fun SharedMobilePdfChaptersDrawerPage(
                     )
                 }
             }
-            SharedMobileLazyListScrollbar(
-                state = listState,
-                itemCount = visibleEntries.size,
+            SharedDrawerScrollbar(
+                listState = listState,
                 modifier = Modifier.align(Alignment.CenterEnd)
             )
         }
-    }
-}
-
-@Composable
-private fun SharedMobileLazyListScrollbar(
-    state: androidx.compose.foundation.lazy.LazyListState,
-    itemCount: Int,
-    modifier: Modifier = Modifier
-) {
-    if (itemCount <= 1) return
-    val visibleCount = state.layoutInfo.visibleItemsInfo.size.coerceAtLeast(1)
-    if (visibleCount >= itemCount) return
-    val scope = rememberCoroutineScope()
-    var trackHeightPx by remember { mutableStateOf(1) }
-    val thumbFraction = (visibleCount.toFloat() / itemCount).coerceIn(0.08f, 1f)
-    val maxFirst = (itemCount - visibleCount).coerceAtLeast(1)
-    val progress = (state.firstVisibleItemIndex.toFloat() / maxFirst).coerceIn(0f, 1f)
-    val thumbColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
-    Canvas(
-        modifier = modifier
-            .width(12.dp)
-            .fillMaxHeight()
-            .onSizeChanged { trackHeightPx = it.height.coerceAtLeast(1) }
-            .pointerInput(itemCount, visibleCount) {
-                detectDragGestures { change, _ ->
-                    val target = ((change.position.y / trackHeightPx) * maxFirst).toInt().coerceIn(0, maxFirst)
-                    scope.launch { state.scrollToItem(target) }
-                }
-            }
-    ) {
-        val thumbHeight = size.height * thumbFraction
-        val thumbTop = (size.height - thumbHeight) * progress
-        drawRoundRect(
-            color = thumbColor,
-            topLeft = Offset(size.width - 4.dp.toPx(), thumbTop),
-            size = androidx.compose.ui.geometry.Size(3.dp.toPx(), thumbHeight),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx())
-        )
     }
 }
 
@@ -6510,7 +6745,7 @@ private fun SharedMobilePdfBookmarksDrawerPage(
                 badge = {
                     Box {
                         IconButton(onClick = { menuBookmark = bookmark }) { Icon(Icons.Default.MoreVert, contentDescription = readerString("content_desc_more_options_bookmark", "Bookmark options"), modifier = Modifier.size(18.dp)) }
-                        DropdownMenu(expanded = menuBookmark?.pageIndex == bookmark.pageIndex, onDismissRequest = { menuBookmark = null }) {
+                        SharedDropdownMenu(expanded = menuBookmark?.pageIndex == bookmark.pageIndex, onDismissRequest = { menuBookmark = null }) {
                             DropdownMenuItem(text = { Text("Rename") }, onClick = { renameBookmark = bookmark; menuBookmark = null })
                             DropdownMenuItem(text = { Text("Delete") }, onClick = { deleteBookmark = bookmark; menuBookmark = null })
                         }
@@ -6593,7 +6828,7 @@ private fun SharedMobilePdfAnnotationsDrawerPage(
                     trailingContent = {
                         Box {
                             IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Default.MoreVert, "Highlight options") }
-                            DropdownMenu(menuExpanded, { menuExpanded = false }) {
+                            SharedDropdownMenu(menuExpanded, { menuExpanded = false }) {
                                 DropdownMenuItem(
                                     text = { Text(if (annotation.note.isNullOrBlank()) "Add note" else "Edit note") },
                                     onClick = { menuExpanded = false; onEditNote(annotation) }
@@ -6668,52 +6903,75 @@ private fun SharedMobilePdfSearchResultsPanel(
 }
 
 @Composable
-private fun SharedMobilePdfSearchNavigationPill(
-    activeIndex: Int,
-    resultCount: Int,
+fun SharedMobilePdfSearchNavigationPill(
+    text: String,
     highlightMode: SearchHighlightMode,
     onToggleHighlightMode: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onShowResults: () -> Unit,
+    isPrevEnabled: Boolean,
+    isNextEnabled: Boolean,
     modifier: Modifier = Modifier
 ) {
     Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        tonalElevation = 4.dp,
-        shadowElevation = 4.dp
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        modifier = modifier
+            .shadow(6.dp, RoundedCornerShape(50))
+            .height(56.dp)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.padding(horizontal = 8.dp)
         ) {
             IconButton(onClick = onToggleHighlightMode) {
                 Icon(
-                    if (highlightMode == SearchHighlightMode.ALL) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                    imageVector = if (highlightMode == SearchHighlightMode.ALL) Icons.Default.Visibility
+                    else Icons.Default.VisibilityOff,
                     contentDescription = readerString("content_desc_toggle_search_highlights", "Toggle search highlights"),
                     tint = if (highlightMode == SearchHighlightMode.ALL) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Box(
-                Modifier
+                modifier = Modifier
                     .width(1.dp)
                     .height(24.dp)
                     .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
             )
-            IconButton(onClick = onPrevious, enabled = activeIndex > 0) {
-                Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = readerString("tooltip_prev_result", "Previous result"))
-            }
-            TextButton(onClick = onShowResults) {
-                Text(
-                    if (activeIndex in 0 until resultCount) "${activeIndex + 1} of $resultCount"
-                    else "$resultCount results"
+            IconButton(onClick = onPrevious, enabled = isPrevEnabled) {
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowUp,
+                    contentDescription = readerString("tooltip_prev_result", "Previous result"),
+                    tint = if (isPrevEnabled) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                 )
             }
-            IconButton(onClick = onNext, enabled = activeIndex < resultCount - 1) {
-                Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = readerString("tooltip_next_result", "Next result"))
+            Box(
+                modifier = Modifier
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onShowResults
+                    )
+                    .padding(horizontal = 8.dp)
+            ) {
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            IconButton(onClick = onNext, enabled = isNextEnabled) {
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowDown,
+                    contentDescription = readerString("tooltip_next_result", "Next result"),
+                    tint = if (isNextEnabled) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                )
             }
         }
     }

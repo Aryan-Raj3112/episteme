@@ -28,7 +28,34 @@ const val GEMINI_TTS_MODEL_LITE_ID = "gemini:$GEMINI_TTS_MODEL_LITE"
 const val GEMINI_TTS_MODEL_PREVIEW_ID = "gemini:$GEMINI_TTS_MODEL_PREVIEW"
 // Fish TTS via BYOK (user's Fish key, direct api.fish.audio calls, no credits).
 const val FISH_TTS_MODEL = "s2.1-pro"
+// Fish's free development tier: the same model as [FISH_TTS_MODEL] at $0 under
+// fair-use limits, with no time-to-first-audio or data-processing guarantees.
+// Selected with the `model` request header, same /v1/tts endpoint.
+const val FISH_TTS_MODEL_FREE = "s2.1-pro-free"
 const val FISH_TTS_MODEL_ID = "fish:$FISH_TTS_MODEL"
+const val FISH_TTS_MODEL_FREE_ID = "fish:$FISH_TTS_MODEL_FREE"
+
+/** Every Fish model id this app can drive. */
+val READER_FISH_TTS_MODEL_IDS = listOf(FISH_TTS_MODEL_ID, FISH_TTS_MODEL_FREE_ID)
+
+/** Every Gemini model id this app can drive for TTS (REST + legacy Live). */
+val READER_GEMINI_TTS_MODEL_IDS = listOf(
+    GEMINI_TTS_MODEL_LITE_ID,
+    GEMINI_TTS_MODEL_PREVIEW_ID,
+    GEMINI_CLOUD_TTS_MODEL_ID,
+)
+
+/**
+ * Cloud TTS master switch: enabled when the stored TTS model names a cloud
+ * backend, disabled for device speech ("").
+ *
+ * Every model the TTS picker can select counts, not just the legacy Live model
+ * and one Fish id: gating on a subset meant that picking a Gemini REST model
+ * (or the Fish free tier) silently switched cloud TTS *off* in the reader,
+ * because the engine and the reader toggle read this same function.
+ */
+fun isCloudTtsModelEnabled(ttsModel: String): Boolean =
+    ttsModel in READER_GEMINI_TTS_MODEL_IDS || ttsModel in READER_FISH_TTS_MODEL_IDS
 const val DEFAULT_CLOUD_TTS_SPEAKER_ID = "Aoede"
 const val READER_TTS_CHUNK_MAX_LENGTH = 250
 private const val ReaderTtsStartTraceLogTag = "EpistemeDesktopTtsStartTrace"
@@ -90,7 +117,8 @@ data class ReaderAiByokSettings(
 ) {
     fun sanitized(): ReaderAiByokSettings {
         val knownTextModelIds = ReaderAiModelOptions.mapTo(mutableSetOf()) { it.id }
-        val knownTtsModelIds = ReaderTtsByokOptions.mapTo(mutableSetOf()) { it.id } + GEMINI_CLOUD_TTS_MODEL_ID
+        val knownTtsModelIds = ReaderTtsByokOptions.mapTo(mutableSetOf()) { it.id } +
+            setOf(GEMINI_CLOUD_TTS_MODEL_ID)
         return copy(
             geminiKey = geminiKey.trim(),
             groqKey = groqKey.trim(),
@@ -135,9 +163,49 @@ data class ReaderAiByokSettings(
     val isByokCloudTtsAvailable: Boolean get() = geminiKey.isNotBlank() && ttsModel == GEMINI_CLOUD_TTS_MODEL_ID
     val isGeminiRestByokTtsAvailable: Boolean get() =
         geminiKey.isNotBlank() && (ttsModel == GEMINI_TTS_MODEL_LITE_ID || ttsModel == GEMINI_TTS_MODEL_PREVIEW_ID)
-    val isFishByokTtsAvailable: Boolean get() = fishKey.isNotBlank() && ttsModel == FISH_TTS_MODEL_ID
+    val isFishByokTtsAvailable: Boolean get() = fishKey.isNotBlank() && ttsModel in READER_FISH_TTS_MODEL_IDS
     val isAnyByokTtsAvailable: Boolean get() = isByokCloudTtsAvailable || isGeminiRestByokTtsAvailable || isFishByokTtsAvailable
     val isCloudTtsAvailable: Boolean get() = serverBackedCloudTts || isAnyByokTtsAvailable
+}
+
+/**
+ * Which backend should actually synthesize a cloud-TTS chunk.
+ *
+ * Android benchmark (`TtsService.audioGenerator`, `AndroidTtsSettings`):
+ * a BYOK key always wins over spending credits, and between the two keys Fish
+ * is checked first:
+ *
+ *  1. Fish BYOK  — Fish key saved and a Fish model selected.
+ *  2. Gemini BYOK — Gemini key saved and a Gemini TTS model selected.
+ *  3. Worker     — signed in with a token, synthesis is billed to the wallet.
+ *  4. Unavailable — nothing configured; the caller must surface a real error
+ *     instead of falling back to device speech silently.
+ *
+ * Kept in commonMain so the iOS engine, the Android engine, and the settings UI
+ * all resolve the same backend for the same settings and cannot drift.
+ */
+enum class CloudTtsBackend {
+    FISH_BYOK,
+    GEMINI_BYOK,
+    WORKER,
+    UNAVAILABLE,
+}
+
+fun resolveCloudTtsBackend(
+    settings: ReaderAiByokSettings,
+    isSignedIn: Boolean = false,
+    hasAuthToken: Boolean = false,
+    hasWorkerUrl: Boolean = false,
+): CloudTtsBackend {
+    val workerAvailable = isSignedIn && hasAuthToken && hasWorkerUrl
+    val useByokFish = settings.isFishByokTtsAvailable
+    val useByokGemini = !useByokFish && (settings.isGeminiRestByokTtsAvailable || settings.isByokCloudTtsAvailable)
+    return when {
+        useByokFish -> CloudTtsBackend.FISH_BYOK
+        useByokGemini -> CloudTtsBackend.GEMINI_BYOK
+        workerAvailable -> CloudTtsBackend.WORKER
+        else -> CloudTtsBackend.UNAVAILABLE
+    }
 }
 
 /**
@@ -148,7 +216,9 @@ data class ReaderAiByokSettings(
 val ReaderTtsByokOptions = listOf(
     ReaderAiModelOption("gemini", GEMINI_TTS_MODEL_LITE),
     ReaderAiModelOption("gemini", GEMINI_TTS_MODEL_PREVIEW),
-    ReaderAiModelOption("fish", FISH_TTS_MODEL)
+    ReaderAiModelOption("fish", FISH_TTS_MODEL),
+    // Fish's free development tier: same model, no TTFA/DPA guarantees.
+    ReaderAiModelOption("fish", FISH_TTS_MODEL_FREE, label = "Fish - ${FISH_TTS_MODEL_FREE} (free tier)"),
 )
 
 val ReaderAiModelOptions = listOf(
@@ -258,6 +328,41 @@ fun parseSpendGuardSentinel(sentinel: String?): Pair<String, Int>? {
 
 fun spendGuardSentinel(kind: String, retryAfterSeconds: Int): String {
     return "$kind:${retryAfterSeconds.coerceAtLeast(0)}"
+}
+
+/**
+ * Maps worker HTTP errors to client error tokens (Android benchmark parity):
+ * 402 with a DAILY_SPEND_LIMIT body -> "DAILY_SPEND_LIMIT:<s>" sentinel,
+ * other 402 / INSUFFICIENT_CREDITS -> "INSUFFICIENT_CREDITS" (callers route it
+ * to the out-of-balance dialog), 429 -> "RATE_LIMITED:<s>" sentinel, anything
+ * else -> null (caller falls back to generic handling). Callers render
+ * user-facing copy from the token; the token itself is never shown.
+ */
+fun mapSpendGuardHttpError(responseCode: Int, errorBody: String?): String? {
+    if (responseCode == 402) {
+        val parsed = parseSpendGuardError(errorBody)
+        return if (parsed?.first == "DAILY_SPEND_LIMIT") {
+            spendGuardSentinel(parsed.first, parsed.second)
+        } else {
+            "INSUFFICIENT_CREDITS"
+        }
+    }
+    if (responseCode == 429) {
+        val parsed = parseSpendGuardError(errorBody)
+        return spendGuardSentinel("RATE_LIMITED", parsed?.second ?: 30)
+    }
+    return null
+}
+
+/**
+ * Maps a worker stream error payload to a client token, preserving the retry
+ * window for the concurrency-slot path ({error, retry_after_seconds}).
+ */
+fun mapSpendGuardStreamError(error: String, retryAfterSeconds: Int): String {
+    if ((error == "RATE_LIMITED" || error == "DAILY_SPEND_LIMIT")) {
+        return spendGuardSentinel(error, retryAfterSeconds)
+    }
+    return error
 }
 
 /**
@@ -419,12 +524,24 @@ enum class ReaderExternalLookupService(val id: String, val title: String) {
     }
 }
 
-// Temporary (external apps undecided): each action offers just the browser —
-// define keeps Smart AI first with the browser second.
+// Android benchmark: the Dict action opens the in-app AI definition by default
+// and falls back to the external app chooser when AI is unavailable. Smart AI is
+// listed first so the in-app route stays prominent; ANY_APP is the explicit
+// "choose each time" choice.
 val ReaderDictionaryServiceOptions = listOf(
     ReaderExternalLookupService.AI,
+    ReaderExternalLookupService.ANY_APP,
     ReaderExternalLookupService.SAFARI,
 )
+
+/**
+ * Engine used by the selection-menu "Dict" action when the user has never
+ * opened the lookup settings. Smart AI is the default on both mobile platforms:
+ * it is the product's headline feature and the Pro upsell rides on it, while
+ * unavailability (offline, AI hidden) still falls back to the app chooser.
+ * Hosts that persist an explicit choice must keep honoring it.
+ */
+val ReaderDefaultDictionaryLookupService = ReaderExternalLookupService.AI
 
 /**
  * Whether the selection-menu "Dict" action routes to the in-app AI definition
@@ -673,17 +790,20 @@ data class ReaderTtsChunk(
         )
     }
 
-    fun toHighlight(sessionId: Long): UserHighlight {
-        val locator = toLocator()
-        return UserHighlight(
-            id = "tts_${sessionId}_$index",
-            cfi = locator.cfi.orEmpty(),
+    /**
+     * The read-aloud band, painted through the shared transient-band builder.
+     *
+     * Goes through [toLocator] rather than rebuilding the locator from the chunk's own fields,
+     * because that is where the `desktop:chapter:start:end` cfi fallback lives. A band without it
+     * would have no position on the surfaces that resolve by cfi.
+     */
+    fun toHighlight(sessionId: Long): UserHighlight =
+        playbackBandHighlight(
+            sessionId = sessionId,
+            bandIndex = index,
             text = text,
-            color = HighlightColor.YELLOW,
-            chapterIndex = chapterIndex,
-            locator = locator
+            locator = toLocator()
         )
-    }
 }
 
 data class ReaderTtsProgress(
@@ -786,6 +906,42 @@ object ReaderTtsPlanner {
         )
     }
 
+    /**
+     * Android benchmark (chapter chaining): read-aloud plans one chapter at
+     * a time instead of the rest of the book, so starting TTS stays fast on
+     * long books and the engine chains chapters on natural completion. When
+     * the session anchor sits inside [chapterIndex] the head is sliced at
+     * the anchor exactly like [chunksFromCurrentLocation]; otherwise the
+     * whole chapter is returned. Empty when the chapter has no pages or no
+     * speakable text (callers skip to the next chapter).
+     */
+    fun chunksForChapterFromLocation(session: ReaderSessionState, chapterIndex: Int): List<ReaderTtsChunk> {
+        val pages = session.reader.pages.filter { it.chapterIndex == chapterIndex }
+        if (pages.isEmpty()) return emptyList()
+        val chunks = chunksForPages(session.reader.book, pages)
+        if (chunks.isEmpty()) return emptyList()
+        val anchor = session.navigationLocator
+        if (anchor?.chapterIndex != chapterIndex) {
+            return chunks
+                .filter { it.text.isNotBlank() }
+                .mapIndexed { index, chunk -> chunk.copy(index = index) }
+        }
+        val target = anchor.toTtsChunkTarget()
+        val startChunkIndex = findReaderTtsChunkStartIndex(chunks, target)
+            ?: chunks.indexOfFirst { it.isOnOrAfterLocator(chapterIndex, anchor.startOffset) }.takeIf { it >= 0 }
+            ?: return emptyList()
+        val initialChunk = chunks[startChunkIndex].sliceFromLocator(anchor)
+        val sessionChunks = if (initialChunk == null) {
+            chunks.drop(startChunkIndex + 1)
+        } else {
+            chunks.withInitialChunkOverride(startChunkIndex, initialChunk).drop(startChunkIndex)
+        }
+        return sessionChunks
+            .filter { it.text.isNotBlank() }
+            .mergeTinyLeadingChunk()
+            .mapIndexed { index, chunk -> chunk.copy(index = index) }
+    }
+
     fun chunksFromCurrentLocation(session: ReaderSessionState): List<ReaderTtsChunk> {
         val anchor = session.navigationLocator
         val pageIndex = anchor?.pageIndex ?: session.reader.currentPageIndex
@@ -825,6 +981,7 @@ object ReaderTtsPlanner {
         }
         return sessionChunks
             .filter { it.text.isNotBlank() }
+            .mergeTinyLeadingChunk()
             .mapIndexed { index, chunk -> chunk.copy(index = index) }
     }
 
@@ -1302,7 +1459,11 @@ data class ReaderCloudTtsState(
     val cacheSummary: ReaderTtsCacheSummary = ReaderTtsCacheSummary(),
     // USD session spend in micro-dollars (credited Fish path only; the worker
     // reports it per chunk via X-Tts-Cost-Micros). Android benchmark parity.
-    val cloudSessionSpendMicros: Long = 0L
+    val cloudSessionSpendMicros: Long = 0L,
+    // Increments only when every chunk finishes naturally (chapter chaining);
+    // explicit stop does not increment it. Lets readers chain the next
+    // chapter like the local completionCount.
+    val completionCount: Long = 0L
 )
 
 data class ReaderCloudTtsControlsModel(
@@ -1347,10 +1508,37 @@ data class ReaderAiResultState(
      */
     val cost: Double? = null,
     val freeRemaining: Int? = null,
-    val isCacheHit: Boolean = false
+    val isCacheHit: Boolean = false,
+    /**
+     * Android parity (executeRecapLogic progress): "Checking past
+     * chapters..." / "Analyzing Chapter N..." / "Reading current
+     * position..." / "Generating Recap...". Shown while [isLoading] with
+     * blank [text]; cleared on first streamed chunk.
+     */
+    val progressMessage: String? = null
 ) {
     val hasContent: Boolean get() = text.isNotBlank() || errorMessage != null || isLoading
 }
+
+/**
+ * Android parity (executeRecapLogic): a story-recap request carries past
+ * sections (summarized with cache read-through) plus the current section
+ * text, instead of one head-truncated blob. [summaryCache] is the host's
+ * instance so chained summaries land in the same store the hub reads.
+ */
+data class ReaderRecapSection(
+    val title: String,
+    val text: String
+)
+
+data class ReaderRecapRequest(
+    val bookTitle: String,
+    val sectionIndex: Int,
+    val pastSections: List<ReaderRecapSection>,
+    val currentText: String,
+    val currentTitle: String = "",
+    val summaryCache: SharedSummaryCache? = null
+)
 
 data class ReaderExtrasState(
     val autoScroll: ReaderAutoScrollState = ReaderAutoScrollState(),

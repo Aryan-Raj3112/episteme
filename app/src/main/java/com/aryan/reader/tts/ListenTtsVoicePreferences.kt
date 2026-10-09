@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.core.content.edit
 import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.loadNativeVoice
+import com.aryan.reader.shared.ReaderTtsVoiceOverride
 import com.aryan.reader.tts.TtsPlaybackManager.TtsMode
 
 /**
@@ -21,8 +22,9 @@ internal const val LISTEN_NATIVE_TTS_VOICE_KEY = "listen_native_tts_voice"
 
 /** Explicit "system default" marker: SharedPreferences cannot distinguish an
  * absent string from a stored null, so blank means system default while an
- * absent key means "inherit the Reader voice". */
-private const val LISTEN_NATIVE_VOICE_SYSTEM_DEFAULT = ""
+ * absent key means "inherit the Reader voice". Shared with iOS via
+ * [ReaderTtsVoiceOverride] so both platforms resolve Listen's voice identically. */
+private const val LISTEN_NATIVE_VOICE_SYSTEM_DEFAULT = ReaderTtsVoiceOverride.SYSTEM_DEFAULT
 
 private fun listenReaderPrefs(context: Context) =
     context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)

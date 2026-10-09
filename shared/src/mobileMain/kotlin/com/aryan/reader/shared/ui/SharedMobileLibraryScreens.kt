@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -60,7 +61,6 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -242,6 +242,8 @@ fun SharedMobileUnifiedLibraryScreen(
     selectionCapabilities: SharedMobileUnifiedLibrarySelectionCapabilities =
         SharedMobileUnifiedLibrarySelectionCapabilities(),
     selectionActions: SharedMobileUnifiedLibraryActions? = null,
+    /** Pull-to-sync trigger; hosts own the sync pipeline. */
+    onRefreshLibrary: () -> Unit = {},
     // Android benchmark: readable file types differ per platform (FileCapabilities.kt).
     // Defaults to IOS to preserve current iOS callers; Android must pass ANDROID on adoption.
     platform: ReaderPlatform = ReaderPlatform.IOS,
@@ -283,8 +285,10 @@ fun SharedMobileUnifiedLibraryScreen(
             books = state.rawLibraryBooks,
             filter = filter,
             query = query,
-            libraryFilters = state.libraryFilters.withIosFolderFilterIdentities(state.syncedFolders),
+            libraryFilters = state.libraryFilters.withCanonicalFolderFilterIdentities(state.syncedFolders),
             sortOrder = state.sortOrder,
+            // iOS books record the folder name while selections store Android's uriString.
+            folderAliases = state.syncedFolders.associate { it.name to it.uriString },
         )
     }
     val continueReading = remember(state.rawLibraryBooks) {
@@ -401,6 +405,12 @@ fun SharedMobileUnifiedLibraryScreen(
         onAddAudiobook = { showAudiobookAddSheet = true },
         onNewShelf = { showCreateShelf = true },
         showFloatingActionButton = !isContextualMode,
+        canPullToSync = canPullToSyncLibrary(
+            cloudSyncEnabled = state.isSyncEnabled,
+            foldersWithLocalSyncEnabled = state.syncedFolders.map { it.localSyncEnabled },
+        ),
+        isRefreshing = state.isRefreshing,
+        onRefresh = onRefreshLibrary,
         topBar = {
             if (isContextualMode) {
                 val actions = requireNotNull(contextualActions)
@@ -462,6 +472,10 @@ fun SharedMobileUnifiedLibraryScreen(
         bottomBar = {
             val activeAudiobook = audiobooks.firstOrNull { it.bookId == audiobookPlayback.bookId }
             val activeTts = ttsItems.firstOrNull { it.book.id == ttsListenState.bookId && ttsListenState.connected }
+            // iOS: the app's tab strip is drawn beneath this Scaffold's bottomBar, so the
+            // compact player needs the navigation-bar inset to avoid sitting under the bottom
+            // navigation / home indicator.
+            Column(Modifier.navigationBarsPadding()) {
             when {
                 activeAudiobook != null -> SharedMobileAudiobookMiniPlayer(
                     audiobook = activeAudiobook,
@@ -479,6 +493,7 @@ fun SharedMobileUnifiedLibraryScreen(
                     onStopPlayback = onStopTtsPlayback,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
                 )
+            }
             }
         },
         sectionContent = { displayedSection, padding ->
@@ -713,10 +728,15 @@ fun SharedMobileUnifiedLibraryScreen(
     }
     if (showFilters) {
         SharedMobileLibraryFilterDialog(
-            state = state,
+            filters = state.libraryFilters.withCanonicalFolderFilterIdentities(state.syncedFolders),
+            allTags = state.allTags,
+            syncedFolders = state.syncedFolders,
+            readableFileTypes = SharedFileCapabilities.readableTypesFor(platform),
+            fileTypeLabels = FileType.entries.associateWith { SharedFileCapabilities.displayNameFor(it) },
+            readStatusLabels = ReadStatusFilter.entries.associateWith { it.sharedMobileLabel() },
+            labels = sharedMobileLibraryFilterLabels(),
+            onApply = ::applyUnifiedLibraryFilters,
             onDismiss = { showFilters = false },
-            onFiltersChange = ::applyUnifiedLibraryFilters,
-            platform = platform,
         )
     }
 
@@ -779,12 +799,35 @@ fun SharedMobileUnifiedLibraryScreen(
             val containsFolderBooks = state.rawLibraryBooks.any {
                 it.id in selectedIds && it.sourceFolder != null
             }
+            val deleteCount = selectedIds.size
+            val deleteTitle = readerQuantityString(
+                "library_delete_selected_books",
+                deleteCount,
+                "Permanently delete %1\$d selected book?",
+                "Permanently delete %1\$d selected books?",
+                deleteCount,
+            )
+            val folderWarning = readerString(
+                "dialog_warning_folder_sync_delete",
+                "Warning: Some selected items are synced from a local folder. Proceeding will delete the actual files from your device storage.\n\nThis action cannot be undone.",
+            )
+            val notUndoable = readerString(
+                "library_delete_not_undoable",
+                "This action cannot be undone.",
+            )
             SharedMobileDeleteConfirmationDialog(
-                title = "Permanently delete ${selectedIds.size} selected book(s)?",
+                // Localized rather than interpolated, so the count is pluralized per locale
+                // instead of always reading "book(s)".
+                title = deleteTitle,
                 body = if (containsFolderBooks) {
-                    "Warning: Some selected items are synced from a local folder. Proceeding will delete the actual files from your device storage.\n\nThis action cannot be undone."
+                    folderWarning
                 } else {
-                    "Permanently delete ${selectedIds.size} selected book(s)? This action cannot be undone."
+                    readerString(
+                        "library_delete_body_with_count",
+                        "%1\$s %2\$s",
+                        deleteTitle,
+                        notUndoable,
+                    )
                 },
                 confirmLabel = readerString("action_delete", "Delete"),
                 emphasizeConfirm = containsFolderBooks,
@@ -884,63 +927,6 @@ fun SharedMobileUnifiedLibraryScreen(
                 onDismiss = { showTtsPlayerSheet = false },
                 onOpenVoiceSettings = onOpenTtsVoiceSettings,
             )
-        }
-    }
-}
-
-@Composable
-private fun SharedMobileUnifiedShelvesSection(
-    shelves: List<Shelf>,
-    selectedShelfId: String?,
-    selectedBookIds: Set<String>,
-    pinnedBookIds: Set<String>,
-    downloadingBookIds: Set<String>,
-    onShelfSelected: (Shelf) -> Unit,
-    onOpenBook: (BookItem) -> Unit,
-    onLongPressBook: (BookItem) -> Unit,
-    onTogglePinned: (BookItem) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val selectedShelf = shelves.firstOrNull { it.id == selectedShelfId }
-    if (selectedShelf == null) {
-        val visibleShelves = remember(shelves) {
-            shelves.filter { it.type != ShelfType.TAG && it.parentShelfId == null }
-        }
-        if (visibleShelves.isEmpty()) {
-            Box(modifier, contentAlignment = Alignment.Center) {
-                Text(readerString("unified_library_no_shelves", "No shelves yet"), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        } else {
-            LazyColumn(modifier, contentPadding = PaddingValues(20.dp, 16.dp, 20.dp, 96.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(visibleShelves, key = { it.id }) { shelf ->
-                    ElevatedCard(modifier = Modifier.fillMaxWidth().clickable { onShelfSelected(shelf) }) {
-                        Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(28.dp), tint = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(16.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(shelf.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                                Text(readerQuantityString("book_count", shelf.bookCount, "%1\$d book", "%1\$d books", shelf.bookCount), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        LazyColumn(modifier, contentPadding = PaddingValues(20.dp, 16.dp, 20.dp, 96.dp)) {
-            item {
-                SharedMobileBookGridSection(
-                    title = "",
-                    books = selectedShelf.directBooks,
-                    selectedBookIds = selectedBookIds,
-                    pinnedBookIds = pinnedBookIds,
-                    downloadingBookIds = downloadingBookIds,
-                    onOpenBook = { book -> if (selectedBookIds.isEmpty()) onOpenBook(book) else onLongPressBook(book) },
-                    onLongPressBook = onLongPressBook,
-                    onTogglePinned = onTogglePinned,
-                )
-            }
         }
     }
 }
@@ -1663,10 +1649,15 @@ fun SharedMobileLibraryScreen(
 
     if (showFilters) {
         SharedMobileLibraryFilterDialog(
-            state = state,
+            filters = state.libraryFilters.withCanonicalFolderFilterIdentities(state.syncedFolders),
+            allTags = state.allTags,
+            syncedFolders = state.syncedFolders,
+            readableFileTypes = SharedFileCapabilities.readableTypesFor(platform),
+            fileTypeLabels = FileType.entries.associateWith { SharedFileCapabilities.displayNameFor(it) },
+            readStatusLabels = ReadStatusFilter.entries.associateWith { it.sharedMobileLabel() },
+            labels = sharedMobileLibraryFilterLabels(),
+            onApply = onRemoveFilters,
             onDismiss = { showFilters = false },
-            onFiltersChange = onRemoveFilters,
-            platform = platform,
         )
     }
     if (showCreateShelf) {
@@ -1835,8 +1826,8 @@ private fun SharedMobileShelfDetail(
             }
         }
     }
-    val visibleBooks = remember(shelf.directBooks, normalizedQuery, sortOrder) {
-        sortBooks(shelf.directBooks.filteredSharedMobileBooks(normalizedQuery), sortOrder)
+    val visibleBooks = remember(shelf.directBooks, normalizedQuery) {
+        shelf.directBooks.filteredSharedMobileBooks(normalizedQuery)
     }
     LaunchedEffect(isSearchActive, shelf.id) {
         if (isSearchActive) shelfSearchFocusRequester.requestFocus()
@@ -1960,7 +1951,7 @@ private fun SharedMobileShelfDetail(
                                 Spacer(Modifier.width(8.dp))
                                 Text(sortOrder.sharedMobileLabel())
                             }
-                            DropdownMenu(
+                            SharedDropdownMenu(
                                 expanded = showSortMenu,
                                 onDismissRequest = { showSortMenu = false },
                             ) {
@@ -1988,7 +1979,7 @@ private fun SharedMobileShelfDetail(
                                 IconButton(onClick = { showMoreMenu = true }) {
                                     Icon(Icons.Default.MoreVert, contentDescription = readerString("content_desc_more_options", "More options"))
                                 }
-                                DropdownMenu(
+                                SharedDropdownMenu(
                                     expanded = showMoreMenu,
                                     onDismissRequest = { showMoreMenu = false },
                                 ) {
@@ -2239,7 +2230,7 @@ private fun SharedMobileAddBooksToShelfScreen(
                                 Spacer(Modifier.width(8.dp))
                                 Text(sortOrder.sharedMobileLabel())
                             }
-                            DropdownMenu(
+                            SharedDropdownMenu(
                                 expanded = showSortMenu,
                                 onDismissRequest = { showSortMenu = false },
                             ) {
@@ -2473,145 +2464,6 @@ private fun SharedMobileTagSelectionSheet(
         )
     }
 }
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SharedMobileLibraryFilterDialog(
-    state: SharedReaderScreenState,
-    onDismiss: () -> Unit,
-    onFiltersChange: (LibraryFilters) -> Unit,
-    platform: ReaderPlatform = ReaderPlatform.IOS,
-) {
-    var currentFilters by remember(state.libraryFilters, state.syncedFolders) {
-        mutableStateOf(state.libraryFilters.withIosFolderFilterIdentities(state.syncedFolders))
-    }
-    val readableTypes = remember(platform) { SharedFileCapabilities.readableTypesFor(platform) }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Text(readerString("filter_library", "Filter library"), style = MaterialTheme.typography.titleLarge)
-
-            Text(readerString("filter_file_type", "File type"), style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                readableTypes.forEach { type ->
-                    FilterChip(
-                        selected = type in currentFilters.fileTypes,
-                        onClick = {
-                            currentFilters = currentFilters.copy(
-                                fileTypes = currentFilters.fileTypes.toggleMember(type)
-                            )
-                        },
-                        label = { Text(SharedFileCapabilities.displayNameFor(type)) },
-                    )
-                }
-            }
-
-            Text(readerString("filter_source_folder", "Source folder"), style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                FilterChip(
-                    selected = IN_APP_STORAGE_SOURCE in currentFilters.sourceFolders,
-                    onClick = {
-                        currentFilters = currentFilters.copy(
-                            sourceFolders = currentFilters.sourceFolders.toggleMember(IN_APP_STORAGE_SOURCE)
-                        )
-                    },
-                    label = { Text(readerString("filter_in_app_storage", "In-app storage")) },
-                )
-                state.syncedFolders.forEach { folder ->
-                    FilterChip(
-                        selected = currentFilters.sourceFolders.any {
-                            it == folder.uriString || it == folder.name
-                        },
-                        onClick = {
-                            currentFilters = currentFilters.toggleIosFolderFilter(folder)
-                        },
-                        label = { Text(folder.name) },
-                    )
-                }
-            }
-
-            Text(readerString("filter_read_status", "Reading status"), style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                ReadStatusFilter.entries.forEach { status ->
-                    FilterChip(
-                        selected = currentFilters.readStatus == status,
-                        onClick = { currentFilters = currentFilters.copy(readStatus = status) },
-                        label = { Text(status.sharedMobileLabel()) },
-                    )
-                }
-            }
-
-            if (state.allTags.isNotEmpty()) {
-                Text(readerString("section_tags", "Tags"), style = MaterialTheme.typography.titleMedium)
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    state.allTags.forEach { tag ->
-                        FilterChip(
-                            selected = tag.id in currentFilters.tagIds,
-                            onClick = {
-                                currentFilters = currentFilters.copy(
-                                    tagIds = currentFilters.tagIds.toggleMember(tag.id)
-                                )
-                            },
-                            label = { Text(tag.name) },
-                            leadingIcon = {
-                                Box(
-                                    modifier = Modifier
-                                        .size(10.dp)
-                                        .background(
-                                            Color(tag.color ?: 0xFF64B5F6.toInt()),
-                                            CircleShape,
-                                        )
-                                )
-                            },
-                        )
-                    }
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                TextButton(onClick = { currentFilters = LibraryFilters() }) {
-                    Text(readerString("clear_all", "Clear all"))
-                }
-                Spacer(Modifier.width(8.dp))
-                Button(
-                    onClick = {
-                        onFiltersChange(currentFilters)
-                        onDismiss()
-                    }
-                ) {
-                    Text(readerString("action_apply", "Apply"))
-                }
-            }
-            Spacer(Modifier.height(32.dp))
-        }
-    }
-}
-
 internal fun <T> Set<T>.toggleMember(value: T): Set<T> = if (value in this) this - value else this + value
 
 @Composable
@@ -2832,7 +2684,7 @@ private fun SharedMobileHomeTopBar(
                 IconButton(onClick = { showOptionsMenu = true }, modifier = Modifier.testTag("MobileHomeMore")) {
                     Icon(Icons.Default.MoreVert, contentDescription = readerString("tooltip_more_options", "More Options"))
                 }
-                DropdownMenu(
+                SharedDropdownMenu(
                     expanded = showOptionsMenu,
                     onDismissRequest = { showOptionsMenu = false },
                 ) {
@@ -2915,5 +2767,20 @@ private fun SharedMobileLibraryTopBar(
                 Icon(Icons.Default.Settings, contentDescription = readerString("settings", "Settings"))
             }
         }
+    )
+}
+
+/** Default English labels for the shared library filter dialog. */
+@Composable
+private fun sharedMobileLibraryFilterLabels(): SharedMobileLibraryFilterLabels {
+    return SharedMobileLibraryFilterLabels(
+        title = readerString("filter_library", "Filter library"),
+        fileType = readerString("filter_file_type", "File type"),
+        sourceFolder = readerString("filter_source_folder", "Source folder"),
+        inAppStorage = readerString("filter_in_app_storage", "In-app storage"),
+        readStatus = readerString("filter_read_status", "Reading status"),
+        tags = readerString("section_tags", "Tags"),
+        clearAll = readerString("clear_all", "Clear all"),
+        apply = readerString("action_apply", "Apply"),
     )
 }

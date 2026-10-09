@@ -7,6 +7,7 @@
 // composable bounds generated method sizes.
 package com.aryan.reader.epubreader
 
+import com.aryan.reader.shared.ui.SharedMobileEpubLoading
 import android.webkit.WebView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
@@ -55,27 +56,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
-
-@Composable
-internal fun EpubReaderBusyScrim(label: String) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.6f))
-            .clickable(enabled = true) {},
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            CircularProgressIndicator()
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-        }
-    }
-}
 
 @Composable
 internal fun EpubReaderTocNavigationOverlay(
@@ -147,9 +127,15 @@ internal fun EpubHighlightNoteEditorSheet(
         onOpenPaletteManager = onOpenPaletteManager,
         onDismiss = { navigation.highlightToNoteCfi = null },
         onSave = { noteText ->
-            val index = userHighlights.indexOfFirst { it.cfi == targetHighlight.cfi }
+            // Keyed on id, which never changes. Keyed on cfi this silently dropped the note whenever
+            // the highlight had been re-anchored — repairing a locator rewrites its position, and
+            // re-highlighting the same span rewrites cfi — leaving the edit to land on whatever
+            // highlight now occupies the old position, or on none.
+            val index = userHighlights.indexOfFirst { it.id == targetHighlight.id }
             if (index != -1) {
-                userHighlights[index] = targetHighlight.copy(note = noteText.takeIf { it.isNotBlank() })
+                userHighlights[index] = userHighlights[index].copy(
+                    note = noteText.takeIf { it.isNotBlank() }
+                )
             }
             navigation.highlightToNoteCfi = null
         },

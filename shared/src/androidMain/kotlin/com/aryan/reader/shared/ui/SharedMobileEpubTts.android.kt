@@ -58,6 +58,11 @@ private class AndroidSharedMobileEpubLocalTts(
     private var currentChunkIndex = -1
     private var wantsPlayback = false
     private var pendingStart = false
+    // Session identity, so a surface sharing this engine can tell its own session
+    // apart from another surface's. Android benchmark: `TtsState.playbackSource`.
+    private var activePlaybackSource: String? = null
+    private var activeBookId: String? = null
+    private var activeTotalChapters: Int = 0
 
     override var state by mutableStateOf(SharedMobileEpubLocalTtsState.IDLE)
         private set
@@ -113,18 +118,34 @@ private class AndroidSharedMobileEpubLocalTts(
         ensureEngine()
     }
 
+    override val playbackSource: String? get() = activePlaybackSource
+    override val sessionBookId: String? get() = activeBookId
+    override val sessionTotalChapters: Int get() = activeTotalChapters
+    // Android's shared local engine speaks whole utterances via TextToSpeech and does not
+    // report a word position; the reader resumes at chunk granularity.
+    override val currentSpokenOffset: Int get() = 0
+
     override fun start(
         chunks: List<ReaderTtsChunk>,
         bookTitle: String,
         bookId: String?,
         startChunkIndex: Int,
         playWhenReady: Boolean,
+        playbackSource: String?,
+        totalChapters: Int,
+        continueSession: Boolean,
+        authToken: String?,
     ) {
+        // The local engine never spends credits, so continueSession/authToken are accepted
+        // only to keep one signature across engines.
         val readable = chunks.filter { it.spokenText.isNotBlank() }
         if (readable.isEmpty() || released) return
         generation += 1
         engine?.stop()
         this.chunks = readable
+        activePlaybackSource = playbackSource
+        activeBookId = bookId
+        activeTotalChapters = totalChapters
         currentChunkIndex = startChunkIndex.coerceIn(0, readable.lastIndex)
         wantsPlayback = playWhenReady
         errorMessage = null
@@ -216,6 +237,10 @@ private class AndroidSharedMobileEpubLocalTts(
         wantsPlayback = false
         pendingStart = false
         isSessionActive = false
+        // Clearing the session tag is what lets another surface claim the engine next.
+        activePlaybackSource = null
+        activeBookId = null
+        activeTotalChapters = 0
         progress = ReaderTtsProgress()
         state = SharedMobileEpubLocalTtsState.IDLE
         errorMessage = null

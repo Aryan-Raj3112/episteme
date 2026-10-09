@@ -26,14 +26,23 @@ enum class SharedMobileAppDestination(val route: String) {
     }
 }
 
-/** Android's source-of-truth main-screen order, shared by both phone hosts. */
+/**
+ * Android's source-of-truth main-screen order, shared by both phone hosts.
+ *
+ * Library Beta is the only main destination: the separate Home and Library screens were
+ * retired and the bottom navigation bar removed. `HOME` and `LIBRARY` remain declared so a
+ * page index persisted by an older install still resolves instead of reading out of bounds.
+ */
 enum class SharedMobileMainDestination {
     HOME,
     LIBRARY,
     UNIFIED_LIBRARY;
 
     companion object {
-        fun fromPageIndex(index: Int): SharedMobileMainDestination =
-            entries.getOrElse(index) { HOME }
+        /** The single destination the app renders. */
+        val current: SharedMobileMainDestination = UNIFIED_LIBRARY
+
+        /** Any persisted page index resolves to Library Beta; retired indices are remapped. */
+        fun fromPageIndex(index: Int): SharedMobileMainDestination = UNIFIED_LIBRARY
     }
 }

@@ -50,12 +50,6 @@ import java.io.File
 
 private const val TTS_MODE_KEY = "tts_mode"
 
-data class TtsHighlightInfo(
-    val text: String,
-    val cfi: String,
-    val offset: Int
-)
-
 @Suppress("unused")
 @OptIn(UnstableApi::class)
 fun saveTtsMode(context: Context, mode: TtsMode) {

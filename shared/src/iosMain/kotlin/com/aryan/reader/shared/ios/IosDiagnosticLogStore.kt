@@ -4,6 +4,7 @@ import com.aryan.reader.shared.SharedDiagnosticLogBuffer
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.pdf.IosPdfOcrMetrics
 import platform.Foundation.NSLock
+import platform.Foundation.NSLog
 
 /**
  * In-process diagnostics retained for the iOS "Export logs" action.
@@ -27,7 +28,23 @@ internal object IosDiagnosticLogStore {
         } finally {
             lock.unlock()
         }
+        // Mirror into the unified log. Without this, every Kotlin-side event is
+        // reachable only through the in-app export, so a bug that shows up in
+        // the Compose layer (account state, sync status, key saves) leaves no
+        // trace in `log stream` or Console.app and cannot be diagnosed from a
+        // running app. Filtering on `process == "Reader"` picks these up
+        // alongside the Swift os_log lines.
+        //
+        // The whole line is passed as the *format* with no varargs. Kotlin/Native
+        // `String` is not an ObjC object, so a `%@` specifier would segfault
+        // CFString's formatter on launch (it did). Percent signs are doubled so
+        // they cannot be read as conversion specifiers with no arguments behind
+        // them.
+        NSLog(percentEscaped("[$tag] $message"))
     }
+
+    private fun percentEscaped(value: String): String =
+        if (value.contains('%')) value.replace("%", "%%") else value
 
     fun snapshot(): List<String> {
         lock.lock()

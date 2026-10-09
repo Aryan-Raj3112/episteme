@@ -30,6 +30,8 @@ import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.R
 import com.aryan.reader.shared.ui.sanitizeSharedMobileTtsSampleText
+import com.aryan.reader.shared.patchReaderTtsWavHeader
+import com.aryan.reader.shared.createReaderTtsWavHeaderUnknownLength
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -50,6 +52,9 @@ const val fishWorkerTtsSamplePath = "/v2/tts/sample"
 const val fishWorkerVoicesPath = "/v2/voices"
 const val fishDirectTtsUrl = "https://api.fish.audio/v1/tts"
 const val FISH_BYOK_MODEL_HEADER = "s2.1-pro"
+/** Maps a stored TTS model id to the Fish `model` request header. */
+fun fishModelHeaderForTtsModel(ttsModel: String): String =
+    ttsModel.substringAfter(':', FISH_BYOK_MODEL_HEADER).ifBlank { FISH_BYOK_MODEL_HEADER }
 const val FISH_CLOUD_AUDIO_EXTENSION = "mp3"
 
 const val TTS_CHUNK_MAX_LENGTH = 250
@@ -362,40 +367,70 @@ class TtsCacheManager(private val context: Context) {
 
 fun patchWavHeader(file: File, pcmDataLength: Int) {
     try {
-        RandomAccessFile(file, "rw").use { raf ->
-            raf.seek(4)
-            raf.writeInt(Integer.reverseBytes(36 + pcmDataLength))
-            raf.seek(40)
-            raf.writeInt(Integer.reverseBytes(pcmDataLength))
-        }
+        patchReaderTtsWavHeader(file, pcmDataLength)
     } catch (e: Exception) {
         Timber.tag("TTS_CLOUD_DIAG").e(e, "Failed to patch WAV header for cached file")
     }
 }
 
-fun splitTextIntoChunks(text: String, maxLengthPerChunk: Int = TTS_CHUNK_MAX_LENGTH): List<String> {
+/**
+ * Whitespace that ends a sentence. A newline counts, because the readers' block text keeps the line
+ * breaks a `<br>` produced, and a line break is as good a place to stop as a full stop.
+ */
+private val sentenceBoundaryRegex = Regex("""(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=[.?!\n])\s+""")
+
+/**
+ * One spoken chunk together with where its text starts in the string it was split from.
+ *
+ * [splitTextIntoChunks] trims the whitespace that separated two chunks, so a chunk's position in
+ * the source cannot be recovered by accumulating chunk lengths. Every caller that stores a chunk
+ * offset against a chapter's text (pagination, the WebView extraction bridge, locators) needs the
+ * position, and a guessed one drifts: a stored offset lands a line early, and playback starts
+ * before the line the reader was looking at.
+ */
+data class TtsChunkSourceSpan(
+    val text: String,
+    val startOffsetInSource: Int
+)
+
+/**
+ * Splits [text] into spoken chunks, keeping each chunk's offset in [text].
+ *
+ * Positions are resolved by searching for each trimmed chunk in the source from the previous
+ * chunk's end, which is exact because the split only ever removes whitespace between chunks: the
+ * whitespace-free text of one chunk can never match inside another chunk's gap.
+ */
+fun splitTextIntoChunksWithSourceOffsets(
+    text: String,
+    maxLengthPerChunk: Int = TTS_CHUNK_MAX_LENGTH
+): List<TtsChunkSourceSpan> {
     if (text.isBlank()) return emptyList()
-    val sentenceBoundaryRegex = Regex("""(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=[.?!\n])\s+""")
-    val sentences = text.trim().split(sentenceBoundaryRegex).filter { it.isNotBlank() }
 
-    if (sentences.isEmpty()) return emptyList()
-
-    val chunks = mutableListOf<String>()
+    val spans = mutableListOf<TtsChunkSourceSpan>()
     val currentChunk = StringBuilder()
+    var currentChunkStart = -1
+    var searchCursor = 0
 
     fun flushCurrentChunk() {
         if (currentChunk.isNotEmpty()) {
-            chunks.add(currentChunk.toString())
+            spans.add(TtsChunkSourceSpan(currentChunk.toString(), currentChunkStart.coerceAtLeast(0)))
             currentChunk.clear()
+            currentChunkStart = -1
         }
     }
 
-    for (sentence in sentences) {
-        val sentenceParts = splitLongTtsSentence(sentence, maxLengthPerChunk)
-        for (part in sentenceParts) {
+    for (sentence in text.trim().split(sentenceBoundaryRegex).filter { it.isNotBlank() }) {
+        for (part in splitLongTtsSentence(sentence, maxLengthPerChunk)) {
+            val partStart = if (part.isEmpty()) {
+                searchCursor
+            } else {
+                text.indexOf(part, searchCursor).takeIf { it >= 0 } ?: searchCursor
+            }
+            searchCursor = partStart + part.length
+
             if (part.length > maxLengthPerChunk) {
                 flushCurrentChunk()
-                chunks.add(part)
+                spans.add(TtsChunkSourceSpan(part, partStart))
                 continue
             }
 
@@ -408,11 +443,17 @@ fun splitTextIntoChunks(text: String, maxLengthPerChunk: Int = TTS_CHUNK_MAX_LEN
                 }
                 currentChunk.append(part)
             }
+            if (currentChunkStart < 0) {
+                currentChunkStart = partStart
+            }
         }
     }
     flushCurrentChunk()
-    return chunks
+    return spans
 }
+
+fun splitTextIntoChunks(text: String, maxLengthPerChunk: Int = TTS_CHUNK_MAX_LENGTH): List<String> =
+    splitTextIntoChunksWithSourceOffsets(text, maxLengthPerChunk).map { it.text }
 
 internal fun splitLongTtsSentence(sentence: String, maxLength: Int): List<String> {
     val trimmed = sentence.trim()
@@ -682,28 +723,5 @@ class SpeakerSamplePlayer(
     }
 }
 
-fun createWavHeaderUnknownLength(sampleRate: Int): ByteArray {
-    val numChannels = 1
-    val bitsPerSample = 16
-    val byteRate = sampleRate * numChannels * bitsPerSample / 8
-    val blockAlign = numChannels * bitsPerSample / 8
-
-    val header = java.nio.ByteBuffer.allocate(44)
-    header.order(java.nio.ByteOrder.LITTLE_ENDIAN)
-
-    header.put("RIFF".toByteArray(Charsets.US_ASCII))
-    header.putInt(0x7FFFFFFF)
-    header.put("WAVE".toByteArray(Charsets.US_ASCII))
-    header.put("fmt ".toByteArray(Charsets.US_ASCII))
-    header.putInt(16)
-    header.putShort(1.toShort())
-    header.putShort(numChannels.toShort())
-    header.putInt(sampleRate)
-    header.putInt(byteRate)
-    header.putShort(blockAlign.toShort())
-    header.putShort(bitsPerSample.toShort())
-    header.put("data".toByteArray(Charsets.US_ASCII))
-    header.putInt(0x7FFFFFFF - 36)
-
-    return header.array()
-}
+fun createWavHeaderUnknownLength(sampleRate: Int): ByteArray =
+    createReaderTtsWavHeaderUnknownLength(sampleRate)

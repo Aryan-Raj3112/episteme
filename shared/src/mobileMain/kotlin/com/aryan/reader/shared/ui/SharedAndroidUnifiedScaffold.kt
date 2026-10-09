@@ -8,17 +8,24 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SharedAndroidUnifiedScaffold(
     section: MobileUnifiedLibrarySection,
@@ -33,11 +40,19 @@ fun SharedAndroidUnifiedScaffold(
     bottomBar: @Composable () -> Unit,
     sectionContent: @Composable (MobileUnifiedLibrarySection, PaddingValues) -> Unit,
     showFloatingActionButton: Boolean = true,
+    /** Pull-to-sync is only offered when a sync mechanism can do real work. */
+    canPullToSync: Boolean = false,
+    isRefreshing: Boolean = false,
+    onRefresh: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Scaffold(
         modifier = modifier,
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        // The top bar draws its own status-bar padding, so only the top inset is zeroed.
+        // The bottom inset must stay live: Material3 offsets the FAB by it solely when no
+        // bottom bar is present, which is what keeps the FAB clear of the system navigation
+        // bar while the optional audiobook mini-player is hidden.
+        contentWindowInsets = WindowInsets.systemBars.only(WindowInsetsSides.Bottom),
         bottomBar = bottomBar,
         topBar = topBar,
         floatingActionButton = if (showFloatingActionButton) {
@@ -73,6 +88,16 @@ fun SharedAndroidUnifiedScaffold(
                     (fadeOut() + slideOutHorizontally { -direction * it / 5 })
             },
             label = "UnifiedLibrarySharedAxis",
-        ) { displayedSection -> sectionContent(displayedSection, padding) }
+        ) { displayedSection ->
+            if (canPullToSync) {
+                PullToRefreshBox(
+                    isRefreshing = isRefreshing,
+                    onRefresh = onRefresh,
+                    modifier = Modifier.fillMaxSize().testTag("UnifiedLibraryPullToRefresh"),
+                ) { sectionContent(displayedSection, padding) }
+            } else {
+                sectionContent(displayedSection, padding)
+            }
+        }
     }
 }

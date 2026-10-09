@@ -70,8 +70,12 @@ fun legacyEpubHighlightColorForArgb(argb: Int): HighlightColor =
 fun legacyEpubHighlightColorOrNull(argb: Int): HighlightColor? =
     HighlightColor.entries.firstOrNull { it.color.toArgb() == argb }
 
+/** Prefix of the palette/selection token for a colour that is not one of the named [HighlightColor] entries. */
+const val CUSTOM_HIGHLIGHT_COLOR_ID_PREFIX = "custom_"
+
 fun epubHighlightColorTag(argb: Int): String =
-    legacyEpubHighlightColorOrNull(argb)?.id ?: "custom_${argb.toUInt().toString(16)}"
+    legacyEpubHighlightColorOrNull(argb)?.id
+        ?: "$CUSTOM_HIGHLIGHT_COLOR_ID_PREFIX${argb.toUInt().toString(16)}"
 
 fun epubHighlightColorFromToken(token: String): Pair<HighlightColor, Int?> {
     val trimmed = token.trim()
@@ -126,12 +130,26 @@ data class ReaderLocator(
         )
     }
 
+    /**
+     * Whether [other] marks the same stretch of text, and so is the same highlight.
+     *
+     * Extent is part of identity, not just the start. Highlighting "beta" and then "beta gamma" in one
+     * block share a block and a start; treating those as one highlight made the second silently
+     * replace the first, losing its colour and any note on it. Two selections are the same highlight
+     * only when they cover the same characters.
+     *
+     * Each side's extent is read from whichever field it has. Where one side's extent cannot be
+     * determined the answer is false, so a duplicate is created rather than a highlight destroyed —
+     * the cheaper error, and the visible one.
+     */
     fun sameLocation(other: ReaderLocator): Boolean {
         val sameChapter = chapterIndex == null || other.chapterIndex == null || chapterIndex == other.chapterIndex
         if (!sameChapter) return false
 
         if (hasBlockPosition && other.hasBlockPosition) {
-            return blockIndex == other.blockIndex && charOffset == other.charOffset
+            if (blockIndex != other.blockIndex || charOffset != other.charOffset) return false
+            val end = selectedLength ?: return false
+            return other.selectedLength == end
         }
 
         if (hasTextRange && other.hasTextRange) {
@@ -139,11 +157,36 @@ data class ReaderLocator(
         }
 
         if (pageIndex != null && other.pageIndex != null) {
-            return pageIndex == other.pageIndex
+            // Same guard as above: comparing two unknown extents would be null == null, which reads as
+            // "the same stretch" and would make a page number alone enough to overwrite a highlight.
+            val end = selectedLength ?: return false
+            return pageIndex == other.pageIndex && other.selectedLength == end
         }
 
-        return cfi != null && cfi == other.cfi
+        val sameCfi = cfi != null && cfi == other.cfi
+        if (!sameCfi) return false
+        // A CFI that encodes only a position in the document cannot tell two ranges in the same place
+        // apart, so the selected text has to agree too. Otherwise highlighting a longer span over a
+        // shorter one inside one DOM node reads as the same highlight.
+        return when {
+            selectedLength != null && other.selectedLength != null -> selectedLength == other.selectedLength
+            else -> textQuote != null && textQuote == other.textQuote
+        }
     }
+
+    /**
+     * How many characters this locator covers, or null when it cannot say.
+     *
+     * Prefers the stored range's length, because that is measured in the chapter's own coordinates,
+     * and falls back to the length of the selected text. A collapsed range is length zero.
+     */
+    val selectedLength: Int?
+        get() = when {
+            startOffset != null && endOffset != null -> (endOffset!! - startOffset!!).coerceAtLeast(0)
+            charOffset != null && endOffset != null -> (endOffset!! - charOffset!!).coerceAtLeast(0)
+            textQuote != null -> textQuote!!.length
+            else -> null
+        }
 
     companion object {
         fun fromLegacy(
@@ -237,38 +280,130 @@ fun ReaderLocator.toStablePositionCfi(): String? {
     }
 }
 
+/**
+ * Reader highlight palette: four ARGB slots the reader can recolor.
+ *
+ * Android benchmark: the palette is a list of ARGB slots (persisted as `List<Int>` via
+ * [DefaultEpubHighlightPaletteArgb]), not a selection of the named [HighlightColor] entries, so a
+ * custom colour is a first-class slot rather than something the model cannot express. The named
+ * entries survive as the defaults and as the token a stock colour maps to
+ * ([epubHighlightColorTag] yields the named id, `custom_<hex>` otherwise).
+ */
 data class ReaderHighlightPalette(
-    val colors: List<HighlightColor> = defaultColors
+    val colors: List<Int> = DefaultEpubHighlightPaletteArgb
 ) {
     fun sanitized(): ReaderHighlightPalette {
-        val knownColors = colors.filter { it in HighlightColor.entries }
-        return copy(colors = knownColors.takeIf { it.size == PaletteSize } ?: defaultColors)
+        return copy(colors = colors.takeIf { it.size == PaletteSize } ?: DefaultEpubHighlightPaletteArgb)
     }
 
-    fun contains(color: HighlightColor): Boolean {
-        return color in sanitized().colors
+    /** ARGB of a slot; falls back to the first default when the index is out of range. */
+    fun argbAt(slotIndex: Int): Int {
+        return sanitized().colors.getOrNull(slotIndex) ?: DefaultEpubHighlightPaletteArgb.first()
     }
 
-    fun withColor(color: HighlightColor, enabled: Boolean): ReaderHighlightPalette {
-        val next = if (enabled) {
-            colors + color
-        } else {
-            colors - color
-        }
-        return copy(colors = next).sanitized()
+    /** Named colour a slot currently holds, for consumers that still speak the enum. */
+    fun namedColorAt(slotIndex: Int): HighlightColor {
+        return legacyEpubHighlightColorForArgb(argbAt(slotIndex))
+    }
+
+    /** JS/CSS token for a slot: the named id for a stock colour, `custom_<hex>` otherwise. */
+    fun colorIdAt(slotIndex: Int): String {
+        return epubHighlightColorTag(argbAt(slotIndex))
+    }
+
+    fun withColorAt(slotIndex: Int, colorArgb: Int): ReaderHighlightPalette {
+        val nextColors = sanitized().colors.toMutableList()
+        if (slotIndex !in nextColors.indices) return sanitized()
+        nextColors[slotIndex] = colorArgb
+        return copy(colors = nextColors)
     }
 
     companion object {
         const val PaletteSize: Int = 4
-        val defaultColors: List<HighlightColor>
-            get() = listOf(
-                HighlightColor.YELLOW,
-                HighlightColor.GREEN,
-                HighlightColor.BLUE,
-                HighlightColor.RED
-            )
+        val defaultColors: List<Int>
+            get() = DefaultEpubHighlightPaletteArgb
     }
 }
+
+/**
+ * Names highlights that show reading position rather than reader intent.
+ *
+ * Both the producer ([ReaderTtsChunk.toHighlight], [SharedMediaOverlayProjector]) and the consumers
+ * read this one constant, so changing the id format cannot quietly leave painters and hit-testing
+ * disagreeing about which highlights are real.
+ *
+ * The value is `playback_`, not `tts_`, because a media overlay produces one of these too and a
+ * TTS-named prefix made that read as a bug. [LEGACY_TRANSIENT_BAND_ID_PREFIXES] keeps in-flight
+ * bands from a running session recognised, so widening the concept cannot drop the highlight the
+ * reader is currently looking at.
+ */
+const val TRANSIENT_BAND_ID_PREFIX = "playback_"
+
+/**
+ * Builds the transient band a playback engine paints for its current position.
+ *
+ * Single-sourced so read-aloud and a media overlay produce an identical shape. They differ only in
+ * what they measure — a spoken sentence against a synthesized chunk, a narrated line against a
+ * `par` — and the band is the one place where a divergence would be visible as one engine's
+ * highlight behaving differently from the other's: selectable, or not; recoloured, or not.
+ *
+ * @param startOffset absolute within the chapter, as every playback offset in this codebase is.
+ * @param endOffset coerced forward, so a degenerate range cannot become a backwards locator that
+ *   resolves to nothing and silently drops the band.
+ */
+fun playbackBandHighlight(
+    sessionId: Long,
+    bandIndex: Int,
+    chapterIndex: Int,
+    pageIndex: Int? = null,
+    cfi: String?,
+    text: String?,
+    startOffset: Int,
+    endOffset: Int
+): UserHighlight = playbackBandHighlight(
+    sessionId = sessionId,
+    bandIndex = bandIndex,
+    text = text,
+    locator = ReaderLocator(
+        chapterIndex = chapterIndex,
+        pageIndex = pageIndex,
+        startOffset = startOffset.coerceAtLeast(0),
+        endOffset = endOffset.coerceAtLeast(startOffset.coerceAtLeast(0)),
+        textQuote = text?.takeIf(String::isNotEmpty),
+        cfi = cfi?.takeIf(String::isNotEmpty)
+    )
+)
+
+/**
+ * [playbackBandHighlight] for a caller that has already built its locator.
+ *
+ * Read-aloud needs this: its locator carries a `desktop:chapter:start:end` cfi when the engine had no
+ * source cfi, and losing that would leave a chunk with no position at all on surfaces that resolve
+ * by cfi. The band's own `cfi` field is read from the locator rather than passed separately, because
+ * a band whose outer cfi and inner locator cfi disagreed would resolve on one path and paint on
+ * another.
+ */
+fun playbackBandHighlight(
+    sessionId: Long,
+    bandIndex: Int,
+    text: String?,
+    locator: ReaderLocator
+): UserHighlight = UserHighlight(
+    id = "$TRANSIENT_BAND_ID_PREFIX${sessionId}_$bandIndex",
+    cfi = locator.cfi.orEmpty(),
+    text = text.orEmpty(),
+    color = HighlightColor.YELLOW,
+    chapterIndex = locator.chapterIndex ?: 0,
+    locator = locator
+)
+
+/**
+ * Prefixes earlier producers used, still honoured.
+ *
+ * Nothing is ever *stored* under these — a transient band has no lifetime beyond its session — so
+ * this is purely about not losing the band currently on screen when the app updates.
+ */
+val LEGACY_TRANSIENT_BAND_ID_PREFIXES: List<String> = listOf("tts_")
 
 data class UserHighlight(
     val id: String,
@@ -287,6 +422,22 @@ data class UserHighlight(
 ) {
     val effectiveColor: Color
         get() = colorArgb?.let { Color(it) } ?: color.color
+
+    /** ARGB the highlight paints with; [colorArgb] when set, else the named colour's value. */
+    val effectiveArgb: Int
+        get() = colorArgb ?: color.color.toArgb()
+
+    /**
+     * Whether this is a transient reading-position band rather than something the reader owns.
+     *
+     * Both playback engines paint their current position through the highlight pipeline, so a band
+     * arrives here shaped exactly like a highlight the reader made. It is not one: it is not stored,
+     * it has no id the reader can look up, and it must not be reported as selected. Painters draw it;
+     * hit-testing and the selection sheet ignore it.
+     */
+    val isTransientPlaybackBand: Boolean
+        get() = id.startsWith(TRANSIENT_BAND_ID_PREFIX) ||
+            LEGACY_TRANSIENT_BAND_ID_PREFIXES.any(id::startsWith)
 
     fun renderColor(legacyAlpha: Float): Color {
         val argb = colorArgb ?: return color.color.copy(alpha = legacyAlpha)

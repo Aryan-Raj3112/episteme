@@ -1,11 +1,14 @@
 package com.aryan.reader
 
+import com.aryan.reader.shared.calculateSharedTtsAudiobookProgress
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.AudiobookImporter
 import com.aryan.reader.audiobook.audiobookResumePosition
 import com.aryan.reader.audiobook.formatSleepTimerLabel
 import com.aryan.reader.audiobook.BookTtsListeningProgressEntity
-import com.aryan.reader.audiobook.toSharedBookTtsListenState
+import com.aryan.reader.audiobook.toSharedTtsPlaybackSnapshot
+import com.aryan.reader.shared.SharedTtsListenSavedProgress
+import com.aryan.reader.shared.toSharedBookTtsListenState
 import com.aryan.reader.tts.TtsPlaybackManager
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -87,7 +90,7 @@ class UnifiedLibraryScreenTest {
 
     @Test
     fun generatedAudiobookProgressIncludesCompletedChapters() {
-        assertEquals(.375f, calculateTtsAudiobookProgress(chapterIndex = 1, chapterCount = 4, chunkIndex = 4, chunkCount = 10))
+        assertEquals(.375f, calculateSharedTtsAudiobookProgress(chapterIndex = 1, chapterCount = 4, chunkIndex = 4, chunkCount = 10))
     }
 
     @Test
@@ -116,8 +119,8 @@ class UnifiedLibraryScreenTest {
             chapterTitle = "Chapter 2",
             transcriptStartIndex = 2,
             transcriptChunks = listOf("A", "B"),
-        ).toSharedBookTtsListenState(
-            progress = BookTtsListeningProgressEntity("book-1", speechRate = 1.2f, pitch = .9f),
+        ).toSharedTtsPlaybackSnapshot().toSharedBookTtsListenState(
+            progress = SharedTtsListenSavedProgress(speechRate = 1.2f, pitch = .9f),
             preparedChapterCount = 0,
             sleepTimerRemainingMs = 90_000L,
         )

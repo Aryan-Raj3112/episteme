@@ -16,6 +16,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.aryan.reader.pdf.MagnifierContentSource
+import com.aryan.reader.pdf.calculateMagnifierSampleGeometry
 import kotlin.math.roundToInt
 
 /**
@@ -49,10 +51,10 @@ internal fun SharedTextMagnifier(
             val lensWidthPx = size.width
             val lensHeightPx = size.height
             if (lensWidthPx <= 0f || lensHeightPx <= 0f || zoomFactor <= 0f) return@Canvas
-            val sample = calculateSharedPdfMagnifierSampleGeometry(
+            val sample = calculateMagnifierSampleGeometry(
                 centerContentX = magnifierCenter.x,
                 centerContentY = magnifierCenter.y,
-                contentSource = SharedPdfMagnifierContentSource(
+                contentSource = MagnifierContentSource(
                     sourceWidth = sourceBitmap.width,
                     sourceHeight = sourceBitmap.height,
                     contentLeft = 0f,

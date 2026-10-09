@@ -10,8 +10,13 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
@@ -40,6 +45,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -59,6 +65,13 @@ private data class SharedScrollbarState(
     val preferredThumbHeightPx: Float,
     val contentHeightPx: Float,
     val viewportHeightPx: Float
+)
+
+private data class SharedDrawerScrollbarState(
+    val thumbHeight: Float,
+    val thumbOffset: Float,
+    val contentHeight: Float,
+    val viewportHeight: Float
 )
 
 private data class SharedPdfScrollbarState(
@@ -259,6 +272,115 @@ fun SharedReaderVerticalScrollbar(
                         .background(barColor, RoundedCornerShape(999.dp))
                 )
             }
+        }
+    }
+}
+
+/**
+ * Drawer scrollbar, ported verbatim from Android's `pdf/PdfNavigationUI.kt`
+ * `VerticalScrollbar` (parity item B7).
+ *
+ * Android-wins: this is the single implementation for both platforms' drawer sheets.
+ * The original Android file's row in the parity doc pointed at [SharedPdfVerticalScrollbar]
+ * instead, but that is a *desktop-only* composable whose sole caller is
+ * `desktopApp/DesktopPdfReaderScreen.kt` — pairing them would have restyled the desktop app
+ * while leaving the actual mobile gap in place.
+ *
+ * The real gap this closed: the shared EPUB drawer sheets take a `scrollbar` slot that
+ * defaults to `{}`, and iOS never passed one, so iOS drawers had **no** scrollbar while
+ * Android's did. The mobile PDF reader had its own private 12dp/3dp copy, which this also
+ * replaces.
+ */
+@Composable
+fun SharedDrawerScrollbar(
+    listState: LazyListState,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isDragged by interactionSource.collectIsDraggedAsState()
+
+    val scrollbarState by remember {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val totalItems = layoutInfo.totalItemsCount
+            val visibleItemsInfo = layoutInfo.visibleItemsInfo
+            val viewportHeight = layoutInfo.viewportSize.height.toFloat()
+
+            if (totalItems == 0 || visibleItemsInfo.isEmpty() || viewportHeight <= 0f) {
+                return@derivedStateOf null
+            }
+
+            // Estimate total height
+            val averageItemHeight = visibleItemsInfo.sumOf { it.size } / visibleItemsInfo.size.toFloat()
+            val estimatedContentHeight = (averageItemHeight * totalItems).coerceAtLeast(viewportHeight)
+            val viewportRatio = viewportHeight / estimatedContentHeight
+
+            if (viewportRatio >= 1f) return@derivedStateOf null
+
+            val maxThumbHeight = viewportHeight / 2f
+            val minThumbHeight = minOf(80f, maxThumbHeight)
+            val thumbHeight = (viewportHeight * viewportRatio).coerceIn(minThumbHeight, maxThumbHeight)
+
+            val firstItemIndex = listState.firstVisibleItemIndex
+            val firstItemOffset = listState.firstVisibleItemScrollOffset
+            val currentScrollPixels = (firstItemIndex * averageItemHeight) + firstItemOffset
+            val maxScrollPixels = estimatedContentHeight - viewportHeight
+            val scrollProgress = (currentScrollPixels / maxScrollPixels).coerceIn(0f, 1f)
+            val trackHeight = viewportHeight - thumbHeight
+            val thumbOffset = trackHeight * scrollProgress
+
+            SharedDrawerScrollbarState(
+                thumbHeight = thumbHeight,
+                thumbOffset = thumbOffset,
+                contentHeight = estimatedContentHeight,
+                viewportHeight = viewportHeight
+            )
+        }
+    }
+
+    val targetAlpha = if (listState.isScrollInProgress || isDragged) 1f else 0f
+    val alpha by animateFloatAsState(
+        targetValue = targetAlpha,
+        animationSpec = tween(durationMillis = 200),
+        label = "ScrollbarAlpha"
+    )
+
+    if (scrollbarState != null) {
+        val state = scrollbarState!!
+        val draggableState = rememberDraggableState { delta ->
+            val trackHeight = state.viewportHeight - state.thumbHeight
+            if (trackHeight > 0) {
+                val scrollRatio = delta / trackHeight
+                val totalScrollableDistance = state.contentHeight - state.viewportHeight
+                val scrollDelta = scrollRatio * totalScrollableDistance
+                listState.dispatchRawDelta(scrollDelta)
+            }
+        }
+
+        Box(
+            modifier = modifier
+                .width(30.dp)
+                .fillMaxHeight()
+                .draggable(
+                    state = draggableState,
+                    orientation = Orientation.Vertical,
+                    interactionSource = interactionSource
+                )
+        ) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .graphicsLayer { translationY = state.thumbOffset }
+                    .padding(end = 4.dp)
+                    .width(6.dp)
+                    .height(with(LocalDensity.current) { state.thumbHeight.toDp() })
+                    .alpha(alpha)
+                    .background(
+                        color = if (isDragged) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(100)
+                    )
+            )
         }
     }
 }

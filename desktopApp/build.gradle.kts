@@ -1509,6 +1509,7 @@ val bundledPdfiumDir = layout.projectDirectory.dir(
 val bundledPdfiumLibraryPath = desktopPdfiumLibraryPath(desktopOsName, desktopOsArch)
 val desktopWindowsIconFile = layout.projectDirectory.file("src/desktopMain/resources/episteme.ico")
 val desktopLinuxIconFile = layout.projectDirectory.file("src/desktopMain/resources/episteme_icon.png")
+val desktopMacIconFile = layout.projectDirectory.file("src/desktopMain/resources/episteme.icns")
 val desktopWindowsUpgradeUuid = if (isOssOfflineDesktop) {
     "ca13b201-940a-420a-8a3f-16e7d83d12a8"
 } else {
@@ -1829,6 +1830,11 @@ compose.desktop {
                 debMaintainer = "epistemereader@gmail.com"
                 menuGroup = "Office"
                 appCategory = "Office"
+            }
+            macOS {
+                iconFile.set(desktopMacIconFile)
+                bundleID = "com.aryan.reader.desktop"
+                packageName = desktopPackageName
             }
         }
     }

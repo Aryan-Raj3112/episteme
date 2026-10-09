@@ -19,93 +19,45 @@
  */
 package com.aryan.reader.epubreader
 
-import android.graphics.BitmapFactory
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ScrollableTabRow
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastSumBy
 import com.aryan.reader.R
@@ -113,116 +65,12 @@ import com.aryan.reader.RenderMode
 import com.aryan.reader.shared.ReaderMotionPolicy
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.epub.EpubTocEntry
-import com.aryan.reader.shared.filterReaderTocEntries
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import timber.log.Timber
-
-@Composable
-fun VerticalScrollbar(
-    listState: LazyListState,
-    modifier: Modifier = Modifier
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isDragged by interactionSource.collectIsDraggedAsState()
-
-    val scrollbarState by remember {
-        derivedStateOf {
-            val layoutInfo = listState.layoutInfo
-            val totalItems = layoutInfo.totalItemsCount
-            val visibleItemsInfo = layoutInfo.visibleItemsInfo
-            val viewportHeight = layoutInfo.viewportSize.height.toFloat()
-
-            if (totalItems == 0 || visibleItemsInfo.isEmpty() || viewportHeight <= 0f) {
-                return@derivedStateOf null
-            }
-
-            val averageItemHeight = visibleItemsInfo.fastSumBy { it.size } / visibleItemsInfo.size.toFloat()
-            val estimatedContentHeight = (averageItemHeight * totalItems).coerceAtLeast(viewportHeight)
-            val viewportRatio = viewportHeight / estimatedContentHeight
-
-            if (viewportRatio >= 1f) return@derivedStateOf null
-
-            val maxThumbHeight = viewportHeight / 2f
-            val minThumbHeight = minOf(80f, maxThumbHeight)
-            val thumbHeight = (viewportHeight * viewportRatio).coerceIn(minThumbHeight, maxThumbHeight)
-
-            val firstItemIndex = listState.firstVisibleItemIndex
-            val firstItemOffset = listState.firstVisibleItemScrollOffset
-            val currentScrollPixels = (firstItemIndex * averageItemHeight) + firstItemOffset
-            val maxScrollPixels = estimatedContentHeight - viewportHeight
-            val scrollProgress = (currentScrollPixels / maxScrollPixels).coerceIn(0f, 1f)
-            val trackHeight = viewportHeight - thumbHeight
-            val thumbOffset = trackHeight * scrollProgress
-
-            ScrollbarCalculations(
-                thumbHeight = thumbHeight,
-                thumbOffset = thumbOffset,
-                contentHeight = estimatedContentHeight,
-                viewportHeight = viewportHeight
-            )
-        }
-    }
-
-    val targetAlpha = if (listState.isScrollInProgress || isDragged) 1f else 0f
-    val alpha by animateFloatAsState(
-        targetValue = targetAlpha,
-        animationSpec = tween(durationMillis = 200),
-        label = "ScrollbarAlpha"
-    )
-
-    if (scrollbarState != null) {
-        val state = scrollbarState!!
-
-        val draggableState = rememberDraggableState { delta ->
-            val trackHeight = state.viewportHeight - state.thumbHeight
-            if (trackHeight > 0) {
-                val scrollRatio = delta / trackHeight
-                val totalScrollableDistance = state.contentHeight - state.viewportHeight
-                val scrollDelta = scrollRatio * totalScrollableDistance
-
-                listState.dispatchRawDelta(scrollDelta)
-            }
-        }
-
-        Box(
-            modifier = modifier
-                .width(30.dp)
-                .fillMaxHeight()
-                .draggable(
-                    state = draggableState,
-                    orientation = Orientation.Vertical,
-                    interactionSource = interactionSource
-                )
-        ) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .graphicsLayer {
-                        translationY = state.thumbOffset
-                    }
-                    .padding(end = 4.dp)
-                    .width(6.dp)
-                    .height(with(androidx.compose.ui.platform.LocalDensity.current) { state.thumbHeight.toDp() })
-                    .alpha(alpha)
-                    .background(
-                        color = if (isDragged) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
-                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                        shape = RoundedCornerShape(100)
-                    )
-            )
-        }
-    }
-}
-
-private data class ScrollbarCalculations(
-    val thumbHeight: Float,
-    val thumbOffset: Float,
-    val contentHeight: Float,
-    val viewportHeight: Float
-)
+import com.aryan.reader.shared.ui.toBookmarkRow
+import com.aryan.reader.shared.ui.SharedDrawerScrollbar
+import com.aryan.reader.shared.ui.SharedMobileEpubToc
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 
 @Composable
 fun EpubReaderDrawerSheet(
@@ -248,6 +96,7 @@ fun EpubReaderDrawerSheet(
     activeHighlightPalette: List<Int>,
     onOpenPaletteManager: () -> Unit,
     onHighlightColorChange: (UserHighlight, Int) -> Unit,
+    onExportAnnotations: (() -> Unit)? = null,
     readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
     ModalDrawerSheet(
@@ -336,7 +185,8 @@ fun EpubReaderDrawerSheet(
                         onEditNote = onEditNote,
                         activeHighlightPalette = activeHighlightPalette,
                         onOpenPaletteManager = onOpenPaletteManager,
-                        onHighlightColorChange = onHighlightColorChange
+                        onHighlightColorChange = onHighlightColorChange,
+                        onExportAnnotations = onExportAnnotations
                     )
                     3 -> ImagesList(
                         readerImages = readerImages,
@@ -349,6 +199,11 @@ fun EpubReaderDrawerSheet(
     }
 }
 
+/**
+ * Android TOC drawer. The search/expand/locate/projection logic is the shared, unit-tested
+ * implementation; this only resolves which chapter path counts as "current" (it differs between
+ * paginated and vertical-scroll modes) and maps row indices back to Android navigation.
+ */
 @Composable
 private fun ChaptersList(
     chapters: List<EpubChapter>,
@@ -360,9 +215,6 @@ private fun ChaptersList(
     onNavigateToTocEntry: (EpubTocEntry) -> Unit,
     onNavigateToChapter: (Int) -> Unit
 ) {
-    val listState = rememberLazyListState()
-    val focusManager = LocalFocusManager.current
-
     val effectiveToc = remember(tocEntries, chapters) {
         tocEntries.ifEmpty {
             chapters.map { EpubTocEntry(it.title, it.absPath, null, it.depth) }
@@ -377,235 +229,42 @@ private fun ChaptersList(
         chapters.getOrNull(idx)?.absPath
     }
 
-    val firstEntryForCurrentChapter = remember(effectiveToc, currentChapterPath) {
-        val entry = effectiveToc.firstOrNull { it.absolutePath == currentChapterPath }
-        Timber.tag("FRAG_NAV_DEBUG").d("Computed First Entry for Chapter: '${entry?.label}' (Path: $currentChapterPath)")
-        entry
-    }
-
-    val allParentIndices = remember(effectiveToc) {
-        effectiveToc.indices.filter { i ->
-            val next = effectiveToc.getOrNull(i + 1)
-            next != null && next.depth > effectiveToc[i].depth
-        }.toSet()
-    }
-
-    var expandedEntryIndices by rememberSaveable(effectiveToc) {
-        mutableStateOf(allParentIndices)
-    }
-    var tocSearchQuery by rememberSaveable(effectiveToc) { mutableStateOf("") }
-    var searchFieldCanFocus by remember(effectiveToc) { mutableStateOf(false) }
-    val isSearchingToc = tocSearchQuery.isNotBlank()
-
-    LaunchedEffect(effectiveToc) {
-        searchFieldCanFocus = false
-        focusManager.clearFocus(force = true)
-    }
-
-    val visibleItemInfo by remember(effectiveToc, tocSearchQuery) {
-        derivedStateOf {
-            if (tocSearchQuery.isNotBlank()) {
-                filterReaderTocEntries(
-                    entries = effectiveToc,
-                    query = tocSearchQuery,
-                    labelOf = { it.label },
-                    depthOf = { it.depth }
-                ).map { it.originalIndex to it.entry }
-            } else {
-                val result = mutableListOf<Pair<Int, EpubTocEntry>>()
-                val visibilityStack = BooleanArray(50) { false }
-                visibilityStack[0] = true
-
-                for (i in effectiveToc.indices) {
-                    val entry = effectiveToc[i]
-                    val depth = entry.depth.coerceIn(0, 49)
-
-                    if (visibilityStack[depth]) {
-                        result.add(i to entry)
-
-                        val isExpanded = expandedEntryIndices.contains(i)
-                        if (depth + 1 < visibilityStack.size) {
-                            visibilityStack[depth + 1] = isExpanded
-                        }
-                    } else {
-                        if (depth + 1 < visibilityStack.size) {
-                            visibilityStack[depth + 1] = false
-                        }
-                    }
-                }
-                result
-            }
-        }
-    }
-    val coroutineScope = rememberCoroutineScope()
-
-    val activeTocEntry = remember(effectiveToc, currentChapterPath, activeFragmentId, firstEntryForCurrentChapter) {
-        effectiveToc.find {
+    // A fragment supplied by the renderer wins; otherwise fall back to the first entry that
+    // points at the current chapter.
+    val activeIndex = remember(effectiveToc, currentChapterPath, activeFragmentId) {
+        val exact = effectiveToc.indexOfFirst {
             it.absolutePath == currentChapterPath && it.fragmentId == activeFragmentId
-        } ?: firstEntryForCurrentChapter
+        }
+        if (exact >= 0) {
+            exact
+        } else {
+            effectiveToc.indexOfFirst { it.absolutePath == currentChapterPath }.takeIf { it >= 0 }
+        }
     }
 
-    val onScrollToCurrent = {
-        coroutineScope.launch {
-            val targetEntry = activeTocEntry ?: return@launch
-            val targetOriginalIndex = effectiveToc.indexOf(targetEntry)
-            if (targetOriginalIndex != -1) {
-                var currentLevel = targetEntry.depth
-                val newExpanded = expandedEntryIndices.toMutableSet()
-
-                for (i in targetOriginalIndex downTo 0) {
-                    val entry = effectiveToc[i]
-                    if (entry.depth < currentLevel) {
-                        newExpanded.add(i)
-                        currentLevel = entry.depth
-                    }
-                    if (currentLevel == 0) break
-                }
-
-                expandedEntryIndices = newExpanded
-
-                val visibleIdx = visibleItemInfo.indexOfFirst { it.second == targetEntry }
-
-                if (visibleIdx != -1) {
-                    var attempts = 0
-                    while (listState.layoutInfo.totalItemsCount <= visibleIdx && attempts < 10) {
-                        delay(30)
-                        attempts++
-                    }
-
-                    listState.animateScrollToItem(visibleIdx)
-                }
-            }
-        }
-        Unit
-    }
-
-    Column(modifier = Modifier.fillMaxSize()) {
-        OutlinedTextField(
-            value = tocSearchQuery,
-            onValueChange = { tocSearchQuery = it },
-            singleLine = true,
-            leadingIcon = {
-                Icon(
-                    Icons.Default.Search,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp)
-                )
-            },
-            trailingIcon = if (tocSearchQuery.isNotEmpty()) {
-                {
-                    IconButton(
-                        onClick = { tocSearchQuery = "" },
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = stringResource(R.string.tooltip_clear_search),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-            } else null,
-            placeholder = { Text(stringResource(R.string.search_chapters_placeholder)) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .pointerInput(effectiveToc) {
-                    awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = false)
-                        searchFieldCanFocus = true
-                    }
-                }
-                .focusProperties { canFocus = searchFieldCanFocus }
-                .onFocusChanged { state ->
-                    if (!state.isFocused) searchFieldCanFocus = false
-                }
-        )
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly
-        ) {
-            TextButton(onClick = { expandedEntryIndices = effectiveToc.indices.toSet() }) {
-                Text(stringResource(R.string.action_expand_all))
-            }
-            TextButton(onClick = { expandedEntryIndices = emptySet() }) {
-                Text(stringResource(R.string.action_collapse_all))
-            }
-            TextButton(onClick = onScrollToCurrent) {
-                Text(stringResource(R.string.action_locate))
-            }
-        }
-
-        HorizontalDivider()
-
-        Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-            if (visibleItemInfo.isEmpty() && isSearchingToc) {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = stringResource(R.string.no_chapters_matching, tocSearchQuery.trim()),
-                        style = MaterialTheme.typography.bodyLarge,
-                        textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+    com.aryan.reader.shared.ui.SharedMobileEpubToc(
+        entries = effectiveToc,
+        activeIndex = activeIndex,
+        onEntryClick = { originalIndex, entry ->
+            if (tocEntries.isEmpty()) {
+                onNavigateToChapter(originalIndex)
             } else {
-                LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .padding(end = 12.dp)
-            ) {
-                items(
-                    items = visibleItemInfo,
-                    key = { (index, entry) -> "${entry.absolutePath}_${entry.fragmentId}_$index" }
-                ) { (originalIndex, entry) ->
-                    val nextItem = effectiveToc.getOrNull(originalIndex + 1)
-                    val hasChildren = nextItem != null && nextItem.depth > entry.depth
-                    val isExpanded = expandedEntryIndices.contains(originalIndex)
-
-                    val isCurrentPath = currentChapterPath == entry.absolutePath
-                    val matchesFragment = entry.fragmentId == activeFragmentId
-
-                    val isFallback = activeFragmentId == null && entry == firstEntryForCurrentChapter
-                    val isHighlighting = isCurrentPath && (matchesFragment || isFallback)
-
-                    TocTreeItem(
-                        label = entry.label,
-                        depth = entry.depth,
-                        isExpanded = isExpanded,
-                        hasChildren = hasChildren,
-                        isCurrent = isHighlighting,
-                        onToggleExpand = {
-                            expandedEntryIndices = if (isExpanded) {
-                                expandedEntryIndices - originalIndex
-                            } else {
-                                expandedEntryIndices + originalIndex
-                            }
-                        },
-                        onClick = {
-                            if (tocEntries.isEmpty()) {
-                                onNavigateToChapter(originalIndex)
-                            } else {
-                                onNavigateToTocEntry(entry)
-                            }
-                        }
-                    )
-                }
+                onNavigateToTocEntry(entry)
             }
-            }
-
-            VerticalScrollbar(
+        },
+        labelOf = { it.label },
+        depthOf = { it.depth },
+        keyOf = { index, entry -> "${entry.absolutePath}_${entry.fragmentId}_$index" },
+        collapseDescription = stringResource(R.string.content_desc_collapse),
+        expandDescription = stringResource(R.string.content_desc_expand),
+        scrollbar = { listState ->
+            SharedDrawerScrollbar(
                 listState = listState,
-                modifier = Modifier.align(Alignment.CenterEnd)
+                modifier = Modifier.align(Alignment.CenterEnd),
             )
-        }
-    }
+        },
+        modifier = Modifier.fillMaxSize()
+    )
 }
 
 @Composable
@@ -639,9 +298,19 @@ private fun BookmarksList(
     onDeleteBookmark: (Bookmark) -> Unit
 ) {
     val context = LocalContext.current
-    com.aryan.reader.shared.ui.SharedAndroidEpubBookmarksList(
-        bookmarks = bookmarks,
-        strings = com.aryan.reader.shared.ui.SharedAndroidEpubBookmarkStrings(
+    val bookmarkDefaultLabel = stringResource(R.string.content_desc_bookmark)
+    val bookmarkPageOf: (Int, Int) -> String = { page, total ->
+        context.getString(R.string.page_of_format, page, total)
+    }
+    com.aryan.reader.shared.ui.SharedEpubBookmarksList(
+        bookmarks = bookmarks.toList(),
+        rowOf = { bookmark ->
+            bookmark.toBookmarkRow(
+                defaultLabel = bookmarkDefaultLabel,
+                pageOf = bookmarkPageOf
+            )
+        },
+        strings = com.aryan.reader.shared.ui.SharedEpubBookmarkStrings(
             empty = stringResource(R.string.no_bookmarks_yet),
             defaultLabel = stringResource(R.string.content_desc_bookmark),
             pageOf = { page, total -> context.getString(R.string.page_of_format, page, total) },
@@ -659,7 +328,7 @@ private fun BookmarksList(
         onRenameBookmark = onRenameBookmark,
         onDeleteBookmark = onDeleteBookmark,
         scrollbar = { listState ->
-            VerticalScrollbar(
+            SharedDrawerScrollbar(
                 listState = listState,
                 modifier = Modifier.align(Alignment.CenterEnd),
             )
@@ -673,140 +342,14 @@ private fun ImagesList(
     onNavigateToImage: (EpubReaderImageReference) -> Unit,
     onDownloadImage: (EpubReaderImageReference) -> Unit
 ) {
-    if (readerImages.isEmpty()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = stringResource(R.string.no_images_found),
-                style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center
-            )
-        }
-        return
-    }
-
-    val listState = rememberLazyListState()
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(end = 4.dp),
-            contentPadding = PaddingValues(vertical = 4.dp)
-        ) {
-            items(
-                items = readerImages,
-                key = { it.id }
-            ) { image ->
-                ListItem(
-                    leadingContent = {
-                        EpubReaderImageThumbnail(
-                            image = image,
-                            modifier = Modifier.size(width = 72.dp, height = 56.dp)
-                        )
-                    },
-                    headlineContent = {
-                        Text(
-                            text = image.displayTitle,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    },
-                    supportingContent = {
-                        Column {
-                            Text(
-                                text = image.chapterTitle,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            val metadata = listOfNotNull(image.dimensionLabel, image.sourceName()).joinToString(" - ")
-                            if (metadata.isNotBlank()) {
-                                Text(
-                                    text = metadata,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    },
-                    trailingContent = {
-                        IconButton(onClick = { onDownloadImage(image) }) {
-                            Icon(
-                                imageVector = Icons.Default.Download,
-                                contentDescription = stringResource(R.string.content_desc_download_image)
-                            )
-                        }
-                    },
-                    modifier = Modifier.clickable { onNavigateToImage(image) }
-                )
-                HorizontalDivider()
-            }
-        }
-
-        VerticalScrollbar(
-            listState = listState,
-            modifier = Modifier.align(Alignment.CenterEnd)
-        )
-    }
+    com.aryan.reader.shared.ui.SharedMobileEpubImages(
+        images = readerImages,
+        rowOf = { it.toDrawerImage() },
+        onImageClick = onNavigateToImage,
+        onDownloadImage = onDownloadImage,
+        modifier = Modifier.fillMaxSize()
+    )
 }
-
-@Composable
-private fun EpubReaderImageThumbnail(
-    image: EpubReaderImageReference,
-    modifier: Modifier = Modifier
-) {
-    var bitmap by remember(image.sourcePath) { mutableStateOf<android.graphics.Bitmap?>(null) }
-
-    LaunchedEffect(image.sourcePath) {
-        bitmap = withContext(Dispatchers.IO) {
-            if (image.sourcePath.startsWith("data:", ignoreCase = true)) {
-                val bytes = image.readDownloadBytes()
-                bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
-            } else {
-                BitmapFactory.decodeFile(image.sourcePath)
-            }
-        }
-    }
-
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(6.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
-    ) {
-        val currentBitmap = bitmap
-        if (currentBitmap != null) {
-            Image(
-                bitmap = currentBitmap.asImageBitmap(),
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize()
-            )
-        } else {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = (image.index + 1).toString(),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
-
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun HighlightsList(
     userHighlights: List<UserHighlight>,
@@ -816,171 +359,30 @@ private fun HighlightsList(
     onEditNote: (UserHighlight) -> Unit,
     activeHighlightPalette: List<Int>,
     onOpenPaletteManager: () -> Unit,
-    onHighlightColorChange: (UserHighlight, Int) -> Unit
+    onHighlightColorChange: (UserHighlight, Int) -> Unit,
+    onExportAnnotations: (() -> Unit)? = null
 ) {
-    if (userHighlights.isEmpty()) {
-        Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
-            Text(stringResource(R.string.no_highlights_yet), style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
-        }
-    } else {
-        var highlightMenuExpandedFor by remember { mutableStateOf<UserHighlight?>(null) }
-        var showHighlightDeleteDialogFor by remember { mutableStateOf<UserHighlight?>(null) }
-        var filterWithNotesOnly by remember { mutableStateOf(false) } // ADDED
-
-        val listState = rememberLazyListState()
-
-        Column(modifier = Modifier.fillMaxSize()) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                androidx.compose.material3.FilterChip(
-                    selected = !filterWithNotesOnly,
-                    onClick = { filterWithNotesOnly = false },
-                    label = { Text(stringResource(R.string.filter_all)) }
-                )
-                androidx.compose.material3.FilterChip(
-                    selected = filterWithNotesOnly,
-                    onClick = { filterWithNotesOnly = true },
-                    label = { Text(stringResource(R.string.filter_with_notes)) }
-                )
-            }
-
-            val filteredHighlights = if (filterWithNotesOnly) {
-                userHighlights.filter { !it.note.isNullOrBlank() }
-            } else {
-                userHighlights
-            }
-
-            Box(modifier = Modifier.fillMaxSize()) {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize().padding(end = 4.dp)
-                ) {
-                    items(
-                        items = filteredHighlights.sortedBy { it.chapterIndex },
-                        key = { it.id }
-                    ) { highlight ->
-                        val chapterTitle = chapters.getOrNull(highlight.chapterIndex)?.title ?: stringResource(R.string.unknown_chapter)
-
-                        ListItem(
-                            headlineContent = {
-                                Text(
-                                    text = highlight.text,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            },
-                            supportingContent = {
-                                Column {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(12.dp)
-                                                .background(highlight.effectiveColor, CircleShape)
-                                        )
-                                        Spacer(Modifier.width(8.dp))
-                                        Text(
-                                            text = chapterTitle,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    val note = highlight.note
-                                    if (!note.isNullOrBlank()) {
-                                        Spacer(Modifier.height(8.dp))
-                                        Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Text(
-                                                text = note,
-                                                style = MaterialTheme.typography.bodySmall.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
-                                                modifier = Modifier.padding(12.dp),
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-                                }
-                            },
-                            trailingContent = {
-                                Box {
-                                    IconButton(onClick = { highlightMenuExpandedFor = highlight }) {
-                                        Icon(
-                                            imageVector = Icons.Default.MoreVert,
-                                            contentDescription = stringResource(R.string.content_desc_options)
-                                        )
-                                    }
-                                    DropdownMenu(
-                                        expanded = highlightMenuExpandedFor == highlight,
-                                        onDismissRequest = { highlightMenuExpandedFor = null }
-                                    ) {
-                                        HighlightColorRow(
-                                            activeHighlightPalette = activeHighlightPalette,
-                                            selectedColorArgb = highlight.colorArgb ?: highlight.color.color.toArgb(),
-                                            onColorSelect = { color ->
-                                                onHighlightColorChange(highlight, color)
-                                                highlightMenuExpandedFor = null
-                                            },
-                                            onOpenPaletteManager = {
-                                                onOpenPaletteManager()
-                                                highlightMenuExpandedFor = null
-                                            }
-                                        )
-                                        HorizontalDivider()
-                                        DropdownMenuItem(
-                                            text = { Text(if (highlight.note.isNullOrBlank()) stringResource(R.string.menu_add_note) else stringResource(R.string.menu_edit_note)) },
-                                            onClick = {
-                                                onEditNote(highlight)
-                                                highlightMenuExpandedFor = null
-                                            }
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.action_delete)) },
-                                            onClick = {
-                                                showHighlightDeleteDialogFor = highlight
-                                                highlightMenuExpandedFor = null
-                                            }
-                                        )
-                                    }
-                                }
-                            },
-                            modifier = Modifier.clickable { onNavigateToHighlight(highlight) }
-                        )
-                        HorizontalDivider()
-                    }
-                }
-
-                VerticalScrollbar(
-                    listState = listState,
-                    modifier = Modifier.align(Alignment.CenterEnd)
-                )
-            }
-        }
-
-        showHighlightDeleteDialogFor?.let { highlightToDelete ->
-            AlertDialog(
-                onDismissRequest = { showHighlightDeleteDialogFor = null },
-                title = { Text(stringResource(R.string.dialog_delete_highlight)) },
-                text = { Text(stringResource(R.string.dialog_delete_highlight_desc)) },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            onDeleteHighlight(highlightToDelete)
-                            showHighlightDeleteDialogFor = null
-                        }
-                    ) {
-                        Text(stringResource(R.string.action_delete))
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showHighlightDeleteDialogFor = null }) {
-                        Text(stringResource(R.string.action_cancel))
-                    }
-                }
+    val unknownChapter = stringResource(R.string.unknown_chapter)
+    com.aryan.reader.shared.ui.SharedMobileEpubHighlights(
+        highlights = userHighlights,
+        chapterTitleOf = { chapterIndex ->
+            chapters.getOrNull(chapterIndex)?.title ?: unknownChapter
+        },
+        // Android's palette is already ARGB slots, so it passes straight through — the shared
+        // model no longer launders it through the named-color enum.
+        palette = com.aryan.reader.shared.ReaderHighlightPalette(colors = activeHighlightPalette),
+        onHighlightClick = onNavigateToHighlight,
+        onHighlightEdit = onEditNote,
+        onHighlightColorChange = onHighlightColorChange,
+        onDeleteHighlight = onDeleteHighlight,
+        onOpenPaletteManager = onOpenPaletteManager,
+        onExportAnnotations = onExportAnnotations,
+        scrollbar = { listState ->
+            SharedDrawerScrollbar(
+                listState = listState,
+                modifier = Modifier.align(Alignment.CenterEnd),
             )
-        }
-    }
+        },
+        modifier = Modifier.fillMaxSize()
+    )
 }

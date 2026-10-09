@@ -30,6 +30,8 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.paginatedreader.CssStyle
+import com.aryan.reader.paginatedreader.imagePageHeightBudgetPx
+import com.aryan.reader.paginatedreader.intrinsicImageWidthPx
 import com.aryan.reader.paginatedreader.PaginationStackFragmentationPlan
 import com.aryan.reader.paginatedreader.SemanticBlock
 import com.aryan.reader.paginatedreader.SemanticFlexContainer
@@ -1464,12 +1466,17 @@ internal fun measureImageSize(
             // Contain-fit inside the page box: tall images shrink in width so
             // the aspect ratio survives and the image always fits the screen.
             // Mirrors computeImageRenderSizePx on Android so measure == render.
-            val maxHeight = (geometry.pageHeightPx * 0.86f).roundToInt().coerceAtLeast(24).toFloat()
+            val maxHeight = imagePageHeightBudgetPx(geometry.pageHeightPx)
             val aspect = height / width
+            // Parity item B1, image base width — must stay identical to
+            // `sharedNativeImageRenderSizePx`, or the image is measured into one box and rendered
+            // into another. Mirrors Android's `measureScaledImageSizePx`, which also falls back to
+            // `intrinsicImageWidthPx` (the `width` attribute read as dp, capped at the content
+            // width) rather than to the content width outright.
             val baseWidth = if (style.width.isSpecified && style.width > 0.dp) {
                 with(density) { style.width.toPx().roundToInt() }.toFloat()
             } else {
-                contentMaxWidth
+                intrinsicImageWidthPx(width, density, contentMaxWidth)
             }
             var scaledWidth = baseWidth * imageScale
             if (style.maxWidth.isSpecified && style.maxWidth > 0.dp) {
@@ -1500,7 +1507,7 @@ internal fun measureImageSize(
     }
     val coercedHeight = measuredHeight.coerceIn(
         24,
-        (geometry.pageHeightPx * 0.86f).roundToInt().coerceAtLeast(24)
+        imagePageHeightBudgetPx(geometry.pageHeightPx).roundToInt()
     )
     return measuredWidth to coercedHeight
 }
@@ -1701,7 +1708,7 @@ private fun SemanticTextBlock.textStyle(baseStyle: TextStyle, settings: ReaderSe
         ?: style.spanStyle.fontSize.takeIfSpecified())
         ?.resolveFontSizeSp(settings.fontSize.toFloat())
         ?: when (this) {
-            is SemanticHeader -> (settings.fontSize * headerScale(level)).sp
+            is SemanticHeader -> (settings.fontSize * sharedHeadingFontScale(level)).sp
             else -> baseStyle.fontSize
         }
     val lineHeight = style.paragraphStyle.lineHeight.takeIfSpecified()
@@ -1770,16 +1777,6 @@ private fun CssStyle.toMeasurementSpanStyle(parentFontSizeSp: Float): SpanStyle 
             fontVariantNumeric = fontVariantNumeric
         )
     )
-}
-
-private fun headerScale(level: Int): Float {
-    return when (level) {
-        1 -> 1.5f
-        2 -> 1.35f
-        3 -> 1.2f
-        4 -> 1.1f
-        else -> 1f
-    }
 }
 
 private fun SemanticTextBlock.sliceText(start: Int, end: Int): SemanticTextBlock {

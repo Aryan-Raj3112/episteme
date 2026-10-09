@@ -40,7 +40,6 @@ import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -106,6 +105,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.testTag
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfToolConfig
@@ -950,6 +950,9 @@ internal fun SharedPdfAnnotationToolSettingsPanel(
                                     contentAlignment = Alignment.Center,
                                     modifier = Modifier
                                         .size(28.dp)
+                                        // Android benchmark (`ToolSettingsPopup.kt`):
+                                        // UI tests address palette swatches by index.
+                                        .testTag("Palette_Item_$index")
                                         .pointerInput(argb, index) {
                                             detectTapGestures(
                                                 onTap = { selectPaletteColor(argb) },
@@ -1151,7 +1154,7 @@ private fun SharedPdfSettingsToolItem(
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-internal fun SharedPdfStyledPropertySlider(
+fun SharedPdfStyledPropertySlider(
     value: Float,
     onValueChange: (Float) -> Unit,
     valueRange: ClosedFloatingPointRange<Float>,
@@ -2098,7 +2101,7 @@ fun SharedPdfTextStyleControls(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                DropdownMenu(
+                SharedDropdownMenu(
                     expanded = fontMenuExpanded,
                     onDismissRequest = { fontMenuExpanded = false }
                 ) {

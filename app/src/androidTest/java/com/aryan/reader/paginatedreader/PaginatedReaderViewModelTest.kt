@@ -17,6 +17,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.epub.EpubBook
+import com.aryan.reader.paginatedreader.TextContentBlock
 import com.google.common.truth.Truth.assertThat
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -43,6 +44,7 @@ private class FakePaginator(
     var lastNavigatedChapter: String? = null
 
     override fun getPageContent(pageIndex: Int): Page? = null
+    override suspend fun getChapterTextBlocks(chapterIndex: Int): List<TextContentBlock>? = null
     override fun getChapterPathForPage(pageIndex: Int): String? = null
     override fun getPlainTextForChapter(chapterIndex: Int): String? = null
 

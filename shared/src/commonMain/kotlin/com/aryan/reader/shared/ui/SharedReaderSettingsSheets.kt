@@ -28,7 +28,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -719,7 +718,7 @@ fun SharedReaderTextFormatSheet(
                         )
                         Icon(Icons.Default.ArrowDropDown, contentDescription = labels.selectMode, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                     }
-                    DropdownMenu(expanded = showModeMenu, onDismissRequest = { showModeMenu = false }) {
+                    SharedDropdownMenu(expanded = showModeMenu, onDismissRequest = { showModeMenu = false }) {
                         DropdownMenuItem(
                             text = {
                                 Column {

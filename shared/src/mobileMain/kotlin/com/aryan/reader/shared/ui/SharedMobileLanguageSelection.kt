@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -40,10 +41,12 @@ import com.aryan.reader.shared.sharedAppLanguageSearchMatches
  * ([com.aryan.reader.shared.sharedAppLanguageSearchMatches]).
  */
 @Composable
-internal fun SharedMobileLanguageSelectionList(
+fun SharedMobileLanguageSelectionList(
     selectedTag: String?,
     onSelect: (String?) -> Unit,
     modifier: Modifier = Modifier,
+    /** Caps the list height inside a fixed-height container such as a dialog. */
+    maxListHeight: androidx.compose.ui.unit.Dp? = null,
 ) {
     var query by remember { mutableStateOf("") }
     // Android renders `stringResource(language.labelRes)`, so the labels are
@@ -93,7 +96,10 @@ internal fun SharedMobileLanguageSelectionList(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
+                    .then(
+                        if (maxListHeight != null) Modifier.heightIn(max = maxListHeight)
+                        else Modifier.weight(1f)
+                    )
             ) {
                 items(rows, key = { it.tag ?: "system" }) { option ->
                     Row(

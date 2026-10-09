@@ -80,9 +80,11 @@ import com.aryan.reader.shared.PdfSplitPaneState
 import com.aryan.reader.shared.TTS_PLAYBACK_SOURCE_AUDIOBOOK
 import com.aryan.reader.shared.samePdfDocument
 import com.aryan.reader.shared.ui.SharedMobileAppDestination
-import com.aryan.reader.tts.ReaderTtsMiniBar
-import com.aryan.reader.tts.readerTtsMiniBarBottomPaddingDp
-import com.aryan.reader.tts.shouldShowReaderTtsMiniBar
+import com.aryan.reader.shared.SharedReaderTtsMiniBarState
+import com.aryan.reader.tts.toSharedReaderTtsMiniBarState
+import com.aryan.reader.shared.sharedReaderTtsMiniBarBottomPaddingDp
+import com.aryan.reader.shared.shouldShowSharedReaderTtsMiniBar
+import com.aryan.reader.shared.ui.SharedReaderTtsMiniBar
 import kotlinx.coroutines.delay
 
 fun shouldInterceptAppNavBack(
@@ -236,11 +238,12 @@ fun AppNavigation(
     }
     val currentDestination = SharedMobileAppDestination.fromRoute(currentRoute)
     val isOnReaderRoute = currentDestination?.isReader == true
-    val showTtsMiniBar = shouldShowReaderTtsMiniBar(
-        ttsState = ttsState,
+    val ttsMiniBarState = remember(ttsState) { ttsState.toSharedReaderTtsMiniBarState() }
+    val showTtsMiniBar = shouldShowSharedReaderTtsMiniBar(
+        state = ttsMiniBarState,
         isOnReaderRoute = isOnReaderRoute
     )
-    val miniBarBottomPadding = readerTtsMiniBarBottomPaddingDp(
+    val miniBarBottomPadding = sharedReaderTtsMiniBarBottomPaddingDp(
         isOnMainRoute = currentDestination == SharedMobileAppDestination.MAIN
     ).dp
     val shouldInterceptBack = shouldInterceptAppNavBack(
@@ -707,9 +710,13 @@ fun AppNavigation(
                 .navigationBarsPadding()
                 .padding(start = 16.dp, end = 16.dp, bottom = miniBarBottomPadding)
         ) {
-            ReaderTtsMiniBar(
-                ttsController = ttsController,
-                ttsState = ttsState,
+            SharedReaderTtsMiniBar(
+                state = ttsMiniBarState,
+                onTogglePlayPause = {
+                    if (ttsState.isPlaying) ttsController.pause() else ttsController.resume()
+                },
+                onPreviousChunk = { ttsController.skipToPreviousChunk() },
+                onNextChunk = { ttsController.skipToNextChunk() },
                 onOpenReader = {
                     ttsState.bookId?.let { bookId ->
                         viewModel.openTtsNotificationTarget(

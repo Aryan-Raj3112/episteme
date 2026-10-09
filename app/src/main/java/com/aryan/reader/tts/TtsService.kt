@@ -1069,7 +1069,7 @@ class TtsService : MediaSessionService() {
             return post(url, json, mapOf("Authorization" to "Bearer $firebaseToken") + appCheckHeaderMap())
         }
 
-        fun synthesizeViaByok(fishKey: String, text: String, referenceId: String): Synthesis {
+        fun synthesizeViaByok(fishKey: String, text: String, referenceId: String, model: String = FISH_BYOK_MODEL_HEADER): Synthesis {
             val json = JSONObject().apply {
                 put("text", text)
                 put("reference_id", referenceId)
@@ -1083,7 +1083,7 @@ class TtsService : MediaSessionService() {
             return post(
                 fishDirectTtsUrl,
                 json,
-                mapOf("Authorization" to "Bearer $fishKey", "model" to FISH_BYOK_MODEL_HEADER)
+                mapOf("Authorization" to "Bearer $fishKey", "model" to model)
             )
         }
     }
@@ -1475,8 +1475,14 @@ class TtsService : MediaSessionService() {
                                 val synthesisBytes: ByteArray? = withContext(Dispatchers.IO) {
                                     when {
                                         useByokFish -> {
+                                            // The selected model drives the Fish
+                                            // `model` header, so the free tier is
+                                            // actually used when it is picked.
                                             val result = fishRestClient.synthesizeViaByok(
-                                                byok.fishKey, text, effectiveVoice
+                                                byok.fishKey,
+                                                text,
+                                                effectiveVoice,
+                                                fishModelHeaderForTtsModel(byok.ttsModel),
                                             )
                                             if (result.error != null) throw TtsCloudException(result.error)
                                             result.audioBytes

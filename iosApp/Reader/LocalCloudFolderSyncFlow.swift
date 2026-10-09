@@ -651,10 +651,14 @@ extension LocalCloudFolderSyncController {
             sizes.append(String(values.fileSize ?? 0))
             mtimes.append(String(Int64((values.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000)))
         }
+        bridge.logFolderScanDiagnostic(
+            message: "cloud_mirror.scan folder=\(rootName) files=\(names.count)"
+        )
         bridge.recordImportedFolder(
             folderName: rootName, fileNames: names, filePaths: paths, contentIds: ids,
             relativePaths: relatives, fileSizes: sizes,
-            lastModifiedTimestamps: mtimes, scanSucceeded: true
+            lastModifiedTimestamps: mtimes, scanSucceeded: true,
+            scanStatusRaw: "COMPLETE", scanDetail: "cloud_mirror"
         )
     }
 }

@@ -1,131 +1,78 @@
-/*
- * Episteme Reader - A native Android document reader.
- * Copyright (C) 2026 Episteme
+/**
+ * Shared Android chrome still owned by this file. The filename is a historical artifact: the
+ * `HomeScreen` this was named for was retired when Library Beta replaced it, and is now gone
+ * (see `docs/shared-parity-migration.md` C4). What remains is the set of composables that its
+ * neighbours still call, so the name no longer describes the contents.
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * Live callers, for anyone re-homing these:
+ * - `SettingsScreen` — the dialogs, `DeviceManagementScreen`, `AppThemeBottomSheet`,
+ *   `LanguageSelectionDialog`
+ * - `UnifiedLibraryScreen` — `AppDrawerContent`
+ * - `DebugFpsOverlay` — `FpsMonitor`
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- *
- * mail: epistemereader@gmail.com
+ * Splitting this into per-concern files is mechanical and safe, but it is pure relocation with no
+ * behavior change, so it is deliberately not done here: renaming churn is not worth a diff's worth
+ * of review on its own. Do it when one of these symbols next needs to move for a real reason.
  */
-// HomeScreen
 @file:Suppress("DEPRECATION")
 
 package com.aryan.reader
 
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
-import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhoneAndroid
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.rememberDrawerState
-import androidx.compose.material3.windowsizeclass.WindowSizeClass
-import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.livedata.observeAsState
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
@@ -134,24 +81,15 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.os.LocaleListCompat
-import androidx.core.net.toUri
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavHostController
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
 import com.aryan.reader.data.RecentFileItem
-import com.aryan.reader.shared.AnnotationExportFormat
 import com.aryan.reader.shared.formatMicrosUsd
-import com.aryan.reader.shared.ui.SharedAnnotationExportFormatDialog
+import com.aryan.reader.shared.ui.AppIcon
 import com.aryan.reader.shared.ui.SharedMobileAppDestination
-import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
-import kotlinx.coroutines.launch
-import timber.log.Timber
+import com.aryan.reader.shared.ui.SharedMobileLanguageSelectionList
+import com.aryan.reader.shared.ui.SharedAppThemeBottomSheet
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -159,670 +97,6 @@ internal fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivity()
     else -> null
-}
-
-@UnstableApi
-@androidx.annotation.OptIn(UnstableApi::class)
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun HomeScreen(
-    viewModel: MainViewModel, windowSizeClass: WindowSizeClass, navController: NavHostController
-) {
-    val compStart = remember { System.currentTimeMillis() }
-    LaunchedEffect(Unit) {
-        ReaderPerfLog.d("HomeScreen initial composition ${System.currentTimeMillis() - compStart}ms")
-    }
-    val context = LocalContext.current
-    val customTabUriHandler = remember { CustomTabUriHandler(context) }
-    var showCloseAllTabsDialog by remember { mutableStateOf(false) }
-    var showAppThemePanel by remember { mutableStateOf(false) }
-
-    CompositionLocalProvider(LocalUriHandler provides customTabUriHandler) {
-        val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-        val recentFilesForHome = uiState.recentFiles
-        val openTabs = uiState.openTabs
-        val selectedContextItems = uiState.contextualActionItems
-        val isContextualModeActive = selectedContextItems.isNotEmpty()
-        val isHomeEmpty = recentFilesForHome.isEmpty() && (!uiState.isTabsEnabled || openTabs.isEmpty())
-        val isLibraryEmpty = uiState.rawLibraryFiles.isEmpty()
-        val scope = rememberCoroutineScope()
-        val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
-        val snackbarHostState = remember { SnackbarHostState() }
-        val deviceLimitState = uiState.deviceLimitState
-
-        var showDeleteConfirmDialog by remember { mutableStateOf(false) }
-        var showClearCloudDataDialog by remember { mutableStateOf(false) }
-        var showClearAllDataDialog by remember { mutableStateOf(false) }
-        var showUpgradeDialog by remember { mutableStateOf(false) }
-        var showSignOutConfirmDialog by remember { mutableStateOf(false) }
-        var showAboutDialog by remember { mutableStateOf(false) }
-        var showInfoDialog by remember { mutableStateOf(false) }
-        var itemForInfoDialog by remember { mutableStateOf<RecentFileItem?>(null) }
-        var pendingSaveOriginalItem by remember { mutableStateOf<RecentFileItem?>(null) }
-        var pendingAnnotationExportText by remember { mutableStateOf<String?>(null) }
-        var showAnnotationExportFormatDialogFor by remember { mutableStateOf<RecentFileItem?>(null) }
-        var showBehaviorDialog by remember { mutableStateOf(false) }
-        var showStrictFilterDialog by remember { mutableStateOf(false) }
-        var showClearBookCacheDialog by remember { mutableStateOf(false) }
-        var showClearReflowCacheDialog by remember { mutableStateOf(false) }
-        var showLanguageDialog by remember { mutableStateOf(false) }
-
-        val feedbackResult =
-            navController.currentBackStackEntry?.savedStateHandle?.getLiveData<String>("banner_message")
-                ?.observeAsState()
-
-        LaunchedEffect(feedbackResult) {
-            feedbackResult?.value?.let { message ->
-                viewModel.showBanner(message)
-                navController.currentBackStackEntry?.savedStateHandle?.remove<String>("banner_message")
-            }
-        }
-
-        val drivePermissionLauncher = rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.StartActivityForResult()
-        ) { result ->
-            if (result.resultCode == Activity.RESULT_OK) {
-                viewModel.onDrivePermissionResult(result.data)
-            } else {
-                Timber.w("Google Sign In for Drive failed with result code: ${result.resultCode}")
-                viewModel.onDrivePermissionFlowCancelled()
-            }
-        }
-
-        val saveOriginalLauncher = rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.CreateDocument("application/octet-stream")
-        ) { uri ->
-            val item = pendingSaveOriginalItem
-            pendingSaveOriginalItem = null
-            if (uri != null && item?.uriString != null) {
-                viewModel.saveOriginalFile(item.uriString.toUri(), uri)
-            }
-        }
-
-        fun saveOriginalItem(item: RecentFileItem) {
-            if (!item.canExportOriginalFile()) return
-            pendingSaveOriginalItem = item
-            saveOriginalLauncher.launch(item.suggestedOriginalFileName())
-        }
-
-        val saveMarkdownAnnotationsLauncher = rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.MARKDOWN.mimeType)
-        ) { uri ->
-            val exportText = pendingAnnotationExportText
-            pendingAnnotationExportText = null
-            if (uri != null && exportText != null) {
-                viewModel.saveAnnotationExport(exportText, uri)
-            }
-        }
-
-        val saveTextAnnotationsLauncher = rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.TEXT.mimeType)
-        ) { uri ->
-            val exportText = pendingAnnotationExportText
-            pendingAnnotationExportText = null
-            if (uri != null && exportText != null) {
-                viewModel.saveAnnotationExport(exportText, uri)
-            }
-        }
-
-        val saveJsonAnnotationsLauncher = rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.JSON.mimeType)
-        ) { uri ->
-            val exportText = pendingAnnotationExportText
-            pendingAnnotationExportText = null
-            if (uri != null && exportText != null) {
-                viewModel.saveAnnotationExport(exportText, uri)
-            }
-        }
-
-        val saveCsvAnnotationsLauncher = rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.CSV.mimeType)
-        ) { uri ->
-            val exportText = pendingAnnotationExportText
-            pendingAnnotationExportText = null
-            if (uri != null && exportText != null) {
-                viewModel.saveAnnotationExport(exportText, uri)
-            }
-        }
-
-        fun exportAnnotationsItem(item: RecentFileItem, format: AnnotationExportFormat) {
-            viewModel.prepareAnnotationExport(item, format) { prepared ->
-                pendingAnnotationExportText = prepared.contents
-                when (format) {
-                    AnnotationExportFormat.MARKDOWN -> saveMarkdownAnnotationsLauncher.launch(prepared.fileName)
-                    AnnotationExportFormat.TEXT -> saveTextAnnotationsLauncher.launch(prepared.fileName)
-                    AnnotationExportFormat.JSON -> saveJsonAnnotationsLauncher.launch(prepared.fileName)
-                    AnnotationExportFormat.CSV -> saveCsvAnnotationsLauncher.launch(prepared.fileName)
-                }
-            }
-        }
-
-        fun shareOriginalItem(item: RecentFileItem) {
-            val uriString = item.uriString ?: return
-            if (!item.canExportOriginalFile()) return
-            scope.launch {
-                viewModel.shareOriginalFile(
-                    activityContext = context,
-                    sourceUri = uriString.toUri(),
-                    fileType = item.type,
-                    filename = item.suggestedOriginalFileName()
-                )
-            }
-        }
-
-        showAnnotationExportFormatDialogFor?.let { item ->
-            SharedAnnotationExportFormatDialog(
-                title = stringResource(R.string.dialog_export_annotations_title),
-                cancelLabel = stringResource(R.string.action_cancel),
-                options = sharedAnnotationExportFormatOptions(
-                    markdownLabel = stringResource(R.string.export_annotations_markdown),
-                    markdownDescription = stringResource(R.string.export_annotations_markdown_description),
-                    textLabel = stringResource(R.string.export_annotations_text),
-                    textDescription = stringResource(R.string.export_annotations_text_description),
-                    jsonLabel = stringResource(R.string.export_annotations_json),
-                    jsonDescription = stringResource(R.string.export_annotations_json_description),
-                    csvLabel = stringResource(R.string.export_annotations_csv),
-                    csvDescription = stringResource(R.string.export_annotations_csv_description)
-                ),
-                onDismiss = { showAnnotationExportFormatDialogFor = null },
-                onExport = { format ->
-                    showAnnotationExportFormatDialogFor = null
-                    exportAnnotationsItem(item, format)
-                }
-            )
-        }
-        LaunchedEffect(uiState.isRequestingDrivePermission) {
-            if (uiState.isRequestingDrivePermission) {
-                val intent = viewModel.getDriveSignInIntent(context)
-                drivePermissionLauncher.launch(intent)
-            }
-        }
-
-        LaunchedEffect(uiState.errorMessage) {
-            uiState.errorMessage?.let { message ->
-                snackbarHostState.showSnackbar(message)
-                viewModel.errorMessageShown()
-            }
-        }
-
-        BackHandler(enabled = isContextualModeActive) {
-            Timber.d("System back pressed during contextual mode.")
-            viewModel.clearContextualAction()
-        }
-
-        val pickFileLauncher = rememberFilePickerLauncher { uris ->
-            if (isContextualModeActive) {
-                viewModel.clearContextualAction()
-            }
-            viewModel.onFilesSelected(uris)
-        }
-
-        val fallbackFilePickerLauncher = rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.GetMultipleContents()
-        ) { uris ->
-            if (isContextualModeActive) {
-                viewModel.clearContextualAction()
-            }
-            viewModel.onFilesSelected(uris)
-        }
-
-        val onSelectFileClick = {
-            if (isContextualModeActive) {
-                viewModel.clearContextualAction()
-            }
-            val mimeTypes = if (uiState.useStrictFileFilter) MainViewModel.SUPPORTED_MIME_TYPES else arrayOf("*/*")
-            try {
-                pickFileLauncher.launch(mimeTypes)
-            } catch (_: android.content.ActivityNotFoundException) {
-                Timber.w("OpenDocument picker failed. Falling back to GetMultipleContents.")
-                try {
-                    fallbackFilePickerLauncher.launch("*/*")
-                } catch (_: android.content.ActivityNotFoundException) {
-                    viewModel.showBanner(context.getString(R.string.error_no_file_manager), isError = true)
-                }
-            }
-        }
-
-        Box(modifier = Modifier.fillMaxSize()) {
-            com.aryan.reader.shared.ui.SharedMobileHomeScaffold(
-                drawerState = drawerState,
-                drawerContent = {
-                    val context = LocalContext.current
-                    AppDrawerContent(
-                        uiState = uiState,
-                        onSignInClick = {
-                            scope.launch {
-                                context.findActivity()?.let { activity ->
-                                    viewModel.signIn(activity)
-                                }
-                                drawerState.close()
-                            }
-                        },
-                        onSignOutClick = {
-                            showSignOutConfirmDialog = true
-                        },
-                        onSyncToggle = viewModel::setSyncEnabled,
-                        onUpgradeClick = {
-                            scope.launch {
-                                drawerState.close()
-                                navController.navigateIfReady(SharedMobileAppDestination.PRO)
-                            }
-                        },
-                        onSyncUpsellClick = {
-                            scope.launch {
-                                showUpgradeDialog = true
-                            }
-                        },
-                        onFontsClick = {
-                            scope.launch {
-                                drawerState.close()
-                                navController.navigateIfReady(SharedMobileAppDestination.FONTS)
-                            }
-                        },
-                        onAiSettingsClick = {
-                            scope.launch {
-                                drawerState.close()
-                                navController.navigateIfReady(SharedMobileAppDestination.AI_SETTINGS)
-                            }
-                        },
-                        onSettingsClick = {
-                            scope.launch {
-                                drawerState.close()
-                                navController.navigateIfReady(SharedMobileAppDestination.SETTINGS)
-                            }
-                        },
-                        navController = navController,
-                        onFolderSyncSettingsClick = {
-                            scope.launch {
-                                drawerState.close()
-                                navController.navigateIfReady(SharedMobileAppDestination.FOLDER_SYNC_SETTINGS)
-                            }
-                        }
-                    )
-                },
-                snackbarHost = { SnackbarHost(snackbarHostState) },
-                topBar = {
-                        if (!isContextualModeActive) {
-                            val debugFpsEnabled = rememberDebugFpsEnabled()
-                            DefaultTopAppBar(
-                                uiState = uiState,
-                                onRenderModeChange = viewModel::setRenderMode,
-                                onClearCache = { showClearBookCacheDialog = true },
-                                onClearCloudData = { showClearAllDataDialog = true },
-                                onAboutClick = { showAboutDialog = true },
-                                onDrawerClick = {
-                                    scope.launch {
-                                        drawerState.open()
-                                    }
-                                },
-                                onShowDeviceManagement = viewModel::showDeviceManagementForDebug,
-                                onFolderSyncToggle = viewModel::setFolderSyncEnabled,
-                                onClearReflowCache = { showClearReflowCacheDialog = true },
-                                onRecentFilesLimitChange = viewModel::setRecentFilesLimit,
-                                onTabsToggle = viewModel::setTabsEnabled,
-                                onExternalFileBehaviorClick = { showBehaviorDialog = true },
-                                onStrictFilterToggleClick = {
-                                    if (uiState.useStrictFileFilter) {
-                                        viewModel.setStrictFileFilter(false)
-                                    } else {
-                                        showStrictFilterDialog = true
-                                    }
-                                },
-                                onUsePdfFileNameAsDisplayNameToggle = {
-                                    viewModel.setUsePdfFileNameAsDisplayName(!uiState.usePdfFileNameAsDisplayName)
-                                },
-                                onAppThemeClick = { showAppThemePanel = true },
-                                onSettingsClick = {
-                                    navController.navigateIfReady(SharedMobileAppDestination.SETTINGS)
-                                },
-                                onTestPanelDetectionClick = { viewModel.testPanelDetection(context) },
-                                onTestSpeechBubbleDetectionClick = { viewModel.testSpeechBubbleDetection(context) },
-                                onLanguageClick = { showLanguageDialog = true },
-                                onExportLogsClick = { viewModel.exportLogsToFile(context) },
-                                onToggleHideReaderAi = {
-                                    saveHideReaderAiFeatures(context, !loadHideReaderAiFeatures(context))
-                                },
-                                onScreenCaptureProtectionChange = { enabled ->
-                                    viewModel.setScreenCaptureProtectionEnabled(enabled)
-                                    val messageRes = if (enabled) {
-                                        R.string.banner_screen_capture_protection_on
-                                    } else {
-                                        R.string.banner_screen_capture_protection_off
-                                    }
-                                    viewModel.showBanner(context.getString(messageRes))
-                                },
-                                showFpsOverlayOption = BuildConfig.DEBUG,
-                                fpsOverlayEnabled = debugFpsEnabled,
-                                onFpsOverlayToggle = {
-                                    if (BuildConfig.DEBUG) {
-                                        DebugFpsStore.setEnabled(context, !debugFpsEnabled)
-                                    }
-                                }
-                            )
-                        } else {
-                            ContextualTopAppBar(
-                                selectedItemCount = selectedContextItems.size,
-                                onNavIconClick = { viewModel.clearContextualAction() },
-                                onTagClick = {
-                                    viewModel.openTagSelection(selectedContextItems.map { it.bookId }.toSet())
-                                },
-                                onAddToShelfClick = {
-                                    viewModel.openAddSelectedToShelf(selectedContextItems.map { it.bookId }.toSet())
-                                },
-                                onInfoClick = {
-                                    if (selectedContextItems.size == 1) {
-                                        itemForInfoDialog = selectedContextItems.first()
-                                        showInfoDialog = true
-                                    }
-                                },
-                                onSaveClick = selectedContextItems.singleOrNull()
-                                    ?.takeIf { it.canExportOriginalFile() }
-                                    ?.let { item -> { saveOriginalItem(item) } },
-                                onShareClick = selectedContextItems.singleOrNull()
-                                    ?.takeIf { it.canExportOriginalFile() }
-                                    ?.let { item -> { shareOriginalItem(item) } },
-                                onExportAnnotationsClick = selectedContextItems.singleOrNull()
-                                    ?.let { item -> { showAnnotationExportFormatDialogFor = item } },
-                                onPinClick = { viewModel.togglePinForContextualItems(isHome = true) },
-                                onDeleteClick = { showDeleteConfirmDialog = true },
-                                onSelectAllClick = { viewModel.selectAllRecentFiles() },
-                                compactSelectionActions = true,
-                                overflowDeleteLabelRes = R.string.action_remove,
-                                onClearSelectionClick = { viewModel.clearContextualAction() })
-                        }
-                    }
-            ) { paddingValues ->
-                    com.aryan.reader.shared.ui.SharedAndroidHomeBody(
-                        isHomeEmpty = isHomeEmpty,
-                        isLibraryEmpty = isLibraryEmpty,
-                        isLoading = uiState.isLoading,
-                        contentPadding = paddingValues,
-                        emptyLibrary = { emptyModifier ->
-                            EmptyState(
-                                title = stringResource(R.string.your_library_empty),
-                                message = stringResource(R.string.your_library_empty_desc),
-                                onSelectFileClick = onSelectFileClick,
-                                modifier = emptyModifier,
-                                secondaryButtonText = stringResource(R.string.setup_folder_sync),
-                                onSecondaryClick = { viewModel.navigateToFolderSync() },
-                            )
-                        },
-                        emptyRecents = { emptyModifier ->
-                            EmptyState(
-                                title = stringResource(R.string.no_recent_files),
-                                message = stringResource(R.string.no_recent_files_desc),
-                                onSelectFileClick = onSelectFileClick,
-                                modifier = emptyModifier,
-                            )
-                        },
-                        recentContent = {
-                                RecentFilesContent(
-                                    recentFiles = recentFilesForHome,
-                                    openTabs = openTabs,
-                                    isTabsEnabled = uiState.isTabsEnabled,
-                                    selectedContextItems = selectedContextItems,
-                                    pinnedHomeBookIds = uiState.pinnedHomeBookIds,
-                                    onItemClick = { item -> viewModel.onRecentFileClicked(item) },
-                                    onItemLongClick = { item -> viewModel.onRecentItemLongPress(item) },
-                                    onTabCloseClick = { bookId -> viewModel.closeTab(bookId) },
-                                    onCloseAllTabsClick = { showCloseAllTabsDialog = true },
-                                    onSelectFileClick = onSelectFileClick,
-                                    onNavigateToFolderSync = { viewModel.navigateToFolderSync() },
-                                    windowSizeClass = windowSizeClass,
-                                    downloadingBookIds = uiState.downloadingBookIds,
-                                    onRefresh = { viewModel.refreshLibrary() },
-                                    isRefreshing = uiState.isRefreshing,
-                                    isSyncEnabled = uiState.isSyncEnabled,
-                                    hasSyncedFolder = uiState.syncedFolders.any { it.localSyncEnabled },
-                                    usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName
-                                )
-                        },
-                    )
-
-                    // Dialogs
-                    if (showDeleteConfirmDialog) {
-                        DeleteConfirmationDialog(count = selectedContextItems.size, onConfirm = {
-                            viewModel.hideItemsFromRecentsView()
-                            showDeleteConfirmDialog = false
-                        }, onDismiss = { showDeleteConfirmDialog = false })
-                    }
-
-                    if (showCloseAllTabsDialog) {
-                        CloseAllTabsDialog(
-                            onConfirm = {
-                                viewModel.closeAllTabs()
-                                showCloseAllTabsDialog = false
-                            },
-                            onDismiss = { showCloseAllTabsDialog = false }
-                        )
-                    }
-
-                    if (showClearCloudDataDialog) {
-                        ClearCloudDataConfirmationDialog(onConfirm = {
-                            viewModel.deleteAllUserData()
-                            showClearCloudDataDialog = false
-                        }, onDismiss = { showClearCloudDataDialog = false })
-                    }
-
-                    if (showUpgradeDialog) {
-                        UpgradeDialog(onDismiss = { showUpgradeDialog = false }, onConfirm = {
-                            showUpgradeDialog = false
-                            navController.navigateIfReady(SharedMobileAppDestination.PRO)
-                        })
-                    }
-
-                    if (showClearBookCacheDialog) {
-                        DangerousFolderActionDialog(
-                            title = stringResource(R.string.dialog_clear_book_cache),
-                            message = stringResource(R.string.dialog_clear_book_cache_desc),
-                            onConfirm = {
-                                viewModel.clearBookCache()
-                                showClearBookCacheDialog = false
-                            },
-                            onDismiss = { showClearBookCacheDialog = false }
-                        )
-                    }
-
-                    HydratedFileInfoDialog(
-                        item = itemForInfoDialog,
-                        isVisible = showInfoDialog,
-                        uiState = uiState,
-                        viewModel = viewModel,
-                        onDismiss = {
-                            showInfoDialog = false
-                            itemForInfoDialog = null
-                        },
-                        onOpenTags = { bookId -> viewModel.openTagSelection(setOf(bookId)) }
-                    )
-
-                    if (showClearReflowCacheDialog) {
-                        DangerousFolderActionDialog(
-                            title = stringResource(R.string.dialog_clear_reflow_cache),
-                            message = stringResource(R.string.dialog_clear_reflow_cache_desc),
-                            onConfirm = {
-                                viewModel.clearReflowCache()
-                                showClearReflowCacheDialog = false
-                            },
-                            onDismiss = { showClearReflowCacheDialog = false }
-                        )
-                    }
-                    if (uiState.showExternalFileSavePromptFor != null) {
-                        ExternalFileSaveDialog(
-                            onConfirm = { keep, dontAskAgain ->
-                                viewModel.handleExternalFilePrompt(uiState.showExternalFileSavePromptFor!!, keep, dontAskAgain)
-                            }
-                        )
-                    }
-                    if (showBehaviorDialog) {
-                        ExternalFileBehaviorDialog(
-                            currentBehavior = uiState.externalFileBehavior,
-                            onDismiss = { showBehaviorDialog = false },
-                            onSelect = { viewModel.setExternalFileBehavior(it) }
-                        )
-                    }
-
-                    if (showStrictFilterDialog) {
-                        StrictFilterConfirmationDialog(
-                            onConfirm = {
-                                viewModel.setStrictFileFilter(true)
-                                showStrictFilterDialog = false
-                            },
-                            onDismiss = { showStrictFilterDialog = false }
-                        )
-                    }
-
-                    if (showLanguageDialog) {
-                        LanguageSelectionDialog(onDismiss = { showLanguageDialog = false })
-                    }
-
-                    if (showAppThemePanel) {
-                        AppThemeBottomSheet(
-                            uiState = uiState,
-                            onThemeModeChanged = viewModel::setAppThemeMode,
-                            onContrastOptionChanged = viewModel::setAppContrastOption,
-                            onTextDimFactorLightChanged = viewModel::setAppTextDimFactorLight,
-                            onTextDimFactorDarkChanged = viewModel::setAppTextDimFactorDark,
-                            onSeedColorChanged = viewModel::setAppSeedColor,
-                            onCustomThemeAdded = viewModel::addCustomAppTheme,
-                            onCustomThemeDeleted = viewModel::deleteCustomAppTheme,
-                            onDismiss = { showAppThemePanel = false }
-                        )
-                    }
-            }
-            if (showAboutDialog) {
-                AboutDialog(onDismiss = { showAboutDialog = false })
-            }
-            if (showClearAllDataDialog) {
-                ClearAllDataConfirmationDialog(onConfirm = {
-                    viewModel.deleteAllCloudAndLocalData()
-                    showClearAllDataDialog = false
-                }, onDismiss = { showClearAllDataDialog = false })
-            }
-            if (showSignOutConfirmDialog) {
-                SignOutConfirmationDialog(onConfirm = {
-                    viewModel.signOut()
-                    showSignOutConfirmDialog = false
-                }, onDismiss = {
-                    showSignOutConfirmDialog = false
-                })
-            }
-            if (deviceLimitState.isLimitReached) {
-                DeviceManagementScreen(
-                    devices = deviceLimitState.registeredDevices,
-                    onRemoveDevice = { deviceId -> viewModel.replaceDevice(deviceId) },
-                    isReplacing = uiState.isReplacingDevice
-                )
-            }
-            CustomTopBanner(bannerMessage = uiState.bannerMessage)
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun RecentFilesContent(
-    recentFiles: List<RecentFileItem>,
-    openTabs: List<RecentFileItem>,
-    isTabsEnabled: Boolean,
-    selectedContextItems: Collection<RecentFileItem>,
-    pinnedHomeBookIds: Set<String>,
-    onItemClick: (RecentFileItem) -> Unit,
-    onItemLongClick: (RecentFileItem) -> Unit,
-    onTabCloseClick: (String) -> Unit,
-    onCloseAllTabsClick: () -> Unit,
-    onSelectFileClick: () -> Unit,
-    onNavigateToFolderSync: () -> Unit,
-    windowSizeClass: WindowSizeClass,
-    downloadingBookIds: Set<String>,
-    onRefresh: () -> Unit,
-    isRefreshing: Boolean,
-    isSyncEnabled: Boolean,
-    hasSyncedFolder: Boolean,
-    usePdfFileNameAsDisplayName: Boolean
-) {
-    val canRefresh = isSyncEnabled || hasSyncedFolder
-    val selectedItemUris = remember(selectedContextItems) {
-        selectedContextItems.mapNotNullTo(mutableSetOf()) { it.uriString }
-    }
-
-    com.aryan.reader.shared.ui.SharedAndroidHomeRecentContent(
-        canRefresh = canRefresh,
-        isRefreshing = isRefreshing,
-        selectFileLabel = stringResource(R.string.empty_select_file),
-        syncFolderLabel = stringResource(R.string.sync_folder),
-        onRefresh = onRefresh,
-        onSelectFile = onSelectFileClick,
-        onSyncFolder = onNavigateToFolderSync,
-        recentGrid = { gridModifier ->
-            RecentFilesGrid(
-                modifier = gridModifier.padding(horizontal = 16.dp),
-                recentFiles = recentFiles,
-                openTabs = openTabs,
-                isTabsEnabled = isTabsEnabled,
-                onTabCloseClick = onTabCloseClick,
-                onCloseAllTabsClick = onCloseAllTabsClick,
-                selectedItemUris = selectedItemUris,
-                pinnedHomeBookIds = pinnedHomeBookIds,
-                onItemClick = onItemClick,
-                onItemLongClick = onItemLongClick,
-                windowSizeClass = windowSizeClass,
-                contentPadding = PaddingValues(top = 8.dp, bottom = 100.dp),
-                downloadingBookIds = downloadingBookIds,
-                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName
-            )
-        },
-    )
-}
-
-@Composable
-private fun RecentFilesGrid(
-    modifier: Modifier = Modifier,
-    recentFiles: List<RecentFileItem>,
-    openTabs: List<RecentFileItem>,
-    isTabsEnabled: Boolean,
-    onTabCloseClick: (String) -> Unit,
-    onCloseAllTabsClick: () -> Unit,
-    pinnedHomeBookIds: Set<String>,
-    selectedItemUris: Set<String>,
-    onItemClick: (RecentFileItem) -> Unit,
-    onItemLongClick: (RecentFileItem) -> Unit,
-    windowSizeClass: WindowSizeClass,
-    contentPadding: PaddingValues = PaddingValues(vertical = 8.dp),
-    downloadingBookIds: Set<String>,
-    usePdfFileNameAsDisplayName: Boolean,
-) {
-    com.aryan.reader.shared.ui.SharedAndroidHomeRecentGrid(
-        recentItems = recentFiles,
-        openTabs = openTabs,
-        tabsEnabled = isTabsEnabled,
-        widthClass = when (windowSizeClass.widthSizeClass) {
-            WindowWidthSizeClass.Compact -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.COMPACT
-            WindowWidthSizeClass.Medium -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.MEDIUM
-            else -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.EXPANDED
-        },
-        activeTabsLabel = stringResource(R.string.active_tabs),
-        recentFilesLabel = stringResource(R.string.recent_files),
-        closeAllTabsDescription = stringResource(R.string.close_all_tabs),
-        closeTabDescription = stringResource(R.string.close_tab),
-        itemKey = { it.bookId },
-        itemTitle = { it.cardTitle(usePdfFileNameAsDisplayName) },
-        onItemClick = onItemClick,
-        onCloseTab = { onTabCloseClick(it.bookId) },
-        onCloseAllTabs = onCloseAllTabsClick,
-        contentPadding = contentPadding,
-        modifier = modifier,
-        recentCard = { item ->
-                RecentFileCard(
-                    item = item,
-                    isSelected = item.uriString in selectedItemUris,
-                    isPinned = item.bookId in pinnedHomeBookIds,
-                    onClick = { onItemClick(item) },
-                    onLongClick = { onItemLongClick(item) },
-                    isDownloading = item.bookId in downloadingBookIds,
-                    usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName
-                )
-        },
-    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -876,103 +150,6 @@ fun RecentFileCard(
                         overlay = true,
                 compact = compact,
                     )
-        },
-    )
-}
-
-@Suppress("unused", "KotlinConstantConditions")
-@Composable
-fun DefaultTopAppBar(
-    uiState: ReaderScreenState,
-    onRenderModeChange: (RenderMode) -> Unit,
-    onClearCache: () -> Unit,
-    onClearCloudData: () -> Unit,
-    onClearReflowCache: () -> Unit,
-    onDrawerClick: () -> Unit,
-    onAboutClick: () -> Unit,
-    onShowDeviceManagement: () -> Unit,
-    onFolderSyncToggle: (Boolean) -> Unit,
-    onRecentFilesLimitChange: (Int) -> Unit,
-    onTabsToggle: (Boolean) -> Unit,
-    onExternalFileBehaviorClick: () -> Unit,
-    onStrictFilterToggleClick: () -> Unit,
-    onUsePdfFileNameAsDisplayNameToggle: () -> Unit,
-    onAppThemeClick: () -> Unit,
-    onSettingsClick: () -> Unit,
-    onTestPanelDetectionClick: () -> Unit,
-    onTestSpeechBubbleDetectionClick: () -> Unit,
-    onLanguageClick: () -> Unit,
-    onExportLogsClick: () -> Unit,
-    onToggleHideReaderAi: () -> Unit,
-    onScreenCaptureProtectionChange: (Boolean) -> Unit,
-    showFpsOverlayOption: Boolean = BuildConfig.DEBUG,
-    fpsOverlayEnabled: Boolean = false,
-    onFpsOverlayToggle: () -> Unit = {},
-) {
-    val context = LocalContext.current
-    com.aryan.reader.shared.ui.SharedAndroidHomeTopBar(
-        strings = com.aryan.reader.shared.ui.SharedAndroidHomeTopBarStrings(
-            openDrawer = stringResource(R.string.content_desc_open_drawer),
-            settings = stringResource(R.string.settings),
-            appTheme = stringResource(R.string.content_desc_app_theme),
-            recentLimit = stringResource(R.string.options_recent_limit),
-            noLimit = stringResource(R.string.options_no_limit),
-            limitLabels = listOf(10, 20, 50, 100).associateWith { stringResource(R.string.options_files_limit, it) },
-            selected = stringResource(R.string.content_desc_selected),
-            moreOptions = stringResource(R.string.content_desc_more_options),
-            about = stringResource(R.string.about_title),
-            multiTab = stringResource(R.string.options_enable_multi_tab_reading),
-            screenCaptureProtection = stringResource(R.string.options_screen_capture_protection),
-            externalFileBehavior = stringResource(R.string.options_external_file_behavior),
-            strictFileFilter = stringResource(R.string.options_use_strict_file_filter),
-            pdfFileName = stringResource(R.string.options_use_pdf_filename_display_name),
-            language = stringResource(R.string.options_language),
-            hideReaderAi = stringResource(R.string.options_hide_ai_in_reader),
-            showReaderAi = stringResource(R.string.options_show_ai_in_reader),
-            enabled = stringResource(R.string.content_desc_enabled),
-            clearBookCache = stringResource(R.string.options_clear_book_cache),
-            clearReflowCache = stringResource(R.string.options_clear_reflow_cache),
-            testPanelDetection = stringResource(R.string.options_test_panel_ml_detection),
-            testSpeechBubbleDetection = stringResource(R.string.options_test_speech_bubble_ml_detection),
-            exportLogs = stringResource(R.string.options_export_logs_last_lines, 5000),
-            fpsOverlay = stringResource(R.string.debug_show_fps_overlay),
-            showDeviceManagement = stringResource(R.string.debug_show_device_management),
-            clearCloudAndLocalData = stringResource(R.string.debug_clear_cloud_local_data),
-        ),
-        hasUnreadFeedback = uiState.hasUnreadFeedback,
-        recentFilesLimit = uiState.recentFilesLimit,
-        tabsEnabled = uiState.isTabsEnabled,
-        screenCaptureProtectionEnabled = uiState.isScreenCaptureProtectionEnabled,
-        strictFileFilterEnabled = uiState.useStrictFileFilter,
-        usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
-        initialHideReaderAi = loadHideReaderAiFeatures(context),
-        showReaderAiOption = !BuildConfig.IS_OFFLINE,
-        showDebugActions = BuildConfig.DEBUG,
-        showDebugCloudActions = BuildConfig.DEBUG && BuildConfig.FLAVOR != "oss",
-        showFpsOverlayOption = showFpsOverlayOption && BuildConfig.DEBUG,
-        fpsOverlayEnabled = fpsOverlayEnabled,
-        onFpsOverlayToggle = onFpsOverlayToggle,
-        onDrawer = onDrawerClick,
-        onSettings = onSettingsClick,
-        onAppTheme = onAppThemeClick,
-        onRecentFilesLimitChange = onRecentFilesLimitChange,
-        onAbout = onAboutClick,
-        onTabsToggle = { onTabsToggle(!uiState.isTabsEnabled) },
-        onScreenCaptureProtectionToggle = { onScreenCaptureProtectionChange(!uiState.isScreenCaptureProtectionEnabled) },
-        onExternalFileBehavior = onExternalFileBehaviorClick,
-        onStrictFileFilterToggle = onStrictFilterToggleClick,
-        onPdfFileNameToggle = onUsePdfFileNameAsDisplayNameToggle,
-        onLanguage = onLanguageClick,
-        onToggleReaderAi = onToggleHideReaderAi,
-        onClearBookCache = onClearCache,
-        onClearReflowCache = onClearReflowCache,
-        onTestPanelDetection = onTestPanelDetectionClick,
-        onTestSpeechBubbleDetection = onTestSpeechBubbleDetectionClick,
-        onExportLogs = onExportLogsClick,
-        onShowDeviceManagement = onShowDeviceManagement,
-        onClearCloudAndLocalData = onClearCloudData,
-        appThemeIcon = {
-            Icon(painterResource(R.drawable.palette), contentDescription = stringResource(R.string.content_desc_app_theme))
         },
     )
 }
@@ -1132,10 +309,9 @@ internal fun AppDrawerContent(
                         .padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    AsyncImage(
-                        model = R.mipmap.ic_launcher,
+                    AppIcon(
                         contentDescription = stringResource(R.string.content_desc_app_icon),
-                        modifier = Modifier.size(64.dp)
+                        size = 64.dp,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(text = stringResource(R.string.app_name_oss), style = MaterialTheme.typography.titleMedium)
@@ -1440,47 +616,6 @@ fun DangerousFolderActionDialog(
 }
 
 @Composable
-fun ExternalFileSaveDialog(
-    onConfirm: (keep: Boolean, dontAskAgain: Boolean) -> Unit
-) {
-    var dontAsk by remember { mutableStateOf(false) }
-
-    AlertDialog(
-        onDismissRequest = { },
-        properties = androidx.compose.ui.window.DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
-        title = { Text(stringResource(R.string.external_file_prompt_title)) },
-        text = {
-            Column {
-                Text(stringResource(R.string.external_file_prompt_desc))
-                Spacer(modifier = Modifier.height(16.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { dontAsk = !dontAsk }
-                ) {
-                    Checkbox(checked = dontAsk, onCheckedChange = { dontAsk = it })
-                    Text(stringResource(R.string.external_file_dont_ask))
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(true, dontAsk) }) {
-                Text(stringResource(R.string.external_file_keep))
-            }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = { onConfirm(false, dontAsk) },
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-            ) {
-                Text(stringResource(R.string.external_file_delete))
-            }
-        }
-    )
-}
-
-@Composable
 fun ExternalFileBehaviorDialog(
     currentBehavior: String,
     onDismiss: () -> Unit,
@@ -1526,26 +661,6 @@ fun ExternalFileBehaviorDialog(
 }
 
 @Composable
-fun CloseAllTabsDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.dialog_close_all_tabs)) },
-        text = { Text(stringResource(R.string.dialog_close_all_tabs_desc)) },
-        confirmButton = {
-            TextButton(
-                onClick = onConfirm,
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-            ) {
-                Text(stringResource(R.string.action_close))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
-        }
-    )
-}
-
-@Composable
 fun StrictFilterConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1556,7 +671,14 @@ fun StrictFilterConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit)
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * App theme bottom sheet.
+ *
+ * Rendering lives in shared (`SharedAppThemeBottomSheet`), which owns the mode
+ * / contrast / text-dim / seed-color controls *and* the custom-theme create
+ * dialog. This wrapper only reads Android's [ReaderScreenState] and forwards the
+ * ViewModel mutators.
+ */
 @Composable
 fun AppThemeBottomSheet(
     uiState: ReaderScreenState,
@@ -1569,475 +691,44 @@ fun AppThemeBottomSheet(
     onCustomThemeDeleted: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var showCreateDialog by remember { mutableStateOf(false) }
-
-    androidx.compose.material3.ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        contentWindowInsets = { WindowInsets.navigationBars }
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 24.dp)
-        ) {
-            Text(
-                text = stringResource(R.string.app_theme_title),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-
-            Text(stringResource(R.string.app_theme_appearance), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)).padding(4.dp)) {
-                AppThemeMode.entries.forEach { mode ->
-                    val isSelected = uiState.appThemeMode == mode
-                    Box(
-                        modifier = Modifier.weight(1f).fillMaxHeight().clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
-                            .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                            .clickable { onThemeModeChanged(mode) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(stringResource(mode.labelRes), color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
-
-            Text(stringResource(R.string.app_theme_contrast), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)).padding(4.dp)) {
-                AppContrastOption.entries.forEach { option ->
-                    val isSelected = uiState.appContrastOption == option
-                    Box(
-                        modifier = Modifier.weight(1f).fillMaxHeight().clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
-                            .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                            .clickable { onContrastOptionChanged(option) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(stringResource(option.labelRes), color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
-
-            if (uiState.appThemeMode == AppThemeMode.SYSTEM) {
-                Text(stringResource(R.string.app_theme_text_brightness_light), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
-                        .padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
-                    androidx.compose.material3.Slider(
-                        value = uiState.appTextDimFactorLight,
-                        onValueChange = onTextDimFactorLightChanged,
-                        valueRange = 0.3f..1.0f,
-                        modifier = Modifier.weight(1f).padding(horizontal = 16.dp)
-                    )
-                    Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 1.0f))
-                }
-
-                Spacer(Modifier.height(16.dp))
-
-                Text(stringResource(R.string.app_theme_text_brightness_dark), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
-                        .padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
-                    androidx.compose.material3.Slider(
-                        value = uiState.appTextDimFactorDark,
-                        onValueChange = onTextDimFactorDarkChanged,
-                        valueRange = 0.3f..1.0f,
-                        modifier = Modifier.weight(1f).padding(horizontal = 16.dp)
-                    )
-                    Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 1.0f))
-                }
-            } else {
-                Text(stringResource(R.string.app_theme_text_brightness), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
-                        .padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
-                    androidx.compose.material3.Slider(
-                        value = if (uiState.appThemeMode == AppThemeMode.DARK) uiState.appTextDimFactorDark else uiState.appTextDimFactorLight,
-                        onValueChange = if (uiState.appThemeMode == AppThemeMode.DARK) onTextDimFactorDarkChanged else onTextDimFactorLightChanged,
-                        valueRange = 0.3f..1.0f,
-                        modifier = Modifier.weight(1f).padding(horizontal = 16.dp)
-                    )
-                    Text("A", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 1.0f))
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
-
-            Text(stringResource(R.string.app_theme_color_scheme), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(8.dp))
-            val presets = remember {
-                listOf(
-                    R.string.app_theme_preset_ocean to Color(0xFF00668B),
-                    R.string.app_theme_preset_mint to Color(0xFF006C4C),
-                    R.string.app_theme_preset_rose to Color(0xFF9C4146),
-                    R.string.app_theme_preset_sepia to Color(0xFF705D49),
-                    R.string.app_theme_preset_amethyst to Color(0xFF9B59B6),
-                    R.string.app_theme_preset_amber to Color(0xFFFFC107),
-                    R.string.app_theme_preset_sapphire to Color(0xFF0F52BA)
-                )
-            }
-
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                item {
-                    ThemeSwatch(
-                        color = MaterialTheme.colorScheme.primary,
-                        isSelected = uiState.appSeedColor == null,
-                        label = stringResource(R.string.app_theme_dynamic),
-                        onClick = { onSeedColorChanged(null) }
-                    )
-                }
-                items(presets.size, key = { it }) { i ->
-                    val (labelRes, color) = presets[i]
-                    ThemeSwatch(
-                        color = color,
-                        isSelected = uiState.appSeedColor == color,
-                        label = stringResource(labelRes),
-                        onClick = { onSeedColorChanged(color) }
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.theme_my_themes), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                IconButton(onClick = { showCreateDialog = true }) {
-                    Icon(Icons.Default.Add, contentDescription = stringResource(R.string.content_desc_add_custom_theme), tint = MaterialTheme.colorScheme.primary)
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-
-            if (uiState.customAppThemes.isEmpty()) {
-                Text(stringResource(R.string.theme_no_custom), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(uiState.customAppThemes, key = { it.id }) { theme ->
-                        ThemeSwatch(
-                            color = theme.seedColor,
-                            isSelected = uiState.appSeedColor == theme.seedColor,
-                            label = theme.name,
-                            onClick = { onSeedColorChanged(theme.seedColor) },
-                            onDelete = { onCustomThemeDeleted(theme.id) }
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    if (showCreateDialog) {
-        CreateAppThemeDialog(
-            onDismiss = { showCreateDialog = false },
-            onSave = { name, color ->
-                onCustomThemeAdded(CustomAppTheme(id = System.currentTimeMillis().toString(), name = name, seedColor = color))
-                showCreateDialog = false
-            }
-        )
-    }
+    SharedAppThemeBottomSheet(
+        appThemeMode = uiState.appThemeMode,
+        appContrastOption = uiState.appContrastOption,
+        appTextDimFactorLight = uiState.appTextDimFactorLight,
+        appTextDimFactorDark = uiState.appTextDimFactorDark,
+        appSeedColor = uiState.appSeedColor,
+        customAppThemes = uiState.customAppThemes,
+        onThemeModeChanged = onThemeModeChanged,
+        onContrastOptionChanged = onContrastOptionChanged,
+        onTextDimFactorLightChanged = onTextDimFactorLightChanged,
+        onTextDimFactorDarkChanged = onTextDimFactorDarkChanged,
+        onSeedColorChanged = onSeedColorChanged,
+        onCustomThemeAdded = onCustomThemeAdded,
+        onCustomThemeDeleted = onCustomThemeDeleted,
+        onDismiss = onDismiss
+    )
 }
-
-@Composable
-fun ThemeSwatch(
-    color: Color,
-    isSelected: Boolean,
-    label: String,
-    onClick: () -> Unit,
-    onDelete: (() -> Unit)? = null
-) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .background(color, CircleShape)
-                .border(if (isSelected) 3.dp else 1.dp, if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                .clickable { onClick() },
-            contentAlignment = Alignment.Center
-        ) {
-            if (isSelected) {
-                Icon(Icons.Default.Check, contentDescription = null, tint = if (color.luminance() > 0.5f) Color.Black else Color.White)
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(text = label, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 64.dp))
-            if (onDelete != null) {
-                // 48dp hit target (was a 16dp clickable icon): easier taps,
-                // default ripple retained. The row grows to fit the button.
-                IconButton(onClick = onDelete, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_delete), modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun CreateAppThemeDialog(
-    initialColor: Color = Color(0xFF6750A4),
-    onDismiss: () -> Unit,
-    onSave: (String, Color) -> Unit
-) {
-    var name by remember { mutableStateOf("") }
-    val context = LocalContext.current
-
-    val initialHsv = remember(initialColor) {
-        val hsv = FloatArray(3)
-        android.graphics.Color.colorToHSV(initialColor.toArgb(), hsv)
-        hsv
-    }
-
-    // Remembered: without this any recomposition (e.g. typing the theme
-    // name) reset the sliders to their initial positions.
-    var hue by remember(initialHsv) { androidx.compose.runtime.mutableFloatStateOf(initialHsv[0]) }
-    var saturation by remember(initialHsv) { androidx.compose.runtime.mutableFloatStateOf(initialHsv[1]) }
-    var value by remember(initialHsv) { androidx.compose.runtime.mutableFloatStateOf(initialHsv[2]) }
-
-    val currentColor by remember {
-        androidx.compose.runtime.derivedStateOf {
-            val hsv = floatArrayOf(hue, saturation, value)
-            Color(android.graphics.Color.HSVToColor(255, hsv))
-        }
-    }
-
-    fun updateFromColor(color: Color) {
-        val hsv = FloatArray(3)
-        android.graphics.Color.colorToHSV(color.toArgb(), hsv)
-        hue = hsv[0]
-        saturation = hsv[1]
-        value = hsv[2]
-    }
-
-    androidx.compose.ui.window.Dialog(
-        onDismissRequest = onDismiss,
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
-            color = Color(0xFF2C2C2C),
-            modifier = Modifier
-                .fillMaxWidth(0.9f)
-                .padding(16.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .padding(20.dp)
-                    .verticalScroll(androidx.compose.foundation.rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = stringResource(R.string.app_theme_create_title),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White
-                )
-
-                Spacer(Modifier.height(16.dp))
-
-                androidx.compose.material3.OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text(stringResource(R.string.theme_name)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = currentColor,
-                        focusedLabelColor = currentColor,
-                    )
-                )
-
-                Spacer(Modifier.height(20.dp))
-
-                SpectrumBox(
-                    hue = hue,
-                    saturation = saturation,
-                    currentColor = currentColor,
-                    onHueSatChanged = { h, s -> hue = h; saturation = s },
-                    modifier = Modifier.fillMaxWidth().height(220.dp)
-                )
-
-                Spacer(Modifier.height(20.dp))
-
-                BrightnessSlider(
-                    hue = hue,
-                    saturation = saturation,
-                    value = value,
-                    onValueChanged = { value = it },
-                    modifier = Modifier.fillMaxWidth().height(24.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
-                )
-
-                Spacer(Modifier.height(24.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    ColorComparePill(
-                        oldColor = initialColor,
-                        newColor = currentColor,
-                        modifier = Modifier.width(64.dp).height(36.dp)
-                    )
-
-                    Column(
-                        modifier = Modifier.weight(1.6f),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(stringResource(R.string.theme_color_hex), color = Color.Gray, fontSize = 12.sp, maxLines = 1)
-                        Spacer(Modifier.height(4.dp))
-                        HexInput(color = currentColor, onHexChanged = { updateFromColor(it) })
-                    }
-
-                    Row(
-                        modifier = Modifier.weight(2.4f),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        RgbInputColumn(label = stringResource(R.string.color_r), value = currentColor.red,
-                            onValueChange = { r -> updateFromColor(currentColor.copy(red = r)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        RgbInputColumn(label = stringResource(R.string.color_g), value = currentColor.green,
-                            onValueChange = { g -> updateFromColor(currentColor.copy(green = g)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        RgbInputColumn(label = stringResource(R.string.color_b), value = currentColor.blue,
-                            onValueChange = { b -> updateFromColor(currentColor.copy(blue = b)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(24.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = onDismiss) {
-                        Text(stringResource(R.string.action_cancel), color = Color.Gray)
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    androidx.compose.material3.Button(
-                        onClick = { onSave(name.ifBlank { context.getString(R.string.app_theme_custom_default_name) }, currentColor) },
-                        colors = ButtonDefaults.buttonColors(containerColor = currentColor)
-                    ) {
-                        Text(stringResource(R.string.action_save), color = if (currentColor.luminance() > 0.5f) Color.Black else Color.White, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
-    }
-}
-
 @Composable
 fun LanguageSelectionDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val currentLocales = AppCompatDelegate.getApplicationLocales()
     val currentTag = if (!currentLocales.isEmpty) currentLocales.get(0)?.toLanguageTag() else null
-    var languageSearchQuery by remember { mutableStateOf("") }
-    val languageRows = appLanguageSelectionOptions
-        .map { language -> language to stringResource(language.labelRes) }
-        .filter { (language, label) ->
-            language.matchesLanguageSearch(label = label, query = languageSearchQuery)
-        }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.options_language)) },
         text = {
-            Column {
-                androidx.compose.material3.OutlinedTextField(
-                    value = languageSearchQuery,
-                    onValueChange = { languageSearchQuery = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text(stringResource(R.string.action_search)) },
-                    leadingIcon = {
-                        Icon(Icons.Default.Search, contentDescription = null)
-                    },
-                    trailingIcon = {
-                        if (languageSearchQuery.isNotBlank()) {
-                            IconButton(onClick = { languageSearchQuery = "" }) {
-                                Icon(
-                                    Icons.Default.Close,
-                                    contentDescription = stringResource(R.string.action_clear)
-                                )
-                            }
-                        }
-                    }
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                if (languageRows.isEmpty()) {
-                    Text(
-                        text = stringResource(R.string.search_no_results_simple),
-                        modifier = Modifier.padding(vertical = 12.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 360.dp)
-                    ) {
-                        items(
-                            items = languageRows,
-                            key = { (language, _) -> language.tag ?: "system" }
-                        ) { (language, label) ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        val locales = language.tag?.let { tag ->
-                                            LocaleListCompat.forLanguageTags(tag)
-                                        } ?: LocaleListCompat.getEmptyLocaleList()
-                                        AppCompatDelegate.setApplicationLocales(locales)
-                                        onDismiss()
-                                        context.findActivity()?.recreate()
-                                    }
-                                    .padding(vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(selected = currentTag == language.tag, onClick = null)
-                                Spacer(modifier = Modifier.width(16.dp))
-                                Text(label)
-                            }
-                        }
-                    }
-                }
-            }
+            SharedMobileLanguageSelectionList(
+                selectedTag = currentTag,
+                onSelect = { tag ->
+                    val locales = tag?.let { LocaleListCompat.forLanguageTags(it) }
+                        ?: LocaleListCompat.getEmptyLocaleList()
+                    AppCompatDelegate.setApplicationLocales(locales)
+                    onDismiss()
+                    context.findActivity()?.recreate()
+                },
+                maxListHeight = 360.dp
+            )
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }

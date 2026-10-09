@@ -6,6 +6,7 @@ import com.aryan.reader.shared.SharedFolderPathResolver
 import com.aryan.reader.shared.LibraryFeatureState
 import com.aryan.reader.shared.SharedLibraryProjectionInput
 import com.aryan.reader.shared.SharedLibraryStateProjector
+import com.aryan.reader.shared.folderDisplayName
 
 /** Android persistence/model conversion around the shared library projector. */
 internal object AndroidLibraryProjectionAdapter {
@@ -72,11 +73,31 @@ internal data class AndroidFolderProjectionKey(
     val name: String
 )
 
+/**
+ * Synthesizes a `SyncedFolder` for every book whose source folder is not in the synced list, so an
+ * unsynced folder still shows up in the library's folder filters instead of the book silently
+ * disappearing from them.
+ *
+ * The name comes from shared's `folderDisplayName` rather than a literal: Android stores a tree
+ * URI here, so the last path segment is the real folder name. It used to hardcode "Local Folder",
+ * which made every unsynced folder indistinguishable in the UI.
+ *
+ * Note the known-folder check below matches on `uriString` only, while shared's equivalent also
+ * matches on `name`. That is correct here because every value reaching this function is an Android
+ * tree URI, but it is the same identity split as D7 — iOS-authored books carry a folder *name* in
+ * `BookItem.sourceFolder`. Unifying the two models is tracked there, not decided here.
+ */
 private fun ReaderScreenState.withAndroidFolderFallbacks(books: Collection<RecentFileItem>): ReaderScreenState {
     val knownFolders = syncedFolders.mapTo(mutableSetOf()) { it.uriString }
     val missingFolders = books
         .mapNotNull { it.sourceFolderUri }
         .filterTo(linkedSetOf()) { it !in knownFolders }
-        .map { uri -> SyncedFolder(uriString = uri, name = "Local Folder", lastScanTime = 0L) }
+        .map { uri ->
+            SyncedFolder(
+                uriString = uri,
+                name = folderDisplayName(uri),
+                lastScanTime = 0L,
+            )
+        }
     return if (missingFolders.isEmpty()) this else copy(syncedFolders = syncedFolders + missingFolders)
 }

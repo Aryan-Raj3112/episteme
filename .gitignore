@@ -52,3 +52,5 @@ DerivedData/
 *.xcresult
 /docs
 .freebuff/
+.kotlin/
+app/src/androidTest/assets/

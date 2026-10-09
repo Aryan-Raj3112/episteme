@@ -402,8 +402,8 @@ fun SharedReaderScreen(
                     selectedHighlightId = it.id
                 },
                 highlightPalette = highlightPalette,
-                onHighlightColorChange = { highlight, color ->
-                    dispatch(ReaderAction.HighlightUpdated(highlight.id, color = color))
+                onHighlightColorChange = { highlight, colorArgb ->
+                    dispatch(ReaderAction.HighlightUpdated(highlight.id, colorArgb = colorArgb))
                 },
                 onOpenHighlightPaletteManager = ::openHighlightPaletteManager,
                 onDeleteHighlight = {
@@ -758,8 +758,8 @@ fun SharedReaderScreen(
                     highlight = selectedHighlight,
                     palette = highlightPalette,
                     onDismiss = { selectedHighlightId = null },
-                    onColorChange = { color ->
-                        dispatch(ReaderAction.HighlightUpdated(selectedHighlight.id, color = color))
+                    onColorChange = { colorArgb ->
+                        dispatch(ReaderAction.HighlightUpdated(selectedHighlight.id, colorArgb = colorArgb))
                     },
                     onStyleChange = { style ->
                         dispatch(ReaderAction.HighlightUpdated(selectedHighlight.id, style = style))

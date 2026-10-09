@@ -113,6 +113,11 @@ fun TtsSettingsSheet(
     currentSpeakerId: String,
     onSpeakerChange: (String) -> Unit,
     isTtsActive: Boolean,
+    // Whether the engine/voice controls are frozen. Defaults to [isTtsActive] (the reader's
+    // rule: any live session freezes settings). Audiobook Listen overrides it because its player
+    // sheet closes the moment playback stops, so demanding a full stop makes the voice
+    // unreachable; there, only actively speaking counts as locked.
+    isVoiceChangeLocked: Boolean = isTtsActive,
     getAuthToken: suspend () -> String?,
     bookTitle: String,
     // Listen binds these to its independent prefs; Reader uses the defaults.
@@ -145,7 +150,7 @@ fun TtsSettingsSheet(
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
             Text(stringResource(R.string.tts_settings), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
 
-            if (isTtsActive) {
+            if (isVoiceChangeLocked) {
                 Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(12.dp)) {
                         Icon(Icons.Default.Stop, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
@@ -157,7 +162,7 @@ fun TtsSettingsSheet(
 
             if (isOss && !isOssCloudAvailable) {
                 Spacer(Modifier.height(16.dp))
-                DeviceVoicesTab(isTtsActive, context, TtsPlaybackManager.TtsMode.BASE, loadDeviceVoiceName, saveDeviceVoiceName)
+                DeviceVoicesTab(isVoiceChangeLocked, context, TtsPlaybackManager.TtsMode.BASE, loadDeviceVoiceName, saveDeviceVoiceName)
             } else {
                 Text(stringResource(R.string.tts_active_engine), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.height(8.dp))
@@ -171,7 +176,7 @@ fun TtsSettingsSheet(
                         Box(
                             modifier = Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(20.dp))
                                 .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                                .clickable(enabled = !isTtsActive) {
+                                .clickable(enabled = !isVoiceChangeLocked) {
                                     onModeChange(mode)
                                     if (mode == TtsPlaybackManager.TtsMode.CLOUD && selectedTabIndex == 1) selectedTabIndex = 0
                                     if (mode == TtsPlaybackManager.TtsMode.BASE && selectedTabIndex != 1) selectedTabIndex = 1
@@ -194,8 +199,8 @@ fun TtsSettingsSheet(
                 Spacer(Modifier.height(16.dp))
 
                 when (selectedTabIndex) {
-                    0 -> AiVoicesTab(currentSpeakerId, onSpeakerChange, isTtsActive, samplePlayer, currentMode, getAuthToken, saveCloudVoiceName)
-                    1 -> DeviceVoicesTab(isTtsActive, context, currentMode, loadDeviceVoiceName, saveDeviceVoiceName)
+                    0 -> AiVoicesTab(currentSpeakerId, onSpeakerChange, isVoiceChangeLocked, samplePlayer, currentMode, getAuthToken, saveCloudVoiceName)
+                    1 -> DeviceVoicesTab(isVoiceChangeLocked, context, currentMode, loadDeviceVoiceName, saveDeviceVoiceName)
                     2 -> TtsCacheTab(bookTitle, context, currentSpeakerId)
                 }
             }

@@ -43,7 +43,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -1258,7 +1257,7 @@ private fun ReaderWorkspaceTopChrome(
                     ) {
                         Icon(Icons.Default.MoreVert, contentDescription = readerString("desktop_pdf_file_actions", "PDF file actions"))
                     }
-                    DropdownMenu(
+                    SharedDropdownMenu(
                         expanded = fileActionsExpanded,
                         onDismissRequest = {
                             fileActionsExpanded = false

@@ -10,7 +10,8 @@ fun androidSettingsHubInput(
     isOssBuild: Boolean = BuildConfig.FLAVOR == "oss",
     isOfflineBuild: Boolean = BuildConfig.IS_OFFLINE,
     isDebugBuild: Boolean = BuildConfig.DEBUG,
-    hideReaderAi: Boolean = false
+    hideReaderAi: Boolean = false,
+    fpsOverlayEnabled: Boolean = false,
 ): SharedSettingsHubInput {
     val supportsSync = !isOssBuild && !isOfflineBuild
     // AI keys and models ship on every online build (iOS parity): OSS
@@ -58,6 +59,8 @@ fun androidSettingsHubInput(
         useStrictFileFilter = uiState.useStrictFileFilter,
         usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
         isScreenCaptureProtectionEnabled = uiState.isScreenCaptureProtectionEnabled,
-        hideReaderAi = hideReaderAi
+        hideReaderAi = hideReaderAi,
+        includeFpsOverlayToggle = isDebugBuild,
+        fpsOverlayEnabled = fpsOverlayEnabled,
     )
 }

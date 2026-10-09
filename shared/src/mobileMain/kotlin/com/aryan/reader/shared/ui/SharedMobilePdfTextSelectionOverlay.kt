@@ -105,6 +105,7 @@ import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.generated.resources.Res
 import com.aryan.reader.shared.generated.resources.copy
 import com.aryan.reader.shared.generated.resources.font_background
+import com.aryan.reader.pdf.MagnifierTileSource
 import com.aryan.reader.shared.generated.resources.format_underlined
 import com.aryan.reader.shared.generated.resources.format_underlined_squiggle
 import com.aryan.reader.shared.generated.resources.select_all
@@ -875,7 +876,18 @@ internal fun SharedMobilePdfTextSelectionOverlay(
         ) {
             SharedPdfMagnifier(
                 sourceBitmap = magnifierBitmap,
-                tiles = zoomTiles,
+                tiles = remember(zoomTiles, canvasSize) {
+                    zoomTiles.map { tile ->
+                        MagnifierTileSource(
+                            bitmap = tile.bitmap,
+                            contentRect = pdfMagnifierTileContentRect(
+                                request = tile.request,
+                                contentWidthPx = canvasSize.width,
+                                contentHeightPx = canvasSize.height,
+                            )
+                        )
+                    }
+                },
                 currentScale = zoomScale,
                 magnifierCenterOnBitmap = magnifierCenter,
                 contentWidthPx = canvasSize.width,
@@ -1194,7 +1206,7 @@ private fun SharedMobilePdfSelectionMenuAction(
  * without blocking the gesture.
  */
 @Composable
-internal fun SharedMobilePdfOcrProcessingIndicator(position: Offset) {
+fun SharedMobilePdfOcrProcessingIndicator(position: Offset) {
     val infiniteTransition = rememberInfiniteTransition(label = "ocr_indicator_transition")
     val animatedRadius by infiniteTransition.animateFloat(
         initialValue = 20f,

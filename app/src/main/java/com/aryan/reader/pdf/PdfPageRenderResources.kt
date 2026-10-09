@@ -8,6 +8,7 @@ import android.view.Choreographer
 import android.util.LruCache
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
@@ -16,6 +17,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import com.aryan.reader.shared.pdf.PdfPagePoint
+import com.aryan.reader.shared.pdf.SharedPdfInkRenderer
 import com.aryan.reader.shared.pdf.buildPdfInkCubicSegments
 import com.aryan.reader.shared.pdf.canPoolPdfBitmap
 import androidx.core.graphics.createBitmap
@@ -24,10 +26,6 @@ import com.aryan.reader.pdf.data.PdfAnnotation
 import timber.log.Timber
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.IdentityHashMap
-import kotlin.math.PI
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.sin
 import kotlin.math.sqrt
 import android.graphics.Color as AndroidColor
 
@@ -59,86 +57,30 @@ internal fun planPdfHighResTileUpdate(
 /** Drawn tiles are independent of the render pause: cached sharp tiles stay visible while panning. */
 internal fun shouldDrawPdfHighResTiles(needsTiling: Boolean): Boolean = needsTiling
 
+/**
+ * Fountain-pen outline geometry now lives in shared, so the PDF reader derives the
+ * same stroke edges on every platform. Android keeps this object purely because its
+ * [PdfPoint] stroke model is not shared's [PdfPagePoint] — that mapping is the only
+ * Android-specific part left.
+ */
 object PdfInkGeometry {
     fun calculateFountainPenPoints(
         points: List<PdfPoint>, baseWidth: Float, pageWidth: Float, pageHeight: Float
     ): Pair<List<Offset>, List<Offset>> {
-        if (points.size < 2) return Pair(emptyList(), emptyList())
-
-        if (points.size % 50 == 0) {
+        // Kept from the pre-lift implementation for stroke-shape debugging. The
+        // per-point verbose dump it used to interleave is gone: that loop now lives
+        // in shared.
+        if (points.size >= 2 && points.size % 50 == 0) {
             Timber.tag("FountainPenDebug").d(
                 "Calculate Points: PWidth=$pageWidth, PHeight=$pageHeight, BaseW=$baseWidth, Pts=${points.size}"
             )
         }
-
-        val leftSide = mutableListOf<Offset>()
-        val rightSide = mutableListOf<Offset>()
-
-        val computedWidths = FloatArray(points.size)
-        computedWidths[0] = baseWidth
-
-        val velocityFactor = 300f
-
-        for (i in 1 until points.size) {
-            val p1 = points[i - 1]
-            val p2 = points[i]
-
-            val dxNorm = p2.x - p1.x
-            val dyNorm = p2.y - p1.y
-            val aspect = if (pageWidth > 0 && pageHeight > 0) pageHeight / pageWidth else 1f
-            val distNorm = sqrt(dxNorm * dxNorm + (dyNorm * aspect) * (dyNorm * aspect))
-
-            val timeDelta = (p2.timestamp - p1.timestamp).coerceAtLeast(1)
-            val velocityNorm = distNorm / timeDelta
-
-            val targetWidth = (baseWidth * (1f / (1f + velocityNorm * velocityFactor))).coerceIn(
-                baseWidth * 0.2f, baseWidth * 1.4f
-            )
-
-            computedWidths[i] = computedWidths[i - 1] * 0.6f + targetWidth * 0.4f
-
-            if (i < 5) {
-                Timber.tag("FountainPenDebug").v(
-                    "Pt[$i]: dt=$timeDelta, velNorm=$velocityNorm, width=${computedWidths[i]} (base=$baseWidth)"
-                )
-            }
-        }
-
-        for (i in 0 until points.size - 1) {
-            val pCurrent = points[i]
-            val pNext = points[i + 1]
-
-            val curX = pCurrent.x * pageWidth
-            val curY = pCurrent.y * pageHeight
-            val nextX = pNext.x * pageWidth
-            val nextY = pNext.y * pageHeight
-
-            val angle = atan2(nextY - curY, nextX - curX)
-            val normalAngle = angle - (PI / 2f).toFloat()
-
-            val w = computedWidths[i] / 2f
-
-            leftSide.add(Offset((curX + cos(normalAngle) * w), (curY + sin(normalAngle) * w)))
-            rightSide.add(Offset((curX - cos(normalAngle) * w), (curY - sin(normalAngle) * w)))
-        }
-
-        val lastIdx = points.lastIndex
-        val lastP = points[lastIdx]
-        val prevP = points[lastIdx - 1]
-
-        val lastX = lastP.x * pageWidth
-        val lastY = lastP.y * pageHeight
-        val prevX = prevP.x * pageWidth
-        val prevY = prevP.y * pageHeight
-
-        val lastAngle = atan2(lastY - prevY, lastX - prevX)
-        val lastNormal = lastAngle - (PI / 2f).toFloat()
-        val lastW = computedWidths[lastIdx] / 2f
-
-        leftSide.add(Offset((lastX + cos(lastNormal) * lastW), (lastY + sin(lastNormal) * lastW)))
-        rightSide.add(Offset((lastX - cos(lastNormal) * lastW), (lastY - sin(lastNormal) * lastW)))
-
-        return Pair(leftSide, rightSide)
+        return SharedPdfInkRenderer.calculateFountainPenEdges(
+            points = points.map { PdfPagePoint(it.x, it.y, it.timestamp) },
+            baseWidthPx = baseWidth,
+            pageWidthPx = pageWidth,
+            pageHeightPx = pageHeight
+        )
     }
 }
 
@@ -591,11 +533,22 @@ internal object PdfAnnotationRenderHelper {
     }
 }
 
+/**
+ * The stroke currently under the user's finger.
+ *
+ * The in-flight [currentAnnotation] deliberately exposes [currentPoints] itself
+ * rather than a copy: a stroke can carry hundreds of coalesced samples and
+ * copying the list on every one of them made the whole stroke O(n^2) on the
+ * main thread, inside the pointer-input coroutine. Only [onDrawEnd] — which
+ * runs once — materialises an immutable snapshot for persistence, so nothing
+ * outside this class can observe the list changing underneath it.
+ */
 @Stable
 class PdfDrawingState {
+    private val currentPoints = mutableStateListOf<PdfPoint>()
+
     var currentAnnotation by mutableStateOf<PdfAnnotation?>(null)
         private set
-    private val currentPoints = mutableListOf<PdfPoint>()
 
     fun onDrawStart(pageIndex: Int, point: PdfPoint, type: InkType, color: Color, width: Float) {
         currentPoints.clear()
@@ -604,16 +557,16 @@ class PdfDrawingState {
             type = AnnotationType.INK,
             inkType = type,
             pageIndex = pageIndex,
-            points = currentPoints.toList(),
+            points = currentPoints,
             color = color,
             strokeWidth = width
         )
     }
 
     fun onDraw(point: PdfPoint) {
-        if (currentAnnotation == null) return
+        val annotation = currentAnnotation ?: return
         currentPoints.add(point)
-        currentAnnotation = currentAnnotation?.copy(points = currentPoints.toList())
+        currentAnnotation = annotation.copy(points = currentPoints)
     }
 
     fun onDrawCancel() {
@@ -622,19 +575,24 @@ class PdfDrawingState {
     }
 
     fun onDrawEnd(): PdfAnnotation? {
-        val finalAnnot = currentAnnotation
+        val annotation = currentAnnotation ?: return null
+        val finalAnnot = if (annotation.points === currentPoints) {
+            annotation.copy(points = currentPoints.toList())
+        } else {
+            annotation
+        }
         currentAnnotation = null
         currentPoints.clear()
         return finalAnnot
     }
 
     fun updateDrag(point: PdfPoint) {
-        if (currentPoints.isNotEmpty()) {
-            val start = currentPoints.first()
-            currentPoints.clear()
-            currentPoints.add(start)
-            currentPoints.add(point)
-            currentAnnotation = currentAnnotation?.copy(points = currentPoints.toList())
-        }
+        val annotation = currentAnnotation ?: return
+        if (currentPoints.isEmpty()) return
+        val start = currentPoints.first()
+        currentPoints.clear()
+        currentPoints.add(start)
+        currentPoints.add(point)
+        currentAnnotation = annotation.copy(points = currentPoints)
     }
 }

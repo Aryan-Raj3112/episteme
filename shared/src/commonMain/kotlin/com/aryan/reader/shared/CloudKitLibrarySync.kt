@@ -28,6 +28,45 @@ const val CLOUDKIT_RECORD_BOOK_TOMBSTONE = "BookTombstone"
 fun cloudKitLibraryRecordName(recordType: String, id: String): String =
     "$recordType:${id.trim()}"
 
+/**
+ * Inverse of [cloudKitLibraryRecordName], used to route a delta back to the
+ * entity it describes.
+ *
+ * Splits on the *first* colon: record-type names never contain one, while
+ * entity ids may, so `BookState:isbn:1234` must keep `isbn:1234` intact. The id
+ * is returned untrimmed because [cloudKitLibraryRecordName] trims on the way
+ * out, so a stored name has already been normalized.
+ */
+data class CloudKitLibraryRecordRef(val recordType: String, val id: String)
+
+fun cloudKitSplitLibraryRecordName(recordName: String): CloudKitLibraryRecordRef? {
+    val separator = recordName.indexOf(':')
+    if (separator <= 0 || separator == recordName.lastIndex) return null
+    return CloudKitLibraryRecordRef(
+        recordType = recordName.substring(0, separator),
+        id = recordName.substring(separator + 1),
+    )
+}
+
+/**
+ * Whether [id] can be used as part of a CloudKit record name.
+ *
+ * Record names may not contain '/' and must be stable on every device, so a
+ * device-local absolute path is doubly invalid: rejected by CloudKit, and
+ * different on every install. Android derives the book id from a content hash
+ * (`FileHasher.calculateSha256`) and gates on a non-null cloud filename; iOS
+ * reaches the same name via `stableImportId`, which falls back to `localPath`
+ * when a caller omits the id. This predicate lets the data plane refuse such a
+ * book up front and say so, instead of letting the server reject a malformed
+ * name on every single pass.
+ */
+fun isValidCloudKitLibraryId(id: String): Boolean {
+    val trimmed = id.trim()
+    return trimmed.isNotEmpty() &&
+        trimmed.length <= 255 &&
+        trimmed.none { it == '/' || it == ':' || it.isISOControl() }
+}
+
 fun cloudKitBookStateRecordName(bookId: String): String =
     cloudKitLibraryRecordName(CLOUDKIT_RECORD_BOOK_STATE, bookId)
 

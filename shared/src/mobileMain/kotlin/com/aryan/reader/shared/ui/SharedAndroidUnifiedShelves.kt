@@ -47,6 +47,8 @@ fun <S, B> SharedAndroidUnifiedShelves(
     modifier: Modifier = Modifier,
     /** Nested shelves inside the selected shelf (file-system navigation). */
     childShelves: List<S> = emptyList(),
+    /** Lets the host render its own contextual actions for the shelf being viewed. */
+    selectedShelfActions: @Composable (S) -> Unit = {},
     childKey: (S) -> String = shelfKey,
     childName: (S) -> String = shelfName,
     childBookCountLabel: @Composable (S) -> String = shelfBookCountLabel,
@@ -78,43 +80,49 @@ fun <S, B> SharedAndroidUnifiedShelves(
                 }
             }
         }
-    } else if (childShelves.isEmpty() && selectedBooks.isEmpty()) {
-        Column(modifier.fillMaxSize()) {
-            breadcrumbContent()
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(emptyShelfLabel, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
     } else {
         Column(modifier.fillMaxSize()) {
-            breadcrumbContent()
-            LazyVerticalGrid(
-                columns = widthClass.bookGridCells(),
-                modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
-                contentPadding = PaddingValues(top = 16.dp, bottom = 96.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+            androidx.compose.foundation.layout.Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (childShelves.isNotEmpty()) {
-                    if (foldersSectionLabel != null && selectedBooks.isNotEmpty()) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            UnifiedShelfSectionLabel(foldersSectionLabel)
+                Box(Modifier.weight(1f)) { breadcrumbContent() }
+                selectedShelfActions(selectedShelf)
+            }
+            if (childShelves.isEmpty() && selectedBooks.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(emptyShelfLabel, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = widthClass.bookGridCells(),
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
+                    contentPadding = PaddingValues(top = 16.dp, bottom = 96.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    if (childShelves.isNotEmpty()) {
+                        if (foldersSectionLabel != null && selectedBooks.isNotEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                UnifiedShelfSectionLabel(foldersSectionLabel)
+                            }
+                        }
+                        items(childShelves, key = childKey, span = { GridItemSpan(maxLineSpan) }) { child ->
+                            UnifiedShelfCard(
+                                name = childName(child),
+                                countLabel = childBookCountLabel(child),
+                                onClick = { onChildShelfSelected(child) },
+                            )
                         }
                     }
-                    items(childShelves, key = childKey, span = { GridItemSpan(maxLineSpan) }) { child ->
-                        UnifiedShelfCard(
-                            name = childName(child),
-                            countLabel = childBookCountLabel(child),
-                            onClick = { onChildShelfSelected(child) },
-                        )
+                    if (selectedBooks.isNotEmpty() && childShelves.isNotEmpty() && filesSectionLabel != null) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            UnifiedShelfSectionLabel(filesSectionLabel)
+                        }
                     }
+                    items(selectedBooks, key = bookKey) { bookCard(it) }
                 }
-                if (selectedBooks.isNotEmpty() && childShelves.isNotEmpty() && filesSectionLabel != null) {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        UnifiedShelfSectionLabel(filesSectionLabel)
-                    }
-                }
-                items(selectedBooks, key = bookKey) { bookCard(it) }
             }
         }
     }

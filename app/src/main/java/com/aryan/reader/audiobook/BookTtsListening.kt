@@ -31,10 +31,15 @@ import com.aryan.reader.pdf.data.PdfTextDatabase
 import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.data.RecentFileEntity
 import com.aryan.reader.shared.SharedBookTtsListenState
+import com.aryan.reader.shared.toSharedBookTtsListenState
 import com.aryan.reader.shared.calculateSharedTtsAudiobookProgress
 import com.aryan.reader.shared.SharedListeningHandoff
 import com.aryan.reader.shared.SharedListeningTarget
 import com.aryan.reader.shared.sharedListeningHandoff
+import com.aryan.reader.shared.SharedTtsListenStartPolicy
+import com.aryan.reader.shared.SharedTtsListenStartPolicyWire
+import com.aryan.reader.shared.resolveSharedTtsListenChapter
+import com.aryan.reader.shared.resolveSharedTtsListenChunk
 import com.aryan.reader.withTtsReplacements
 import java.io.File
 import java.io.InputStream
@@ -362,10 +367,11 @@ class BookTtsSessionCoordinator(
         selectedChapterIndex: Int? = null,
         authToken: String? = null
     ) {
+        val policy = SharedTtsListenStartPolicyWire.decode(startPolicy)
         authToken?.takeIf { it.isNotBlank() }?.let { cachedAuthToken = it }
         val playback = playbackManager.ttsState.value
         if (
-            startPolicy == START_RESUME &&
+            policy == SharedTtsListenStartPolicy.RESUME &&
             activeBook?.bookId == bookId &&
             playback.playbackSource == "AUDIOBOOK_TTS" &&
             !playback.sessionFinished
@@ -379,13 +385,20 @@ class BookTtsSessionCoordinator(
                 val book = repository.loadBook(bookId)
                 val saved = repository.loadProgress(bookId) ?: defaultBookTtsProgress(context = appContext, bookId = bookId)
                 val reading = AppDatabase.getDatabase(appContext).recentFileDao().getFileByBookId(bookId)
-                val chapter = when (startPolicy) {
-                    START_BEGINNING -> 0
-                    START_READING_POSITION -> reading?.lastChapterIndex ?: reading?.lastPage ?: 0
-                    START_CHAPTER -> selectedChapterIndex ?: saved.chapterIndex
-                    else -> saved.chapterIndex
-                }.coerceIn(book.chapters.indices)
-                val chunk = if (startPolicy == START_RESUME && chapter == saved.chapterIndex) saved.chunkIndex else 0
+                val chapter = resolveSharedTtsListenChapter(
+                    policy = policy,
+                    savedChapterIndex = saved.chapterIndex,
+                    requestedChapterIndex = selectedChapterIndex,
+                    readingChapterIndex = reading?.lastChapterIndex,
+                    lastPageIndex = reading?.lastPage,
+                    chapterCount = book.chapters.size
+                )
+                val chunk = resolveSharedTtsListenChunk(
+                    policy = policy,
+                    resolvedChapterIndex = chapter,
+                    savedChapterIndex = saved.chapterIndex,
+                    savedChunkIndex = saved.chunkIndex
+                )
                 activeBook = book
                 activeProgress = saved.copy(chapterIndex = chapter, chunkIndex = chunk, completed = false)
                 playChapter(chapter, chunk, continueSession = false)
@@ -594,10 +607,10 @@ class BookTtsSessionCoordinator(
 
     companion object {
         private const val TAG = "BOOK_TTS_AUDIOBOOK"
-        const val START_RESUME = "resume"
-        const val START_BEGINNING = "beginning"
-        const val START_READING_POSITION = "reading_position"
-        const val START_CHAPTER = "chapter"
+        const val START_RESUME = SharedTtsListenStartPolicyWire.RESUME
+        const val START_BEGINNING = SharedTtsListenStartPolicyWire.BEGINNING
+        const val START_READING_POSITION = SharedTtsListenStartPolicyWire.READING_POSITION
+        const val START_CHAPTER = SharedTtsListenStartPolicyWire.CHAPTER
     }
 }
 
@@ -633,8 +646,14 @@ class BookTtsAudiobookController(
         _uiState,
         _sleepTimerRemainingMs,
     ) { playback, prepared, sleepTimerRemainingMs ->
-        playback.toSharedBookTtsListenState(
-            progress = prepared.savedProgress,
+        playback.toSharedTtsPlaybackSnapshot().toSharedBookTtsListenState(
+            progress = prepared.savedProgress?.let { entity ->
+                com.aryan.reader.shared.SharedTtsListenSavedProgress(
+                    chapterIndex = entity.chapterIndex,
+                    speechRate = entity.speechRate,
+                    pitch = entity.pitch,
+                )
+            },
             preparedChapterCount = prepared.book?.chapters?.size ?: 0,
             sleepTimerRemainingMs = sleepTimerRemainingMs,
         )
@@ -773,40 +792,22 @@ class BookTtsAudiobookController(
 }
 
 @androidx.annotation.OptIn(UnstableApi::class)
-internal fun com.aryan.reader.tts.TtsPlaybackManager.TtsState.toSharedBookTtsListenState(
-    progress: BookTtsListeningProgressEntity?,
-    preparedChapterCount: Int,
-    sleepTimerRemainingMs: Long,
-): SharedBookTtsListenState {
-    val isBookListening = playbackSource == "AUDIOBOOK_TTS"
-    val resolvedChapterCount = (totalChapters ?: preparedChapterCount).coerceAtLeast(0)
-    val resolvedChapterIndex = (chapterIndex ?: progress?.chapterIndex ?: 0).coerceAtLeast(0)
-    val resolvedProgress = bookProgressPercent
-        ?.div(100f)
-        ?: calculateSharedTtsAudiobookProgress(
-            chapterIndex = resolvedChapterIndex,
-            chapterCount = resolvedChapterCount,
-            chunkIndex = currentChunkIndex,
-            chunkCount = totalChunks,
-        )
-    return SharedBookTtsListenState(
-        connected = isBookListening,
+internal fun com.aryan.reader.tts.TtsPlaybackManager.TtsState.toSharedTtsPlaybackSnapshot():
+    com.aryan.reader.shared.SharedTtsPlaybackSnapshot =
+    com.aryan.reader.shared.SharedTtsPlaybackSnapshot(
+        playbackSource = playbackSource,
         bookId = bookId,
-        isPlaying = isBookListening && isPlaying,
-        isLoading = isBookListening && isLoading,
-        chapterIndex = resolvedChapterIndex,
-        chapterCount = resolvedChapterCount,
-        chunkIndex = currentChunkIndex,
-        chunkCount = totalChunks,
+        isPlaying = isPlaying,
+        isLoading = isLoading,
         chapterTitle = chapterTitle,
-        progressPercent = resolvedProgress.coerceIn(0f, 1f),
-        speechRate = progress?.speechRate ?: 1f,
-        pitch = progress?.pitch ?: 1f,
-        sleepTimerRemainingMs = sleepTimerRemainingMs.coerceAtLeast(0L),
+        chapterIndex = chapterIndex,
+        totalChapters = totalChapters,
+        currentChunkIndex = currentChunkIndex,
+        totalChunks = totalChunks,
+        bookProgressPercent = bookProgressPercent,
         sessionFinished = sessionFinished,
         sessionEndedByStop = sessionEndedByStop,
-        error = errorMessage,
+        errorMessage = errorMessage,
         transcriptStartIndex = transcriptStartIndex,
         transcriptChunks = transcriptChunks,
     )
-}

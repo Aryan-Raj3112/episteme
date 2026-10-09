@@ -48,6 +48,7 @@ import platform.Vision.VNRequest
 import platform.Vision.VNRequestTextRecognitionLevelAccurate
 import platform.posix.memcpy
 import kotlin.math.roundToInt
+import com.aryan.reader.shared.ios.resolveIosReadablePath
 
 /** A Vision result expressed in the same top-left normalized coordinate space as PDF overlays. */
 internal data class IosPdfOcrWord(
@@ -63,7 +64,7 @@ internal suspend fun recognizeIosPdfPageWords(
     recognitionLanguages: List<String>,
 ): List<IosPdfOcrWord> = withContext(Dispatchers.Default) {
     val rawPath = path?.trim()?.takeIf { it.isNotBlank() } ?: return@withContext emptyList()
-    val resolvedPath = resolveIosPdfPath(rawPath)
+    val resolvedPath = rawPath.resolveIosReadablePath() ?: rawPath
     if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return@withContext emptyList()
 
     IosPdfiumRuntime.mutex.withLock {
@@ -132,7 +133,7 @@ internal object IosPdfOcrPageCache {
         languages: List<String>,
     ): List<IosPdfOcrWord> {
         val rawPath = path?.trim()?.takeIf { it.isNotBlank() } ?: return emptyList()
-        val resolvedPath = resolveIosPdfPath(rawPath)
+        val resolvedPath = rawPath.resolveIosReadablePath() ?: rawPath
         val revision = iosPdfFileRevision(resolvedPath)
         val distinctLanguages = languages.distinct()
         val key = IosPdfOcrCacheKey(
@@ -342,13 +343,8 @@ internal fun persistIosPdfOcrLanguage(language: SharedPdfOcrLanguage) {
     IosPdfOcrLanguagePreferences.setLanguage(language)
 }
 
-private fun resolveIosPdfPath(path: String): String {
-    if (!path.startsWith("file://")) return path
-    return NSURL.URLWithString(path)?.path ?: path.removePrefix("file://")
-}
-
 private fun iosPdfFileRevision(path: String): String {
-    val attributes = NSFileManager.defaultManager.attributesOfItemAtPath(resolveIosPdfPath(path), error = null)
+    val attributes = NSFileManager.defaultManager.attributesOfItemAtPath(path.resolveIosReadablePath() ?: path, error = null)
     val size = (attributes?.get(NSFileSize) as? NSNumber)?.longLongValue ?: 0L
     val modified = attributes?.get(NSFileModificationDate)?.toString().orEmpty()
     return "$size:$modified"

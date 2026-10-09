@@ -31,12 +31,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSURL
-
-private fun String?.resolvedIosPdfPath(): String? {
-    val value = this?.trim()?.takeIf { it.isNotBlank() } ?: return null
-    if (!value.startsWith("file://")) return value
-    return NSURL.URLWithString(value)?.path ?: value.removePrefix("file://")
-}
+import com.aryan.reader.shared.ios.resolveIosReadablePath
 
 private data class IosPdfSearchCacheKey(
     val path: String,
@@ -75,7 +70,7 @@ private suspend fun searchIosPdfLocked(
     query: String,
     password: String?,
 ): List<SharedPdfSearchResult> {
-    val resolvedPath = book.path.resolvedIosPdfPath() ?: return emptyList()
+    val resolvedPath = book.path.resolveIosReadablePath() ?: return emptyList()
     if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) {
         return emptyList()
     }

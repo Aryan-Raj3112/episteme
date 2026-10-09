@@ -1,6 +1,7 @@
 package com.aryan.reader
 
 import com.aryan.reader.audiobook.AudiobookPlaybackService
+import com.aryan.reader.mediaoverlay.MediaOverlayPlaybackService
 import com.aryan.reader.tts.TtsService
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -43,6 +44,18 @@ class MediaButtonRoutingTest {
         assertEquals(
             AudiobookPlaybackService::class.java.name,
             resolveMediaButtonTargetServiceClassName(MediaButtonRouting.AUDIOBOOK_SERVICE_CLASS_NAME)
+        )
+    }
+
+    @Test
+    fun `resolver keeps narration on the media overlay service`() {
+        assertEquals(
+            MediaOverlayPlaybackService::class.java.name,
+            resolveMediaButtonTargetServiceClassName(MediaOverlayPlaybackService::class.java.name)
+        )
+        assertEquals(
+            MediaOverlayPlaybackService::class.java.name,
+            resolveMediaButtonTargetServiceClassName(MediaButtonRouting.MEDIA_OVERLAY_SERVICE_CLASS_NAME)
         )
     }
 

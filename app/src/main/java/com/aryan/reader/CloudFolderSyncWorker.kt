@@ -7,9 +7,11 @@ import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.Data
+import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -62,17 +64,42 @@ import java.io.OutputStream
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 private const val CLOUD_FOLDER_ROOT_WORK_PREFIX = "CloudFolderSyncWorker"
 private const val CLOUD_FOLDER_GC_RETENTION_MILLIS = 30L * 24L * 60L * 60L * 1_000L
 private const val METADATA_CONFLICT_RETRY_DELAY_MILLIS = 5L * 60L * 1_000L
+
+/**
+ * Concurrent Drive downloads during materialization.
+ *
+ * A first-time pull is bound by Drive round trips, not local IO, so a strictly
+ * sequential loop made a 21-file folder take ~54s — long enough that a user
+ * concludes the sync failed. Four keeps the pass comfortably under ten seconds
+ * without opening so many sockets that Drive rate-limits the account.
+ */
+private const val MATERIALIZE_PARALLELISM = 4
+
+/**
+ * Minimum gap between progress notifications during materialization.
+ *
+ * The old loop notified per file, which is both a second per-file cost and
+ * invisible to a reader: progress that changes 21 times in a few seconds reads
+ * as a spinner, not as progress.
+ */
+private const val PROGRESS_NOTIFY_INTERVAL_MILLIS = 500L
 
 /**
  * The small amount of WorkManager state needed to choose a metadata wake-up
@@ -137,6 +164,13 @@ class CloudFolderSyncWorker(
             val startedAt = System.currentTimeMillis()
             if (!isCloudFolderSyncEnabled(applicationContext)) {
                 cloudFolderLogI("event=worker_gate gate=sync_enabled result=disabled")
+                // Cancel the periodic safety net too: leaving it scheduled while
+                // sync is off means a wake every interval that can only be
+                // gated out at execution time.
+                CloudFolderSyncWorker.cancelPeriodicReconcile(
+                    applicationContext,
+                    inputData.getString(KEY_ACCOUNT_ID)?.trim().orEmpty(),
+                )
                 return@withLock Result.success()
             }
 
@@ -146,6 +180,26 @@ class CloudFolderSyncWorker(
             val requestedRootId = inputData.getString(KEY_ROOT_ID)?.trim().orEmpty()
             val metadataOnly = inputData.getBoolean(KEY_METADATA_ONLY, false)
             val requestedAccountId = inputData.getString(KEY_ACCOUNT_ID)?.trim().orEmpty()
+            // One shared-tag event per pass. Everything below still logs to the
+            // folder tag; this is the line that says which side of sync this
+            // pass represents and which device ran it.
+            val passDevice = runCatching {
+                cloudSyncDeviceLabel(CloudInstallationId.get(applicationContext))
+            }.getOrDefault("unknown")
+            // Resolved lazily below: `repository` is only constructed after the
+            // account gate passes, so reading deviceId here always logged
+            // `fself=unknown`. This holder is filled in at construction and
+            // read by the start/end lines, so every pass line carries the real
+            // folder-device identity.
+            var passFolderDevice = "unknown"
+            val passDir = when (direction) {
+                Direction.PULL -> CloudSyncDirPull
+                Direction.PUSH, Direction.GC, Direction.DELETE -> CloudSyncDirPush
+                Direction.SYNC -> CloudSyncDirBoth
+            }
+            val passScope = requestedRootId.takeIf { it.isNotBlank() }
+                ?.let { cloudFolderSafeId(it) }
+                ?: "account"
             activeOperationId = cloudFolderOperationId(
                 "folder-worker",
                 id.toString(),
@@ -168,7 +222,6 @@ class CloudFolderSyncWorker(
                     "account=${cloudFolderSafeId(requestedAccountId)} " +
                     "root=${cloudFolderSafeId(requestedRootId)} metadataOnly=$metadataOnly attempt=$runAttemptCount",
             )
-
             // WorkManager can outlive a Firebase session. Never touch the
             // database or Drive until the request's account matches the
             // currently authenticated Firebase account.
@@ -178,10 +231,40 @@ class CloudFolderSyncWorker(
                         "requested=${cloudFolderSafeId(requestedAccountId)} " +
                         "current=${cloudFolderSafeId(currentAccountId)}",
                 )
+                cloudSyncEvent(
+                    plane = CloudSyncPlaneFolder,
+                    dir = passDir,
+                    event = "folder_pass_blocked",
+                    result = "blocked:account_mismatch",
+                    scope = passScope,
+                    device = passDevice,
+                    folderDevice = passFolderDevice,
+                    details = "requested=${cloudFolderSafeId(requestedAccountId)} " +
+                        "current=${cloudFolderSafeId(currentAccountId)}",
+                )
                 return@withLock Result.success()
             }
             repository = CloudFolderSyncRepository(applicationContext, currentAccountId)
-            cloudFolderLogD("event=worker_gate gate=account result=accepted account=${cloudFolderSafeId(currentAccountId)}")
+            passFolderDevice = runCatching {
+                cloudSyncFolderDeviceLabel(repository.deviceId)
+            }.getOrDefault("unknown")
+            cloudFolderLogD(
+                "event=worker_gate gate=account result=accepted " +
+                    "account=${cloudFolderSafeId(currentAccountId)} fself=$passFolderDevice",
+            )
+            // Emitted after the gate so the line carries the real folder-device
+            // identity. A blocked pass never gets a start line, which is what
+            // makes `start` with no matching `end` an unambiguous signal.
+            cloudSyncEvent(
+                plane = CloudSyncPlaneFolder,
+                dir = passDir,
+                event = "folder_pass_start",
+                scope = passScope,
+                device = passDevice,
+                folderDevice = passFolderDevice,
+                details = "attempt=$runAttemptCount metadataOnly=$metadataOnly " +
+                    "${cloudFolderTraceFields(activeOperationId, activeCorrelationId)}",
+            )
 
             // Reset rows claimed by a process that was killed before it could
             // complete them. WorkManager may recreate this worker later.
@@ -272,6 +355,16 @@ class CloudFolderSyncWorker(
                         "${traceFields(requestedRootId)} " +
                         "durationMs=${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)}",
                 )
+                cloudSyncEvent(
+                    plane = CloudSyncPlaneFolder,
+                    dir = passDir,
+                    event = "folder_pass_end",
+                    scope = passScope,
+                    device = passDevice,
+                    folderDevice = passFolderDevice,
+                    details = "durationMs=${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)} " +
+                        "${cloudFolderTraceFields(activeOperationId, activeCorrelationId)}",
+                )
                 Result.success()
             } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error
@@ -303,6 +396,17 @@ class CloudFolderSyncWorker(
                         "direction=${direction.name} metadataOnly=$metadataOnly stage=$activeStage " +
                         "category=${cloudFolderStageCategory(activeStage, metadataOnly)} " +
                         "durationMs=${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)}",
+                )
+                cloudSyncEvent(
+                    plane = CloudSyncPlaneFolder,
+                    dir = passDir,
+                    event = "folder_pass_end",
+                    result = "error:${cloudFolderErrorStatus(error)}",
+                    scope = passScope,
+                    device = passDevice,
+                    folderDevice = passFolderDevice,
+                    details = "disposition=${if (terminal) "failure" else "retry"} " +
+                        "stage=$activeStage reason=${cloudFolderSafeErrorReason(error)}",
                 )
                 if (terminal) Result.failure() else Result.retry()
             }
@@ -1702,6 +1806,20 @@ class CloudFolderSyncWorker(
             // never fails on a stale token at the final commit step.
             val publishToken = runCatching { repositoryAccessToken() }.getOrNull()
                 ?: accessToken
+            cloudSyncEvent(
+                plane = CloudSyncPlaneFolder,
+                dir = CloudSyncDirPush,
+                event = "manifest_publish",
+                scope = cloudFolderSafeId(rootId),
+                device = runCatching { cloudSyncDeviceLabel(CloudInstallationId.get(applicationContext)) }
+                    .getOrDefault("unknown"),
+                folderDevice = runCatching { cloudSyncFolderDeviceLabel(repository.deviceId) }
+                    .getOrDefault("unknown"),
+                local = "revision=${published.revision} files=${published.activeFiles().size}",
+                remote = "revision=${remote.revision}",
+                details = "shouldPublish=$shouldPublish operations=${plan.operations.size} " +
+                    "conflicts=${plan.conflicts.size}",
+            )
             publishManifestWithCas(
                 accessToken = publishToken,
                 rootId = rootId,
@@ -1823,6 +1941,9 @@ class CloudFolderSyncWorker(
                     expectedRevision = expectedRevision,
                     revision = manifest.revision,
                     deviceId = repository.deviceId,
+                    // Lets the FCM fan-out exclude this device instead of
+                    // echoing the push back to its own publisher.
+                    installationId = CloudInstallationId.get(applicationContext),
                 )
             ) {
                 is CloudFolderManifestLeaseResult.Acquired -> {
@@ -2372,6 +2493,13 @@ class CloudFolderSyncWorker(
         }
 
     /** Materialize DOWNLOAD_ALL into app-private storage, without a SAF grant. */
+    /** Per-file result from the parallel content materialization. */
+    private data class MaterializeOutcome(
+        val node: CloudFolderNode,
+        val materialized: Boolean,
+        val failure: CloudFolderTransferException?,
+    )
+
     private suspend fun materializeManifestToAppStorage(
         accessToken: String,
         manifest: CloudFolderManifest,
@@ -2415,66 +2543,160 @@ class CloudFolderSyncWorker(
                 totalFiles = files.size,
                 totalBytes = totalBytes,
             )
-            var completedFiles = 0
-            var completedBytes = 0L
             var contentFilesChanged = false
             var skippedFiles = 0
-            for ((index, node) in files.withIndex()) {
-                currentCoroutineContext().ensureActive()
-                val ordinal = index + 1
-                val safeNode = cloudFolderSafeId(node.nodeId)
-                // A missing object pointer is not immediately fatal: the
-                // materializer first verifies any existing local bytes
-                // against the authenticated hash and only downloads when
-                // they differ. Only then is the object ID required.
-                val objectId = node.contentObjectId?.trim()?.takeIf(String::isNotBlank)
-                val target = safeAppPath(root, node.relativePath)
-                target.parentFile?.let { parent ->
-                    if (!parent.exists() && !parent.mkdirs()) throw IOException("Unable to create offline parent")
-                }
-                try {
-                    val materialized = writeAppFileAtomically(accessToken, target, node, objectId)
-                    if (materialized && !isCloudFolderMetadataSidecarPath(node.relativePath)) {
-                        contentFilesChanged = true
-                    }
-                    completedFiles = ordinal
+            // A first-time pull is latency-bound on Drive round trips, not on
+            // local IO: one request per file, serialized, is what turned a
+            // 21-file folder into a 54-second pass that reads as a failed sync.
+            // Metadata sidecars are deliberately excluded from the parallel
+            // batch and transferred first, serially, so the legacy index pass
+            // this enqueues can never observe a half-landed sidecar.
+            val contentNodes = files.filterNot { isCloudFolderMetadataSidecarPath(it.relativePath) }
+            val sidecarNodes = files.filter { isCloudFolderMetadataSidecarPath(it.relativePath) }
+            val totalContent = contentNodes.size
+            var completedFiles = 0
+            var completedBytes = 0L
+            var lastProgressNotifyMs = 0L
+            val progressLock = Any()
+            // Serialized on one dispatcher so concurrent completions cannot
+            // interleave a Room write and a state notification.
+            val progressScope = CoroutineScope(currentCoroutineContext() + Dispatchers.IO)
+
+            suspend fun recordProgress(node: CloudFolderNode, materialized: Boolean) {
+                synchronized(progressLock) {
+                    completedFiles++
                     completedBytes = (completedBytes + node.sizeBytes.coerceAtLeast(0L))
                         .coerceAtMost(totalBytes)
-                    saveRootProgress(
-                        rootId = manifest.rootId,
-                        phase = CloudFolderSyncPhase.UPLOADING,
-                        completedFiles = completedFiles,
-                        totalFiles = files.size,
-                        completedBytes = completedBytes,
-                        totalBytes = totalBytes,
+                }
+                if (!materialized) skippedFiles++
+                if (materialized && !isCloudFolderMetadataSidecarPath(node.relativePath)) {
+                    contentFilesChanged = true
+                }
+                // Notify at most every ~500ms. One notification per file was a
+                // second source of startup cost and produced no extra progress
+                // a reader could perceive.
+                val nowMs = System.currentTimeMillis()
+                if (nowMs - lastProgressNotifyMs >= PROGRESS_NOTIFY_INTERVAL_MILLIS) {
+                    lastProgressNotifyMs = nowMs
+                    progressScope.launch {
+                        saveRootProgress(
+                            rootId = manifest.rootId,
+                            phase = CloudFolderSyncPhase.UPLOADING,
+                            completedFiles = completedFiles,
+                            totalFiles = files.size,
+                            completedBytes = completedBytes,
+                            totalBytes = totalBytes,
+                        )
+                    }
+                }
+            }
+
+            // Sidecars first, one at a time. They are small and the index pass
+            // depends on them being complete and self-consistent.
+            for (node in sidecarNodes) {
+                currentCoroutineContext().ensureActive()
+                val safeNode = cloudFolderSafeId(node.nodeId)
+                val target = safeAppPath(root, node.relativePath)
+                target.parentFile?.let { parent ->
+                    if (!parent.exists() && !parent.mkdirs()) {
+                        throw IOException("Unable to create offline parent")
+                    }
+                }
+                try {
+                    val materialized = writeAppFileAtomically(
+                        accessToken = accessToken,
+                        target = target,
+                        node = node,
+                        objectId = node.contentObjectId?.trim()?.takeIf(String::isNotBlank),
                     )
                     if (materialized) {
                         cloudFolderLogD(
                             "event=materialize_file_end root=$safeRoot node=$safeNode result=success " +
-                                "ordinal=$ordinal totalFiles=${files.size} bytes=${node.sizeBytes} " +
-                                "transfer=downloaded",
+                                "bytes=${node.sizeBytes} transfer=sidecar",
                         )
-                    } else {
-                        skippedFiles++
                     }
+                    recordProgress(node, materialized)
                 } catch (error: kotlinx.coroutines.CancellationException) {
                     throw error
                 } catch (error: Exception) {
-                    val safe = cloudFolderTransferFailure(
+                    throw cloudFolderTransferFailure(
                         error = error,
                         stage = "materialize_file",
                         category = "file_transfer_failure",
                     )
-                    cloudFolderLogError(
-                        event = "materialize_file_end",
-                        error = safe,
-                        details = "root=$safeRoot node=$safeNode result=failure " +
-                            "ordinal=$ordinal totalFiles=${files.size} bytes=${node.sizeBytes} " +
-                            "stage=${safe.stage}",
-                    )
-                    throw safe
                 }
             }
+
+            // Content files concurrently, bounded so a large folder cannot
+            // open one socket per file and trip Drive rate limits.
+            val outcomes = if (contentNodes.isEmpty()) {
+                emptyList()
+            } else {
+                val semaphore = Semaphore(MATERIALIZE_PARALLELISM)
+                contentNodes.mapIndexed { index, node ->
+                    async(Dispatchers.IO) {
+                        currentCoroutineContext().ensureActive()
+                        semaphore.withPermit {
+                            val safeNode = cloudFolderSafeId(node.nodeId)
+                            val target = safeAppPath(root, node.relativePath)
+                            target.parentFile?.let { parent ->
+                                if (!parent.exists() && !parent.mkdirs()) {
+                                    throw IOException("Unable to create offline parent")
+                                }
+                            }
+                            try {
+                                val materialized = writeAppFileAtomically(
+                                    accessToken = accessToken,
+                                    target = target,
+                                    node = node,
+                                    objectId = node.contentObjectId?.trim()?.takeIf(String::isNotBlank),
+                                )
+                                recordProgress(node, materialized)
+                                cloudFolderLogD(
+                                    "event=materialize_file_end root=$safeRoot node=$safeNode " +
+                                        "result=success ordinal=${index + 1}/$totalContent " +
+                                        "bytes=${node.sizeBytes} transfer=downloaded",
+                                )
+                                MaterializeOutcome(node, materialized, null)
+                            } catch (error: kotlinx.coroutines.CancellationException) {
+                                throw error
+                            } catch (error: Exception) {
+                                val safe = cloudFolderTransferFailure(
+                                    error = error,
+                                    stage = "materialize_file",
+                                    category = "file_transfer_failure",
+                                )
+                                cloudFolderLogError(
+                                    event = "materialize_file_end",
+                                    error = safe,
+                                    details = "root=$safeRoot node=$safeNode result=failure " +
+                                        "ordinal=${index + 1}/$totalContent bytes=${node.sizeBytes} " +
+                                        "stage=${safe.stage}",
+                                )
+                                MaterializeOutcome(node, false, safe)
+                            }
+                        }
+                    }
+                }.awaitAll()
+            }
+            // One failure aborts the pass, as the sequential loop did. Awaiting
+            // all first means an in-flight download is never abandoned
+            // mid-transfer, which would leave a staging file behind.
+            outcomes.firstOrNull { it.failure != null }?.let { failed ->
+                throw requireNotNull(failed.failure)
+            }
+            // Final authoritative progress, so the UI never rests on a
+            // throttled intermediate value.
+            progressScope.launch {
+                saveRootProgress(
+                    rootId = manifest.rootId,
+                    phase = CloudFolderSyncPhase.UPLOADING,
+                    completedFiles = files.size,
+                    totalFiles = files.size,
+                    completedBytes = totalBytes,
+                    totalBytes = totalBytes,
+                )
+            }.join()
             val tombstonesChanged = applyAppTombstones(root, manifest.tombstones)
             contentFilesChanged = contentFilesChanged || tombstonesChanged
             // Keep the folder tab and the legacy local index in step with a
@@ -3445,6 +3667,19 @@ class CloudFolderSyncWorker(
         private val GLOBAL_MUTEX = Mutex()
 
         /**
+         * Fifteen minutes is deliberately slower than any trigger-driven sync.
+         * This exists to bound staleness when a push is missed, not to provide
+         * freshness, so a longer interval costs nothing that matters and keeps
+         * the wake well inside WorkManager's background budget.
+         */
+        private const val PERIODIC_RECONCILE_INTERVAL_MINUTES = 15L
+        private const val PERIODIC_RECONCILE_BACKOFF_SECONDS = 30L
+        private const val PERIODIC_TAG = "cloud_folder_periodic_reconcile"
+
+        private fun periodicWorkName(accountId: String): String =
+            "$WORK_NAME:periodic:${accountIdDigest(accountId)}"
+
+        /**
          * Remove a complete app-managed offline copy while sharing the same
          * mutex as normal cloud-folder work. The caller changes the durable
          * binding only after this returns, so a failure leaves KEEP_OFFLINE
@@ -3680,6 +3915,86 @@ class CloudFolderSyncWorker(
             rootId: String? = null,
             replace: Boolean = false,
         ) = enqueue(context, accountId, rootId, CloudFolderSyncDirection.CLOUD_TO_LOCAL, replace)
+
+        /**
+         * Push-independent safety net.
+         *
+         * The FCM fan-out is the fast path, but it is a server-side dependency
+         * and a single missed push would otherwise leave a device stale until
+         * the user happened to open the app. This periodic pass runs for every
+         * selected and bound root, so a dropped push costs at most one
+         * interval. It is the same shape as the foreground-resume trigger iOS
+         * already relies on.
+         *
+         * Scheduled on account sign-in and refreshed whenever eligibility
+         * changes. Safe to call repeatedly: it is unique work.
+         */
+        fun enqueuePeriodicReconcile(
+            context: Context,
+            accountId: String,
+        ) {
+            val normalizedAccountId = accountId.trim()
+            if (normalizedAccountId.isBlank()) return
+            val request = PeriodicWorkRequestBuilder<CloudFolderSyncWorker>(
+                PERIODIC_RECONCILE_INTERVAL_MINUTES,
+                TimeUnit.MINUTES,
+            )
+                .setInputData(
+                    Data.Builder()
+                        .putString(KEY_ACCOUNT_ID, normalizedAccountId)
+                        .putString(KEY_ROOT_ID, "")
+                        .putString(KEY_DIRECTION, Direction.SYNC.name)
+                        .build()
+                )
+                .addTag(accountTag(normalizedAccountId))
+                .addTag(PERIODIC_TAG)
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.CONNECTED)
+                        // A long library should not sync on a dying battery.
+                        .setRequiresBatteryNotLow(true)
+                        .build()
+                )
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL,
+                    PERIODIC_RECONCILE_BACKOFF_SECONDS,
+                    TimeUnit.SECONDS,
+                )
+                .build()
+            // UPDATE, not REPLACE: rescheduling on every sign-in must not
+            // reset the interval clock of an already-running safety net.
+            SafeWorkManager.enqueueUniquePeriodicWork(
+                context.applicationContext,
+                periodicWorkName(normalizedAccountId),
+                ExistingPeriodicWorkPolicy.UPDATE,
+                request,
+            )
+            cloudFolderLogI(
+                "event=periodic_reconcile_enqueue account=${cloudFolderSafeId(normalizedAccountId)} " +
+                    "intervalMinutes=$PERIODIC_RECONCILE_INTERVAL_MINUTES result=queued",
+            )
+            cloudSyncEvent(
+                plane = CloudSyncPlaneFolder,
+                dir = CloudSyncDirBoth,
+                event = "safety_net_armed",
+                scope = "account",
+                device = runCatching {
+                    cloudSyncDeviceLabel(CloudInstallationId.get(context))
+                }.getOrDefault("unknown"),
+                details = "intervalMinutes=$PERIODIC_RECONCILE_INTERVAL_MINUTES " +
+                    "batteryNotLow=true",
+            )
+        }
+
+        /** Cancel the safety net, e.g. when the account signs out or loses sync. */
+        fun cancelPeriodicReconcile(context: Context, accountId: String) {
+            val normalizedAccountId = accountId.trim()
+            if (normalizedAccountId.isBlank()) return
+            SafeWorkManager.cancelUniqueWork(
+                context.applicationContext,
+                periodicWorkName(normalizedAccountId),
+            )
+        }
 
         /** Schedule account-scoped immutable-object maintenance. */
         fun enqueueGarbageCollection(

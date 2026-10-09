@@ -91,6 +91,8 @@ import com.aryan.reader.ReaderFontDiagnosticsTag
 import com.aryan.reader.copyPlainTextToClipboard
 import com.aryan.reader.getReaderTextureDataUri
 import com.aryan.reader.readerFontDiagnosticSummary
+import com.aryan.reader.shared.fillCssColor
+import com.aryan.reader.shared.highlightFillCss
 import com.aryan.reader.shared.detectFontVariant
 import com.aryan.reader.shared.familyFilenameSignature
 import com.aryan.reader.shared.fontWeightCssDescriptor
@@ -99,6 +101,7 @@ import com.aryan.reader.shared.normalizeReaderHref
 import com.aryan.reader.shared.ui.SharedSelectionMenuRect
 import com.aryan.reader.shared.ui.SharedSelectionMenuSize
 import com.aryan.reader.shared.ui.SharedSelectionMenuViewport
+import com.aryan.reader.shared.ui.SharedReaderHighlightPaletteSpectrumButton
 import com.aryan.reader.shared.ui.sharedSelectionMenuPlacement
 import com.aryan.reader.paginatedreader.resolveEpubNoteHtml
 import kotlinx.coroutines.CoroutineScope
@@ -712,6 +715,22 @@ private data class CustomMenuState(
 )
 
 internal fun highlightsJsonForWebView(userHighlights: List<UserHighlight>): String {
+    // What the document is about to be told. The fill is the whole question when a highlight paints in
+    // the wrong tone, and "did the alpha survive the trip" is not answerable from either end alone.
+    userHighlights.forEach { highlight ->
+        logHighlightTrace(
+            "payload id=${highlight.id} chapter=${highlight.chapterIndex} style=${highlight.style.id} " +
+                "colorId=${highlight.color.id} colorArgb=${highlight.colorArgb?.let { String.format("#%08X", it) }} " +
+                "fill=${highlight.fillCssColor()} quoteChars=${highlight.text.length} " +
+                "offsets=${highlight.locator.startOffset}..${highlight.locator.endOffset} " +
+                "block=${highlight.locator.blockIndex} " +
+                // locator.cfi is the field the document reads (`locator.cfi || highlight.cfi`), so it is
+                // the one that decides where the highlight lands. Logging only highlight.cfi reported a
+                // value no part of placement consumes, which made a correctly repaired highlight look
+                // like it was still carrying the position it was created with.
+                "locatorCfi=${highlight.locator.cfi} cfi=${highlight.cfi}"
+        )
+    }
     val jsonArray = org.json.JSONArray()
     userHighlights.forEach { highlight ->
         val obj = JSONObject()
@@ -723,8 +742,13 @@ internal fun highlightsJsonForWebView(userHighlights: List<UserHighlight>): Stri
         obj.put("style", highlight.style.id)
         highlight.colorArgb?.let { argb ->
             obj.put("colorArgb", argb)
-            obj.put("colorCss", colorCssForArgb(argb))
+            obj.put("colorCss", argb.highlightFillCss())
         }
+        // The tone the other surfaces fill with, alpha included. Sent for every highlight, palette or
+        // custom, so a highlight looks the same here as it does in pagination and scrolling. Without
+        // it the WebView painted stored colours fully opaque and palette colours tinted, which is how
+        // the same book showed one highlight at two different tones.
+        obj.put("fillCss", highlight.fillCssColor())
         obj.put("chapterIndex", highlight.chapterIndex)
         obj.put(
             "locator",
@@ -744,10 +768,6 @@ internal fun highlightsJsonForWebView(userHighlights: List<UserHighlight>): Stri
         jsonArray.put(obj)
     }
     return jsonArray.toString()
-}
-
-private fun colorCssForArgb(argb: Int): String {
-    return String.format("#%06X", 0xFFFFFF and argb)
 }
 
 @Suppress("unused")
@@ -1058,6 +1078,21 @@ fun ChapterWebView(
                             consoleMessage?.let {
                                 val message = it.message()
                                 when {
+                                    // The document always console.logs its highlight diagnostics, so this
+                                    // is the delivery path on Android and needs no JS interface. Anything
+                                    // tagged HIGHLIGHT_SHIFT is a highlight decision worth reading.
+                                    message.startsWith("HIGHLIGHT_SHIFT") -> {
+                                        logHighlightTrace(
+                                            "js ${message.substringAfter("HIGHLIGHT_SHIFT").trimStart()}"
+                                        )
+                                    }
+
+                                    message.startsWith("WEB_HIGHLIGHT:") -> {
+                                        logHighlightTrace(
+                                            "js ${message.substringAfter("WEB_HIGHLIGHT:").trimStart()}"
+                                        )
+                                    }
+
                                     message.startsWith("LINK_NAV:") -> {
                                         Timber.tag(TAG_LINK_NAV)
                                             .d("JS -> ${message.substringAfter("LINK_NAV: ")}")
@@ -1777,7 +1812,7 @@ fun ChapterWebView(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             activeHighlightPalette.forEachIndexed { index, colorArgb ->
-                                val colorCss = colorCssForArgb(colorArgb)
+                                val colorCss = colorArgb.highlightFillCss()
                                 val colorEnum = legacyHighlightColorForArgb(colorArgb)
                                 Box(
                                     modifier = Modifier
@@ -1808,7 +1843,7 @@ fun ChapterWebView(
                             }
 
                             Spacer(modifier = Modifier.width(8.dp))
-                            SpectrumButton(
+                            SharedReaderHighlightPaletteSpectrumButton(
                                 onClick = { showPaletteManager = true }, size = 28.dp
                             )
                         }
@@ -1868,7 +1903,7 @@ fun ChapterWebView(
                                     } else {
                                         onNoteRequested(null)
                                         localWebViewRef?.evaluateJavascript(
-                                            "javascript:window.HighlightBridgeHelper.createUserHighlight('${HighlightColor.YELLOW.cssClass}', '${HighlightColor.YELLOW.color.toArgb()}', '${colorCssForArgb(HighlightColor.YELLOW.color.toArgb())}', '${style.id}');", null
+                                            "javascript:window.HighlightBridgeHelper.createUserHighlight('${HighlightColor.YELLOW.cssClass}', '${HighlightColor.YELLOW.color.toArgb()}', '${HighlightColor.YELLOW.color.toArgb().highlightFillCss()}', '${style.id}');", null
                                         )
                                     }
                                     state.finishActionModeCallback()

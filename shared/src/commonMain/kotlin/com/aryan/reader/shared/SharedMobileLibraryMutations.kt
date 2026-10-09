@@ -42,11 +42,43 @@ fun shouldRequestCloudSyncAfterFolderSyncChange(
     cloudSyncEnabled: Boolean,
 ): Boolean = folderSyncEnabled && cloudSyncEnabled
 
+/**
+ * Common diagnostics tag for the iOS imported-folder scan pipeline (bookmark
+ * resolution, security-scoped copy, managed-copy swap, scan consumption).
+ * Swift logs with a `Logger(category:)` of the same value and forwards lines
+ * through `ReaderIosBridge.logFolderScanDiagnostic`, so filtering the exported
+ * diagnostics for this single tag shows the whole pipeline.
+ */
+const val LOCAL_FOLDER_SCAN_LOG_TAG = "LocalFolderScan"
+
 data class SharedMobileFolderScanResult(
     val folderName: String,
     val files: List<SharedFolderScannedFile>,
     val succeeded: Boolean = true,
+    val scanStatus: LocalFolderScanStatus = LocalFolderScanStatus.COMPLETE,
 )
+
+/**
+ * Parses the scan-status raw value handed over by native code. Unknown or
+ * blank values map to [LocalFolderScanStatus.PARTIAL]: a scan whose
+ * completeness cannot be proven must never infer deletions.
+ */
+fun parseLocalFolderScanStatus(raw: String?): LocalFolderScanStatus {
+    return when (raw?.trim()?.uppercase()) {
+        "COMPLETE" -> LocalFolderScanStatus.COMPLETE
+        "PARTIAL" -> LocalFolderScanStatus.PARTIAL
+        "UNAVAILABLE" -> LocalFolderScanStatus.UNAVAILABLE
+        "NOT_SCANNED" -> LocalFolderScanStatus.NOT_SCANNED
+        else -> LocalFolderScanStatus.PARTIAL
+    }
+}
+
+/**
+ * The status the sync engine must honor. A failed scan never reconciles
+ * deletions, regardless of the reported status.
+ */
+val SharedMobileFolderScanResult.effectiveScanStatus: LocalFolderScanStatus
+    get() = if (!succeeded) LocalFolderScanStatus.UNAVAILABLE else scanStatus
 
 /**
  * Keeps folders with the same provider display name independently addressable.
@@ -202,6 +234,12 @@ enum class MobileBookOpenPreflightAction {
  * Mirrors Android's recent-item click ordering. Folder-backed entries are
  * checked before availability so a file removed outside the app is cleaned
  * from the library instead of being mistaken for a cloud-only download.
+ *
+ * [localFileExists] must be a positive confirmation that the file is gone, not
+ * a failure to prove it is present. A caller that cannot resolve a path (a
+ * security-scoped provider ref whose scope is not currently held, for example)
+ * must pass `true`: reporting `false` here removes the book from the library,
+ * which is unrecoverable for a file the user still has on disk.
  */
 fun mobileBookOpenPreflightAction(
     book: BookItem,

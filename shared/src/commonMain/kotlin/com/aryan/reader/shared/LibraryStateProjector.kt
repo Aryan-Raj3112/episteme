@@ -158,13 +158,17 @@ class SharedLibraryStateProjector(
                     .sortedBy { it.addedAt }
                     .map { it.bookId }
                 val books = bookIds.mapNotNull { booksById[it] }
+                // Manual shelves are not nested, so `books` and `directBooks` hold the same
+                // membership. Both must honour `sortOrder`: shelf screens render `directBooks`
+                // directly, and folder shelves below already sort theirs the same way.
+                val sortedBooks = sortBooks(books, sortOrder)
                 shelves.add(
                     Shelf(
                         id = shelf.id,
                         name = shelf.name,
                         type = ShelfType.MANUAL,
-                        books = sortBooks(books, sortOrder),
-                        directBooks = books,
+                        books = sortedBooks,
+                        directBooks = sortedBooks,
                         modifiedAt = shelf.modifiedAt,
                         directBookAddedAt = shelfRefs
                             .filter { it.shelfId == shelf.id && it.bookId in booksById }
@@ -217,7 +221,7 @@ class SharedLibraryStateProjector(
             .filter { it.sourceFolder != null }
             .groupBy { it.sourceFolder.orEmpty() }
             .flatMap { (folderUri, books) ->
-                val rootName = folderNamesByUri[folderUri] ?: folderUri.folderDisplayName()
+                val rootName = folderNamesByUri[folderUri] ?: folderDisplayName(folderUri)
                 val rootShelfId = "folder_$folderUri"
                 val rootAccumulator = FolderShelfAccumulator(
                     id = rootShelfId,
@@ -323,6 +327,17 @@ fun booksAvailableForShelfAddition(
         .distinctBy { it.sharedLibraryIdentity() }
 }
 
+/**
+ * Display name for a folder identified by a path, URI, or bare name.
+ *
+ * The identifier is whatever the authoring platform recorded: Android stores a tree URI, iOS
+ * stores the folder name. Both reduce to the last path segment here, and a value with no usable
+ * segment keeps the placeholder the UI has always shown.
+ */
+fun folderDisplayName(sourceFolder: String): String {
+    return sourceFolder.replace('\\', '/').trimEnd('/').substringAfterLast('/').ifBlank { "Local Folder" }
+}
+
 private fun List<SyncedFolder>.withSourceFolderFallbacks(books: List<BookItem>): List<SyncedFolder> {
     val knownFolders = flatMapTo(linkedSetOf()) { folder -> listOf(folder.uriString, folder.name) }
     val missingFolders = books
@@ -331,15 +346,11 @@ private fun List<SyncedFolder>.withSourceFolderFallbacks(books: List<BookItem>):
         .map { sourceFolder ->
             SyncedFolder(
                 uriString = sourceFolder,
-                name = sourceFolder.folderDisplayName(),
+                name = folderDisplayName(sourceFolder),
                 lastScanTime = 0L
             )
         }
     return if (missingFolders.isEmpty()) this else this + missingFolders
-}
-
-private fun String.folderDisplayName(): String {
-    return replace('\\', '/').trimEnd('/').substringAfterLast('/').ifBlank { "Local Folder" }
 }
 
 fun filterBySearch(books: List<BookItem>, searchQuery: String): List<BookItem> {
@@ -363,10 +374,14 @@ internal fun BookItem.sharedLibraryIdentity(): String =
         ?.let { "path:$it" }
         ?: "id:$id"
 
-fun applyLibraryFilters(books: List<BookItem>, filters: LibraryFilters): List<BookItem> {
+fun applyLibraryFilters(
+    books: List<BookItem>,
+    filters: LibraryFilters,
+    folderAliases: Map<String, String> = emptyMap(),
+): List<BookItem> {
     return books.filter { book ->
         val matchType = filters.fileTypes.isEmpty() || book.type in filters.fileTypes
-        val matchFolder = book.matchesSourceFolders(filters.sourceFolders)
+        val matchFolder = book.matchesSourceFolders(filters.sourceFolders, folderAliases)
         val progress = book.progressPercentage ?: 0f
         val matchStatus = when (filters.readStatus) {
             ReadStatusFilter.ALL -> true

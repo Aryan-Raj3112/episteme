@@ -14,9 +14,10 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
-import androidx.core.content.FileProvider
+import androidx.compose.ui.test.performTouchInput
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -30,7 +31,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
-import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class PdfViewerScreenTest {
@@ -78,10 +78,24 @@ class PdfViewerScreenTest {
         }
     }
 
-    private fun waitForDocumentLoad(pageText: String = text(R.string.page_of_pages, 1, 4)) {
+    /**
+     * Reveals the reader chrome and waits for the document to finish loading.
+     *
+     * The top bar — which owns the `PageNumberIndicator` — is behind `showStandardBars`, false until
+     * the reader is tapped, so it has to be revealed before its contents exist in the tree.
+     *
+     * Waits on the *tag* rather than a page label string: the bar renders `pdfPageRangeLabel`, which
+     * is "1/4" in vertical scroll but a spread range like "1-2/4" in pagination, so no single
+     * literal is correct regardless of the persisted display mode. The tag only appears once
+     * `totalPages > 0`, which is the condition actually worth waiting for.
+     */
+    private fun waitForDocumentLoad() {
+        runCatching {
+            composeTestRule.onNodeWithTag("PdfVerticalScroll").performTouchInput { click(center) }
+        }
         composeTestRule.waitUntil(timeoutMillis = 15_000) {
             composeTestRule
-                .onAllNodesWithText(pageText)
+                .onAllNodesWithTag("PageNumberIndicator")
                 .fetchSemanticsNodes().isNotEmpty()
         }
     }
@@ -123,22 +137,9 @@ class PdfViewerScreenTest {
 
     @Suppress("SameParameterValue")
     private fun copyAssetToCache(context: Context, assetName: String): Uri {
-        val uniqueName = "${UUID.randomUUID()}_$assetName"
-        val file = File(context.cacheDir, uniqueName)
-
+        val file = copyAssetToShareableCache(context, context, assetName)
         currentPdfFile = file
-
-        if (file.exists()) file.delete()
-        context.assets.open(assetName).use { inputStream ->
-            file.outputStream().use { outputStream ->
-                inputStream.copyTo(outputStream)
-            }
-        }
-        return FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.provider",
-            file
-        )
+        return shareableCacheUri(context, file)
     }
 
     @Test

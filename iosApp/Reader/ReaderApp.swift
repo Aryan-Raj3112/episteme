@@ -16,6 +16,18 @@ import FirebaseAppCheck
 
 @main
 struct ReaderApp: App {
+    /// CloudKit silent-push delivery needs a UIApplicationDelegate, which the
+    /// SwiftUI lifecycle does not create on its own. Without this adaptor
+    /// `registerForRemoteNotifications()` is never called, iOS issues no device
+    /// token, and the zone subscription in CloudKitLibraryTransport stays inert
+    /// even though `shouldSendContentAvailable` is set and the
+    /// `remote-notification` background mode is declared.
+    ///
+    /// Sync does not depend on any of this: registration failure is logged and
+    /// ignored, and library sync still runs on foreground resume, on
+    /// BGTaskScheduler, and on every library mutation.
+    @UIApplicationDelegateAdaptor(ReaderAppDelegate.self) private var appDelegate
+
     init() {
         // P0 #1 background execution parity (Android WorkManager -> iOS
         // BGTaskScheduler, one-shot only, never periodic). Handlers are set

@@ -102,6 +102,60 @@ fun SharedAndroidHomeRecentContent(
     }
 }
 
+/**
+ * Open-reader tabs strip with per-tab and close-all affordances.
+ *
+ * Rendered above the library grid so a reader opened in multi-tab mode stays visible and
+ * dismissable from the library surface that replaced the standalone Home screen.
+ */
+@Composable
+fun <T> SharedAndroidActiveTabsRow(
+    openTabs: List<T>,
+    tabsEnabled: Boolean,
+    activeTabsLabel: String,
+    closeAllTabsDescription: String,
+    closeTabDescription: String,
+    itemKey: (T) -> String,
+    itemTitle: (T) -> String,
+    onItemClick: (T) -> Unit,
+    onCloseTab: (T) -> Unit,
+    onCloseAllTabs: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (!tabsEnabled || openTabs.isEmpty()) return
+    androidx.compose.foundation.layout.Column(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp, top = 24.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(activeTabsLabel, style = MaterialTheme.typography.titleLarge)
+            IconButton(onClick = onCloseAllTabs) {
+                Icon(Icons.Default.Close, closeAllTabsDescription, tint = MaterialTheme.colorScheme.error)
+            }
+        }
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(bottom = 8.dp),
+        ) {
+            items(openTabs, key = { "tab_${itemKey(it)}" }) { tab ->
+                InputChip(
+                    selected = false,
+                    onClick = { onItemClick(tab) },
+                    label = { Text(itemTitle(tab), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 150.dp)) },
+                    trailingIcon = {
+                        IconButton(onClick = { onCloseTab(tab) }, modifier = Modifier.size(24.dp)) {
+                            Icon(Icons.Default.Close, closeTabDescription, modifier = Modifier.size(16.dp))
+                        }
+                    },
+                    modifier = Modifier.testTag("LibraryTab_${itemKey(tab)}"),
+                )
+            }
+        }
+    }
+}
+
 /** Exact Android active-tabs header and recent-books grid; Android supplies its existing cards. */
 @Composable
 fun <T> SharedAndroidHomeRecentGrid(

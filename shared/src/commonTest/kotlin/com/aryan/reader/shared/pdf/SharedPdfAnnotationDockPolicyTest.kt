@@ -182,4 +182,70 @@ class SharedPdfAnnotationDockPolicyTest {
         // Small screens fall back to usable height instead of the minimum.
         assertEquals(136, sharedPdfPopupMaxHeightDp(200))
     }
+
+    @Test
+    fun `side wheel popup pad keeps the popup clear of the wheel`() {
+        val wheelH = 192f
+        // Wheel in the top half: the popup starts below the wheel's top edge.
+        assertEquals(
+            300f,
+            sharedPdfSideWheelPopupSidePadPx(
+                wheelYPx = 300f, wheelHeightPx = wheelH, boxHeightPx = 1000f, wheelInBottomHalf = false,
+            ),
+        )
+        // Wheel in the bottom half: the popup starts above the wheel's bottom
+        // edge.
+        assertEquals(
+            208f,
+            sharedPdfSideWheelPopupSidePadPx(
+                wheelYPx = 600f, wheelHeightPx = wheelH, boxHeightPx = 1000f, wheelInBottomHalf = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `side wheel popup pad never goes negative on a short box`() {
+        // Wheel taller than the box (IME open / split screen): padding must
+        // clamp to 0, not throw "Padding must be non-negative".
+        assertEquals(
+            0f,
+            sharedPdfSideWheelPopupSidePadPx(
+                wheelYPx = 0f, wheelHeightPx = 192f, boxHeightPx = 100f, wheelInBottomHalf = true,
+            ),
+        )
+        assertEquals(
+            0f,
+            sharedPdfSideWheelPopupSidePadPx(
+                wheelYPx = 40f, wheelHeightPx = 192f, boxHeightPx = 100f, wheelInBottomHalf = true,
+            ),
+        )
+        // Unbounded (non-finite) constraints must not leak NaN/Infinity in.
+        assertEquals(
+            0f,
+            sharedPdfSideWheelPopupSidePadPx(
+                wheelYPx = 0f, wheelHeightPx = 192f, boxHeightPx = Float.POSITIVE_INFINITY, wheelInBottomHalf = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `bar popup clearance above dock never goes negative`() {
+        // Bottom-docked bar: space above it (dock top 944 in a 1000 box).
+        assertEquals(
+            56f,
+            sharedPdfPopupClearanceAboveBarPx(dockTopYPx = 944f, boxHeightPx = 1000f),
+        )
+        // Bar dragged past the bottom edge (floating, stale offset): clamp to 0
+        // instead of a negative pad.
+        assertEquals(
+            0f,
+            sharedPdfPopupClearanceAboveBarPx(dockTopYPx = 1200f, boxHeightPx = 1000f),
+        )
+        assertEquals(
+            0f,
+            sharedPdfPopupClearanceAboveBarPx(
+                dockTopYPx = 0f, boxHeightPx = Float.POSITIVE_INFINITY,
+            ),
+        )
+    }
 }

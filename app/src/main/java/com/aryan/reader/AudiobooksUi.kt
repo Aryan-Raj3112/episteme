@@ -1,5 +1,6 @@
 package com.aryan.reader
 
+import com.aryan.reader.shared.calculateSharedTtsAudiobookProgress
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
@@ -121,7 +122,6 @@ import com.aryan.reader.data.AudiobookEntity
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.epubreader.loadTtsPitch
 import com.aryan.reader.epubreader.loadTtsSpeechRate
-import com.aryan.reader.tts.formatReaderTtsChunkLabel
 
 internal enum class AudiobookUiStatus { ALL, IN_PROGRESS, NOT_STARTED, COMPLETED }
 
@@ -691,6 +691,10 @@ private fun BookTtsPlayerSheet(
     // changes at the next session start), so switching then resuming would
     // keep playing the previous voice.
     val listenTtsActive = playback.connected && !playback.sessionFinished
+    // Only freeze the voice/engine controls while something is actually being spoken. The
+    // Listen player sheet closes on stop, so requiring a full stop would make the voice
+    // settings unreachable; pausing is a safe point to change it.
+    val listenTtsVoiceLocked = playback.isPlaying
     var adapterRate by remember { mutableFloatStateOf(prepared.savedProgress?.speechRate ?: loadTtsSpeechRate(context)) }
     var adapterPitch by remember { mutableFloatStateOf(prepared.savedProgress?.pitch ?: loadTtsPitch(context)) }
     val sharedItem = remember(sourceBook, prepared.savedProgress) {
@@ -785,6 +789,7 @@ private fun BookTtsPlayerSheet(
                 listenSpeaker = loadListenTtsSpeaker(context)
             },
             isTtsActive = listenTtsActive,
+            isVoiceChangeLocked = listenTtsVoiceLocked,
             getAuthToken = getAuthToken,
             // Canonical cache title so the Cache tab lists the same files the
             // service reads/writes (shared with Reader for identical chunks).
@@ -794,17 +799,6 @@ private fun BookTtsPlayerSheet(
             saveCloudVoiceName = ::saveListenTtsSpeakerName
         )
     }
-}
-
-internal fun calculateTtsAudiobookProgress(
-    chapterIndex: Int,
-    chapterCount: Int,
-    chunkIndex: Int,
-    chunkCount: Int
-): Float {
-    if (chapterCount <= 0) return 0f
-    val chapterFraction = if (chunkCount > 0) (chunkIndex.coerceAtLeast(0) + 1f) / chunkCount else 0f
-    return ((chapterIndex.coerceIn(0, chapterCount - 1) + chapterFraction) / chapterCount).coerceIn(0f, 1f)
 }
 
 @Composable

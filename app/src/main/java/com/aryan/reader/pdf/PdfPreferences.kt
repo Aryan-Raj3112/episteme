@@ -12,6 +12,8 @@ import com.aryan.reader.epubreader.SystemUiMode
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.PdfToolbarPreferences
+import com.aryan.reader.shared.loadAndroidReaderLookupUsesAiDictionary
+import com.aryan.reader.shared.saveAndroidReaderLookupUsesAiDictionary
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 
 internal const val VERTICAL_SCROLL_TAG = "PdfVerticalScroll"
@@ -39,7 +41,6 @@ private const val PDF_AUTO_SCROLL_LOCAL_MIN_PREFIX = "pdf_as_local_min_"
 private const val PDF_AUTO_SCROLL_LOCAL_MAX_PREFIX = "pdf_as_local_max_"
 private const val PDF_SCROLL_LOCKED_PREFIX = "pdf_sl_local_"
 private const val PDF_MUSICIAN_MODE_KEY = "pdf_musician_mode_enabled"
-private const val PREF_USE_ONLINE_DICT = "use_online_dictionary"
 private const val PREF_EXTERNAL_DICT_PKG = "external_dictionary_package"
 private const val PREF_EXTERNAL_TRANSLATE_PKG = "external_translate_package"
 private const val PREF_EXTERNAL_SEARCH_PKG = "external_search_package"
@@ -378,16 +379,13 @@ internal fun loadPdfThemeId(context: Context): String {
 
 internal fun loadUseOnlineDict(context: Context): Boolean {
     @Suppress("KotlinConstantConditions") if (BuildConfig.FLAVOR == "oss" && BuildConfig.IS_OFFLINE) return false
-    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    // Default false ("no selection"): nothing is preselected, so a lookup
-    // with no external app chosen opens the dictionary settings sheet and
-    // lets the user pick Smart AI or an external app.
-    return prefs.getBoolean(PREF_USE_ONLINE_DICT, false)
+    // Android benchmark: Smart AI is the default engine. The shared module owns
+    // the persisted copy so the selection menu and this sheet always agree.
+    return loadAndroidReaderLookupUsesAiDictionary(context)
 }
 
 internal fun saveUseOnlineDict(context: Context, useOnline: Boolean) {
-    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(PREF_USE_ONLINE_DICT, useOnline) }
+    saveAndroidReaderLookupUsesAiDictionary(context, useOnline)
 }
 
 internal fun loadExternalDictPackage(context: Context): String? {

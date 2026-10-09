@@ -76,12 +76,14 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest.Builder
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.plainTextCharacterCount
-import com.aryan.reader.epubreader.TtsHighlightInfo
 import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
 import com.aryan.reader.shared.isReaderExternalHref as sharedIsReaderExternalHref
 import com.aryan.reader.shared.normalizeReaderHref
+import com.aryan.reader.shared.reader.SharedPlaybackFragment
 import com.aryan.reader.shared.reader.paintOnlyColorOverlayText
+import com.aryan.reader.shared.reader.sharedHeadingFontScale
+import com.aryan.reader.shared.reader.withPlaybackFragmentBackground
 import com.aryan.reader.shared.reader.withoutForegroundColorSpans
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -110,28 +112,45 @@ data class PaginatedSelection(
     val textPerBlock: Map<String, String> = emptyMap()
 )
 
+/**
+ * The locator to store for a highlight created from this selection.
+ *
+ * It records what the selection genuinely knows — which chapter, which block, which words, and the DOM
+ * position it came from — and nothing else.
+ *
+ * In particular it does not compute `startBlockCharOffset + startOffset` as a chapter offset. That sum
+ * was never a chapter position: [PaginatedSelection.startBlockCharOffset] carries
+ * `startCharOffsetInSource`, which the parser computes per HTML element, so it restarts at every
+ * paragraph and describes nothing outside its own element. Adding a character offset within the block to
+ * it produces a number that looks like a chapter offset and is not one, and it was stored as though it
+ * were. The result was a highlight whose persisted range pointed at unrelated text, which is what let a
+ * 118-character selection be painted across most of a page.
+ *
+ * Leaving the chapter range unset is not a gap to be filled in later by guessing. Placement resolves a
+ * highlight from its own words through [EpubChapterTextIndex.anchorFor], which works whether or not a
+ * range was stored, and the reader-wide reconciliation writes a correct range in as soon as the
+ * chapter's blocks can be read. So the stored locator becomes a record of a position rather than the
+ * means of finding one, and a highlight is placeable from the moment it is created.
+ */
 internal fun PaginatedSelection.toSharedHighlightLocator(
     chapterIndex: Int?,
     cfi: String
 ): SharedReaderLocator {
-    val startAbsoluteOffset = startBlockCharOffset + startOffset
-    val endAbsoluteOffset = endBlockCharOffset + endOffset
-    val rangeStart = minOf(startAbsoluteOffset, endAbsoluteOffset)
-    val rangeEnd = maxOf(startAbsoluteOffset, endAbsoluteOffset)
     // Note: pageIndex is a volatile pagination hint (shifts with font/margin settings).
-    // Render scoping intentionally ignores it and uses the absolute offsets + structural
-    // scope below, so stored page numbers can never hide a highlight after repagination.
+    // Render scoping intentionally ignores it and uses the structural scope below, so stored page
+    // numbers can never hide a highlight after repagination.
     Timber.tag(TAG_HIGHLIGHT_DIAG).d(
-        "create chapter=$chapterIndex absoluteRange=$rangeStart..$rangeEnd " +
-            "blockIndex=$startBlockIndex pageHint=$startPageIndex..$endPageIndex cfi=$cfi"
+        "create chapter=$chapterIndex textChars=${text.length} " +
+            "blockIndex=$startBlockIndex pageHint=$startPageIndex..$endPageIndex cfi=$cfi " +
+            "range=unresolved_until_chapter_index"
     )
     return SharedReaderLocator(
         chapterIndex = chapterIndex,
         pageIndex = startPageIndex,
-        startOffset = rangeStart,
-        endOffset = rangeEnd,
+        startOffset = null,
+        endOffset = null,
         blockIndex = startBlockIndex.takeIf { it >= 0 },
-        charOffset = rangeStart,
+        charOffset = null,
         textQuote = text,
         cfi = cfi
     )
@@ -271,15 +290,6 @@ internal fun textBlockLayoutKey(
 
 internal fun legacyTextBlockLayoutKey(cfi: String, pageIndex: Int): String = "${cfi}_$pageIndex"
 
-internal fun headerFontScale(level: Int): Float = when (level) {
-    1 -> 1.5f
-    2 -> 1.4f
-    3 -> 1.3f
-    4 -> 1.2f
-    5 -> 1.1f
-    else -> 1.0f
-}
-
 internal const val WEB_VIEW_NORMAL_LINE_HEIGHT_MULTIPLIER = 1.2f
 internal const val ReaderUiCutoffLogTag = "EpistemeEpubCutoff"
 internal const val ReaderUiPageGapDiagLogTag = "EpistemePageGapDiag"
@@ -339,7 +349,7 @@ internal fun createHeaderTextStyle(
     level: Int,
     textAlign: TextAlign?
 ): TextStyle {
-    val scale = headerFontScale(level)
+    val scale = sharedHeadingFontScale(level)
     val scaledFontSize = baseStyle.fontSize * scale
     val scaledLineHeight = if (baseStyle.lineHeight != TextUnit.Unspecified) {
         baseStyle.lineHeight * scale
@@ -762,75 +772,6 @@ internal fun updatedSelectionForHandleDrag(
     }
 
     return selectionWithText.copy(rect = newRect) to activeDragHandle
-}
-
-/**
- * Page-level highlight scoping for paginated rendering.
- *
- * Chapter matching is mandatory. When the page's absolute char range is known, highlights
- * whose absolute text range cannot touch the page are dropped here, before per-block
- * mapping runs — otherwise repeated sentences paint on every page of the chapter via
- * text-quote fallbacks. Highlights without an absolute range (legacy, quote-anchored)
- * keep the previous chapter-wide behavior; per-block CFI/quote mapping still decides them.
- *
- * A highlight whose range misses the page is still kept when its structural anchor
- * (block index or source CFI) touches a block on this page, so CFI-anchored recovery
- * keeps working when absolute offsets went stale after a reparse. The stored
- * [ReaderLocator.pageIndex][com.aryan.reader.shared.ReaderLocator.pageIndex] is
- * intentionally NOT used for filtering: global page numbers shift with font/margin
- * settings, so a stored page hint would hide highlights after repagination.
- */
-internal fun highlightsForPaginatedPage(
-    pageChapterIndex: Int?,
-    userHighlights: List<UserHighlight>,
-    pageStartOffset: Int? = null,
-    pageEndOffset: Int? = null,
-    pageBlocks: List<TextContentBlock>? = null
-): List<UserHighlight> {
-    if (pageChapterIndex == null) {
-        if (userHighlights.isNotEmpty()) {
-            Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-                "page_scope_skip reason=null_page_chapter inputHighlightCount=${userHighlights.size}"
-            )
-        }
-        return emptyList()
-    }
-    val scoped = userHighlights.filter { it.chapterIndex == pageChapterIndex }
-    if (pageStartOffset == null || pageEndOffset == null) {
-        Timber.tag(TAG_HIGHLIGHT_DIAG).d(
-            "scope pageChapter=$pageChapterIndex mode=chapter_only " +
-                "inputHighlightCount=${userHighlights.size} scopedHighlightCount=${scoped.size}"
-        )
-        return scoped
-    }
-    val visible = scoped.filter { highlight ->
-        val locator = highlight.locator
-        if (highlightTextRangeOverlapsPage(locator.startOffset, locator.endOffset, pageStartOffset, pageEndOffset)) {
-            true
-        } else {
-            // Range misses the page: keep only for structural recovery via a block on this page.
-            val touches = pageBlocks?.any { block ->
-                (locator.blockIndex != null && locator.blockIndex == block.blockIndex) ||
-                    androidHighlightCfiTouchesBlock(highlight, block.cfi)
-            } == true
-            Timber.tag(TAG_HIGHLIGHT_DIAG).d(
-                "scope_drop pageChapter=$pageChapterIndex pageRange=$pageStartOffset..$pageEndOffset " +
-                    "highlightId=${highlight.id} highlightRange=${locator.startOffset}..${locator.endOffset} " +
-                    "structuralTouch=$touches locatorBlock=${locator.blockIndex}"
-            )
-            touches
-        }
-    }
-    Timber.tag(TAG_HIGHLIGHT_DIAG).d(
-        "scope pageChapter=$pageChapterIndex pageRange=$pageStartOffset..$pageEndOffset " +
-            "inputHighlightCount=${userHighlights.size} scopedHighlightCount=${scoped.size} " +
-            "visibleHighlightCount=${visible.size}"
-    )
-    Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-        "page_scope pageChapter=$pageChapterIndex inputHighlightCount=${userHighlights.size} " +
-            "scopedHighlightCount=${scoped.size} scopedIds=${scoped.map { it.id }}"
-    )
-    return visible
 }
 
 class ReactiveBlockMap(
@@ -1260,55 +1201,19 @@ internal class SmartPopupPositionProvider(
     }
 }
 
+/**
+ * Android-side alias for the shared CFI path/offset arithmetic (parity item B1). The bodies live
+ * in `com.aryan.reader.paginatedreader.ReaderCfiPaths.kt` so the iOS reader cannot drift from these.
+ */
 internal object CfiUtils {
-    fun compare(cfi1: String, cfi2: String): Int {
-        val path1 = cfi1.split(':').first()
-        val path2 = cfi2.split(':').first()
+    fun compare(cfi1: String, cfi2: String): Int = readerCompareCfi(cfi1, cfi2)
 
-        val parts1 = path1.split('/').filter { it.isNotEmpty() }.mapNotNull { it.toIntOrNull() }
-        val parts2 = path2.split('/').filter { it.isNotEmpty() }.mapNotNull { it.toIntOrNull() }
+    fun getPath(cfi: String): String = readerCfiPath(cfi)
+    fun getOffset(cfi: String): Int = readerCfiOffset(cfi)
+    fun getOffsetOrNull(cfi: String): Int? = readerCfiOffsetOrNull(cfi)
 
-        val length = minOf(parts1.size, parts2.size)
-        for (i in 0 until length) {
-            val cmp = parts1[i].compareTo(parts2[i])
-            if (cmp != 0) return cmp
-        }
-
-        if (parts1.size != parts2.size) {
-            return parts1.size.compareTo(parts2.size)
-        }
-
-        val offset1 = cfi1.substringAfter(':', "0").toIntOrNull() ?: 0
-        val offset2 = cfi2.substringAfter(':', "0").toIntOrNull() ?: 0
-        return offset1.compareTo(offset2)
-    }
-
-    fun getPath(cfi: String): String = cfi.split(':').first()
-    fun getOffset(cfi: String): Int = cfi.substringAfter(':', "0").toIntOrNull() ?: 0
-    fun getOffsetOrNull(cfi: String): Int? = cfi.substringAfter(':', "").toIntOrNull()
-
-    fun isPathStrictlyBetween(candidate: String, start: String, end: String): Boolean {
-        val candidateParts = pathParts(candidate) ?: return false
-        val startParts = pathParts(start) ?: return false
-        val endParts = pathParts(end) ?: return false
-        return comparePathParts(candidateParts, startParts) > 0 &&
-            comparePathParts(candidateParts, endParts) < 0
-    }
-
-    private fun pathParts(cfi: String): List<Int>? {
-        val segments = getPath(cfi).split('/').filter { it.isNotEmpty() }
-        if (segments.isEmpty()) return null
-        return segments.map { it.toIntOrNull() ?: return null }
-    }
-
-    private fun comparePathParts(first: List<Int>, second: List<Int>): Int {
-        val length = minOf(first.size, second.size)
-        for (index in 0 until length) {
-            val cmp = first[index].compareTo(second[index])
-            if (cmp != 0) return cmp
-        }
-        return first.size.compareTo(second.size)
-    }
+    fun isPathStrictlyBetween(candidate: String, start: String, end: String): Boolean =
+        readerCfiPathStrictlyBetween(candidate, start, end)
 }
 
 internal fun highlightQueryInText(
@@ -1862,7 +1767,7 @@ internal fun WrappingContentLayout(
     hideImages: Boolean = false,
     modifier: Modifier = Modifier,
     searchQuery: String,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     searchHighlightColor: Color,
     ttsHighlightColor: Color,
     isDarkTheme: Boolean,
@@ -1877,29 +1782,13 @@ internal fun WrappingContentLayout(
             block.paragraphsToWrap.forEachIndexed { index, p ->
                 val searchHighlighted =
                     highlightQueryInText(p.content, searchQuery, searchHighlightColor)
-                val finalContent = if (ttsHighlightInfo != null && p.cfi == ttsHighlightInfo.cfi) {
-                    buildAnnotatedString {
-                        append(searchHighlighted)
-                        val blockStartAbs = p.startCharOffsetInSource
-                        val blockEndAbs = p.startCharOffsetInSource + searchHighlighted.length
-                        val highlightStartAbs = ttsHighlightInfo.offset
-                        val highlightEndAbs = ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-                        val intersectionStartAbs = maxOf(blockStartAbs, highlightStartAbs)
-                        val intersectionEndAbs = minOf(blockEndAbs, highlightEndAbs)
-
-                        if (intersectionStartAbs < intersectionEndAbs) {
-                            val highlightStartRelative = intersectionStartAbs - blockStartAbs
-                            val highlightEndRelative = intersectionEndAbs - blockStartAbs
-                            addStyle(
-                                style = SpanStyle(
-                                    background = ttsHighlightColor
-                                ), start = highlightStartRelative, end = highlightEndRelative
-                            )
-                        }
-                    }
-                } else {
-                    searchHighlighted
-                }
+                val finalContent = searchHighlighted.withPlaybackFragmentBackground(
+                    fragment = ttsHighlightInfo,
+                    blockCfi = p.cfi,
+                    blockStartAbs = p.startCharOffsetInSource,
+                    blockLength = searchHighlighted.length,
+                    color = ttsHighlightColor
+                )
                 append(finalContent)
                 if (index < block.paragraphsToWrap.lastIndex) append("\n\n")
             }

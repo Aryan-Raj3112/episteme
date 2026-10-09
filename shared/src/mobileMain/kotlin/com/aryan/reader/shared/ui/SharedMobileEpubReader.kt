@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.ui
 
+import com.aryan.reader.shared.ui.SharedDrawerScrollbar
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationEndReason
@@ -50,6 +51,7 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -72,15 +74,24 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.isReaderOwnedTtsSession
 import com.aryan.reader.shared.Tag
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.ReaderLocator
+import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
+import com.aryan.reader.paginatedreader.EpubChapterTextIndex
 import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderAiResultState
+import com.aryan.reader.shared.ReaderRecapRequest
+import com.aryan.reader.shared.ReaderRecapSection
 import com.aryan.reader.shared.SharedSummaryCache
 import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.ReaderTtsPlanner
+import com.aryan.reader.shared.reader.ReaderTtsStartTag
+import com.aryan.reader.shared.reader.epubPositionSummary
+import com.aryan.reader.shared.reader.logEpubPositionSave
+import com.aryan.reader.shared.reader.shouldDropPreRestoreBridgePosition
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderLifecycleAction
 import com.aryan.reader.shared.ReaderAutoScrollProfile
@@ -112,6 +123,7 @@ import com.aryan.reader.shared.readerAutoScrollBoundaryAction
 import com.aryan.reader.shared.migrateLegacyIosReaderAutoScrollSpeed
 import com.aryan.reader.shared.migrateAndroidEpubFormatSettings
 import com.aryan.reader.shared.shouldFollowReaderTtsChunk
+import com.aryan.reader.shared.shouldRefreshReaderNavigationOnTtsSessionEnd
 import com.aryan.reader.shared.pageInfoBarBottomReserve
 import com.aryan.reader.shared.shouldReserveEpubPageInfoBarSpace
 import com.aryan.reader.shared.shouldShowEpubPageInfoBar
@@ -120,6 +132,24 @@ import com.aryan.reader.shared.withReaderFormatFrom
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderJumpHistory
+import com.aryan.reader.shared.reader.PaginatedReaderState
+import com.aryan.reader.shared.reader.ReaderSessionState
+import com.aryan.reader.shared.reader.SharedEpubBook
+import com.aryan.reader.shared.reader.SharedMediaOverlayDocumentCache
+import com.aryan.reader.shared.reader.SharedMediaOverlayEngine
+import com.aryan.reader.shared.reader.SharedMediaOverlayIndex
+import com.aryan.reader.shared.reader.SharedMediaOverlayPlaybackState
+import com.aryan.reader.shared.reader.SharedMediaOverlayPlaybackBand
+import com.aryan.reader.shared.reader.SharedMediaOverlayProjection
+import com.aryan.reader.shared.reader.SharedMediaOverlayProjector
+import com.aryan.reader.shared.reader.SharedMediaOverlaySession
+import com.aryan.reader.shared.reader.rememberSharedMediaOverlaySmilReader
+import com.aryan.reader.shared.reader.sharedMediaOverlayIsOffered
+import com.aryan.reader.shared.reader.sharedMediaOverlayPageForFragment
+import com.aryan.reader.shared.reader.sharedMediaOverlayPlaybackBand
+import com.aryan.reader.shared.reader.sharedMediaOverlaySpineItemIndexByChapter
+import com.aryan.reader.shared.reader.sharedMediaOverlaySpineItemsInReadingOrder
+import com.aryan.reader.shared.reader.sharedMediaOverlayTextQuote
 import com.aryan.reader.shared.reader.captureReaderJumpHistoryOrigin
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import com.aryan.reader.shared.reader.ReaderPage
@@ -147,19 +177,27 @@ import com.aryan.reader.shared.reader.findPageIndexForLocator
 import com.aryan.reader.shared.reader.layoutSignature
 import com.aryan.reader.shared.reader.withUncappedPageWidth
 import com.aryan.reader.shared.reader.readerImageReferences
+import com.aryan.reader.shared.reader.toDrawerImage
 import com.aryan.reader.shared.reader.readerTocActiveIndex
 import com.aryan.reader.shared.reader.pullToTurnEnabled
 import com.aryan.reader.shared.reader.seamlessChapterTransitionEnabled
 import kotlin.math.abs
+import kotlin.time.TimeSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.aryan.reader.shared.reader.mobileEpubSystemBarsVisibility
 import com.aryan.reader.shared.reader.writeSharedReaderDiagnostic
+import com.aryan.reader.shared.deduplicatedReaderBookmarks
+import com.aryan.reader.shared.ui.LocalSharedStringResolver
+import com.aryan.reader.shared.ui.SharedEpubBookmarkRow
+import com.aryan.reader.shared.ui.SharedEpubBookmarkStrings
+import com.aryan.reader.shared.ui.SharedEpubBookmarksList
 
 data class SharedMobileEpubReaderSnapshot(
     val locator: ReaderLocator,
@@ -183,6 +221,15 @@ private data class SharedMobileEpubActivePageTurn(
     val direction: Int,
     val touchY: Float?
 )
+
+/**
+ * The state a screen that cannot narrate still reads.
+ *
+ * A screen collects its session's state flow whenever a session exists, so the no-session case needs
+ * a flow of the same shape to collect instead of a branch inside the collect call — one code path
+ * whether or not the book has narration. Mirrors Android's `EmptyMediaOverlayPlaybackState`.
+ */
+private val EmptySharedMediaOverlayPlaybackState = MutableStateFlow(SharedMediaOverlayPlaybackState())
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -223,11 +270,24 @@ fun SharedMobileEpubReaderScreen(
     cloudTtsVoiceId: String = com.aryan.reader.shared.DEFAULT_CLOUD_TTS_SPEAKER_ID,
     onCloudTtsVoiceChange: (String) -> Unit = {},
     onClearCloudTtsCache: () -> Unit = {},
+    // Android benchmark (AiVoicesTab): Fish catalog + favorites + language
+    // filter for the reader TTS sheet. Defaulted; iOS passes live values.
+    cloudFishVoices: List<com.aryan.reader.shared.ReaderFishVoice> = emptyList(),
+    expectCloudFishVoices: Boolean = false,
+    cloudFishVoicesLoading: Boolean = false,
+    favoriteCloudVoiceIds: Set<String> = emptySet(),
+    onToggleFavoriteCloudVoice: (String) -> Unit = {},
+    cloudVoiceLanguage: String? = null,
+    onCloudVoiceLanguageChange: (String) -> Unit = {},
+    onClearCloudVoiceSamples: () -> Unit = {},
     initialTtsOverlaySize: ReaderTtsOverlaySize = ReaderTtsOverlaySize.LARGE,
     onTtsOverlaySizePreferenceChange: (ReaderTtsOverlaySize) -> Unit = {},
     onAiAction: (ReaderAiFeature, String) -> Unit = { _, _ -> },
     onAiResultDismiss: () -> Unit = {},
     onOpenAiHub: () -> Unit = {},
+    // Android parity (executeRecapLogic): chained recap with cache
+    // read-through + progress. Null keeps the legacy single-shot path.
+    onAiRecapAction: ((ReaderRecapRequest) -> Unit)? = null,
     summaryCache: SharedSummaryCache? = null,
     aiCredits: Int? = null,
     walletMicros: Long = 0L,
@@ -253,6 +313,7 @@ fun SharedMobileEpubReaderScreen(
     onReaderScreenOrientationModeChange: (ReaderScreenOrientationMode) -> Unit = {},
     onApplyReaderScreenOrientation: (ReaderScreenOrientationMode) -> Unit = {},
     streamPageLoader: SharedMobileEpubStreamPageLoader? = null,
+    onExportAnnotations: ((BookItem) -> Unit)? = null,
     modifier: Modifier = Modifier,
     /**
      * App-level read-aloud engine. When provided (iOS host), the screen drives
@@ -261,8 +322,26 @@ fun SharedMobileEpubReaderScreen(
      * per-screen engine (desktop/legacy behavior).
      */
     externalLocalTts: SharedMobileEpubLocalTts? = null,
+    /**
+     * The app-level media overlay engine, so narration arbitrates against the other audio surfaces
+     * while this reader is not the one composing.
+     *
+     * Null when the host has no engine — the normal answer for a book that does not narrate itself,
+     * and the answer `RS §9` asks for from a reader that cannot support overlays.
+     */
+    mediaOverlayEngine: SharedMediaOverlayEngine? = null,
+    /**
+     * Claims the audio output before narration starts, and reports when narration gives it up.
+     *
+     * Callbacks rather than an engine reference because arbitration is the *host's* decision: it owns
+     * the audiobook and both TTS engines, and the reader screen has no business knowing what else can
+     * make noise. `onMediaOverlayStarting` runs before anything is loaded, which is what makes it safe
+     * to stop the outgoing session there.
+     */
+    onMediaOverlayStarting: () -> Unit = {},
+    onMediaOverlayStopped: () -> Unit = {},
     /** Reports mini-bar state to an app-level host (global TTS bar). */
-    onReaderTtsSessionChange: (SharedReaderTtsMiniBarState?) -> Unit = {}
+    onReaderTtsSessionChange: (SharedReaderTtsMiniBarState?) -> Unit = {},
 ) {
     val motionPolicy = rememberReaderMotionPolicy()
     remember(book.id) {
@@ -303,15 +382,23 @@ fun SharedMobileEpubReaderScreen(
     // Report app-level mini-bar state (iOS global bar; Android uses its own
     // host). While composed, mirror the live session; on dispose the host
     // keeps the last snapshot so the bar survives navigation.
+    // A session tagged for audiobook Listen belongs to that surface, not this reader: both
+    // drive the same engine instance, so "a session is live" alone would make opening a book
+    // during Listen playback look like the reader starting to speak. Android distinguishes the
+    // two with `TtsState.playbackSource`; the same tag gates this.
+    val ownsTtsSession = isReaderOwnedTtsSession(
+        isSessionActive = localTts.isSessionActive,
+        playbackSource = localTts.playbackSource,
+    )
     LaunchedEffect(
-        localTts.isSessionActive,
+        ownsTtsSession,
         localTts.state,
         localTts.progress.currentChunkIndex,
         localTts.progress.chunks.size,
         loadedBook?.id,
         book.id
     ) {
-        if (localTts.isSessionActive) {
+        if (ownsTtsSession) {
             val progress = localTts.progress
             val chunk = progress.currentChunk
             onReaderTtsSessionChange(
@@ -360,22 +447,131 @@ fun SharedMobileEpubReaderScreen(
     var pages by remember(book.id) { mutableStateOf<List<ReaderPage>>(emptyList()) }
     var measuredPagesApplied by remember(book.id) { mutableStateOf(false) }
     var currentLocator by remember(book.id) { mutableStateOf(book.readerPosition) }
+    // Restore guard (WebView branch): pre-anchor reports in the restored
+    // chapter are dropped until the anchor is confirmed, the chapter moves,
+    // or the user navigates explicitly — see shouldDropPreRestoreBridgePosition.
+    var restoreAnchor by remember(book.id) { mutableStateOf(book.readerPosition) }
+    fun clearRestoreAnchor(reason: String) {
+        if (restoreAnchor != null) {
+            logEpubPositionSave(
+                "event=restore_guard_cleared reason=$reason bookId=${book.id} " +
+                    "anchor=${restoreAnchor.epubPositionSummary()}"
+            )
+            restoreAnchor = null
+        }
+    }
     var currentPageIndex by remember(book.id) { mutableStateOf(book.lastPageIndex ?: 0) }
     var currentChapterIndex by remember(book.id) {
         mutableIntStateOf(book.readerPosition?.chapterIndex?.coerceAtLeast(0) ?: 0)
     }
     val activeCloudTtsChunk = cloudTtsState.progress.currentChunk
 
-    fun planReaderTtsChunks(epub: com.aryan.reader.shared.reader.SharedEpubBook): List<ReaderTtsChunk> {
-        val session = ReaderEngine().createSession(
-            book = epub,
-            settings = settings,
-            initialPageIndex = currentPageIndex,
-            initialLocator = currentLocator,
+
+    // Android parity (chapter chaining): read-aloud plans one chapter at a
+    // time. Planning the rest of the book on the main thread froze the UI
+    // for ~23s on long books (ReaderTtsStart logs). [ttsActiveChapter] is
+    // the chapter the current session is speaking; [ttsSessionBookId] pins
+    // chain effects to this book because the engines are shared across
+    // books; the handled counters snapshot engine state at composition so a
+    // session finishing in another book never hijacks this reader.
+    // Declared before the helpers (Kotlin locals are not hoisted).
+    val scope = rememberCoroutineScope()
+    var ttsActiveChapter by remember(book.id) { mutableStateOf<Int?>(null) }
+    var ttsSessionBookId by remember(book.id) { mutableStateOf<String?>(null) }
+    var localTtsHandledCompletion by remember(book.id) { mutableStateOf(localTts.completionCount) }
+    var cloudTtsHandledCompletion by remember(book.id) { mutableStateOf(cloudTtsState.completionCount) }
+
+    fun currentTtsChapterIndex(): Int? =
+        currentLocator?.chapterIndex
+            ?: pages.firstOrNull { it.pageIndex == currentPageIndex }?.chapterIndex
+            ?: pages.firstOrNull()?.chapterIndex
+
+    fun planChapterTtsChunks(epub: SharedEpubBook, chapterIndex: Int): List<ReaderTtsChunk> {
+        // Reuse the measured pages: rebuilding a session re-paginates the
+        // whole book, which is the other half of the start latency.
+        val session = ReaderSessionState(
+            reader = PaginatedReaderState(book = epub, pages = pages, currentPageIndex = currentPageIndex),
+            navigationLocator = currentLocator,
         )
-        return ReaderTtsPlanner.chunksFromCurrentLocation(session)
-            .ifEmpty { ReaderTtsPlanner.chunksForCurrentChapter(session) }
+        return ReaderTtsPlanner.chunksForChapterFromLocation(session, chapterIndex)
             .withTtsReplacements(readerTtsReplacementPreferences, book.id)
+    }
+
+    // Android parity (scope.launch planning): even a single chapter can be
+    // big enough to drop frames, so planning runs off the main thread and
+    // the engine starts back on it. A second tap while planning cancels the
+    // pending start; leaving the reader cancels via the screen scope.
+    var ttsPlanJob by remember(book.id) { mutableStateOf<Job?>(null) }
+
+    fun cancelTtsPlanning() {
+        ttsPlanJob?.cancel()
+        ttsPlanJob = null
+    }
+
+    fun startLocalTtsFromChapter(fromChapter: Int) {
+        cancelTtsPlanning()
+        val epub = loadedBook ?: return
+        val planMark = TimeSource.Monotonic.markNow()
+        ttsPlanJob = scope.launch(Dispatchers.Default) {
+            var chapter = fromChapter
+            var planned: List<ReaderTtsChunk> = emptyList()
+            while (chapter < epub.chapters.size) {
+                planned = planChapterTtsChunks(epub, chapter)
+                if (planned.isNotEmpty()) break
+                chapter++
+            }
+            if (planned.isEmpty()) {
+                withContext(Dispatchers.Main) {
+                    println("[$ReaderTtsStartTag] ui localNoChapter bookId=${book.id} fromChapter=$fromChapter")
+                    localTts.stop()
+                }
+                return@launch
+            }
+            val startedChapter = chapter
+            val startedChunks = planned
+            val startedTitle = epub.title
+            withContext(Dispatchers.Main) {
+                if (!isActive) return@withContext
+                ttsActiveChapter = startedChapter
+                ttsSessionBookId = book.id
+                localTtsHandledCompletion = localTts.completionCount
+                localTts.start(chunks = startedChunks, bookTitle = startedTitle, bookId = book.id)
+                println("[$ReaderTtsStartTag] ui localPlanned chapter=$startedChapter chunks=${startedChunks.size} +${planMark.elapsedNow().inWholeMilliseconds}ms")
+            }
+        }
+    }
+
+    fun startCloudTtsFromChapter(fromChapter: Int, continued: Boolean) {
+        val controller = cloudTts ?: return
+        val epub = loadedBook ?: return
+        cancelTtsPlanning()
+        val planMark = TimeSource.Monotonic.markNow()
+        ttsPlanJob = scope.launch(Dispatchers.Default) {
+            var chapter = fromChapter
+            var planned: List<ReaderTtsChunk> = emptyList()
+            while (chapter < epub.chapters.size) {
+                planned = planChapterTtsChunks(epub, chapter)
+                if (planned.isNotEmpty()) break
+                chapter++
+            }
+            if (planned.isEmpty()) {
+                withContext(Dispatchers.Main) {
+                    println("[$ReaderTtsStartTag] ui cloudNoChapter bookId=${book.id} fromChapter=$fromChapter")
+                }
+                return@launch
+            }
+            val startedChapter = chapter
+            val startedChunks = planned
+            val startedTitle = epub.title
+            withContext(Dispatchers.Main) {
+                if (!isActive) return@withContext
+                ttsActiveChapter = startedChapter
+                ttsSessionBookId = book.id
+                cloudTtsHandledCompletion = cloudTtsState.completionCount
+                controller.start(startedChunks, startedTitle, book.id, continueSession = continued)
+                println("[$ReaderTtsStartTag] ui cloudPlanned chapter=$startedChapter chunks=${startedChunks.size} continued=$continued +${planMark.elapsedNow().inWholeMilliseconds}ms")
+            }
+        }
     }
 
     fun toggleCloudTts() {
@@ -383,10 +579,15 @@ fun SharedMobileEpubReaderScreen(
         when {
             cloudTtsState.isPlaying || cloudTtsState.isLoading -> controller.pause()
             cloudTtsState.isPaused -> controller.resume()
-            else -> loadedBook?.let { epub ->
+            else -> loadedBook?.let {
+                if (ttsPlanJob?.isActive == true) {
+                    println("[$ReaderTtsStartTag] ui cloudCancel bookId=${book.id}")
+                    cancelTtsPlanning()
+                    return@let
+                }
+                println("[$ReaderTtsStartTag] ui cloudToggle bookId=${book.id} page=$currentPageIndex mode=${settings.readingMode}")
                 localTts.stop()
-                val planned = planReaderTtsChunks(epub)
-                controller.start(planned, epub.title, book.id)
+                currentTtsChapterIndex()?.let { chapter -> startCloudTtsFromChapter(chapter, continued = false) }
             }
         }
     }
@@ -501,7 +702,6 @@ fun SharedMobileEpubReaderScreen(
         )
     }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
-    val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val copiedTextLabel = readerString("clip_label_copied_text", "Copied Text")
     val copiedLinkLabel = readerString("clip_label_copied_link", "Copied Link")
@@ -535,6 +735,7 @@ fun SharedMobileEpubReaderScreen(
     // stable across chrome toggles: the live chrome-dependent pad would
     // repaginate on every tap, so the paginator uses the chrome-independent
     // maximum and the render box shares it.
+    val pageInfoBarContentHeight = sharedMobileEpubPageInfoBarContentHeight()
     val nativePaginatedPageInfoReserveTop = if (
         settings.pageInfoPosition == PageInfoPosition.TOP &&
         shouldReserveEpubPageInfoBarSpace(
@@ -543,7 +744,7 @@ fun SharedMobileEpubReaderScreen(
             isNativeVerticalMode = false
         )
     ) {
-        SharedMobileEpubPageInfoBarContentHeight
+        pageInfoBarContentHeight
     } else {
         0.dp
     }
@@ -557,7 +758,7 @@ fun SharedMobileEpubReaderScreen(
             pageInfoMode = settings.pageInfoMode,
             showReaderChrome = showChrome
         ),
-        contentHeight = SharedMobileEpubPageInfoBarContentHeight,
+        contentHeight = pageInfoBarContentHeight,
         bottomPad = nativePaginatedPageInfoMaxBottomPad
     )
 
@@ -770,6 +971,26 @@ fun SharedMobileEpubReaderScreen(
     LaunchedEffect(localTts.isSessionActive) {
         if (!localTts.isSessionActive) detachedTtsChunkIndex = null
     }
+    // Android parity (chapter chaining): a chapter finishing naturally
+    // starts the next non-empty chapter in a continued session; the last
+    // chapter ends the session. The book pin keeps a session finishing in
+    // another book from hijacking this reader (engines are app-shared).
+    LaunchedEffect(localTts.completionCount) {
+        if (localTts.completionCount == localTtsHandledCompletion) return@LaunchedEffect
+        localTtsHandledCompletion = localTts.completionCount
+        if (!localTts.isSessionActive || ttsSessionBookId != book.id) return@LaunchedEffect
+        val next = (ttsActiveChapter ?: return@LaunchedEffect) + 1
+        println("[$ReaderTtsStartTag] ui localChain bookId=${book.id} nextChapter=$next")
+        startLocalTtsFromChapter(next)
+    }
+    LaunchedEffect(cloudTtsState.completionCount) {
+        if (cloudTtsState.completionCount == cloudTtsHandledCompletion) return@LaunchedEffect
+        cloudTtsHandledCompletion = cloudTtsState.completionCount
+        if (ttsSessionBookId != book.id || cloudTts == null) return@LaunchedEffect
+        val next = (ttsActiveChapter ?: return@LaunchedEffect) + 1
+        println("[$ReaderTtsStartTag] ui cloudChain bookId=${book.id} nextChapter=$next")
+        startCloudTtsFromChapter(next, continued = true)
+    }
     LaunchedEffect(localTts.isSessionActive, cloudTtsState.isPlaying, cloudTtsState.isLoading) {
         // Android parity (EpubReaderScreen.startTts): starting TTS turns
         // auto-scroll off. Android never lifts the auto-scroll overlay above the
@@ -894,11 +1115,58 @@ fun SharedMobileEpubReaderScreen(
 
     LaunchedEffect(currentLocator, settings, bookmarks, highlights, currentPageIndex, pageCount, isLocalFormatMode, localFormatSettings, autoScrollIsLocal, autoScrollLocalProfile) {
         delay(220)
-        currentReaderSnapshot()?.let(onReaderStateChange)
+        val snapshot = currentReaderSnapshot()
+        if (snapshot == null) {
+            logEpubPositionSave("event=autosave_skip reason=null_locator bookId=${book.id}")
+        } else {
+            logEpubPositionSave(
+                "event=autosave_emit bookId=${book.id} page=${snapshot.pageIndex}/${snapshot.pageCount} " +
+                    "progress=${snapshot.progressPercent} locator=${snapshot.locator.epubPositionSummary()}"
+            )
+        }
+        snapshot?.let(onReaderStateChange)
+    }
+
+    // Repair stored highlight locators that point at the wrong place.
+    //
+    // Highlights written before the reader had a usable coordinate space carry offsets that were
+    // computed against block-relative positions, so they resolve to somewhere else in the chapter.
+    // Only the chapter's own text can say where they should point, and a reader only sees the chapters
+    // it opens, so this runs per chapter as its pages become available rather than over the whole book.
+    // Android does the same thing through `onGetChapterTextBlocks`; this is the iOS equivalent, kept
+    // here so both platforms repair the same way.
+    val chapterTextIndexes = remember { mutableStateOf(emptyMap<Int, EpubChapterTextIndex>()) }
+    LaunchedEffect(highlights, pages) {
+        // Every chapter that holds a highlight, not only the ones whose highlights lack offsets: a
+        // legacy highlight has offsets and they are wrong, which is exactly what the repair fixes.
+        val chaptersWithHighlights = highlights
+            .mapNotNull { it.locator.chapterIndex ?: it.chapterIndex }
+            .distinct()
+        for (chapterIndex in chaptersWithHighlights) {
+            if (chapterTextIndexes.value.containsKey(chapterIndex)) continue
+            val blocks = pages
+                .filter { it.chapterIndex == chapterIndex }
+                .flatMap { it.semanticBlocks }
+            val index = EpubChapterTextIndex.of(chapterIndex, blocks) ?: continue
+            chapterTextIndexes.value = chapterTextIndexes.value + (chapterIndex to index)
+            val repaired = index.repairHighlights(highlights)
+            if (repaired.unchanged) continue
+            logSharedReaderDiagnostic("HighlightDiag") {
+                "highlight_repair platform=shared chapter=$chapterIndex repaired=${repaired.repaired} " +
+                    "of=${highlights.size}"
+            }
+            highlights = repaired.highlights
+        }
     }
 
     fun closeReader() {
-        currentReaderSnapshot()?.let(onReaderStateChange)
+        val snapshot = currentReaderSnapshot()
+        logEpubPositionSave(
+            "event=close_save bookId=${book.id} " +
+                (snapshot?.let { "page=${it.pageIndex}/${it.pageCount} progress=${it.progressPercent} locator=${it.locator.epubPositionSummary()}" }
+                    ?: "snapshot=null")
+        )
+        snapshot?.let(onReaderStateChange)
         onBack()
     }
 
@@ -951,6 +1219,7 @@ fun SharedMobileEpubReaderScreen(
         fragment: String? = null,
         detachFromTts: Boolean = true,
     ) {
+        clearRestoreAnchor("explicit_navigate")
         if (detachFromTts) detachVerticalReaderFromTts()
         val epub = loadedBook
         locator.chapterIndex?.let { chapterIndex ->
@@ -1003,6 +1272,34 @@ fun SharedMobileEpubReaderScreen(
      * WebView rendering asks the DOM for its current visible locator and falls
      * back to the latest bridge observation while the page is unavailable.
      */
+    /**
+     * Android parity (EpubReaderScreen TTS follow, `keepVisible = true`): speech
+     * follows the reader only when the spoken chunk has actually drifted off
+     * the page being shown.
+     *
+     * Paginated mode turned a page on *every* chunk change, so a chunk boundary
+     * every few seconds yanked the reader forward mid-paragraph — the jarring
+     * auto-scroll around read-aloud. The chunk's own page is usually already the
+     * visible one (chunks are far smaller than pages), so those turns were
+     * almost all no-ops in intent and pure churn in practice. Vertical mode
+     * keeps following: its keep-visible/animated path lives in the document
+     * script (`ttsLocatorNeedsFollowScroll`).
+     */
+    fun followTtsChunkNavigation(chunk: ReaderTtsChunk) {
+        if (settings.readingMode != ReaderReadingMode.PAGINATED) {
+            navigate(chunk.toLocator(), detachFromTts = false)
+            return
+        }
+        val chunkPage = chunk.pageIndex
+        if (chunkPage >= 0 && chunkPage == currentPageIndex) {
+            // Already showing the spoken chunk's page: keep the highlight and
+            // the locator, skip the turn. Mirrors Android's keep-visible follow.
+            publishCapturedEpubLocator(chunk.toLocator())
+            return
+        }
+        navigate(chunk.toLocator(), detachFromTts = false)
+    }
+
     fun captureCurrentEpubLocator(onCaptured: (ReaderLocator?) -> Unit) {
         val chapterCount = loadedBook?.chapters?.size ?: 0
         val nativeLocator = if (
@@ -1063,6 +1360,7 @@ fun SharedMobileEpubReaderScreen(
 
     fun navigateChapter(direction: Int) {
         val epub = loadedBook ?: return
+        clearRestoreAnchor("chapter_turn")
         val targetChapterIndex = (currentChapterIndex + direction).coerceIn(0, epub.chapters.lastIndex)
         if (targetChapterIndex == currentChapterIndex) return
         // The JS pull gesture posts its progress:0 reset just before the
@@ -1131,11 +1429,17 @@ fun SharedMobileEpubReaderScreen(
                 currentChunkIndex = activeTtsChunk?.index,
             )
         ) {
-            ReaderLifecycleAction.SAVE_POSITION -> {
-                // Android requests a final CFI on pause. Persist the latest
-                // portable locator immediately instead of awaiting the debounce.
-                currentReaderSnapshot()?.let(onReaderStateChange)
-            }
+                ReaderLifecycleAction.SAVE_POSITION -> {
+                    // Android requests a final CFI on pause. Persist the latest
+                    // portable locator immediately instead of awaiting the debounce.
+                    val snapshot = currentReaderSnapshot()
+                    logEpubPositionSave(
+                        "event=lifecycle_save bookId=${book.id} " +
+                            (snapshot?.let { "page=${it.pageIndex}/${it.pageCount} progress=${it.progressPercent} locator=${it.locator.epubPositionSummary()}" }
+                                ?: "snapshot=null")
+                    )
+                    snapshot?.let(onReaderStateChange)
+                }
             ReaderLifecycleAction.LOCATE_TTS -> {
                 // Speech may advance while backgrounded. Restore the active
                 // chunk unless the user intentionally detached from it.
@@ -1157,7 +1461,7 @@ fun SharedMobileEpubReaderScreen(
         // Speech chunks have source offsets and page indices from the same shared planner used
         // by Android. Let them own navigation while reading, so a spoken sentence is always
         // visible in either reader mode.
-        navigate(chunk.toLocator(), detachFromTts = false)
+        followTtsChunkNavigation(chunk)
     }
 
     LaunchedEffect(activeCloudTtsChunk?.index, activeCloudTtsChunk?.chapterIndex, activeCloudTtsChunk?.pageIndex) {
@@ -1165,12 +1469,285 @@ fun SharedMobileEpubReaderScreen(
         if (chunk == null || loadedBook == null) return@LaunchedEffect
         if (!shouldFollowReaderTtsChunk(detachedTtsChunkIndex, chunk.index)) return@LaunchedEffect
         detachedTtsChunkIndex = null
-        navigate(chunk.toLocator(), detachFromTts = false)
+        followTtsChunkNavigation(chunk)
+    }
+
+    // --- EPUB media overlays: the publisher's own narration ---------------------------------------
+    //
+    // One session, one projector, one follow rule, mirroring the read-aloud wiring above. The two
+    // never run at once (starting narration stops read-aloud and vice versa), so the single playback
+    // highlight each surface paints always holds the live engine's position.
+
+    val mediaOverlayEngineScope = rememberCoroutineScope()
+    // The engine is app-level, so it outlives this composition; the archive is not, and detaching on
+    // dispose is what stops a resource loader answering for a book this reader no longer shows.
+    DisposableEffect(mediaOverlayEngine, book.id) {
+        mediaOverlayEngine?.attachArchive(book)
+        onDispose { mediaOverlayEngine?.attachArchive(null) }
+    }
+    // Empty rather than null: the archive reader's contract is that a blank path means "no archive",
+// and the hook order here is deliberately unconditional so a screen that recomposes around a book
+    // that cannot narrate does not change how many composables it calls.
+    val mediaOverlaySmilReader = rememberSharedMediaOverlaySmilReader(book.path.orEmpty())
+    val mediaOverlayCache = remember(loadedBook?.mediaOverlays, mediaOverlaySmilReader, book.id) {
+        val index = loadedBook?.mediaOverlays ?: SharedMediaOverlayIndex.EMPTY
+        mediaOverlaySmilReader?.takeIf { index.hasOverlays }
+            ?.let { readSmil -> SharedMediaOverlayDocumentCache(index, readSmil) }
+    }
+    val mediaOverlayChapters = remember(loadedBook?.chapters) { loadedBook?.chapters.orEmpty() }
+    val mediaOverlaySpineItemsByChapter = remember(mediaOverlayChapters, loadedBook?.mediaOverlays) {
+        val index = loadedBook?.mediaOverlays ?: SharedMediaOverlayIndex.EMPTY
+        sharedMediaOverlaySpineItemIndexByChapter(
+            chapterContentPaths = mediaOverlayChapters.map { it.baseHref.orEmpty() },
+            overlayIndex = index
+        )
+    }
+    val mediaOverlaySession = remember(mediaOverlayCache, mediaOverlayEngine, mediaOverlayChapters, book.id) {
+        val engine = mediaOverlayEngine
+        val cache = mediaOverlayCache
+        val index = loadedBook?.mediaOverlays ?: SharedMediaOverlayIndex.EMPTY
+        if (engine == null || cache == null) {
+            null
+        } else {
+            SharedMediaOverlaySession(
+                engine = engine,
+                projector = SharedMediaOverlayProjector(
+                    cache = cache,
+                    chapters = mediaOverlayChapters,
+                    spineItemIndexToChapterIndex = mediaOverlaySpineItemsByChapter
+                ),
+                bookId = book.id,
+                bookTitle = loadedBook?.title ?: book.displayName.orEmpty(),
+                narrator = index.narrator,
+                totalDurationMs = index.totalDurationMs,
+                overlayIndex = index,
+                spineItemIndexByChapter = mediaOverlaySpineItemsByChapter,
+                spineItemsInReadingOrder = sharedMediaOverlaySpineItemsInReadingOrder(
+                    mediaOverlayChapters.size,
+                    mediaOverlaySpineItemsByChapter
+                )
+            )
+        }
+    }
+    val mediaOverlayPlaybackState by remember(mediaOverlaySession) {
+        mediaOverlaySession?.engine?.state ?: EmptySharedMediaOverlayPlaybackState
+    }.collectAsState()
+    var mediaOverlayProjection by remember(book.id) { mutableStateOf<SharedMediaOverlayProjection?>(null) }
+    /**
+     * The chapter narration asked the reader to show, so the rule below can tell "the reader
+     * navigated" apart from "narration moved and we followed it". Without it, carrying narration into
+     * the next chapter would look like a manual navigation — and the answer to that would be to
+     * restart the chapter narration just began, so following forward would rewind to the top of every
+     * chapter. Consumed on first use: a change that is *not* the follow is the reader's, by
+     * definition.
+     */
+    var mediaOverlayFollowedChapter by remember(book.id) { mutableStateOf<Int?>(null) }
+
+    // Playback position -> reader coordinates. Keyed on the clip, so a chapter's anchors resolve once
+    // and a clip advance within the chapter is a map lookup.
+    LaunchedEffect(mediaOverlaySession, mediaOverlayPlaybackState.spineItemIndex, mediaOverlayPlaybackState.clipIndex) {
+        val session = mediaOverlaySession ?: return@LaunchedEffect
+        val spineItemIndex = mediaOverlayPlaybackState.spineItemIndex ?: return@LaunchedEffect
+        mediaOverlayProjection = session.project(spineItemIndex, mediaOverlayPlaybackState.clipIndex)
+    }
+
+    /**
+     * The page the narrated fragment sits on, or null while the chapter has no pages yet.
+     *
+     * Resolved from the reader's own pages rather than carried on the band, because a band does not
+     * care which page it is on — only the follow does, and it asks the same question one step later.
+     */
+    val mediaOverlayPageIndex: Int? = remember(mediaOverlayProjection, pages) {
+        sharedMediaOverlayPageForFragment(
+            pages = pages,
+            chapterIndex = mediaOverlayProjection?.chapterIndex,
+            fragment = mediaOverlayProjection?.fragment
+        )
+    }
+
+    /**
+     * The narration band: the paintable highlight plus the locator a follow would navigate to.
+     *
+     * A [UserHighlight] rather than a fragment parameter because that is how this screen already
+     * paints a spoken chunk, and because `isTransientPlaybackBand` makes the existing hit-testing
+     * refuse to select it — so a narrated line can never be mistaken for a highlight the reader made,
+     * and no new paint path or hit-test rule is needed.
+     *
+     * The quote is read from the block the fragment lands in rather than from the chapter's
+     * `plainText`, because `plainText` has book replacements applied to it: a reader who replaced a
+     * word would otherwise get a quote that no longer matches the rendered text.
+     *
+     * The session's id and clip count are in the key rather than a value of this screen's own: a
+     * continuation rewrites the count without changing the projection — a bar reading "1 / 3" over a
+     * chapter with two clips — and a fresh run changes the id, which is what retires the last run's
+     * band instead of leaving it painted.
+     */
+    val mediaOverlayBand: SharedMediaOverlayPlaybackBand? = remember(
+        mediaOverlayProjection,
+        mediaOverlayPageIndex,
+        mediaOverlaySession?.clipCount,
+        mediaOverlaySession?.bandSessionId,
+    ) {
+        sharedMediaOverlayPlaybackBand(
+            projection = mediaOverlayProjection,
+            pageIndex = mediaOverlayPageIndex,
+            textQuote = sharedMediaOverlayTextQuote(
+                chapters = mediaOverlayChapters,
+                chapterIndex = mediaOverlayProjection?.chapterIndex,
+                fragment = mediaOverlayProjection?.fragment
+            ),
+            sessionId = mediaOverlaySession?.bandSessionId ?: 0L
+        )
+    }
+
+    // Narration drives the reader, and only ever towards the narrated line.
+    //
+    // Android benchmark (`EpubReaderScreen.kt` media overlay follow, `keepVisible = true`): a chapter
+    // change navigates, and within a chapter the paginated reader turns only when the narrated page
+    // is not the one showing. Turning on every clip is the jarring auto-scroll that read-aloud used
+    // to have — a clip boundary every couple of seconds, and the page is usually already right — so
+    // the within-chapter case turns only when it would otherwise narrate off-screen. Vertical mode
+    // needs no rule here: its document script keeps the line on screen itself.
+    LaunchedEffect(
+        mediaOverlayPlaybackState.spineItemIndex,
+        mediaOverlayPlaybackState.clipIndex,
+        mediaOverlayProjection?.fragment,
+        currentChapterIndex,
+        currentPageIndex
+    ) {
+        val session = mediaOverlaySession ?: return@LaunchedEffect
+        val target = session.chapterIndex ?: return@LaunchedEffect
+        if (!mediaOverlayPlaybackState.hasBook) return@LaunchedEffect
+
+        if (target != currentChapterIndex) {
+            mediaOverlayFollowedChapter = target
+            navigate(
+                ReaderLocator(
+                    chapterIndex = target,
+                    pageIndex = null,
+                    startOffset = 0,
+                    endOffset = 0,
+                    textQuote = null,
+                    cfi = null
+                ),
+                detachFromTts = false
+            )
+            return@LaunchedEffect
+        }
+
+        if (settings.readingMode != ReaderReadingMode.PAGINATED) return@LaunchedEffect
+        val bandPage = mediaOverlayBand?.locator?.pageIndex ?: return@LaunchedEffect
+        if (bandPage < 0 || bandPage == currentPageIndex) return@LaunchedEffect
+        navigate(mediaOverlayBand.locator, detachFromTts = false)
+    }
+
+    // The reader drives the narration: navigating away while narration plays resumes it there.
+    // `RS §9.3.1` requires this — a reader who jumps to another chapter must hear that chapter, not
+    // the one they left.
+    LaunchedEffect(currentChapterIndex) {
+        val session = mediaOverlaySession ?: return@LaunchedEffect
+        if (mediaOverlayFollowedChapter == currentChapterIndex) {
+            mediaOverlayFollowedChapter = null
+            return@LaunchedEffect
+        }
+        mediaOverlayFollowedChapter = null
+        if (!mediaOverlayPlaybackState.hasBook) return@LaunchedEffect
+        if (session.chapterIndex == currentChapterIndex) return@LaunchedEffect
+        val readerOffset = currentLocator
+            ?.takeIf { it.chapterIndex == currentChapterIndex }
+            ?.startOffset
+            ?.takeIf { it >= 0 }
+        session.start(currentChapterIndex, readerOffset)
+    }
+
+    /**
+     * Starts or stops narration from the toolbar.
+     *
+     * Arbitration happens *before* anything is loaded, and through the host rather than by reaching
+     * for another engine: read-aloud and the audiobook own real audio on their own engines, and a
+     * narration started over either would be two voices at once. The host knows what else can make
+     * noise; this screen only states the intent.
+     */
+    // Resolved during composition rather than inside `toggleMediaOverlay`, because
+        // `readerString` is a composable and the toggle runs on a click.
+        val mediaOverlayUnavailableMessage = readerString(
+            "media_overlay_chapter_unavailable",
+            "This chapter has no narration"
+        )
+        fun toggleMediaOverlay() {
+            val session = mediaOverlaySession
+            if (session == null) return
+            if (mediaOverlayPlaybackState.hasBook) {
+                session.stop()
+                onMediaOverlayStopped()
+                return
+            }
+            onMediaOverlayStarting()
+            val chapterIndex = currentChapterIndex
+            val readerOffset = currentLocator
+                ?.takeIf { it.chapterIndex == chapterIndex }
+                ?.startOffset
+                ?.takeIf { it >= 0 }
+            mediaOverlayEngineScope.launch {
+                if (!session.start(chapterIndex, readerOffset)) {
+                    onShowBanner(mediaOverlayUnavailableMessage)
+                }
+            }
+        }
+
+    /**
+     * The reader's highlights plus whichever playback band is live, for the native surfaces.
+     *
+     * One list rather than three, and the precedence is the whole point: narration and read-aloud
+     * never run at once — starting either stops the other through the arbiter — so exactly one band
+     * exists at a time and a surface's single playback parameter always holds the live engine's
+     * position. Without arbitration this ordering would be a guess, and a reader would see the
+     * highlight jump between engines mid-paragraph.
+     */
+    val playbackHighlights: List<UserHighlight> = mediaOverlayBand?.highlight
+        ?.let { highlights + it }
+        ?: activeTtsChunk?.let { chunk -> highlights + chunk.toHighlight(localTts.progress.sessionId) }
+        // Cloud read-aloud paints the same yellow chunk highlight as the local engine (Android parity).
+        ?: activeCloudTtsChunk?.let { chunk -> highlights + chunk.toHighlight(cloudTtsState.progress.sessionId) }
+        ?: highlights
+
+
+    // Stuck-highlight clear (vertical WebView) for the cloud engine too:
+    // ending a cloud session must push readerSetTtsLocator(null) to the page,
+    // otherwise the last spoken chunk stays painted (local-TTS parity).
+    var wasCloudTtsSessionActive by remember(book.id) { mutableStateOf(false) }
+    LaunchedEffect(cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused) {
+        val cloudSessionActive = cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
+        val refreshNavigation = shouldRefreshReaderNavigationOnTtsSessionEnd(
+            sessionWasActive = wasCloudTtsSessionActive,
+            sessionIsActive = cloudSessionActive,
+            readingMode = settings.readingMode,
+            useNativeVerticalRenderer = useNativeVerticalRenderer,
+        )
+        wasCloudTtsSessionActive = cloudSessionActive
+        if (refreshNavigation) navigationRequestId++
+    }
+
+    // Stuck-highlight clear (vertical WebView): ending the session must push
+    // the composed readerSetTtsLocator(null) to the page, otherwise the last
+    // chunk's highlight stays painted. Native renderers clear via
+    // recomposition, so only the WebView branch issues this final request.
+    var wasLocalTtsSessionActive by remember(book.id) { mutableStateOf(false) }
+    LaunchedEffect(localTts.isSessionActive) {
+        val refreshNavigation = shouldRefreshReaderNavigationOnTtsSessionEnd(
+            sessionWasActive = wasLocalTtsSessionActive,
+            sessionIsActive = localTts.isSessionActive,
+            readingMode = settings.readingMode,
+            useNativeVerticalRenderer = useNativeVerticalRenderer,
+        )
+        wasLocalTtsSessionActive = localTts.isSessionActive
+        if (refreshNavigation) navigationRequestId++
     }
 
     fun navigateSearchResult(result: SharedMobileEpubSearchResult) {
         val epub = loadedBook ?: return
         val chapter = epub.chapters.getOrNull(result.chapterIndex) ?: return
+        clearRestoreAnchor("search")
         detachVerticalReaderFromTts()
         captureCurrentEpubLocator { current ->
             jumpHistory = jumpHistory.record(
@@ -1248,7 +1825,8 @@ fun SharedMobileEpubReaderScreen(
             id = "ios_epub_note_$timestamp",
             cfi = locator.cfi ?: "desktop:$chapterIndex:$startOffset:$endOffset",
             text = text,
-            color = readerHighlightPalette.sanitized().colors.first(),
+            color = readerHighlightPalette.sanitized().namedColorAt(0),
+            colorArgb = readerHighlightPalette.sanitized().argbAt(0),
             chapterIndex = chapterIndex,
             locator = locator.withFallbacks(
                 chapterIndex = chapterIndex,
@@ -1363,11 +1941,34 @@ fun SharedMobileEpubReaderScreen(
                         )
                     }
                 }
+                // Android benchmark (SharedEpubBookmarksList): the drawer bookmark list and
+                // its rename/delete dialogs are one shared widget; only the strings and the
+                // scrollbar slot are host-supplied.
+                // pageOf is a plain (Int, Int) -> String, so capture the resolver to
+                // localize inside it; readerString is @Composable.
+                val bookmarkStringsResolver = LocalSharedStringResolver.current
+                val bookmarkDefaultLabel = readerString("content_desc_bookmark", "Bookmark")
+                val bookmarkStrings = SharedEpubBookmarkStrings(
+                    empty = readerString("no_bookmarks_yet", "No bookmarks yet"),
+                    defaultLabel = bookmarkDefaultLabel,
+                    pageOf = { page, total ->
+                        bookmarkStringsResolver.string("page_of_format", "Page %1\$d of %2\$d", page, total)
+                    },
+                    moreOptionsDescription = readerString("content_desc_more_options_bookmark", "Bookmark options"),
+                    renameAction = readerString("action_rename", "Rename"),
+                    deleteAction = readerString("action_delete", "Delete"),
+                    renameDialogTitle = readerString("dialog_rename_bookmark", "Rename Bookmark"),
+                    newNameLabel = readerString("label_new_name", "New name"),
+                    saveAction = readerString("action_save", "Save"),
+                    cancelAction = readerString("action_cancel", "Cancel"),
+                    deleteDialogTitle = readerString("dialog_delete_bookmark", "Delete Bookmark?"),
+                    deleteDialogDescription = readerString("dialog_delete_bookmark_desc", "This bookmark will be removed from the book."),
+                )
                 HorizontalPager(state = drawerPagerState, modifier = Modifier.fillMaxWidth().weight(1f)) { page ->
                     when (page) {
                         0 -> SharedMobileEpubToc(
-                            epub = loadedBook,
-                            selectedIndex = selectedTocIndex,
+                            entries = loadedBook?.effectiveReaderTocEntries().orEmpty(),
+                            activeIndex = selectedTocIndex,
                             onEntryClick = { index, entry ->
                                 selectedTocIndex = index
                                 loadedBook?.locatorForTocEntry(entry, pages)?.let { locator ->
@@ -1375,35 +1976,58 @@ fun SharedMobileEpubReaderScreen(
                                     scope.launch { drawerState.close() }
                                 }
                             },
+                            labelOf = { it.label },
+                            depthOf = { it.depth },
+                            keyOf = { index, entry -> "${entry.href}_${entry.fragmentId}_$index" },
+                            collapseDescription = readerString("content_desc_collapse", "Collapse"),
+                            expandDescription = readerString("content_desc_expand", "Expand"),
+                            scrollbar = { listState ->
+                                SharedDrawerScrollbar(
+                                    listState = listState,
+                                    modifier = Modifier.align(Alignment.CenterEnd),
+                                )
+                            },
                             modifier = Modifier.fillMaxSize()
                         )
-                        1 -> SharedMobileEpubBookmarks(
-                            bookmarks = bookmarks,
-                            onBookmarkClick = { bookmark ->
+                        1 -> SharedEpubBookmarksList(
+                            bookmarks = bookmarks.deduplicatedReaderBookmarks(),
+                            rowOf = { bookmark ->
+                                SharedEpubBookmarkRow(
+                                    key = bookmark.id,
+                                    title = bookmark.label?.takeIf { it.isNotBlank() }
+                                        ?: bookmark.preview.ifBlank { bookmarkDefaultLabel },
+                                    chapterTitle = bookmark.chapterTitle
+                                )
+                            },
+                            strings = bookmarkStrings,
+                            onNavigateToBookmark = { bookmark ->
                                 recordJumpAndNavigate(bookmark.locator)
                                 scope.launch { drawerState.close() }
                             },
-                            onBookmarkRename = { bookmark, label ->
+                            onRenameBookmark = { bookmark, label ->
                                 bookmarks = bookmarks.map { existing ->
                                     if (existing.id == bookmark.id) existing.copy(label = label.trim().ifBlank { null }) else existing
                                 }
                             },
-                            onBookmarkDelete = { bookmark -> bookmarks = bookmarks.filterNot { it.id == bookmark.id } },
-                            modifier = Modifier.fillMaxSize()
+                            onDeleteBookmark = { bookmark -> bookmarks = bookmarks.filterNot { it.id == bookmark.id } }
                         )
                         2 -> SharedMobileEpubHighlights(
                             highlights = highlights,
-                            chapters = loadedBook?.chapters.orEmpty(),
+                            chapterTitleOf = { chapterIndex ->
+                                loadedBook?.chapters?.getOrNull(chapterIndex)?.title
+                                    ?.takeIf(String::isNotBlank)
+                                    ?: "Chapter ${chapterIndex + 1}"
+                            },
                             palette = readerHighlightPalette,
                             onHighlightClick = { highlight ->
                                 recordJumpAndNavigate(highlight.locator)
                                 scope.launch { drawerState.close() }
                             },
                             onHighlightEdit = { editingHighlight = it },
-                            onHighlightColorChange = { highlight, color ->
+                            onHighlightColorChange = { highlight, colorArgb ->
                                 highlights = highlights.map { current ->
                                     if (current.id == highlight.id) {
-                                        current.copy(color = color, colorArgb = null)
+                                        current.copy(colorArgb = colorArgb)
                                     } else {
                                         current
                                     }
@@ -1414,22 +2038,45 @@ fun SharedMobileEpubReaderScreen(
                                 if (editingHighlight?.id == highlight.id) editingHighlight = null
                             },
                             onOpenPaletteManager = { showHighlightPaletteManager = true },
-                            modifier = Modifier.fillMaxSize()
+                            onExportAnnotations = onExportAnnotations?.let { export ->
+                                { export(book.copy(readerHighlights = highlights)) }
+                            },
+                            scrollbar = { listState ->
+                                    SharedDrawerScrollbar(
+                                        listState = listState,
+                                        modifier = Modifier.align(Alignment.CenterEnd),
+                                    )
+                                },
+                                modifier = Modifier.fillMaxSize()
                         )
-                        else -> SharedMobileEpubImages(
-                            images = if (settings.hideImages) {
+                        else -> {
+                            val imageRefs = if (settings.hideImages) {
                                 emptyList()
                             } else {
                                 loadedBook?.readerImageReferences(pages).orEmpty()
-                            },
-                            onImageClick = { image ->
-                                loadedBook?.chapters?.getOrNull(image.chapterIndex)?.let {
-                                    recordJumpAndNavigate(image.locator)
-                                    scope.launch { drawerState.close() }
-                                }
-                            },
-                            modifier = Modifier.fillMaxSize()
-                        )
+                            }
+                            SharedMobileEpubImages(
+                                images = imageRefs,
+                                rowOf = { it.toDrawerImage() },
+                                onImageClick = { image ->
+                                    loadedBook?.chapters?.getOrNull(image.chapterIndex)?.let {
+                                        recordJumpAndNavigate(image.locator)
+                                        scope.launch { drawerState.close() }
+                                    }
+                                },
+                                onDownloadImage = { image ->
+                                    scope.launch {
+                                        image.downloadBytes()?.let { bytes ->
+                                            shareSharedMobileEpubImage(
+                                                bytes,
+                                                image.suggestedDownloadFileName()
+                                            )
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
                     }
                 }
             }
@@ -1480,9 +2127,10 @@ fun SharedMobileEpubReaderScreen(
                                     requestId = navigationRequestId,
                                     readingMode = settings.readingMode
                                 ),
-                                highlights = activeTtsChunk?.let { chunk ->
-                                    highlights + chunk.toHighlight(localTts.progress.sessionId)
-                                } ?: highlights
+                                highlights = playbackHighlights,
+                                // Highlight placement uses the same chapter layout Android does, so a
+                                // repeated sentence resolves to one block on both platforms.
+                                chapterTextIndexes = chapterTextIndexes.value
                             )
                             // Android-benchmark page turn: single visible-step turns play the realistic
                             // page curl with the same tween(700) the Android pager snap uses; multi-page
@@ -1985,9 +2633,10 @@ fun SharedMobileEpubReaderScreen(
                                     requestId = navigationRequestId,
                                     readingMode = settings.readingMode
                                 ),
-                                highlights = activeTtsChunk?.let { chunk ->
-                                    highlights + chunk.toHighlight(localTts.progress.sessionId)
-                                } ?: highlights
+                                highlights = playbackHighlights,
+                                // Same chapter layout Android places highlights against, so scrolling
+                                // and paginating agree on where a highlight is.
+                                chapterTextIndexes = chapterTextIndexes.value
                             ),
                             readerFontFamily = readerFontFamily,
                             searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
@@ -2121,6 +2770,22 @@ fun SharedMobileEpubReaderScreen(
                         val highlightsApplyScript = remember(highlights) {
                             sharedMobileEpubHighlightsApplyScript(highlights)
                         }
+                        // The live playback band, in the same precedence the native surfaces use in
+                        // `playbackHighlights` above: media overlay first, then local read-aloud, then
+                        // cloud. They cannot both be live — the arbiter stops one engine to start the
+                        // other — so one `?:` decides which surface owns the highlight without a second
+                        // rule to keep in step. Cloud goes through the same bridge as the local engine
+                        // (Android parity), so the WebView paints a cloud chunk too.
+                        val playbackBandScript = remember(
+                            mediaOverlayProjection,
+                            activeTtsChunk,
+                            activeCloudTtsChunk,
+                        ) {
+                            sharedMobileEpubPlaybackBandScript(
+                                mediaOverlayProjection = mediaOverlayProjection,
+                                ttsLocator = (activeTtsChunk ?: activeCloudTtsChunk)?.toLocator()
+                            )
+                        }
                         val navigationScript = buildList {
                             commandScript?.let(::add)
                             (explicitNavigationLocator ?: currentLocator)?.let { locator ->
@@ -2129,11 +2794,21 @@ fun SharedMobileEpubReaderScreen(
                                         locator = locator,
                                         fragment = explicitNavigationFragment,
                                         targetChunkIndex = navigationChunkIndex,
-                                        targetChunkHtml = navigationChunkHtml
+                                        targetChunkHtml = navigationChunkHtml,
+                                        // No explicit target and no command means this
+                                        // script carries the reopen restore: land it
+                                        // exact only (never ratio/host_top against a
+                                        // still-settling document). Every user-initiated
+                                        // navigation keeps its approximate feedback.
+                                        preferExact = explicitNavigationLocator == null && commandScript == null
                                     )
                                 )
                             }
-                            add(sharedMobileEpubTtsNavigationScript(activeTtsChunk?.toLocator()))
+                            // Narration and read-aloud do **not** go here. A band moves several times a
+                            // second and none of those moves are navigations, so riding
+                            // `navigationScript` meant the paint was requested once per chapter load —
+                            // when the projection was still null — and never again. It is its own
+                            // channel below, applied whenever it changes.
                         }.joinToString(separator = "\n")
                         // Android parity (EpubReaderRenderSurfaces): shrink the WebView
                         // by the full PageInfo bar height instead of overlaying it, so the
@@ -2147,7 +2822,7 @@ fun SharedMobileEpubReaderScreen(
                                 isNativeVerticalMode = false
                             )
                         ) {
-                            SharedMobileEpubPageInfoBarContentHeight
+                            pageInfoBarContentHeight
                         } else {
                             0.dp
                         }
@@ -2194,6 +2869,7 @@ fun SharedMobileEpubReaderScreen(
                             navigationScript = navigationScript,
                             navigationRequestId = navigationRequestId,
                             highlightsApplyScript = highlightsApplyScript,
+                            playbackBandScript = playbackBandScript,
                             positionController = webViewPositionController,
                             streamPageLoader = streamPageLoader,
                             streamPageUnavailableLabel = streamPageUnavailableLabel,
@@ -2203,11 +2879,81 @@ fun SharedMobileEpubReaderScreen(
                                     "readerPointerActivity" -> {
                                         if (!(autoScrollMusicianMode && autoScrollModeActive)) showChrome = !showChrome
                                     }
-                                    "readerDragActivity" -> temporarilyPauseAutoScroll(300L)
+                                    "readerDragActivity" -> {
+                                        // A real scroll gesture is a takeover: the reader
+                                        // is the user's now, so stop dropping reports
+                                        // below the restore anchor. Autoscroll is
+                                        // JS-driven and never posts this.
+                                        clearRestoreAnchor("user_drag")
+                                        temporarilyPauseAutoScroll(300L)
+                                    }
+                                    // JS restore/scroll traces are invisible on iOS otherwise
+                                    // (bridge-or-gated-console only). Forward them while the
+                                    // restore guard is armed so a still-failing initial scroll
+                                    // can be diagnosed without drowning in scroll volume. The
+                                    // JS guard's own give-up/user-takeover events also release
+                                    // the Kotlin anchor: expiry means the anchor never became
+                                    // reachable, and a user gesture means the reader is theirs.
+                                    "readerDesktopPositionTraceLog" -> {
+                                        payload.sharedMobileEpubTraceMessageOrNull()?.let { trace ->
+                                            // Rare scroll-actor events are always worth one
+                                            // line, even after the guard resolved: a
+                                            // post-landing jump to the chapter top is
+                                            // invisible otherwise (the guard resolves on
+                                            // first confirmation while chunks/fonts still
+                                            // settle). Per-frame position payloads stay
+                                            // bounded to the armed restore window.
+                                            val alwaysForward = trace.contains("web_restore_") ||
+                                                trace.contains("web_scroll_to_locator_") ||
+                                                trace.contains("web_chunk_compensate") ||
+                                                trace.contains("web_navigation_") ||
+                                                trace.contains("web_fonts_ready")
+                                            if (restoreAnchor == null && !alwaysForward) return@let
+                                            logEpubPositionSave("event=js_restore_trace bookId=${book.id} trace=$trace")
+                                            if (restoreAnchor != null) {
+                                                when {
+                                                    trace.contains("guard_expired") ->
+                                                        // Hold the anchor: the document never
+                                                        // showed the restored text, so
+                                                        // accepting a report would persist
+                                                        // whatever the reader happens to
+                                                        // show (chapter start) over the
+                                                        // saved position. Reports below the
+                                                        // anchor stay dropped until the anchor
+                                                        // is reached or the user takes over.
+                                                        logEpubPositionSave(
+                                                            "event=restore_guard_expired_hold bookId=${book.id} " +
+                                                                "anchor=${restoreAnchor.epubPositionSummary()}"
+                                                        )
+                                                    trace.contains("guard_cleared") ->
+                                                        clearRestoreAnchor("js_guard_cleared")
+                                                }
+                                            }
+                                        }
+                                    }
                                     "readerPositionChanged" -> payload.sharedMobileEpubLocatorOrNull()?.let { position ->
                                         webViewPositionController.updateObservedLocator(position)
                                         val reportedChapter = position.chapterIndex
                                         if (reportedChapter == null || reportedChapter == currentChapterIndex) {
+                                            if (shouldDropPreRestoreBridgePosition(restoreAnchor, position)) {
+                                                logEpubPositionSave(
+                                                    "event=bridge_position_drop reason=pre_restore bookId=${book.id} " +
+                                                        "locator=${position.epubPositionSummary()} " +
+                                                        "anchor=${restoreAnchor.epubPositionSummary()}"
+                                                )
+                                                return@let
+                                            }
+                                            if (restoreAnchor != null) {
+                                                logEpubPositionSave(
+                                                    "event=restore_guard_resolved bookId=${book.id} " +
+                                                        "locator=${position.epubPositionSummary()}"
+                                                )
+                                                restoreAnchor = null
+                                            }
+                                            logEpubPositionSave(
+                                                "event=bridge_position_accept bookId=${book.id} " +
+                                                    "locator=${position.epubPositionSummary()} currentChapter=$currentChapterIndex"
+                                            )
                                             currentLocator = position
                                             currentPageIndex = (position.pageIndex ?: currentPageIndex).coerceIn(0, pageCount - 1)
                                             position.chapterIndex?.let { currentChapterIndex = it }
@@ -2225,8 +2971,17 @@ fun SharedMobileEpubReaderScreen(
                                             if (!(autoScroll && !autoScrollTemporarilyPaused)) {
                                                 commandScript = null
                                             }
+                                        } else {
+                                            logEpubPositionSave(
+                                                "event=bridge_position_drop reason=chapter_mismatch bookId=${book.id} " +
+                                                    "reportedChapter=$reportedChapter currentChapter=$currentChapterIndex " +
+                                                    "locator=${position.epubPositionSummary()}"
+                                            )
                                         }
-                                    }
+                                    } ?: logEpubPositionSave(
+                                        "event=bridge_position_unparseable bookId=${book.id} " +
+                                            "payloadChars=${payload.length} head=${payload.take(160)}"
+                                    )
                                     "readerChapterBoundary" -> when (payload.sharedMobileEpubDirectionOrNull()) {
                                         "previous" -> navigateChapter(-1)
                                         "next" -> navigateChapter(1)
@@ -2406,6 +3161,9 @@ fun SharedMobileEpubReaderScreen(
                         onOpenDictionarySettings = onOpenDictionarySettings,
                         onOpenAiHub = { showAiHub = true; onOpenAiHub() },
                         aiAvailable = readerAiAvailable,
+                        onExportAnnotations = onExportAnnotations?.let { export ->
+                            { export(book.copy(readerHighlights = highlights)) }
+                        },
                         readingMode = settings.readingMode,
                         rightToLeftPagination = settings.rightToLeftPagination,
                         useNativeVerticalRenderer = useNativeVerticalRenderer,
@@ -2432,31 +3190,27 @@ fun SharedMobileEpubReaderScreen(
                         localTtsState = localTts.state,
                         onLocalTtsToggle = {
                             when (localTts.state) {
-                                SharedMobileEpubLocalTtsState.IDLE -> loadedBook?.let { epub ->
+                                SharedMobileEpubLocalTtsState.IDLE -> loadedBook?.let {
+                                    if (ttsPlanJob?.isActive == true) {
+                                        println("[$ReaderTtsStartTag] ui localCancel bookId=${book.id}")
+                                        cancelTtsPlanning()
+                                        return@let
+                                    }
+                                    println("[$ReaderTtsStartTag] ui localToggle bookId=${book.id} page=$currentPageIndex mode=${settings.readingMode}")
                                     cloudTts?.stop()
-                                    val session = ReaderEngine().createSession(
-                                        book = epub,
-                                        settings = settings,
-                                        initialPageIndex = currentPageIndex,
-                                        initialLocator = currentLocator
-                                    )
-                                    localTts.start(
-                                        chunks = ReaderTtsPlanner.chunksFromCurrentLocation(session)
-                                            .ifEmpty { ReaderTtsPlanner.chunksForCurrentChapter(session) }
-                                            .withTtsReplacements(readerTtsReplacementPreferences, book.id),
-                                        bookTitle = epub.title,
-                                        bookId = book.id,
-                                    )
+                                    currentTtsChapterIndex()?.let { chapter -> startLocalTtsFromChapter(chapter) }
                                 }
                                 SharedMobileEpubLocalTtsState.SPEAKING -> localTts.pause()
                                 SharedMobileEpubLocalTtsState.PAUSED -> localTts.resume()
                             }
                         },
-                        onLocalTtsStop = localTts::stop,
+                        onLocalTtsStop = {
+                            cancelTtsPlanning(); localTts.stop()
+                        },
                         cloudTtsState = cloudTtsState,
                         cloudTtsAvailable = cloudTtsAvailable,
                         onCloudTtsToggle = ::toggleCloudTts,
-                        onCloudTtsStop = cloudTts?.let { controller -> { controller.stop() } } ?: {},
+                        onCloudTtsStop = cloudTts?.let { controller -> { cancelTtsPlanning(); controller.stop() } } ?: {},
                         keepScreenOn = keepScreenOn,
                         onKeepScreenOnChange = {
                             keepScreenOn = it
@@ -2474,6 +3228,15 @@ fun SharedMobileEpubReaderScreen(
                                 showChrome = !autoScrollMusicianMode
                             }
                         },
+                        // Android benchmark (EpubReaderControls.kt:406): offered only when the book
+                        // declares overlays *and* the platform can reach its archive, so a reader who
+                        // cannot hear the narration never sees a control for it.
+                        hasMediaOverlayNarration = sharedMediaOverlayIsOffered(
+                            index = loadedBook?.mediaOverlays,
+                            playButtonVisible = mediaOverlaySession != null
+                        ),
+                        isMediaOverlayActive = mediaOverlayPlaybackState.hasBook,
+                        onToggleMediaOverlay = ::toggleMediaOverlay,
                     )
                 }
                 if (loadedBook != null && pages.isNotEmpty()) {
@@ -2530,21 +3293,15 @@ fun SharedMobileEpubReaderScreen(
                             localTtsState = localTts.state,
                             onLocalTtsToggle = {
                                 when (localTts.state) {
-                                    SharedMobileEpubLocalTtsState.IDLE -> loadedBook?.let { epub ->
+                                    SharedMobileEpubLocalTtsState.IDLE -> loadedBook?.let {
+                                        if (ttsPlanJob?.isActive == true) {
+                                            println("[$ReaderTtsStartTag] ui localCancel bookId=${book.id}")
+                                            cancelTtsPlanning()
+                                            return@let
+                                        }
+                                        println("[$ReaderTtsStartTag] ui localToggle bookId=${book.id} page=$currentPageIndex mode=${settings.readingMode}")
                                         cloudTts?.stop()
-                                        val session = ReaderEngine().createSession(
-                                            book = epub,
-                                            settings = settings,
-                                            initialPageIndex = currentPageIndex,
-                                            initialLocator = currentLocator
-                                        )
-                                        localTts.start(
-                                            chunks = ReaderTtsPlanner.chunksFromCurrentLocation(session)
-                                                .ifEmpty { ReaderTtsPlanner.chunksForCurrentChapter(session) }
-                                                .withTtsReplacements(readerTtsReplacementPreferences, book.id),
-                                            bookTitle = epub.title,
-                                            bookId = book.id,
-                                        )
+                                        currentTtsChapterIndex()?.let { chapter -> startLocalTtsFromChapter(chapter) }
                                     }
                                     SharedMobileEpubLocalTtsState.SPEAKING -> localTts.pause()
                                     SharedMobileEpubLocalTtsState.PAUSED -> localTts.resume()
@@ -2553,19 +3310,62 @@ fun SharedMobileEpubReaderScreen(
                             cloudTtsState = cloudTtsState,
                             cloudTtsAvailable = cloudTtsAvailable,
                             onCloudTtsToggle = ::toggleCloudTts,
-                            onLocalTtsStop = localTts::stop,
-                            onCloudTtsStop = cloudTts?.let { controller -> { controller.stop() } } ?: {},
+                            onLocalTtsStop = {
+                            cancelTtsPlanning(); localTts.stop()
+                        },
+                            onCloudTtsStop = cloudTts?.let { controller -> { cancelTtsPlanning(); controller.stop() } } ?: {},
                         )
                     }
                     }
                 }
+                // Shared with the TTS overlay above: home-indicator inset the
+                // bottom chrome (and the cards floating over it) must clear.
+                val epubEffectiveBottomInset = if (!navigationUiHidden) {
+                    WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
+                } else {
+                    0.dp
+                }
+                // The bottom stack, derived once. The jump bar and the narration card are both
+                // overlays floating over the same chrome, so each needs the others' heights, and
+                // computing them in two places is how they came to overlap: the card was placed
+                // before the jump bar was, so the jump bar painted over its lower edge.
+                val epubBottomChromePadding = sharedMobileEpubBottomChromePadding(epubEffectiveBottomInset)
+                val epubJumpVisible = showChrome && !showSearch && jumpHistory.hasJumpTargets
+                val epubPageInfoBottomVisible = pageInfoVisible &&
+                    settings.pageInfoPosition == PageInfoPosition.BOTTOM
+                // PageInfo lives in the bottom Column directly above the
+                // toolbar, so overlays must clear it to avoid overlap.
+                val epubPageInfoReserve = if (epubPageInfoBottomVisible) {
+                    pageInfoBarContentHeight
+                } else {
+                    0.dp
+                }
                 // Android parity (EpubReaderScreen TTS overlay): session AND chrome
-                // gate, slide+fade with the shared 200ms spec, animated offset
-                // and alignment instead of snapping.
-                val epubTtsBottomOffset by animateDpAsState(
-                    targetValue = if (showChrome) (-52).dp else (-12).dp,
+                // gate, slide+fade with the shared 200ms spec, and bottom
+                // padding above the toolbar (inset + 45dp bar + 16dp gap) so
+                // the card never overlaps the bottom bar. The old fixed
+                // -52dp offset ignored the home-indicator inset.
+                val epubTtsBottomPadding by animateDpAsState(
+                    targetValue = if (showChrome) {
+                        epubEffectiveBottomInset + SharedReaderEpubBottomBarHeight + 16.dp
+                    } else {
+                        32.dp
+                    },
                     animationSpec = tween(motionPolicy.durationMillis(200)),
-                    label = "EpubTtsBottomOffset"
+                    label = "EpubTtsBottomPadding"
+                )
+                // The narration card's own lift. It shares the read-aloud overlay's numbers, which
+                // reserve for the toolbar alone, but it is taller and has to clear the jump bar and
+                // a bottom page info bar as well — so it gets the whole stack rather than a guess.
+                val epubNarrationBottomPadding by animateDpAsState(
+                    targetValue = sharedMobileEpubMediaOverlayBottomPadding(
+                        bottomChromePadding = epubBottomChromePadding,
+                        pageInfoReserve = epubPageInfoReserve,
+                        jumpBarVisible = epubJumpVisible,
+                        chromeVisible = showChrome
+                    ),
+                    animationSpec = tween(motionPolicy.durationMillis(200)),
+                    label = "EpubNarrationBottomPadding"
                 )
                 val epubTtsAlignBias by animateFloatAsState(
                     targetValue = readerTtsOverlayAlignmentBias(ttsOverlaySize),
@@ -2592,7 +3392,7 @@ fun SharedMobileEpubReaderScreen(
                         },
                         modifier = Modifier
                             .padding(horizontal = 12.dp)
-                            .offset(y = epubTtsBottomOffset)
+                            .padding(bottom = epubTtsBottomPadding)
                     )
                 }
                 AnimatedVisibility(
@@ -2618,14 +3418,51 @@ fun SharedMobileEpubReaderScreen(
                             },
                             modifier = Modifier
                                 .padding(horizontal = 12.dp)
-                                .offset(y = epubTtsBottomOffset),
+                                .padding(bottom = epubTtsBottomPadding),
+                            credits = aiCredits,
+                            walletMicros = walletMicros,
+                            walletMigrated = walletMigrated,
                         )
                     }
                 }
-                val epubEffectiveBottomInset = if (!navigationUiHidden) {
-                    WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
-                } else {
-                    0.dp
+                // The narration bar. Android parity (EpubReaderScreen.kt:5901): bottom-aligned,
+                // chrome-gated, the same composable on both platforms so the two cannot drift, and
+                // lifted clear of the jump bar and a bottom page info bar.
+                AnimatedVisibility(
+                    visible = mediaOverlayPlaybackState.hasBook && showChrome,
+                    enter = slideInVertically(animationSpec = tween(motionPolicy.durationMillis(200))) { it } + fadeIn(animationSpec = tween(motionPolicy.durationMillis(200))),
+                    exit = slideOutVertically(animationSpec = tween(motionPolicy.durationMillis(200))) { it } + fadeOut(animationSpec = tween(motionPolicy.durationMillis(200))),
+                    modifier = Modifier
+                        .align(BiasAlignment(1f, 1f))
+                        .padding(bottom = epubNarrationBottomPadding)
+                        .padding(horizontal = 16.dp)
+                ) {
+                    val session = mediaOverlaySession
+                    val clipCount = session?.clipCount ?: 0
+                    val clipIndex = mediaOverlayPlaybackState.clipIndex
+                    SharedMobileEpubMediaOverlayBar(
+                        title = loadedBook?.mediaOverlays?.narrator
+                            ?.takeIf { it.isNotBlank() }
+                            ?: readerString("media_overlay_title", "Narration"),
+                        subtitle = listOfNotNull(
+                            loadedBook?.mediaOverlays?.narrator?.takeIf { it.isNotBlank() },
+                            if (clipCount > 0) "${clipIndex + 1} / $clipCount" else null
+                        ).joinToString(" · "),
+                        isPlaying = mediaOverlayPlaybackState.isPlaying,
+                        isLoading = mediaOverlayPlaybackState.isLoading,
+                        speed = mediaOverlayPlaybackState.speed,
+                        canSkipPrevious = clipIndex > 0,
+                        canSkipNext = clipCount > 0 && clipIndex < clipCount - 1,
+                        onTogglePlayPause = { session?.togglePlayPause() },
+                        onPreviousClip = { session?.previousClip() },
+                        onNextClip = { session?.nextClip() },
+                        onSpeedSelected = { session?.setSpeed(it) },
+                        onStop = {
+                            session?.stop()
+                            onMediaOverlayStopped()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
                 // Android parity (EpubReaderScreen autoScrollPadding /
                 // autoScrollAlignmentBias): the overlay clears the bottom
@@ -2759,7 +3596,7 @@ fun SharedMobileEpubReaderScreen(
                     val pullIsPrevious = pullDirection == "previous"
                     val pullTopReserve = (if (showChrome) 55.dp else 0.dp) +
                         (if (pageInfoVisible && settings.pageInfoPosition == PageInfoPosition.TOP) {
-                            SharedMobileEpubPageInfoBarContentHeight
+                            pageInfoBarContentHeight
                         } else {
                             0.dp
                         })
@@ -2769,13 +3606,19 @@ fun SharedMobileEpubReaderScreen(
                         0.dp
                     }) +
                         (if (pageInfoVisible && settings.pageInfoPosition == PageInfoPosition.BOTTOM) {
-                            SharedMobileEpubPageInfoBarContentHeight
+                            pageInfoBarContentHeight
                         } else {
                             0.dp
                         })
+                    val pullReleaseLabel = if (pullIsPrevious) {
+                        readerString("release_for_previous_chapter", "Release for Previous Chapter")
+                    } else {
+                        readerString("release_for_next_chapter", "Release for Next Chapter")
+                    }
                     SharedMobileEpubChapterChangeIndicator(
                         direction = pullDirection.orEmpty(),
                         progress = pullProgress,
+                        releaseLabel = pullReleaseLabel,
                         modifier = Modifier
                             .align(if (pullIsPrevious) Alignment.TopCenter else Alignment.BottomCenter)
                             .then(
@@ -2887,18 +3730,9 @@ fun SharedMobileEpubReaderScreen(
                 // it, slider above the jump bar. Fixed 52/60.dp offsets ignored
                 // the home-indicator inset and overlapped when both bars showed,
                 // so derive the stack from the toolbar + safe inset like the
-                // benchmark (bottomPadding + 45.dp + jump).
-                val epubBottomChromePadding = sharedMobileEpubBottomChromePadding(epubEffectiveBottomInset)
-                val epubJumpVisible = showChrome && !showSearch && jumpHistory.hasJumpTargets
-                val epubPageInfoBottomVisible = pageInfoVisible &&
-                    settings.pageInfoPosition == PageInfoPosition.BOTTOM
-                // PageInfo lives in the bottom Column directly above the
-                // toolbar, so overlays must clear it to avoid overlap.
-                val epubPageInfoReserve = if (epubPageInfoBottomVisible) {
-                    SharedMobileEpubPageInfoBarContentHeight
-                } else {
-                    0.dp
-                }
+                // benchmark (bottomPadding + 45.dp + jump). The stack itself —
+                // chrome padding, jump visibility, page info reserve — is derived
+                // once above, so the narration card and this bar cannot disagree.
                 // Preserve the existing TTS/auto-scroll lift so the jump bar
                 // still clears the floating TTS controls.
                 val epubTtsLift = if (localTts.isSessionActive || autoScrollModeActive) 68.dp else 0.dp
@@ -3107,7 +3941,6 @@ fun SharedMobileEpubReaderScreen(
                 isMainTtsActive = localTts.isSessionActive,
                 ttsBookTitle = book.displayName,
                 onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
-                showUsageBadge = aiCredits != null,
                 walletMigrated = walletMigrated,
             )
         }
@@ -3142,10 +3975,42 @@ fun SharedMobileEpubReaderScreen(
             },
             onGenerateRecap = {
                 hubBook?.let { epub ->
-                    val recapText = epub.chapters.take(hubChapterIndex + 1)
-                        .joinToString("\n\n") { chapter -> chapter.plainText }
-                        .take(24_000)
-                    if (recapText.isNotBlank()) onAiAction(ReaderAiFeature.RECAP, recapText)
+                    val pastSections = epub.chapters.take(hubChapterIndex).mapIndexed { index, chapter ->
+                        ReaderRecapSection(
+                            title = chapter.title.takeIf { it.isNotBlank() } ?: "Chapter ${index + 1}",
+                            text = chapter.plainText,
+                        )
+                    }
+                    // Android parity (runRecap charsScrolled): the current
+                    // chapter slices at the reading position instead of
+                    // leaking post-position text into the recap. Falls back
+                    // to the full chapter when the locator is stale or blank.
+                    val currentChapterText = epub.chapters.getOrNull(hubChapterIndex)?.plainText.orEmpty()
+                    val positionOffset = currentLocator
+                        ?.takeIf { it.chapterIndex == hubChapterIndex }
+                        ?.let { it.charOffset ?: it.startOffset }
+                        ?.coerceIn(0, currentChapterText.length)
+                    val currentText = positionOffset
+                        ?.let { currentChapterText.take(it).ifBlank { currentChapterText } }
+                        ?: currentChapterText
+                    val chainedRecap = onAiRecapAction
+                    if (chainedRecap != null) {
+                        chainedRecap(
+                            ReaderRecapRequest(
+                                bookTitle = hubBookTitle,
+                                sectionIndex = hubChapterIndex,
+                                pastSections = pastSections,
+                                currentText = currentText,
+                                currentTitle = hubChapterTitle,
+                                summaryCache = summaryCache,
+                            )
+                        )
+                    } else if (currentText.isNotBlank() || pastSections.any { it.text.isNotBlank() }) {
+                        onAiAction(
+                            ReaderAiFeature.RECAP,
+                            (pastSections.map { it.text } + currentText).joinToString("\n\n").take(24_000),
+                        )
+                    }
                 }
             },
             onClearAiResult = { pendingSummarySave = null; onAiResultDismiss() },
@@ -3173,6 +4038,15 @@ fun SharedMobileEpubReaderScreen(
             aiCacheRevision++
         }
     }
+    // Android parity (executeRecapLogic cache backfill): chained recaps save
+    // past-chapter summaries into the shared cache, so refresh the hub's
+    // cache view when a recap finishes.
+    LaunchedEffect(readerExtrasState.aiResult.isLoading, readerExtrasState.aiResult.title) {
+        val result = readerExtrasState.aiResult
+        if (!result.isLoading && result.title == ReaderAiFeature.RECAP.displayName) {
+            aiCacheRevision++
+        }
+    }
     if (showTtsSettingsSheet) {
         SharedMobileReaderTtsSettingsSheet(
             tts = localTts,
@@ -3183,6 +4057,14 @@ fun SharedMobileEpubReaderScreen(
             cloudTtsVoiceId = cloudTtsVoiceId,
             onCloudTtsVoiceChange = onCloudTtsVoiceChange,
             onClearCloudTtsCache = onClearCloudTtsCache,
+            fishVoices = cloudFishVoices,
+            expectFishVoices = expectCloudFishVoices,
+            fishVoicesLoading = cloudFishVoicesLoading,
+            favoriteCloudVoiceIds = favoriteCloudVoiceIds,
+            onToggleFavoriteCloudVoice = onToggleFavoriteCloudVoice,
+            cloudVoiceLanguage = cloudVoiceLanguage,
+            onCloudVoiceLanguageChange = onCloudVoiceLanguageChange,
+            onClearCloudVoiceSamples = onClearCloudVoiceSamples,
         )
     }
     if (showBookReplacementsSheet) {

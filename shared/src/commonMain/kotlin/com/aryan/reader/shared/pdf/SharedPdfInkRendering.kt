@@ -25,20 +25,85 @@ fun sharedPdfIsInkDownAllowed(isStylusOnlyMode: Boolean, type: PointerType): Boo
 }
 
 /**
- * Android parity (PdfVerticalReader globalDrawingModifier).
+ * One sample of a stroke as it was reported by the platform, together with the
+ * event time the platform attached to it.
  *
- * Android starts an ink stroke on the pointer down: `onDrawStart` runs
- * immediately and the down is consumed, so a stroke never waits for the touch
- * slop and never starts from a stale position. It then feeds every pressed
- * position change into the stroke without checking whether something upstream
- * consumed that change (the shared renderer used to skip `isConsumed` changes,
- * which silently dropped mid-line movement and whole fast strokes on iOS).
- *
- * Keeping the rule in one place lets both platforms share the exact contract
- * and pins it with tests.
+ * Event times come from the pointer event itself (`HistoricalChange.uptimeMillis`
+ * on Android), not from the wall clock at handling time. A batched event can
+ * carry dozens of samples that are handled within the same millisecond, so
+ * stamping them on arrival collapses them onto one timestamp and destroys the
+ * velocity the fountain pen and pencil renderers derive from it.
  */
-fun sharedPdfInkStrokeConsumesMove(isPressed: Boolean, positionChanged: Boolean): Boolean =
-    isPressed && positionChanged
+data class SharedPdfInkSample(val position: Offset, val eventTimeMillis: Long)
+
+/**
+ * Offset that turns a pointer event's `uptimeMillis` into the epoch
+ * milliseconds [PdfPagePoint] stores: `origin + sample.eventTimeMillis`.
+ *
+ * Ink points are persisted as epoch milliseconds, so replaying a batch through
+ * this origin keeps sub-millisecond spacing between the samples of one stroke
+ * while leaving stored strokes comparable with ones drawn before.
+ */
+fun sharedPdfInkEventTimeOrigin(epochMillis: Long, uptimeMillis: Long): Long =
+    epochMillis - uptimeMillis
+
+/**
+ * Smallest gap, in screen pixels, kept between two samples of the same stroke.
+ *
+ * Sub-pixel samples do not change the rendered curve but each one costs a
+ * point record, so they are dropped as they arrive.
+ */
+const val SHARED_PDF_INK_MIN_SAMPLE_DISTANCE_PX = 0.75f
+
+/**
+ * Expands one pressed pointer change into every sample the change carries.
+ *
+ * Android coalesces many finger/stylus samples into a single batched
+ * `MotionEvent`. Compose surfaces all but the final sample through
+ * `PointerInputChange.historical` and leaves only that final sample in
+ * `position`, so a loop that reads `position` alone silently discards the rest
+ * of the batch. The discarded samples are exactly the ones that carried the
+ * curve: the survivors are joined by a chord, which is what turned handwriting
+ * into straight-line segments. The platform coalesces harder the longer the
+ * main thread is busy, which is why it only showed up on very heavy documents.
+ *
+ * Android parity (PdfVerticalReader `globalDrawingModifier`): a stroke starts on
+ * the pointer down, and every sample of every pressed change feeds it without
+ * checking whether something upstream consumed the change — gating on
+ * `isConsumed` is what used to stop iOS strokes mid-line when a parent gesture
+ * claimed the pointer. A change carries nothing to draw only when all of its
+ * samples fall within [minDistancePx] of what the stroke already has, which is
+ * why this returns the samples rather than a boolean.
+ *
+ * Samples come back in arrival order — historical first, then [current].
+ */
+fun sharedPdfInkSamplesForChange(
+    historical: List<SharedPdfInkSample>,
+    current: SharedPdfInkSample,
+    lastEmittedPosition: Offset? = null,
+    minDistancePx: Float = 0f,
+): List<SharedPdfInkSample> {
+    val minDistanceSq = minDistancePx * minDistancePx
+    val samples = ArrayList<SharedPdfInkSample>(historical.size + 1)
+    var previousPosition = lastEmittedPosition
+
+    fun append(candidate: SharedPdfInkSample) {
+        val position = candidate.position
+        if (!position.x.isFinite() || !position.y.isFinite()) return
+        val reference = previousPosition
+        if (reference != null && minDistanceSq > 0f) {
+            val dx = position.x - reference.x
+            val dy = position.y - reference.y
+            if (dx * dx + dy * dy <= minDistanceSq) return
+        }
+        samples.add(candidate)
+        previousPosition = position
+    }
+
+    historical.forEach { append(it) }
+    append(current)
+    return samples
+}
 
 sealed interface SharedPdfInkRenderData {
     data class Standard(

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<smil xmlns="http://www.w3.org/ns/SMIL" xmlns:epub="http://www.idpf.org/2007/ops" version="3.0">
+  <body>
+    <seq epub:textref="../chapters/chapter-02.xhtml" epub:type="bodymatter chapter">
+      <par id="chapter-two-delta">
+        <text src="../chapters/chapter-02.xhtml#search-target-delta"/>
+        <audio clipBegin="0:00:00.000" clipEnd="0:00:01.500" src="../audio/chapter-02.wav"/>
+      </par>
+      <par id="chapter-two-echo">
+        <text src="../chapters/chapter-02.xhtml#bookmark-target-echo"/>
+        <audio clipBegin="0:00:01.500" clipEnd="0:00:03.000" src="../audio/chapter-02.wav"/>
+      </par>
+    </seq>
+  </body>
+</smil>

@@ -257,6 +257,10 @@ internal fun CloudFolderMigrationRecoveryEntity.toModel(): CloudFolderMigrationR
  * best-effort, idempotent bridge: a failed copy must not cause the public
  * database migration to be skipped, and all imported values are protected by
  * the no-backup database on the next attempt.
+ *
+ * The columns the bridge imports stop existing the moment 31 -> 32 has run, so
+ * a public database that has already been upgraded is detected up front and
+ * skipped instead of being queried and failing on every process start.
  */
 internal object CloudFolderPrivateStateMigrator {
     fun importLegacyState(context: Context) {
@@ -274,18 +278,16 @@ internal object CloudFolderPrivateStateMigrator {
             return
         }
         try {
-            if (!hasTable(legacy, "cloud_folder_bindings") ||
-                !hasTable(legacy, "cloud_folder_outbox")
-            ) {
-                return
-            }
+            val hasBindingUris = hasColumn(legacy, "cloud_folder_bindings", "localUri")
+            val hasOutboxSources = hasColumn(legacy, "cloud_folder_outbox", "sourceUri")
+            if (!hasBindingUris && !hasOutboxSources) return
+
             val privateDatabase = CloudFolderPrivateDatabase.getDatabase(context)
             val target = privateDatabase.openHelper.writableDatabase
             target.beginTransaction()
             try {
-                val roots = readRoots(legacy)
-                copyBindings(legacy, target, roots)
-                copyOutboxSources(legacy, target)
+                if (hasBindingUris) copyBindings(legacy, target)
+                if (hasOutboxSources) copyOutboxSources(legacy, target)
                 target.setTransactionSuccessful()
             } finally {
                 target.endTransaction()
@@ -302,10 +304,12 @@ internal object CloudFolderPrivateStateMigrator {
     private fun copyBindings(
         legacy: SQLiteDatabase,
         target: androidx.sqlite.db.SupportSQLiteDatabase,
-        roots: Map<String, LegacyRootInfo>,
     ) {
         val columns = tableColumns(legacy, "cloud_folder_bindings")
+        if ("localUri" !in columns) return
         val accountExpression = if ("accountId" in columns) "accountId" else "'' AS accountId"
+        // Only rows that predate account scoping need the legacy root lookup.
+        val roots by lazy { readRoots(legacy) }
         legacy.rawQuery(
             "SELECT $accountExpression, rootId, deviceId, localUri FROM cloud_folder_bindings",
             null,
@@ -324,8 +328,8 @@ internal object CloudFolderPrivateStateMigrator {
                     val root = roots[rootId]
                     target.execSQL(
                         "INSERT OR REPLACE INTO cloud_folder_migration_recovery " +
-                            "(legacyRootId, legacyDeviceId, displayName, localUri, manifestRevision, createdAt) " +
-                            "VALUES (?, ?, ?, ?, ?, ?)",
+                            "(legacyRootId, legacyDeviceId, displayName, localUri, manifestRevision, " +
+                            "createdAt, state) VALUES (?, ?, ?, ?, ?, ?, ?)",
                         arrayOf<Any?>(
                             rootId,
                             deviceId,
@@ -333,6 +337,10 @@ internal object CloudFolderPrivateStateMigrator {
                             localUri,
                             root?.manifestRevision ?: 0L,
                             root?.updatedAt ?: System.currentTimeMillis(),
+                            // The table has no column default, so the state has to
+                            // travel with the row rather than rely on the entity's
+                            // constructor default.
+                            CloudFolderMigrationRecoveryEntity.STATE_PENDING,
                         ),
                     )
                 } else if (localUri != null) {
@@ -408,6 +416,14 @@ internal object CloudFolderPrivateStateMigrator {
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
             arrayOf(tableName),
         ).use { it.moveToFirst() }
+
+    /**
+     * True when [table] still exists and still carries [column].  The columns
+     * this bridge imports only survive until 31 -> 32, so their absence means
+     * the public database has already been upgraded and has nothing to copy.
+     */
+    private fun hasColumn(database: SQLiteDatabase, table: String, column: String): Boolean =
+        hasTable(database, table) && column in tableColumns(database, table)
 
     private fun tableColumns(database: SQLiteDatabase, tableName: String): Set<String> =
         database.rawQuery("PRAGMA table_info(`$tableName`)", null).use { cursor ->

@@ -1,5 +1,7 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.ui.graphics.isSpecified
+import com.aryan.reader.shared.BuiltInReaderThemes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -149,6 +151,31 @@ class SharedNativePaginatedPageTurnTest {
     fun `paper darkness drives the flap tint like the android dark theme flag`() {
         assertFalse(sharedReaderPaperIsDark(androidx.compose.ui.graphics.Color.White))
         assertTrue(sharedReaderPaperIsDark(androidx.compose.ui.graphics.Color(0xFF1C1B1F)))
+    }
+
+    /**
+     * Parity item B1, the page-curl ink polarity.
+     *
+     * Android's `realisticBookPage` takes an `isDarkTheme` flag; shared derives `isDarkPaper` from
+     * the paper colour. Those only agree if every theme's stored `isDark` matches its own background
+     * luminance, because `effectiveBg` is `activeTheme.backgroundColor` and the crease, sheen,
+     * flap tint and fold line are all *ink on that paper*.
+     *
+     * This pins the invariant on the shared side rather than asserting it in prose: a theme whose
+     * `isDark` disagrees with its own background would draw light ink on dark paper (or the
+     * reverse), and the divergence would be invisible on either platform until someone turned a
+     * page. Custom themes are excluded — they are built with
+     * `isDark = backgroundColor.luminance() < 0.5f` at creation, which is the same predicate
+     * `sharedReaderPaperIsDark` uses, so they cannot disagree by construction. The `system` theme is
+     * excluded because its colours are `Unspecified` and resolved per-platform from the OS setting.
+     */
+    @Test
+    fun `every built-in theme flags itself dark exactly when its paper is dark`() {
+        val disagreeing = BuiltInReaderThemes
+            .filter { it.id != "system" && it.backgroundColor.isSpecified }
+            .filter { it.isDark != sharedReaderPaperIsDark(it.backgroundColor) }
+            .map { it.id }
+        assertEquals(emptyList(), disagreeing)
     }
 
     @Test

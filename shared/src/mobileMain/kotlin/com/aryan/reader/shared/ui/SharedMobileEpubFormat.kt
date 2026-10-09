@@ -50,7 +50,6 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -116,6 +115,7 @@ import com.aryan.reader.shared.toAndroidEpubFormatSliderValues
 import com.aryan.reader.shared.withAndroidEpubFormatSliderValue
 import com.aryan.reader.shared.reader.ReaderPageInfo
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
+import com.aryan.reader.shared.ReaderPageInfoTitleMinSideReserve
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.isTwoPageSpreadEnabled
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -192,7 +192,7 @@ internal fun SharedMobileEpubFormatSheet(
                         Text(if (isLocalMode) "Local Format" else "Global Format", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                         Icon(Icons.Default.ArrowDropDown, contentDescription = readerString("format_select_mode", "Select format mode"), tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                     }
-                    DropdownMenu(expanded = showModeMenu, onDismissRequest = { showModeMenu = false }) {
+                    SharedDropdownMenu(expanded = showModeMenu, onDismissRequest = { showModeMenu = false }) {
                         DropdownMenuItem(text = { Column { Text(readerString("format_global", "Global Format"), fontWeight = FontWeight.Bold); Text(
                                     readerString("auto_scroll_desc_global", "Applies to all files"),
                                     style = MaterialTheme.typography.bodySmall,
@@ -841,20 +841,11 @@ internal fun SharedMobileEpubThemeGridItem(
     }
 }
 
-/**
- * Content height of the shared mobile PageInfo bar.
- *
- * Android benchmark ([PAGE_INFO_BAR_HEIGHT]) adds a rounded-corner allowance on
- * top of this; the safe-area background extension below covers the iOS home
- * indicator and curved corners instead of growing the content row.
- */
-internal val SharedMobileEpubPageInfoBarContentHeight = 25.dp
-
 /** Common log tag for PageInfo-bar clipping diagnosis on iOS and Android. */
 internal const val ReaderPageInfoBarDiagTag = "ReaderPageInfoBar"
 
 /** Bump when the bar layout changes, so logs prove which code produced them. */
-internal const val ReaderPageInfoBarDiagRevision = 8
+internal const val ReaderPageInfoBarDiagRevision = 9
 
 /**
  * Bottom safe padding owned by the PageInfo bar (single source of truth).
@@ -868,9 +859,13 @@ internal fun rememberSharedMobileEpubPageInfoBottomPad(
     pageInfoPosition: PageInfoPosition,
     applySystemBarsInsets: Boolean
 ): Dp {
+    // Vertical space the bottom pad has to give back because the corner curve
+    // already covers it; the larger side governs a single shared bottom value.
+    val cornerClearance = sharedMobileEpubPageInfoCornerClearance()
     val safeBottom = WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
     return if (applySystemBarsInsets && pageInfoPosition == PageInfoPosition.BOTTOM) {
-        (safeBottom - sharedMobileEpubPageInfoCornerClearance).coerceAtLeast(0.dp)
+        (safeBottom - maxOf(cornerClearance.start, cornerClearance.end))
+            .coerceAtLeast(0.dp)
     } else {
         0.dp
     }
@@ -891,9 +886,13 @@ internal fun rememberSharedMobileEpubPageInfoBottomPad(
 internal fun rememberSharedMobileEpubPageInfoMaxBottomPad(
     pageInfoPosition: PageInfoPosition
 ): Dp {
+    // Vertical space the bottom pad has to give back because the corner curve
+    // already covers it; the larger side governs a single shared bottom value.
+    val cornerClearance = sharedMobileEpubPageInfoCornerClearance()
     val safeBottom = WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
     return if (pageInfoPosition == PageInfoPosition.BOTTOM) {
-        (safeBottom - sharedMobileEpubPageInfoCornerClearance).coerceAtLeast(0.dp)
+        (safeBottom - maxOf(cornerClearance.start, cornerClearance.end))
+            .coerceAtLeast(0.dp)
     } else {
         0.dp
     }
@@ -919,7 +918,7 @@ internal fun SharedMobileEpubPageInfo(
     }
     val foreground = settings.readerTextColor().copy(alpha = 0.8f)
     val texture = sharedMobileEpubTextureBitmap(settings.textureId)
-    val clockTime = rememberReaderClockTime()
+    val clockTime = rememberSharedReaderClockTime()
     val positionText = spreadPositionLabel
         ?: pageInfo?.let { "${it.currentPageInChapter}" }
     val centerLabel = if (pageInfo != null && positionText != null) {
@@ -939,8 +938,17 @@ internal fun SharedMobileEpubPageInfo(
     val containerSize = LocalWindowInfo.current.containerSize
     val safeDrawing = WindowInsets.safeDrawing.asPaddingValues()
     val cutout = WindowInsets.displayCutout.asPaddingValues()
-    val sidePadding = 16.dp + sharedMobileEpubPageInfoCornerClearance
-    val centerReserve = 48.dp + sharedMobileEpubPageInfoCornerClearance
+    // Measured rounded-corner clearance (see the platform declaration): the
+    // bar's edge-pinned clock and percentage are the only thing at the very edge,
+    // so they are what the corner curve can clip.
+    val cornerClearance = sharedMobileEpubPageInfoCornerClearance()
+    val sidePadding = SharedReaderPageInfoBarSidePadding +
+        maxOf(cornerClearance.start, cornerClearance.end)
+    // The title's own inset is measured per side label now (see
+    // SharedReaderPageInfoBarRow), so this only logs the floor it can never go
+    // below. Kept in the diagnostic because it is the number the old fixed
+    // 48.dp layout used.
+    val centerReserve = ReaderPageInfoTitleMinSideReserve
     // Hug the bottom edge a little closer than the full safe inset so the bar
     // doesn't float high above it; the same corner room keeps the content clear
     // of the home indicator and the curve. Android clearance is 0.dp, so its
@@ -958,7 +966,7 @@ internal fun SharedMobileEpubPageInfo(
         writeSharedReaderDiagnostic(
             ReaderPageInfoBarDiagTag,
             "config rev=$ReaderPageInfoBarDiagRevision pos=$pageInfoPosition applyInsets=$applySystemBarsInsets " +
-                "clearance=$sharedMobileEpubPageInfoCornerClearance sidePad=$sidePadding " +
+                "clearance=$cornerClearance sidePad=$sidePadding " +
                 "centerReserve=$centerReserve density=${density.density} " +
                 "fontScale=${density.fontScale} container=$containerSize orient=$orientation " +
                 "safeDrawing=l${safeDrawing.calculateLeftPadding(LayoutDirection.Ltr)}" +
@@ -1033,39 +1041,37 @@ internal fun SharedMobileEpubPageInfo(
             },
         contentAlignment = Alignment.Center
     ) {
+        val contentHeight = sharedMobileEpubPageInfoBarContentHeight()
         Box(
-            Modifier.fillMaxWidth().height(SharedMobileEpubPageInfoBarContentHeight)
+            Modifier.fillMaxWidth().height(contentHeight)
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
-                .padding(horizontal = 16.dp + sharedMobileEpubPageInfoCornerClearance),
-            contentAlignment = Alignment.Center
+                .padding(
+                    start = SharedReaderPageInfoBarSidePadding + cornerClearance.start,
+                    end = SharedReaderPageInfoBarSidePadding + cornerClearance.end
+                )
         ) {
-            Text(
-                centerLabel,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodySmall,
+            // Shared row: measures the clock and percentage, then gives the title
+            // exactly the gap left between them (shrinking and wrapping to two
+            // lines before it ellipsizes). Android uses the same row, so the two
+            // platforms cannot drift apart here.
+            SharedReaderPageInfoBarRow(
+                clockText = clockTime,
+                titleText = centerLabel,
+                progressText = "${formatReaderProgress(progressPercent)}%",
                 color = foreground,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 48.dp + sharedMobileEpubPageInfoCornerClearance)
-            )
-            Text(
-                clockTime,
-                style = MaterialTheme.typography.bodySmall,
-                color = foreground,
-                modifier = Modifier.align(Alignment.CenterStart)
-            )
-            Text(
-                "${formatReaderProgress(progressPercent)}%",
-                style = MaterialTheme.typography.bodySmall,
-                color = foreground,
-                modifier = Modifier.align(Alignment.CenterEnd)
+                contentHeight = contentHeight,
+                modifier = Modifier.fillMaxSize()
             )
         }
     }
 }
 
+/**
+ * Reader page-info clock, re-aligned to the minute. Honours the platform's
+ * 12/24-hour setting via `formatSharedMobileClockTime`.
+ */
 @Composable
-internal fun rememberReaderClockTime(): String {
+fun rememberSharedReaderClockTime(): String {
     var currentTimeMillis by remember { mutableLongStateOf(currentTimestamp()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -1090,13 +1096,25 @@ internal fun Long.hasDarkReaderBackground(): Boolean {
     return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0) < 0.5
 }
 
+/**
+ * Pull-to-turn chapter affordance shown while dragging toward the previous or
+ * next chapter.
+ *
+ * @param releaseLabel localized "release to turn" caption, supplied by the host
+ *   so the string is translated (Android passes `R.string.release_for_*`).
+ */
 @Composable
-internal fun SharedMobileEpubChapterChangeIndicator(direction: String, progress: Float, modifier: Modifier = Modifier) {
+fun SharedMobileEpubChapterChangeIndicator(
+    direction: String,
+    progress: Float,
+    releaseLabel: String,
+    modifier: Modifier = Modifier
+) {
     val alpha = (progress * 1.5f).coerceIn(0f, 1f)
     if (alpha <= 0.1f) return
     Surface(
         modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp).graphicsLayer { this.alpha = alpha },
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.5f),
         contentColor = MaterialTheme.colorScheme.inverseOnSurface,
         tonalElevation = 4.dp
@@ -1110,9 +1128,10 @@ internal fun SharedMobileEpubChapterChangeIndicator(direction: String, progress:
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                if (progress >= 1f) if (direction == "previous") "Release for previous chapter" else "Release for next chapter" else "Pull further... (${(progress * 100).toInt()}%)",
+                if (progress >= 1f) releaseLabel else "Pull further... (${(progress * 100).toInt()}%)",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.inverseOnSurface
+                color = MaterialTheme.colorScheme.inverseOnSurface,
+                textAlign = TextAlign.Center
             )
         }
     }

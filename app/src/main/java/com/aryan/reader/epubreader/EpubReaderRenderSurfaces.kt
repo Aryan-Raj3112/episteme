@@ -182,6 +182,8 @@ import com.aryan.reader.paginatedreader.LocatorConverter
 import com.aryan.reader.paginatedreader.NativeVerticalLocation
 import com.aryan.reader.paginatedreader.NativeVerticalReaderScreen
 import com.aryan.reader.paginatedreader.PaginatedReaderScreen
+import com.aryan.reader.paginatedreader.rememberChapterHighlightIndexes
+import com.aryan.reader.paginatedreader.resolveWebViewHighlightAnchor
 import com.aryan.reader.paginatedreader.ParagraphBlock
 import com.aryan.reader.paginatedreader.QuoteBlock
 import com.aryan.reader.paginatedreader.TextContentBlock
@@ -219,6 +221,7 @@ import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.findEpubBookmarkForLocation
 import com.aryan.reader.shared.reader.MobileEpubReaderBackAction
 import com.aryan.reader.shared.reader.ReaderJumpHistory
+import com.aryan.reader.shared.reader.SharedPlaybackFragment
 import com.aryan.reader.shared.reader.mobileEpubChapterScrollFraction
 import com.aryan.reader.shared.reader.mobileEpubCharacterDisplayProgress
 import com.aryan.reader.shared.reader.mobileEpubCharacterProgress
@@ -227,6 +230,7 @@ import com.aryan.reader.shared.ui.SharedMobileReaderDrawer
 import com.aryan.reader.shared.ui.SharedMobileReaderRecoveryGate
 import com.aryan.reader.shared.ui.SharedMobileReaderScaffold
 import com.aryan.reader.shared.ui.rememberReaderMotionPolicy
+import com.aryan.reader.shared.ui.SharedMobileEpubChapterChangeIndicator
 import com.aryan.reader.shouldRenderReaderSlider
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsController
@@ -235,7 +239,7 @@ import com.aryan.reader.tts.loadReaderTtsOverlaySize
 import com.aryan.reader.tts.loadTtsMode
 import com.aryan.reader.tts.readerTtsOverlayAlignmentBias
 import com.aryan.reader.tts.saveReaderTtsOverlaySize
-import com.aryan.reader.tts.splitTextIntoChunks
+import com.aryan.reader.tts.splitTextIntoChunksWithSourceOffsets
 import com.aryan.reader.withTtsReplacements
 import java.io.File
 import kotlin.math.ceil
@@ -298,6 +302,7 @@ internal fun EpubReaderRenderSurfaces(
     isSavingAndExitingState: MutableState<Boolean>,
     isSummarizationLoadingState: MutableState<Boolean>,
     isSwitchingToPaginatedState: MutableState<Boolean>,
+    isVerticalRestoreSettledState: MutableState<Boolean>,
     lastHighlightClickTimeState: MutableState<Long>,
     lastKnownLocatorState: MutableState<Locator?>,
     lastScrollHideTimeState: MutableState<Long>,
@@ -366,6 +371,14 @@ internal fun EpubReaderRenderSurfaces(
     currentChapterInPaginatedMode: Int?,
     latestChapterIndex: Int,
     ttsState: TtsPlaybackManager.TtsState,
+    /**
+     * The fragment media overlay narration is currently speaking, when a narrated book is playing.
+     *
+     * Folded into the same parameter the surfaces already paint read-aloud with instead of adding
+     * a second one: arbitration stops one engine when the other starts, so there is never more than
+     * one live position, and the band inherits read-aloud's paint-only, never-tappable semantics.
+     */
+    mediaOverlayFragment: SharedPlaybackFragment? = null,
     ttsController: TtsController,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
     totalPagesInCurrentChapter: Int,
@@ -415,6 +428,7 @@ internal fun EpubReaderRenderSurfaces(
     var isSavingAndExiting by isSavingAndExitingState
     var isSummarizationLoading by isSummarizationLoadingState
     var isSwitchingToPaginated by isSwitchingToPaginatedState
+    var isVerticalRestoreSettled by isVerticalRestoreSettledState
     var lastHighlightClickTime by lastHighlightClickTimeState
     var lastKnownLocator by lastKnownLocatorState
     var lastScrollHideTime by lastScrollHideTimeState
@@ -457,6 +471,54 @@ internal fun EpubReaderRenderSurfaces(
     val onDictionaryLookup: (String)->Unit = { p0 -> onDictionaryLookupFn(p0) }
     val onUpdateHighlightPalette: (Int, Int) -> Unit = { p0, p1 -> onUpdateHighlightPaletteFn(p0, p1) }
     val runRecap: (Int, Int) -> Unit = { p0, p1 -> runRecapFn(p0, p1) }
+
+    /**
+     * Writes back locators that a paginated surface corrected in place.
+     *
+     * A highlight stored before the reader had a usable coordinate space points at the wrong place,
+     * and only the chapter's own text can say where. The surfaces decide *what* the correction is;
+     * this applies it to the live list, which is what gets persisted, so the correction survives the
+     * book being closed. Entries are replaced by id and only when they actually differ, so a
+     * no-op pass does not mark every highlight dirty.
+     */
+    val onHighlightsRepaired: (List<UserHighlight>) -> Unit = { repaired ->
+        var changed = false
+        repaired.forEach { updated ->
+            val index = userHighlights.indexOfFirst { it.id == updated.id }
+            if (index >= 0 && userHighlights[index] != updated) {
+                userHighlights[index] = updated
+                changed = true
+            }
+        }
+        if (changed) {
+            Timber.tag("HighlightDiag").d(
+                "repair_applied highlights=${userHighlights.size}"
+            )
+        }
+    }
+
+    // One set of chapter indexes for the whole reader, shared by every surface.
+    //
+    // A highlight made in the WebView carries only its selected text, so any other surface has to
+    // resolve that text against the whole chapter before it can be placed — and resolving needs the
+    // chapter's blocks, which come from the paginator. The paginator does not exist in WebView mode,
+    // so this runs where it does exist and is keyed on it: the first pass can legitimately find no
+    // blocks, and re-running when the paginator appears is what turns a highlight that was invisible
+    // everywhere into one that is anchored once and placed everywhere.
+    val chapterHighlightIndexes = rememberChapterHighlightIndexes(
+        highlights = userHighlights,
+        chapterBlocks = { chapterIndex -> paginator?.getChapterTextBlocks(chapterIndex) },
+        onHighlightsRepaired = onHighlightsRepaired
+    )
+
+    // The one live playback band, shared by every surface below. A media overlay wins when it has
+    // one, because it is the engine that is actually playing — read-aloud was stopped when it
+    // started and its last chunk is history, not a position.
+    val activePlaybackFragment = mediaOverlayFragment ?: SharedPlaybackFragment.ofLength(
+        blockCfi = ttsState.sourceCfi,
+        startAbs = ttsState.startOffsetInSource,
+        length = ttsState.currentText?.length ?: 0
+    ).takeIf { ttsState.currentText != null && ttsState.sourceCfi != null && ttsState.startOffsetInSource != -1 }
 
                 when (currentRenderMode) {
                     RenderMode.VERTICAL_SCROLL -> {
@@ -506,11 +568,8 @@ internal fun EpubReaderRenderSurfaces(
                                     bookReplacementFileId = bookId,
                                     activeHighlightPalette = currentHighlightPalette,
                                     onUpdatePalette = onUpdateHighlightPalette,
-                                    ttsHighlightInfo = TtsHighlightInfo(
-                                        text = ttsState.currentText ?: "",
-                                        cfi = ttsState.sourceCfi ?: "",
-                                        offset = ttsState.startOffsetInSource
-                                    ).takeIf { ttsState.currentText != null && ttsState.sourceCfi != null && ttsState.startOffsetInSource != -1 },
+                                    chapterHighlightIndexes = chapterHighlightIndexes,
+                                    ttsHighlightInfo = activePlaybackFragment,
                                     activeTextureId = activeTextureId,
                                     activeTextureAlpha = activeTextureAlpha,
                                     initialLocator = lastKnownLocator,
@@ -645,7 +704,7 @@ internal fun EpubReaderRenderSurfaces(
                                     },
                                     onHighlightDeleted = { cfi ->
                                         userHighlights.find { it.cfi == cfi }?.let { userHighlights.remove(it) }
-                                    }
+                                    },
                                 )
                             } else {
                                 AnimatedContent(
@@ -816,8 +875,12 @@ internal fun EpubReaderRenderSurfaces(
                                         val baseUrl =
                                             "file://${epubBook.extractionBasePath}/$chapterDirectoryPath/"
 
-                                        val topPaddingPx =
-                                            with(LocalDensity.current) { 16.dp.toPx() }
+                                        // The page lays its CSS pixels out one per dp, so the number
+                                        // the page reads is the dp value itself. Dp.toPx() scales by
+                                        // the display density, which hands the page a reading-area
+                                        // top several times too large and pushes every line lookup
+                                        // below the first lines of the chapter.
+                                        val topPaddingCssPx = 16.dp.value
 
                                         var isWebViewReady by remember(chapterKeyForWebView) {
                                             mutableStateOf(
@@ -897,6 +960,20 @@ internal fun EpubReaderRenderSurfaces(
                                                 if (navigation.pendingNoteForNewHighlight) {
                                                     navigation.pendingNoteForNewHighlight = false
                                                     navigation.highlightToNoteCfi = finalCfi
+                                                }
+                                                // Resolve the stored text into absolute offsets and write them
+                                                // back. Without them the highlight can only be placed by
+                                                // searching text, which loses multi-paragraph selections and
+                                                // duplicates repeated sentences. Persisting the offsets lets the
+                                                // paginated surfaces place it exactly and never re-search.
+                                                scope.launch {
+                                                    val created = userHighlights.lastOrNull { it.cfi == finalCfi }
+                                                    val chapterBlocks =
+                                                        paginator?.getChapterTextBlocks(currentChapterIndex)
+                                                    resolveWebViewHighlightAnchor(created, chapterBlocks)?.let { resolved ->
+                                                        val index = userHighlights.indexOfFirst { it.id == resolved.id }
+                                                        if (index >= 0) userHighlights[index] = resolved
+                                                    }
                                                 }
                                             },
                                             onNoteRequested = { cfi ->
@@ -1318,7 +1395,7 @@ internal fun EpubReaderRenderSurfaces(
                                                     )
                                                 }
                                                 webView.evaluateJavascript(
-                                                    "javascript:window.setViewportPadding(${topPaddingPx}, 0);",
+                                                    "javascript:window.setViewportPadding(${topPaddingCssPx}, 0);",
                                                     null
                                                 )
                                             },
@@ -1330,6 +1407,12 @@ internal fun EpubReaderRenderSurfaces(
                                             onScrollFinished = { success ->
                                                 Timber.tag("BookmarkDiagnosis").d("Scroll finished callback. Success: $success")
                                                 navigation.isNavigatingToPosition = false
+                                                if (!isVerticalRestoreSettled) {
+                                                    Timber.tag(TAG_EPUB_VERTICAL_OPEN_DIAG).d(
+                                                        "restore_settled chapter=$targetChapterIndex success=$success"
+                                                    )
+                                                    isVerticalRestoreSettled = true
+                                                }
                                             },
                                             ttsScope = scope,
                                             onTtsTextReady = { jsonString ->
@@ -1348,18 +1431,22 @@ internal fun EpubReaderRenderSurfaces(
                                                             Timber.tag("TTS_LIST_DIAG").d("Processing Chunk[$i]: text='${text.take(40)}...' cfi='$cfi'")
                                                             val baseOffset = jsonObject.optInt("startOffset", 0)
 
+                                                            // The document reports where its text
+                                                            // starts, so every sub-chunk is placed
+                                                            // relative to that instead of by
+                                                            // accumulating lengths, which skips the
+                                                            // whitespace the split removed.
                                                             val subChunks =
-                                                                splitTextIntoChunks(text)
-                                                            var currentOffset = baseOffset
+                                                                splitTextIntoChunksWithSourceOffsets(text)
                                                             for (subChunk in subChunks) {
                                                                 ttsChunks.add(
                                                                     TtsChunk(
-                                                                        text = subChunk,
+                                                                        text = subChunk.text,
                                                                         sourceCfi = cfi,
-                                                                        startOffsetInSource = currentOffset
+                                                                        startOffsetInSource =
+                                                                            baseOffset + subChunk.startOffsetInSource
                                                                     )
                                                                 )
-                                                                currentOffset += subChunk.length
                                                             }
                                                         }
 
@@ -1688,10 +1775,10 @@ internal fun EpubReaderRenderSurfaces(
                                 }
 
                                 if (prefs.pullToTurnEnabled && currentChapterIndex > 0) {
-                                    ChapterChangeIndicator(
-                                        text = stringResource(R.string.release_for_previous_chapter),
+                                    SharedMobileEpubChapterChangeIndicator(
+                                        direction = "previous",
                                         progress = pullToPrevProgress,
-                                        isPullingDown = true,
+                                        releaseLabel = stringResource(R.string.release_for_previous_chapter),
                                         modifier = Modifier
                                             .align(Alignment.TopCenter)
                                             .padding(top = 8.dp)
@@ -1699,10 +1786,10 @@ internal fun EpubReaderRenderSurfaces(
                                 }
 
                                 if (prefs.pullToTurnEnabled && currentChapterIndex < chapters.size - 1) {
-                                    ChapterChangeIndicator(
-                                        text = stringResource(R.string.release_for_next_chapter),
+                                    SharedMobileEpubChapterChangeIndicator(
+                                        direction = "next",
                                         progress = pullToNextProgress,
-                                        isPullingDown = false,
+                                        releaseLabel = stringResource(R.string.release_for_next_chapter),
                                         modifier = Modifier
                                             .align(Alignment.BottomCenter)
                                             .padding(bottom = 8.dp)
@@ -1753,11 +1840,7 @@ internal fun EpubReaderRenderSurfaces(
                                 activeHighlightPalette = currentHighlightPalette,
                                 onUpdatePalette = onUpdateHighlightPalette,
                                 isPageTurnAnimationEnabled = prefs.isPageTurnAnimationEnabled,
-                                ttsHighlightInfo = TtsHighlightInfo(
-                                    text = ttsState.currentText ?: "",
-                                    cfi = ttsState.sourceCfi ?: "",
-                                    offset = ttsState.startOffsetInSource
-                                ).takeIf { ttsState.currentText != null && ttsState.sourceCfi != null && ttsState.startOffsetInSource != -1 },
+                                ttsHighlightInfo = activePlaybackFragment,
                                 activeTextureId = activeTextureId,
                                 activeTextureAlpha = activeTextureAlpha,
                                 initialChapterIndexInBook = lastKnownLocator?.chapterIndex,
@@ -1956,7 +2039,8 @@ internal fun EpubReaderRenderSurfaces(
                                             "delete_request cfi=$cfi matchedId=null beforeCount=$beforeCount"
                                         )
                                     }
-                                }
+                                },
+                                chapterHighlightIndexes = chapterHighlightIndexes
                             )
                             if (!isPagerInitialized) {
                                 Box(

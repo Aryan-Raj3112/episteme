@@ -32,10 +32,11 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest.Builder
-import com.aryan.reader.epubreader.TtsHighlightInfo
 import com.aryan.reader.epubreader.UserHighlight
 import java.io.File
 import timber.log.Timber
+import com.aryan.reader.shared.reader.SharedPlaybackFragment
+import com.aryan.reader.shared.reader.sharedPlaybackFragmentRangeInBlock
 
 /**
  * Native vertical-rl (`tategaki`) page renderer for paginated EPUB chapters.
@@ -63,9 +64,11 @@ internal fun VerticalPageContent(
     hideImages: Boolean,
     searchQuery: String,
     searchHighlightColor: Color,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     ttsHighlightColor: Color,
     pageUserHighlights: List<UserHighlight>,
+    highlightRangesByBlock: Map<Int, Map<String, List<IntRange>>>,
+    highlightById: Map<String, UserHighlight>,
     fallbackTextColor: Color,
     onLinkClick: (String) -> Unit,
     onGeneralTap: (Offset) -> Unit,
@@ -104,6 +107,8 @@ internal fun VerticalPageContent(
                                 ttsHighlightInfo = ttsHighlightInfo,
                                 ttsHighlightColor = ttsHighlightColor,
                                 pageUserHighlights = pageUserHighlights,
+                                highlightRangesByBlock = highlightRangesByBlock,
+                                highlightById = highlightById,
                                 fallbackTextColor = fallbackTextColor,
                                 onLinkClick = onLinkClick,
                                 onGeneralTap = onGeneralTap,
@@ -151,14 +156,18 @@ private fun VerticalPageTextBlock(
     spaceBeforePx: Float,
     searchQuery: String,
     searchHighlightColor: Color,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     ttsHighlightColor: Color,
     pageUserHighlights: List<UserHighlight>,
+    highlightRangesByBlock: Map<Int, Map<String, List<IntRange>>>,
+    highlightById: Map<String, UserHighlight>,
     fallbackTextColor: Color,
     onLinkClick: (String) -> Unit,
     onGeneralTap: (Offset) -> Unit,
     onHighlightClick: (UserHighlight) -> Unit
 ) {
+    // Ranges are in each block's own coordinates, so the page-wide map is narrowed here.
+    val highlightRanges = highlightRangesByBlock[block.blockIndex].orEmpty()
     val params = remember(block, textStyle, pageHeightPx) {
         block.verticalContentParams(
             textStyle,
@@ -221,7 +230,7 @@ private fun VerticalPageTextBlock(
             val resolved = layout
             if (resolved != null) {
                 val overlayRects = remember(
-                    resolved, block, searchQuery, ttsHighlightInfo, pageUserHighlights
+                    resolved, block, searchQuery, ttsHighlightInfo, highlightRanges, highlightById
                 ) {
                     verticalOverlayRects(
                         layout = resolved,
@@ -230,7 +239,8 @@ private fun VerticalPageTextBlock(
                         searchHighlightColor = searchHighlightColor,
                         ttsHighlightInfo = ttsHighlightInfo,
                         ttsHighlightColor = ttsHighlightColor,
-                        pageUserHighlights = pageUserHighlights
+                        highlightRanges = highlightRanges,
+                        highlightById = highlightById
                     )
                 }
                 Box(
@@ -241,7 +251,7 @@ private fun VerticalPageTextBlock(
                                 drawRect(color = color, topLeft = rect.topLeft, size = rect.size)
                             }
                         }
-                        .pointerInput(resolved, block, pageUserHighlights) {
+                        .pointerInput(resolved, block, highlightRanges) {
                             detectTapGestures(
                                 onTap = { position ->
                                     val tappedOffset = resolved.offsetAt(position)
@@ -252,12 +262,18 @@ private fun VerticalPageTextBlock(
                                         onLinkClick(href)
                                         return@detectTapGestures
                                     }
-                                    val highlightHit = pageUserHighlights.firstOrNull { highlight ->
-                                        getHighlightOffsetsInBlock(block, highlight)?.let { range ->
-                                            resolved.rectsForRange(range.first, range.last + 1)
-                                                .any { rect -> rect.contains(position) }
-                                        } == true
-                                    }
+                                    // Hit-test the same resolved ranges the overlay paints, so the
+                                    // tappable area always matches what is visible.
+                                    val highlightHit = highlightRanges.entries
+                                        .toList()
+                                        .asReversed()
+                                        .firstNotNullOfOrNull { entry ->
+                                            val hit = entry.value.any { range ->
+                                                resolved.rectsForRange(range.first, range.last + 1)
+                                                    .any { rect -> rect.contains(position) }
+                                            }
+                                            if (hit) highlightById[entry.key] else null
+                                        }
                                     if (highlightHit != null) {
                                         onHighlightClick(highlightHit)
                                     } else {
@@ -278,9 +294,10 @@ private fun verticalOverlayRects(
     block: TextContentBlock,
     searchQuery: String,
     searchHighlightColor: Color,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     ttsHighlightColor: Color,
-    pageUserHighlights: List<UserHighlight>
+    highlightRanges: Map<String, List<IntRange>>,
+    highlightById: Map<String, UserHighlight>
 ): List<Pair<Rect, Color>> {
     val out = mutableListOf<Pair<Rect, Color>>()
     if (searchQuery.length >= 3) {
@@ -290,23 +307,23 @@ private fun verticalOverlayRects(
             }
         }
     }
-    if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-        val blockStartAbs = block.startCharOffsetInSource
-        val blockEndAbs = blockStartAbs + block.content.length
-        val highlightStartAbs = ttsHighlightInfo.offset
-        val highlightEndAbs = ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-        val startAbs = maxOf(blockStartAbs, highlightStartAbs)
-        val endAbs = minOf(blockEndAbs, highlightEndAbs)
-        if (startAbs < endAbs) {
-            for (rect in layout.rectsForRange(startAbs - blockStartAbs, endAbs - blockStartAbs)) {
-                out.add(rect to ttsHighlightColor)
-            }
+    val fragmentRange = sharedPlaybackFragmentRangeInBlock(
+        fragment = ttsHighlightInfo,
+        blockCfi = block.cfi,
+        blockStartAbs = block.startCharOffsetInSource,
+        blockLength = block.content.length
+    )
+    if (fragmentRange != null) {
+        for (rect in layout.rectsForRange(fragmentRange.first, fragmentRange.last + 1)) {
+            out.add(rect to ttsHighlightColor)
         }
     }
-    for (highlight in pageUserHighlights) {
-        val range = getHighlightOffsetsInBlock(block, highlight) ?: continue
-        for (rect in layout.rectsForRange(range.first, range.last + 1)) {
-            out.add(rect to highlight.renderColor(legacyAlpha = 0.4f))
+    for ((highlightId, ranges) in highlightRanges) {
+        val highlight = highlightById[highlightId] ?: continue
+        for (range in ranges) {
+            for (rect in layout.rectsForRange(range.first, range.last + 1)) {
+                out.add(rect to highlight.renderColor(legacyAlpha = 0.4f))
+            }
         }
     }
     return out

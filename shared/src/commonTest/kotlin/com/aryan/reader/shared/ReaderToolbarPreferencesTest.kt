@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import androidx.compose.ui.graphics.toArgb
 
 class ReaderToolbarPreferencesTest {
 
@@ -135,23 +136,38 @@ class ReaderToolbarPreferencesTest {
             .reduce(
                 AppAction.ReaderHighlightPaletteChanged(
                     ReaderHighlightPalette(
-                        colors = listOf(HighlightColor.CYAN, HighlightColor.CYAN, HighlightColor.YELLOW)
+                        colors = listOf(
+                            HighlightColor.CYAN.color.toArgb(),
+                            HighlightColor.CYAN.color.toArgb(),
+                            HighlightColor.YELLOW.color.toArgb()
+                        )
                     )
                 )
             )
 
         assertEquals(ReaderHighlightPalette.defaultColors, state.readerHighlightPalette.colors)
 
+        val customArgb = 0xFF123456.toInt()
         val customized = state.reduce(
             AppAction.ReaderHighlightPaletteChanged(
                 ReaderHighlightPalette(
-                    colors = listOf(HighlightColor.CYAN, HighlightColor.CYAN, HighlightColor.PINK, HighlightColor.WHITE)
+                    colors = listOf(
+                        customArgb,
+                        HighlightColor.CYAN.color.toArgb(),
+                        HighlightColor.PINK.color.toArgb(),
+                        HighlightColor.WHITE.color.toArgb()
+                    )
                 )
             )
         )
 
         assertEquals(
-            listOf(HighlightColor.CYAN, HighlightColor.CYAN, HighlightColor.PINK, HighlightColor.WHITE),
+            listOf(
+                customArgb,
+                HighlightColor.CYAN.color.toArgb(),
+                HighlightColor.PINK.color.toArgb(),
+                HighlightColor.WHITE.color.toArgb()
+            ),
             customized.readerHighlightPalette.colors
         )
     }

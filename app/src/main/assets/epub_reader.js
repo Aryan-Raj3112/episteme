@@ -1426,6 +1426,15 @@
         dynamicStyleElement.innerHTML = [sizeCss, lineHeightCss, typographyOverrideCss, fontCss, alignCss, gapCss, viewportContainmentCss, imageCss, horizontalMarginCss, hideImagesCss].join("\n");
         applyReaderImageAnchors();
         setTimeout(applyReaderImageAnchors, 80);
+        // The stylesheet above is what collapses author-fixed-layout image wrappers, so a
+        // style change can break an image that was already laid out. Re-run the recovery
+        // once the new rules have been parsed instead of waiting for a reload.
+        if (window.recoverCollapsedReaderImages) {
+            window.recoverCollapsedReaderImages();
+            setTimeout(function () {
+                if (window.recoverCollapsedReaderImages) window.recoverCollapsedReaderImages();
+            }, 120);
+        }
         logVerticalJitter(
             "jsStyleApply scrollY=" +
                 scrollYBeforeStyle +
@@ -1900,6 +1909,77 @@
         return "JS: Chunk " + chunkIndex + " not found.";
     };
 
+    /**
+     * The raw character position [node]:[offset] occupies inside [root].
+     *
+     * This is the walker's own coordinate system: it counts every character between elements,
+     * whitespace included. It is only ever a hint — the reader stores offsets in the text
+     * pagination produced, which is not this space.
+     */
+    function readerTtsRawOffsetForPosition(root, node, offset) {
+        if (!root || !node) return -1;
+        const nodes = readerTtsBlockTextNodes(root);
+        let raw = 0;
+        for (let i = 0; i < nodes.length; i++) {
+            if (nodes[i] === node) return raw + offset;
+            raw += (nodes[i].nodeValue || '').length;
+        }
+        return -1;
+    }
+
+    /**
+     * The range [text] occupies inside [root], or null when the text is not there.
+     *
+     * Whitespace is the one thing two coordinate systems disagree about: a stored offset is
+     * measured in the text pagination produced, while a DOM walk counts the raw characters between
+     * elements, so every whitespace run and every line break moves them apart. Comparing with
+     * whitespace removed lets either space find the same words, and [hintOffset] - the raw position
+     * the stored offset points at - keeps a repeated sentence on the occurrence the reader is
+     * actually reading rather than on the first one in the block.
+     */
+    function readerTtsRangeForText(root, text, hintOffset) {
+        if (!root || !text) return null;
+        const target = text.replace(/\s+/g, '');
+        if (!target) return null;
+
+        const nodes = readerTtsBlockTextNodes(root);
+        let flat = '';
+        const positions = [];
+        let rawCursor = 0;
+        for (let i = 0; i < nodes.length; i++) {
+            const value = nodes[i].nodeValue || '';
+            for (let j = 0; j < value.length; j++) {
+                if (/\s/.test(value.charAt(j))) continue;
+                flat += value.charAt(j);
+                positions.push({ node: nodes[i], offset: j, raw: rawCursor + j });
+            }
+            rawCursor += value.length;
+        }
+
+        let best = null;
+        let bestDistance = 0;
+        let from = 0;
+        for (;;) {
+            const found = flat.indexOf(target, from);
+            if (found < 0) break;
+            const start = positions[found];
+            const end = positions[found + target.length - 1];
+            if (start && end) {
+                const distance = hintOffset < 0 ? 0 : Math.abs(start.raw - hintOffset);
+                if (!best || distance < bestDistance) {
+                    const range = document.createRange();
+                    range.setStart(start.node, start.offset);
+                    range.setEnd(end.node, end.offset + 1);
+                    best = range;
+                    bestDistance = distance;
+                }
+            }
+            if (best && hintOffset < 0) break;
+            from = found + 1;
+        }
+        return best;
+    }
+
     window.removeHighlight = function () {
         var highlightNode;
         var removedCount = 0;
@@ -2009,6 +2089,29 @@
 
             const baseNode = location.node;
             const highlightRoot = getTtsHighlightBlock(baseNode);
+
+            // 1. Find the range to highlight.
+            //
+            // The stored offset lands the range in the block but cannot place it exactly: it is
+            // measured in the text pagination produced, and a text-node walk counts raw
+            // characters, so the two drift by every whitespace run and <br> in between. The spoken
+            // text is present in the very same block, so it places the range itself, and the
+            // offset only chooses between repeated occurrences.
+            const hintOffset = readerTtsRawOffsetForPosition(highlightRoot, baseNode, startOffset);
+            let range = readerTtsRangeForText(highlightRoot, textToHighlight, hintOffset);
+            let remainingTextLength = 0;
+
+            if (range) {
+                console.log(`$ {
+                    TTS_HIGHLIGHT_LOG_TAG
+                }
+
+                : Spoken text located directly. rawHint=$ {
+                    hintOffset
+                }
+
+                `);
+            } else {
             let remainingOffset = startOffset;
 
             const treeWalker = document.createTreeWalker(highlightRoot, NodeFilter.SHOW_TEXT, null, false);
@@ -2047,11 +2150,11 @@
 
             `);
 
-            const range = document.createRange();
+            range = document.createRange();
             range.setStart(currentNode, remainingOffset);
 
             // 2. Find the ending text node and character position
-            let remainingTextLength = textToHighlight.length;
+            remainingTextLength = textToHighlight.length;
             let endNode = currentNode;
             let endOffset = remainingOffset;
             let sanityCheck = 0;
@@ -2114,6 +2217,7 @@
             } else {
                 range.setEnd(endNode, endOffset);
             }
+            }
 
             const highlightSpan = document.createElement("span");
             highlightSpan.className = "tts-highlight";
@@ -2167,6 +2271,242 @@
         }
     };
 
+    // --- EPUB media overlays: the publisher's own narration -------------------------------------
+    //
+    // Kept apart from the read-aloud highlight above on purpose. An overlay anchor is an element id
+    // resolved from the same parse that produced the text, so `getElementById` is exact and no CFI
+    // resolution or quote matching is involved. Painting by class on the element is also the only
+    // way the publisher's `media:active-class` can be honoured: the document here really is styled
+    // by the book's own stylesheet.
+    window.readerMediaOverlay = (function () {
+        var activeElement = null;
+        var publishedClass = null;
+        var FALLBACK_CLASS = "reader-media-overlay-active";
+        var STYLE_ID = "reader-media-overlay-style";
+
+        function ensureStyle() {
+            if (document.getElementById(STYLE_ID)) {
+                return;
+            }
+            var style = document.createElement("style");
+            style.id = STYLE_ID;
+            // A translucent fill that reads on paper and on a dark theme alike. The publisher's own
+            // class is applied in addition, and wins wherever the book declares a rule for it.
+            style.textContent = "." + FALLBACK_CLASS + " { background-color: rgba(255, 226, 102, 0.45); }";
+            (document.head || document.documentElement).appendChild(style);
+        }
+
+        /**
+         * True when the narrated line has left the viewport.
+         *
+         * A clip is a line and advances every couple of seconds, so this only has to guarantee the
+         * line is on screen at all — following on "not comfortably visible" would re-centre the
+         * page continuously.
+         */
+        function needsScroll(element) {
+            var rect = element.getBoundingClientRect();
+            if (!rect || (rect.top === 0 && rect.bottom === 0 && rect.height === 0)) {
+                return true;
+            }
+            var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+            if (!viewportHeight) {
+                return true;
+            }
+            return rect.bottom <= 0 || rect.top >= viewportHeight;
+        }
+
+        function clear() {
+            if (!activeElement) {
+                return;
+            }
+            activeElement.classList.remove(FALLBACK_CLASS);
+            if (publishedClass) {
+                activeElement.classList.remove(publishedClass);
+            }
+            activeElement = null;
+            publishedClass = null;
+        }
+
+        /**
+         * Marks the narrated element. The follow flag asks for a scroll, and it only happens when
+         * the line is off screen — scrollIntoView with block: nearest never re-centres, which is
+         * what keeps a line-level clip from moving the page on every advance.
+         */
+        function show(elementId, activeClass, follow) {
+            try {
+                clear();
+                if (!elementId) {
+                    return "JS: no media overlay id";
+                }
+                var element = document.getElementById(elementId);
+                if (!element) {
+                    return "JS: no element for media overlay id " + elementId;
+                }
+                ensureStyle();
+                element.classList.add(FALLBACK_CLASS);
+                if (activeClass) {
+                    element.classList.add(activeClass);
+                    publishedClass = activeClass;
+                }
+                activeElement = element;
+                if (follow && needsScroll(element)) {
+                    element.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+                }
+                return "JS: media overlay fragment shown";
+            } catch (error) {
+                return "JS: media overlay show failed: " + (error && error.message ? error.message : error);
+            }
+        }
+
+        return { show: show, clear: clear };
+    })();
+
+    /**
+     * The text nodes of a block, in reading order.
+     */
+    function readerTtsBlockTextNodes(block) {
+        const nodes = [];
+        const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null, false);
+        let node;
+        while ((node = walker.nextNode()) !== null) {
+            if (node.nodeValue && node.nodeValue.length > 0) nodes.push(node);
+        }
+        return nodes;
+    }
+
+    /**
+     * The first line box that reaches past [readingTop].
+     *
+     * A block owns the viewport top once it starts there, but where inside the block the reading
+     * position is depends on the line, not the block: a chapter whose prose is a single element
+     * (fan-fiction and one-paragraph chapters are common) would otherwise always start from the
+     * chapter's first word, however far the reader had scrolled. Line boxes come back in reading
+     * order, so the first one reaching the top of the reading area is the line the reader is
+     * looking at, whether it straddles that top or starts below it.
+     */
+    function readerTtsFirstVisibleLineRect(nodes, readingTop) {
+        for (let i = 0; i < nodes.length; i++) {
+            const range = document.createRange();
+            range.selectNodeContents(nodes[i]);
+            const rects = range.getClientRects();
+            range.detach && range.detach();
+            for (let r = 0; r < rects.length; r++) {
+                const rect = rects[r];
+                // A zero-sized rect is collapsed or unrendered content and carries no line.
+                if (rect.width <= 0 || rect.height <= 0) continue;
+                if (rect.bottom <= readingTop) continue;
+                return rect;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * A collapsed caret position at the start of [lineRect].
+     *
+     * The point is placed at the line's leading edge, which snaps the caret to the first character
+     * of that line rather than to wherever the line's middle happens to be.
+     */
+    function readerTtsCaretAtLineStart(lineRect, block) {
+        let direction = 'ltr';
+        try {
+            direction = window.getComputedStyle(block).direction || 'ltr';
+        } catch (error) {}
+        const x = direction === 'rtl'
+            ? Math.max(0, lineRect.right - 1)
+            : Math.max(0, lineRect.left + 1);
+        const y = (lineRect.top + lineRect.bottom) / 2;
+        if (document.caretRangeFromPoint) {
+            return document.caretRangeFromPoint(x, y);
+        }
+        if (document.caretPositionFromPoint) {
+            const position = document.caretPositionFromPoint(x, y);
+            if (position && position.offsetNode) {
+                const range = document.createRange();
+                range.setStart(position.offsetNode, position.offset);
+                range.collapse(true);
+                return range;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Where [node]:[offset] sits in the block's rendered text.
+     *
+     * innerText collapses the whitespace a raw text-node walk counts and writes a newline for every
+     * line break element, so a DOM position cannot index the extracted text directly. Rendering the
+     * prefix and reading it back is the only way to measure it in the same coordinate system as the
+     * text being sliced, which is the coordinate system pagination stores offsets in.
+     */
+    function readerTtsRenderedTextOffset(block, node, offset) {
+        try {
+            const range = document.createRange();
+            range.setStart(block, 0);
+            range.setEnd(node, offset);
+            const holder = document.createElement('div');
+            // Rendered: innerText is a layout-dependent property, and an unrendered element
+            // answers with its raw text instead of the whitespace layout decided.
+            holder.setAttribute('style', 'position:fixed;top:0;left:0;opacity:0;pointer-events:none;');
+            holder.style.whiteSpace = window.getComputedStyle(block).whiteSpace || 'normal';
+            holder.appendChild(range.cloneContents());
+            document.body.appendChild(holder);
+            let prefixLength = 0;
+            try {
+                prefixLength = (holder.innerText || '').length;
+            } finally {
+                document.body.removeChild(holder);
+            }
+            // A rendered prefix keeps none of the whitespace that separates it from what follows,
+            // so stepping over it lands on the first character of the line that was found.
+            const fullText = (block.innerText || '').trim();
+            let index = Math.max(0, Math.min(prefixLength, fullText.length));
+            while (index < fullText.length && /\s/.test(fullText.charAt(index))) index++;
+            return index;
+        } catch (error) {
+            return 0;
+        }
+    }
+
+    /**
+     * The offset in the block's own text where its first visible line begins, or 0 when the block
+     * starts at the top of the reading area. [readingTop] is where the reading area begins.
+     */
+    function topVisibleOffsetWithinBlock(block, readingTop) {
+        if (!Number.isFinite(readingTop)) {
+            readingTop = typeof window.VIEWPORT_PADDING_TOP === 'number' ? window.VIEWPORT_PADDING_TOP : 0;
+        }
+        const nodes = readerTtsBlockTextNodes(block);
+        if (!nodes.length) return 0;
+
+        const lineRect = readerTtsFirstVisibleLineRect(nodes, readingTop);
+        if (!lineRect) return 0;
+
+        const caret = readerTtsCaretAtLineStart(lineRect, block);
+        if (caret && caret.startContainer && block.contains(caret.startContainer)) {
+            const offset = readerTtsRenderedTextOffset(block, caret.startContainer, caret.startOffset);
+            if (offset > 0) {
+                console.log("TTS_CHAPTER_CHANGE_DIAG: Top visible line resolved at text offset " + offset);
+                return offset;
+            }
+        }
+
+        // Without a caret position the line's first text node is the closest answer there is.
+        for (let i = 0; i < nodes.length; i++) {
+            const range = document.createRange();
+            range.selectNodeContents(nodes[i]);
+            const rects = range.getClientRects();
+            range.detach && range.detach();
+            for (let r = 0; r < rects.length; r++) {
+                const rect = rects[r];
+                if (rect.width <= 0 || rect.height <= 0) continue;
+                if (rect.bottom <= lineRect.top + 0.5 || rect.top >= lineRect.bottom - 0.5) continue;
+                return readerTtsRenderedTextOffset(block, nodes[i], 0);
+            }
+        }
+        return 0;
+    }
+
     window.extractTextWithCfiFromTop = function () {
         console.log("TTS_CHAPTER_CHANGE_DIAG: Starting extractTextWithCfiFromTop");
         try {
@@ -2176,21 +2516,24 @@
 
             console.log("TTS_CHAPTER_CHANGE_DIAG: Total nodes found: " + allContentNodes.length);
 
-            let startBlock = null;
+            // The reading area starts below the content's top padding, and the reading position is
+            // the first line that reaches past that point: a line straddling the top of the reading
+            // area is the line the reader is looking at, so it is chosen rather than the next one
+            // down. Block and line must use the same top, because a block rejected here is never
+            // searched for a visible line.
+            const viewportTop = typeof window.VIEWPORT_PADDING_TOP === 'number' ? window.VIEWPORT_PADDING_TOP : 0;
             let startIndex = -1;
 
             for (let i = 0; i < allContentNodes.length; i++) {
-                const node = allContentNodes[i];
-                const rect = node.getBoundingClientRect();
+                const rect = allContentNodes[i].getBoundingClientRect();
 
-                if (rect.bottom > (window.VIEWPORT_PADDING_TOP + 10)) {
-                    startBlock = node;
+                if (rect.bottom > viewportTop) {
                     startIndex = i;
                     break;
                 }
             }
 
-            if (!startBlock) {
+            if (startIndex === -1) {
                 console.log("TTS_CHAPTER_CHANGE_DIAG: No visible start block found in viewport.");
                 return window.extractTextWithCfi();
             }
@@ -2200,16 +2543,27 @@
             const nodesToProcess = allContentNodes.slice(startIndex);
             const results =[];
 
-            nodesToProcess.forEach((node) => {
+            nodesToProcess.forEach((node, index) => {
                 const text = node.innerText ? node.innerText.trim() : "";
-                if (text.length > 0 && node.offsetParent !== null) {
-                    try {
-                        const cfiObj = getCfiPathForElement(node, 0);
-                        if (cfiObj && cfiObj.cfi) {
-                            results.push({ cfi: cfiObj, text: text });
+                if (text.length === 0 || node.offsetParent === null) return;
+                try {
+                    const cfiObj = getCfiPathForElement(node, 0);
+                    if (!cfiObj || !cfiObj.cfi) return;
+                    // The block the viewport starts in is sliced at its first visible line, so a
+                    // chapter of one long element still begins reading where the reader is looking
+                    // rather than at the chapter's first word.
+                    if (index === 0) {
+                        const lineOffset = topVisibleOffsetWithinBlock(node, viewportTop);
+                        if (lineOffset > 0) {
+                            const sliced = text.substring(lineOffset);
+                            if (sliced.trim().length > 0) {
+                                results.push({ cfi: cfiObj, text: sliced, startOffset: lineOffset });
+                                return;
+                            }
                         }
-                    } catch (e) {}
-                }
+                    }
+                    results.push({ cfi: cfiObj, text: text });
+                } catch (e) {}
             });
 
             return JSON.stringify(results);
@@ -2396,6 +2750,131 @@
         },
     };
 
+    function readerUsableContentWidth() {
+        var host = document.getElementById("content-container") || document.body;
+        var width = host && host.clientWidth ? host.clientWidth : 0;
+        if (!width) width = document.documentElement.clientWidth || window.innerWidth || 0;
+        return Math.max(1, Math.round(width - 32));
+    }
+
+    function readerImageScaleFactor() {
+        try {
+            var raw = parseFloat(
+                window.getComputedStyle(document.documentElement).getPropertyValue("--reader-image-size"),
+            );
+            if (!isNaN(raw) && raw > 0) return raw;
+        } catch (e) {}
+        return 1;
+    }
+
+    /**
+     * Releases degenerate wrappers between a decoded image and the content box.
+     *
+     * Fixed-layout publications (Calibre/Kobo comics and manga) wrap every page in
+     * position:absolute divs sized in absolute px. The reader's containment rule
+     * (max-width:100%!important on every descendant) plus width:auto on images
+     * makes those wrappers shrink-to-fit against a percentage that resolves through the
+     * image itself, so the whole chain collapses to 0x0 while the bitmap decodes fine.
+     * The direct wrapper always loses its author height cap (a figure with
+     * max-height:60% resolves against a figure that has no height yet); anything
+     * further up is only touched when it measured 0 wide, so reflowable chapters keep
+     * their authored geometry.
+     */
+    function releaseDegenerateReaderAncestors(img) {
+        var boundary = document.getElementById("content-container") || document.body;
+        var direct = img.parentElement;
+        var released = 0;
+
+        if (direct) {
+            direct.style.setProperty("height", "auto", "important");
+            direct.style.setProperty("max-height", "none", "important");
+            released++;
+        }
+
+        var node = direct;
+        while (node && node !== boundary && node !== document.body && node !== document.documentElement) {
+            var style = window.getComputedStyle(node);
+            var positioned = style.position === "absolute" || style.position === "fixed";
+            if (node.clientWidth === 0 && positioned) {
+                node.style.setProperty("width", "auto", "important");
+                node.style.setProperty("max-width", "100%", "important");
+                node.style.setProperty("min-width", "0", "important");
+                node.style.setProperty("height", "auto", "important");
+                node.style.setProperty("max-height", "none", "important");
+                node.style.setProperty("overflow", "visible", "important");
+                released++;
+            }
+            node = node.parentElement;
+        }
+        return released;
+    }
+
+    /**
+     * Gives a decoded-but-unlaid-out image an explicit box.
+     *
+     * Every size has to be pinned: the imageCss block caps the image with
+     * max-width:min(100%,..) which resolves against the (0 wide) author wrapper and
+     * re-clamps any width we set, so width/height plus their max/min counterparts are all
+     * written inline with !important. Inline !important outranks the injected stylesheet,
+     * which is what makes this stick.
+     */
+    function recoverCollapsedReaderImage(img) {
+        if (!img || img.naturalWidth <= 0 || img.naturalHeight <= 0) return false;
+
+        // A width the browser already laid out is authoritative: only the height is missing.
+        var heightOnly = img.clientWidth > 0 && img.clientHeight === 0;
+        if (!heightOnly && (img.clientWidth !== 0 || img.clientHeight !== 0)) return false;
+
+        var contentWidth = readerUsableContentWidth();
+        var scale = readerImageScaleFactor();
+        var width = heightOnly
+            ? img.clientWidth
+            : Math.max(1, Math.min(img.naturalWidth, Math.round(contentWidth * scale)));
+        var height = Math.round((width * img.naturalHeight) / img.naturalWidth);
+
+        // Cap to the viewport so a full-page scan never blows out the scroll range, then
+        // re-derive the width so the recovered box keeps the author's aspect ratio.
+        var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+        if (viewportHeight > 0 && height > Math.round(viewportHeight * 0.92)) {
+            height = Math.round(viewportHeight * 0.92);
+            width = Math.max(1, Math.round((height * img.naturalWidth) / img.naturalHeight));
+        }
+
+        var released = releaseDegenerateReaderAncestors(img);
+        img.style.setProperty("width", width + "px", "important");
+        img.style.setProperty("max-width", width + "px", "important");
+        img.style.setProperty("min-width", width + "px", "important");
+        img.style.setProperty("height", height + "px", "important");
+        img.style.setProperty("max-height", height + "px", "important");
+        img.style.setProperty("min-height", height + "px", "important");
+
+        try {
+            console.log(
+                "EpubBlankDiag: event=android_img_recovered src=" +
+                    ((img.getAttribute("src") || "").split("/").pop() || "").slice(-40) +
+                    " nat=" + img.naturalWidth + "x" + img.naturalHeight +
+                    " box=" + width + "x" + height +
+                    " releasedAncestors=" + released,
+            );
+        } catch (e) {}
+        return true;
+    }
+
+    window.recoverCollapsedReaderImages = function () {
+        var recovered = 0;
+        var candidates = document.querySelectorAll("img, image");
+        for (var i = 0; i < candidates.length; i++) {
+            if (recoverCollapsedReaderImage(candidates[i])) recovered++;
+        }
+        if (recovered > 0) {
+            if (window.reportScrollState) window.reportScrollState();
+            setTimeout(function () {
+                if (window.reportScrollState) window.reportScrollState();
+            }, 150);
+        }
+        return recovered;
+    };
+
     window.checkImagesForDiagnosis = function () {
         const images = document.querySelectorAll("img, image"); // 'image' for SVG images
         const logTag = "ImageDiagnosis";
@@ -2425,85 +2904,11 @@
                         "'",
                 );
 
-                // FIX: If height has collapsed, manually calculate and set it forcefully.
-                // Covers both the historical clientWidth>0/height==0 case and the
-                // Standard Ebooks figure collapse where the image is fully 0x0 while
-                // the bitmap decoded (naturalWidth>0). Parent-relative max-height
-                // (100%/60% in local.css) resolving against a 0-height figure is the
-                // usual cause; the imageCss cap (none then the JS-measured px cap) plus
-                // this band-aid recovers paint even if a publication rule still wins.
-                var collapsedHeightOnly = img.complete && img.naturalWidth > 0 && img.clientWidth > 0 && img.clientHeight === 0;
-                var collapsedFully = img.complete && img.naturalWidth > 0 && img.naturalHeight > 0 && img.clientWidth === 0 && img.clientHeight === 0;
-                if (collapsedHeightOnly || collapsedFully) {
-                    console.log(logTag + ": CORRECTING GEOMETRY for Image #" + index + " mode=" + (collapsedFully ? "fully-collapsed-0x0" : "height-only"));
-                    try { console.log("EpubBlankDiag: event=android_img_correct idx=" + index + " mode=" + (collapsedFully ? "0x0" : "h0") + " nat=" + img.naturalWidth + "x" + img.naturalHeight + " client=" + img.clientWidth + "x" + img.clientHeight + " src=" + ((img.getAttribute('src') || '').split('/').pop() || '').slice(-40)); } catch (e) {}
-                    const parent = img.parentElement;
-
-                    if (parent) {
-                        const parentStyle = window.getComputedStyle(parent);
-                        console.log(
-                            logTag +
-                                ": Parent <" +
-                                parent.tagName +
-                                "> computed height: " +
-                                parentStyle.height +
-                                ", overflow: " +
-                                parentStyle.overflow,
-                        );
-                        // Force the parent's height to be determined by its content. This is crucial.
-                        parent.style.setProperty("height", "auto", "important");
-                        parent.style.setProperty("max-height", "none", "important");
-                        if (collapsedFully && parent.tagName === "FIGURE") {
-                            parent.style.setProperty("width", "auto", "important");
-                            parent.style.setProperty("max-width", "100%", "important");
-                            parent.style.setProperty("overflow", "visible", "important");
-                        }
-                    }
-
-                    // Remove the conflicting max-height property first; on 0x0 images
-                    // clientWidth is 0 so derive width from the figure/content width.
-                    img.style.setProperty("max-height", "none", "important");
-                    var targetWidth = img.clientWidth;
-                    if (!targetWidth) {
-                        try {
-                            var host = img.closest ? (img.closest("figure") || img.parentElement) : img.parentElement;
-                            targetWidth = host ? host.clientWidth : 0;
-                        } catch (e) { targetWidth = 0; }
-                    }
-                    if (!targetWidth) {
-                        try { targetWidth = Math.min(img.naturalWidth, (document.documentElement.clientWidth || window.innerWidth || 0) - 32); } catch (e) {}
-                    }
-                    if (targetWidth && targetWidth > 0) {
-                        var aspect = img.naturalHeight / img.naturalWidth;
-                        var h = Math.round(targetWidth * aspect);
-                        // Cap to viewport so portrait scans never blow out scroll range.
-                        try {
-                            var vh = window.innerHeight || document.documentElement.clientHeight || 0;
-                            if (vh > 0 && h > Math.round(vh * 0.92)) h = Math.round(vh * 0.92);
-                        } catch (e) {}
-                        img.style.setProperty("width", targetWidth + "px", "important");
-                        img.style.setProperty("height", h + "px", "important");
-                    } else {
-                        var aspectOnly = img.naturalHeight / img.naturalWidth;
-                        var fallbackW = img.clientWidth || 0;
-                        var correctH = fallbackW * aspectOnly;
-                        img.style.setProperty("height", correctH + "px", "important");
-                    }
-
-                    console.log(logTag + ": Corrective styles applied to Image #" + index + ". Verifying height after a short delay for reflow...");
-
-                    // After applying styles, wait a moment for the browser to reflow the layout
-                    // before reporting the new height and updating the scroll state.
-                    setTimeout(
-                        function () {
-                            console.log(logTag + ": Verified height for Image #" + index + ": " + img.clientHeight + "px");
-                            try { console.log("EpubBlankDiag: event=android_img_corrected idx=" + index + " now=" + img.clientWidth + "x" + img.clientHeight); } catch (e) {}
-                            if (window.reportScrollState) window.reportScrollState(); // Update scroll metrics now that the image has height
-                        },
-
-                        150,
-                    );
-                }
+                // A decoded bitmap with no layout box is unambiguously broken, whatever the
+                // publication CSS did. Covers the historical clientWidth>0/height==0 case, the
+                // Standard Ebooks figure collapse (parent-relative max-height resolving against
+                // a 0-height figure) and the fixed-layout comic/manga chain collapse.
+                recoverCollapsedReaderImage(img);
 
                 img.onerror = function () {
                     console.log(logTag + ": ERROR: Image #" + index + " FAILED to load. Src was: '" + src + "'");
@@ -3633,24 +4038,29 @@
 
             nodes.forEach((node) => {
                 var parent = node.parentNode;
+                var existingCfiList = parent && parent.tagName === "SPAN" && parent.classList.contains(className)
+                    ? (parent.getAttribute("data-cfi") || "").split(";;")
+                    : null;
 
-                if (parent && parent.tagName === "SPAN" && parent.classList.contains(className)) {
-                    var currentCfi = parent.getAttribute("data-cfi") || "";
-                    var cfiList = currentCfi.split(";;");
-
-                    if (!cfiList.includes(newCfi)) {
-                        parent.setAttribute("data-cfi", currentCfi ? (currentCfi + ";;" + newCfi) : newCfi);
-                    }
+                if (existingCfiList && existingCfiList.includes(newCfi)) {
+                    // The same highlight being restored or repainted. Keep it on the existing span so
+                    // the DOM matches the stored list instead of growing a duplicate span per pass.
                     this.applyHighlightVisualStyle(parent, colorCss, highlightStyle);
-                } else {
-                    if (node.nodeValue.trim().length === 0) return;
-                    var span = document.createElement("span");
-                    span.className = className;
-                    span.setAttribute("data-cfi", newCfi);
-                    this.applyHighlightVisualStyle(span, colorCss, highlightStyle);
-                    node.parentNode.insertBefore(span, node);
-                    span.appendChild(node);
+                    return;
                 }
+
+                if (node.nodeValue.trim().length === 0) return;
+
+                // A different highlight lands on text that is already highlighted. Wrap it in its own
+                // span rather than folding it into the existing one: a shared span has a single CSS
+                // class and a single inline colour, so merging made the second highlight overwrite the
+                // first's colour and made deleting one of them hide the other.
+                var span = document.createElement("span");
+                span.className = className;
+                span.setAttribute("data-cfi", newCfi);
+                this.applyHighlightVisualStyle(span, colorCss, highlightStyle);
+                node.parentNode.insertBefore(span, node);
+                span.appendChild(node);
             });
         },
 
@@ -3756,23 +4166,12 @@
                                 }).`);
                         span.setAttribute("data-cfi", newCfiList.join(";;"));
 
-                        if (optionalCssClass) {
-                            console.log(`$ {
-                                    HL_LOG_TAG
-                                }
-
-                                : -> Removing CSS class: $ {
-                                    optionalCssClass
-                                }
-
-                                `);
+                        // The span's styling is deliberately left alone. It is shared by every CFI
+                        // still on it, and removing the CSS class made a surviving highlight go
+                        // invisible while it remained in the stored list. Newly created highlights no
+                        // longer share a span; this path only runs for spans written by an older build.
+                        if (optionalCssClass && newCfiList.length === 0) {
                             span.classList.remove(optionalCssClass);
-                        } else {
-                            console.log(`$ {
-                                    HL_LOG_TAG
-                                }
-
-                                : -> Warning: No CSS class provided to remove. Visual style might persist if classes are mixed.`);
                         }
 
                         updatedCount++;

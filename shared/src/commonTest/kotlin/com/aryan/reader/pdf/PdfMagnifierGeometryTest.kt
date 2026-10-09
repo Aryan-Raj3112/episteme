@@ -20,4 +20,31 @@ class PdfMagnifierGeometryTest {
     fun `invalid geometry remains non renderable`() {
         assertEquals(null, calculateMagnifierSampleGeometry(0f, 0f, source.copy(sourceWidth = 0), 120f, 60f, 2f))
     }
+
+    /**
+     * A high-res tile is sampled in the tile's own pixels, not the base page's: the tile is denser
+     * than the region it covers, so the same lens width takes fewer source pixels. Both hosts reach
+     * this through `MagnifierTileSource.contentRect`, so the scale has to come from the content
+     * rect's extent rather than the page's.
+     */
+    @Test
+    fun `tile sample uses the tile local source scale`() {
+        val tile = MagnifierContentSource(
+            sourceWidth = 512,
+            sourceHeight = 512,
+            contentLeft = 100f,
+            contentTop = 200f,
+            contentWidth = 256f,
+            contentHeight = 256f
+        )
+
+        val sample = requireNotNull(
+            calculateMagnifierSampleGeometry(228f, 328f, tile, 120f, 60f, 2f)
+        )
+
+        assertEquals(196, sample.srcLeft)
+        assertEquals(226, sample.srcTop)
+        assertEquals(120, sample.srcWidth)
+        assertEquals(60, sample.srcHeight)
+    }
 }

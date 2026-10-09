@@ -20,6 +20,7 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.togetherWith
@@ -169,7 +170,10 @@ import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfInkRenderer
 import com.aryan.reader.pdf.resolveEraserStrokeWidth
 import com.aryan.reader.pdf.calculateTextBoxChromeLayout
-import com.aryan.reader.shared.pdf.sharedPdfInkStrokeConsumesMove
+import com.aryan.reader.shared.pdf.sharedPdfInkEventTimeOrigin
+import com.aryan.reader.shared.pdf.sharedPdfInkSamplesForChange
+import com.aryan.reader.shared.pdf.SHARED_PDF_INK_MIN_SAMPLE_DISTANCE_PX
+import com.aryan.reader.shared.pdf.SharedPdfInkSample
 import com.aryan.reader.shared.pdf.sharedPdfIsInkDownAllowed
 import com.aryan.reader.shared.pdf.sharedPdfIsEraserOverride
 import com.aryan.reader.shared.sharedPdfStylusBarrelPressed
@@ -734,6 +738,13 @@ internal fun SharedMobilePdfVerticalPages(
     navigationRequestPage: Int,
     navigationRequestToken: Int,
     navigationCenterFraction: Float,
+    /**
+     * True for animated follow transitions (TTS). Vertical navigation is
+     * otherwise instant; animating every jump would visibly scroll long
+     * distances. TTS follow moves one page/highlight at a time, where an
+     * instant snap reads as jarring stutter.
+     */
+    animateNavigation: Boolean = false,
     showPageGap: Boolean,
     showPageNumberOverlay: Boolean,
     searchResults: List<SharedPdfSearchResult>,
@@ -844,7 +855,7 @@ internal fun SharedMobilePdfVerticalPages(
     // the page the reader was on. Android never re-navigates on a layout change.
     // Rotation position is owned by the orientation re-anchor below.
     val hasMeasuredViewport = viewportSize.height > 0
-    LaunchedEffect(navigationRequestToken, pageCount, hasMeasuredViewport, navigationRender.aspectRatio) {
+    LaunchedEffect(navigationRequestToken, pageCount, hasMeasuredViewport, navigationRender.aspectRatio, animateNavigation) {
         if (viewportSize.height <= 0) return@LaunchedEffect
         val target = navigationRequestPage.coerceIn(0, pageCount - 1)
         val pageHeight = (viewportSize.width / navigationRender.aspectRatio.coerceIn(0.1f, 10f)).roundToInt()
@@ -853,15 +864,22 @@ internal fun SharedMobilePdfVerticalPages(
             pageHeightPx = pageHeight,
             pageFraction = navigationCenterFraction
         )
-        // Android parity (PdfViewerScreen verticalReaderState.scrollToPage):
-        // vertical-scroll navigation is ALWAYS instant, for every navigation
-        // reason — page turns, TOC, search, slider, TTS and links all snap.
-        // Only pagination animates (see animatesPagination()). The previous
-        // animateScrollToItem made long jumps visibly scroll the whole way.
-        listState.scrollToItem(
-            index = target,
-            scrollOffset = centeredOffset
-        )
+        // Vertical-scroll navigation is instant except for TTS follow:
+        // paginated TTS already animates (animatesPagination), and an
+        // instant snap on every chunk change reads as jarring stutter.
+        // Long non-TTS jumps stay instant so they don't visibly scroll the
+        // whole way.
+        if (animateNavigation) {
+            listState.animateScrollToItem(
+                index = target,
+                scrollOffset = centeredOffset
+            )
+        } else {
+            listState.scrollToItem(
+                index = target,
+                scrollOffset = centeredOffset
+            )
+        }
     }
     LaunchedEffect(listState, pageCount) {
         snapshotFlow {
@@ -981,7 +999,10 @@ internal fun SharedMobilePdfVerticalPages(
                         focusedSearchResult = searchResults.getOrNull(state.activeSearchResultIndex)
                             ?.takeIf { it.pageIndex == pdfPage },
                         searchHighlightMode = state.searchHighlightMode,
-                        ttsHighlights = if (ttsPageIndex == pdfPage && !zoomCamera.isZoomed()) ttsHighlightBounds else emptyList(),
+                        // TTS highlight stays visible while zoomed (Android
+                        // parity): suppressing it made speech appear
+                        // un-highlighted the moment the user pinched in.
+                        ttsHighlights = if (ttsPageIndex == pdfPage) ttsHighlightBounds else emptyList(),
                         annotations = state.annotations.filter { it.pageIndex == pdfPage },
                         activeStroke = activeStroke,
                         customFontFamilies = customFontFamilies,
@@ -1556,7 +1577,8 @@ internal fun SharedMobilePdfPaginatedPages(
                                     focusedSearchResult = searchResults.getOrNull(state.activeSearchResultIndex)
                                         ?.takeIf { it.pageIndex == pdfPage },
                                     searchHighlightMode = state.searchHighlightMode,
-                                    ttsHighlights = if (ttsPageIndex == pdfPage && !activeZoomCamera.isZoomed()) ttsHighlightBounds else emptyList(),
+                                    // Same zoom parity as the vertical list above.
+                                    ttsHighlights = if (ttsPageIndex == pdfPage) ttsHighlightBounds else emptyList(),
                                     annotations = state.annotations.filter { it.pageIndex == pdfPage },
                                     activeStroke = activeStroke,
                                     customFontFamilies = customFontFamilies,
@@ -1824,12 +1846,23 @@ internal fun SharedMobilePdfTtsHighlightOverlay(
     }
 }
 
+/**
+ * Jump-history bar: back / clear / forward, each weighted equally. Android
+ * benchmark (`pdf/PdfToolbars.kt`).
+ *
+ * Visibility animation is the caller's responsibility so each host can keep its
+ * own enter/exit spec.
+ *
+ * @param labels localized captions and content descriptions.
+ */
 @Composable
-internal fun SharedMobilePdfJumpHistoryBar(
-    history: SharedPdfJumpHistory,
+fun SharedMobilePdfJumpHistoryBar(
+    backPage: Int?,
+    forwardPage: Int?,
     onBack: () -> Unit,
     onForward: () -> Unit,
     onClear: () -> Unit,
+    labels: SharedPdfJumpHistoryBarLabels,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -1842,24 +1875,53 @@ internal fun SharedMobilePdfJumpHistoryBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            TextButton(onClick = onBack, enabled = history.backPage != null, modifier = Modifier.weight(1f)) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous jump", modifier = Modifier.size(16.dp))
+            TextButton(onClick = onBack, enabled = backPage != null, modifier = Modifier.weight(1f)) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = labels.jumpBack,
+                    modifier = Modifier.size(16.dp)
+                )
                 Spacer(Modifier.width(4.dp))
-                Text(history.backPage?.let { "Page ${it + 1}" }.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    text = backPage?.let { labels.page(it + 1) }.orEmpty(),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
             TextButton(onClick = onClear, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Default.Close, contentDescription = "Clear page history", modifier = Modifier.size(16.dp))
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = labels.clear,
+                    modifier = Modifier.size(16.dp)
+                )
                 Spacer(Modifier.width(4.dp))
-                Text("Clear", maxLines = 1)
+                Text(labels.clear, maxLines = 1)
             }
-            TextButton(onClick = onForward, enabled = history.forwardPage != null, modifier = Modifier.weight(1f)) {
-                Text(history.forwardPage?.let { "Page ${it + 1}" }.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            TextButton(onClick = onForward, enabled = forwardPage != null, modifier = Modifier.weight(1f)) {
+                Text(
+                    text = forwardPage?.let { labels.page(it + 1) }.orEmpty(),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Spacer(Modifier.width(4.dp))
-                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next jump", modifier = Modifier.size(16.dp))
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = labels.jumpForward,
+                    modifier = Modifier.size(16.dp)
+                )
             }
         }
     }
 }
+
+/** Localized strings for [SharedMobilePdfJumpHistoryBar]. */
+data class SharedPdfJumpHistoryBarLabels(
+    val jumpBack: String,
+    val jumpForward: String,
+    val clear: String,
+    /** 1-based page caption, e.g. `"Page 7"`. */
+    val page: (Int) -> String
+)
 
 enum class SharedPdfTtsOverlaySize { LARGE, MEDIUM, SMALL }
 
@@ -2149,13 +2211,22 @@ internal fun SharedMobilePdfPageSlider(
     }
 }
 
+/**
+ * Full-bleed tap-swallowing overlay shown while page-scrubbing, with a centred
+ * page-range card. Android benchmark (`pdf/PdfNavigationUI.kt:156`).
+ */
 @Composable
-internal fun SharedMobilePdfPageScrubbingOverlay(
+fun SharedMobilePdfPageScrubbingOverlay(
     label: String,
     modifier: Modifier = Modifier
 ) {
     Box(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() }
+            ) {},
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -2473,6 +2544,14 @@ internal fun SharedMobilePdfPageSurface(
                         val isTextTool = selectedTool == PdfInkTool.TEXT
                         var committed = false
                         var lastEraserPoint: PdfPagePoint? = null
+                        // Coalesced samples arrive in batches; track where the
+                        // stroke last had geometry so the batch expansion can
+                        // drop the duplicate the next batch repeats.
+                        var lastEmittedScreenPosition: Offset? = null
+                        val eventTimeOrigin = sharedPdfInkEventTimeOrigin(
+                            epochMillis = currentTimestamp(),
+                            uptimeMillis = down.uptimeMillis
+                        )
                         fun hasCanvas(): Boolean =
                             latestCanvasSize.width > 0 && latestCanvasSize.height > 0
                         // Android parity (PdfViewerScreen onDrawStartStable /
@@ -2540,11 +2619,15 @@ internal fun SharedMobilePdfPageSurface(
                             clearOwnedStroke()
                             if (hasCanvas()) {
                                 (activeStroke as? MutableList<PdfPagePoint>)?.add(
-                                    down.position.toSharedMobilePdfPoint(latestCanvasSize)
+                                    down.position.toSharedMobilePdfPoint(
+                                        size = latestCanvasSize,
+                                        timestamp = eventTimeOrigin + down.uptimeMillis
+                                    )
                                 )
                                 if (eraserOverride) eraserOverridePosition = down.position
                             }
                         }
+                        lastEmittedScreenPosition = down.position
                         // Android parity: the down is consumed so no parent
                         // scroll/pager gesture can steal a stroke that has
                         // already started drawing.
@@ -2584,7 +2667,7 @@ internal fun SharedMobilePdfPageSurface(
                                     committed = true
                                     return@awaitEachGesture
                                 }
-                                if (!sharedPdfInkStrokeConsumesMove(change.pressed, change.positionChanged())) continue
+                                if (!change.pressed) continue
                                 // Android parity (onDrawStable): every movement
                                 // feeds the in-flight stroke. Android never skips
                                 // a change because something upstream consumed it,
@@ -2599,30 +2682,52 @@ internal fun SharedMobilePdfPageSurface(
                                 if (!latestIsActiveStrokeOwner) {
                                     return@awaitEachGesture
                                 }
-                                if (strokeEraser) {
-                                    if (hasCanvas()) {
-                                        eraseAtFinger(change.position, lastEraserPoint)
-                                        eraserOverridePosition = change.position
+                                // A single change can carry a whole batch of
+                                // coalesced samples; only the last one is in
+                                // `position`. Feed all of them, or the curve
+                                // between two of them is drawn as a chord.
+                                val samples = sharedPdfInkSamplesForChange(
+                                    historical = change.historical.map {
+                                        SharedPdfInkSample(it.position, it.uptimeMillis)
+                                    },
+                                    current = SharedPdfInkSample(change.position, change.uptimeMillis),
+                                    lastEmittedPosition = lastEmittedScreenPosition,
+                                    minDistancePx = SHARED_PDF_INK_MIN_SAMPLE_DISTANCE_PX
+                                )
+                                if (samples.isEmpty()) continue
+                                for (sample in samples) {
+                                    if (!latestIsActiveStrokeOwner) {
+                                        return@awaitEachGesture
                                     }
-                                } else if (hasCanvas()) {
-                                    val mutableStroke = activeStroke as? MutableList<PdfPagePoint>
-                                    if (mutableStroke != null) {
-                                        val point = change.position.toSharedMobilePdfPoint(latestCanvasSize)
-                                        val snapped = if (
-                                            highlighterSnapEnabled && selectedTool.isDesktopHighlighter &&
-                                            !eraserOverride
-                                        ) {
-                                            sharedPdfSnapHighlighterPoint(
-                                                pageAspectRatio = pageRender.aspectRatio,
-                                                currentPoint = point,
-                                                startPoint = mutableStroke.firstOrNull(),
-                                            )
-                                        } else {
-                                            point
+                                    if (strokeEraser) {
+                                        if (hasCanvas()) {
+                                            eraseAtFinger(sample.position, lastEraserPoint)
+                                            eraserOverridePosition = sample.position
                                         }
-                                        mutableStroke.add(snapped)
+                                    } else if (hasCanvas()) {
+                                        val mutableStroke = activeStroke as? MutableList<PdfPagePoint>
+                                        if (mutableStroke != null) {
+                                            val point = sample.position.toSharedMobilePdfPoint(
+                                                size = latestCanvasSize,
+                                                timestamp = eventTimeOrigin + sample.eventTimeMillis
+                                            )
+                                            val snapped = if (
+                                                highlighterSnapEnabled && selectedTool.isDesktopHighlighter &&
+                                                !eraserOverride
+                                            ) {
+                                                sharedPdfSnapHighlighterPoint(
+                                                    pageAspectRatio = pageRender.aspectRatio,
+                                                    currentPoint = point,
+                                                    startPoint = mutableStroke.firstOrNull(),
+                                                )
+                                            } else {
+                                                point
+                                            }
+                                            mutableStroke.add(snapped)
+                                        }
+                                        if (eraserOverride) eraserOverridePosition = sample.position
                                     }
-                                    if (eraserOverride) eraserOverridePosition = change.position
+                                    lastEmittedScreenPosition = sample.position
                                 }
                                 change.consume()
                             }
@@ -3277,10 +3382,10 @@ internal fun SharedMobilePdfPagePlaceholder(
     }
 }
 
-internal fun Offset.toSharedMobilePdfPoint(size: IntSize): PdfPagePoint {
+internal fun Offset.toSharedMobilePdfPoint(size: IntSize, timestamp: Long = currentTimestamp()): PdfPagePoint {
     return PdfPagePoint(
         x = (x / size.width.toFloat()).coerceIn(0f, 1f),
         y = (y / size.height.toFloat()).coerceIn(0f, 1f),
-        timestamp = currentTimestamp()
+        timestamp = timestamp
     )
 }

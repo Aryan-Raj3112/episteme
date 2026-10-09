@@ -505,6 +505,56 @@ class ReaderExtrasModelsTest {
     }
 
     @Test
+    fun `tts planner reads one chapter at a time for chaining`() {
+        val book = SharedEpubBook(
+            id = "tts-chained",
+            fileName = "tts-chained.epub",
+            title = "TTS chained",
+            chapters = listOf(
+                SharedEpubChapter("one", "One", "First chapter text."),
+                SharedEpubChapter("two", "Two", "Second chapter text.")
+            )
+        )
+        val session = ReaderEngine().createSession(book)
+
+        assertEquals(listOf(0), ReaderTtsPlanner.chunksForChapterFromLocation(session, 0).map { it.chapterIndex }.distinct())
+        assertEquals(listOf(1), ReaderTtsPlanner.chunksForChapterFromLocation(session, 1).map { it.chapterIndex }.distinct())
+        assertTrue(ReaderTtsPlanner.chunksForChapterFromLocation(session, 2).isEmpty())
+        assertTrue(ReaderTtsPlanner.chunksForChapterFromLocation(session, -1).isEmpty())
+    }
+
+    @Test
+    fun `tts planner slices chapter head at visible locator offset`() {
+        val source = "First hidden sentence. Second visible sentence. Third visible sentence."
+        val visibleOffset = source.indexOf("Second")
+        val book = SharedEpubBook(
+            id = "tts-chain-visible",
+            fileName = "tts-chain-visible.epub",
+            title = "TTS chain visible",
+            chapters = listOf(
+                SharedEpubChapter("zero", "Zero", "Earlier chapter text."),
+                SharedEpubChapter("one", "One", source)
+            )
+        )
+        val session = ReaderEngine().createSession(book).copy(
+            navigationLocator = ReaderLocator(
+                chapterIndex = 1,
+                pageIndex = 1,
+                startOffset = visibleOffset,
+                endOffset = visibleOffset,
+                textQuote = "Second visible sentence."
+            )
+        )
+
+        val chunks = ReaderTtsPlanner.chunksForChapterFromLocation(session, 1)
+
+        assertEquals(listOf(1), chunks.map { it.chapterIndex }.distinct())
+        assertTrue(chunks.first().text.startsWith("Second visible sentence."))
+        assertFalse(chunks.any { it.text.startsWith("First hidden") })
+        assertFalse(chunks.any { it.text.startsWith("Earlier chapter") })
+    }
+
+    @Test
     fun `tts planner starts onward reading at visible locator offset`() {
         val source = "First hidden sentence. Second visible sentence. Third visible sentence."
         val visibleOffset = source.indexOf("Second")
@@ -802,8 +852,9 @@ class ReaderExtrasModelsTest {
 
     @Test
     fun `dictionary service options exclude system for translate and search`() {
-        // Temporary (external apps undecided): browser only; define keeps AI first.
-        assertEquals(2, ReaderDictionaryServiceOptions.size)
+        // Android benchmark (Smart AI default): the dictionary offers Smart
+        // AI first, then the explicit "choose each time" entry, then browser.
+        assertEquals(3, ReaderDictionaryServiceOptions.size)
         assertEquals(1, ReaderTranslateServiceOptions.size)
         assertEquals(1, ReaderSearchServiceOptions.size)
         // Android parity: every action can hand off to the user's installed apps,
@@ -811,7 +862,16 @@ class ReaderExtrasModelsTest {
         assertEquals(ReaderExternalLookupService.AI, ReaderDictionaryServiceOptions.first())
         assertEquals(ReaderExternalLookupService.SAFARI, ReaderTranslateServiceOptions.first())
         assertEquals(ReaderExternalLookupService.SAFARI, ReaderSearchServiceOptions.first())
+        assertTrue(ReaderDictionaryServiceOptions.contains(ReaderExternalLookupService.ANY_APP))
         assertTrue(ReaderDictionaryServiceOptions.contains(ReaderExternalLookupService.SAFARI))
+    }
+
+    @Test
+    fun `smart ai is the default dictionary engine`() {
+        // Android benchmark (PdfPreferences/EpubReaderPreferences.loadUseOnlineDict):
+        // with nothing persisted the Dict action routes to the in-app AI
+        // definition, which is also what drives the Pro upsell for free accounts.
+        assertEquals(ReaderExternalLookupService.AI, ReaderDefaultDictionaryLookupService)
     }
 
     @Test
@@ -941,6 +1001,125 @@ class ReaderExtrasModelsTest {
         assertNull(parseSpendGuardSentinel("INSUFFICIENT_CREDITS"))
         assertNull(parseSpendGuardSentinel(null))
         assertEquals(Pair("RATE_LIMITED", 0), parseSpendGuardSentinel("RATE_LIMITED"))
+    }
+
+    @Test
+    fun `http errors map to spend guard tokens`() {
+        assertEquals(
+            "DAILY_SPEND_LIMIT:3600",
+            mapSpendGuardHttpError(402, """{"error":"DAILY_SPEND_LIMIT","retry_after_seconds":3600}""")
+        )
+        assertEquals("INSUFFICIENT_CREDITS", mapSpendGuardHttpError(402, """{"error":"402"}"""))
+        assertEquals("INSUFFICIENT_CREDITS", mapSpendGuardHttpError(402, null))
+        assertEquals("RATE_LIMITED:30", mapSpendGuardHttpError(429, null))
+        assertEquals(
+            "RATE_LIMITED:45",
+            mapSpendGuardHttpError(429, """{"error":"RATE_LIMITED","retry_after_seconds":45}""")
+        )
+        assertNull(mapSpendGuardHttpError(500, "boom"))
+        assertNull(mapSpendGuardHttpError(200, ""))
+    }
+
+    @Test
+    fun `stream errors map to spend guard tokens`() {
+        assertEquals("RATE_LIMITED:20", mapSpendGuardStreamError("RATE_LIMITED", 20))
+        assertEquals("DAILY_SPEND_LIMIT:0", mapSpendGuardStreamError("DAILY_SPEND_LIMIT", 0))
+        assertEquals("INSUFFICIENT_CREDITS", mapSpendGuardStreamError("INSUFFICIENT_CREDITS", 0))
+        assertEquals("boom", mapSpendGuardStreamError("boom", 0))
+    }
+
+    @Test
+    fun `cloud tts model switch covers every selectable tts model`() {
+        assertTrue(isCloudTtsModelEnabled(GEMINI_CLOUD_TTS_MODEL_ID))
+        assertTrue(isCloudTtsModelEnabled(FISH_TTS_MODEL_ID))
+        assertFalse(isCloudTtsModelEnabled(""))
+        assertFalse(isCloudTtsModelEnabled("gemini:unknown-model"))
+        // Regression: these selectable models used to read as "cloud off",
+        // which silently disabled read-aloud in the reader.
+        assertTrue(isCloudTtsModelEnabled(GEMINI_TTS_MODEL_LITE_ID))
+        assertTrue(isCloudTtsModelEnabled(GEMINI_TTS_MODEL_PREVIEW_ID))
+        assertTrue(isCloudTtsModelEnabled(FISH_TTS_MODEL_FREE_ID))
+    }
+
+    @Test
+    fun `fish free tier is selectable and drives byok like the paid model`() {
+        val settings = ReaderAiByokSettings(fishKey = "key", ttsModel = FISH_TTS_MODEL_FREE_ID)
+        assertTrue(settings.isFishByokTtsAvailable)
+        assertTrue(settings.isAnyByokTtsAvailable)
+        assertEquals("fish", settings.ttsProvider)
+        assertEquals(
+            FISH_TTS_MODEL_FREE_ID,
+            ReaderAiByokSettings(ttsModel = FISH_TTS_MODEL_FREE_ID).sanitized().ttsModel
+        )
+        assertTrue(ReaderTtsByokOptions.map { it.id }.contains(FISH_TTS_MODEL_FREE_ID))
+    }
+
+    @Test
+    fun `backend resolution prefers a byok key over spending credits`() {
+        val worker = mapOf(true to true, false to false)
+        for (signedIn in worker.keys) for (token in worker.keys) {
+            val available = signedIn && token
+            val signedInArg = signedIn
+            val tokenArg = token
+            // Fish key wins over a Gemini key and over the worker.
+            assertEquals(
+                CloudTtsBackend.FISH_BYOK,
+                resolveCloudTtsBackend(
+                    settings = ReaderAiByokSettings(fishKey = "f", geminiKey = "g", ttsModel = FISH_TTS_MODEL_ID),
+                    isSignedIn = signedInArg,
+                    hasAuthToken = tokenArg,
+                    hasWorkerUrl = true,
+                ),
+            )
+            // Gemini key next.
+            assertEquals(
+                CloudTtsBackend.GEMINI_BYOK,
+                resolveCloudTtsBackend(
+                    settings = ReaderAiByokSettings(geminiKey = "g", ttsModel = GEMINI_TTS_MODEL_LITE_ID),
+                    isSignedIn = signedInArg,
+                    hasAuthToken = tokenArg,
+                    hasWorkerUrl = true,
+                ),
+            )
+            // No keys: the wallet-backed worker, and nothing without auth.
+            assertEquals(
+                if (available) CloudTtsBackend.WORKER else CloudTtsBackend.UNAVAILABLE,
+                resolveCloudTtsBackend(
+                    settings = ReaderAiByokSettings(ttsModel = FISH_TTS_MODEL_ID),
+                    isSignedIn = signedInArg,
+                    hasAuthToken = tokenArg,
+                    hasWorkerUrl = true,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `legacy live gemini model still resolves as a byok backend`() {
+        assertEquals(
+            CloudTtsBackend.GEMINI_BYOK,
+            resolveCloudTtsBackend(
+                settings = ReaderAiByokSettings(geminiKey = "g", ttsModel = GEMINI_CLOUD_TTS_MODEL_ID),
+                isSignedIn = false,
+                hasAuthToken = false,
+                hasWorkerUrl = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a model with no matching key is not treated as byok`() {
+        // Fish model selected but only a Gemini key saved: Android falls
+        // through to the worker, it does not synthesize with the wrong key.
+        assertEquals(
+            CloudTtsBackend.UNAVAILABLE,
+            resolveCloudTtsBackend(
+                settings = ReaderAiByokSettings(geminiKey = "g", ttsModel = FISH_TTS_MODEL_ID),
+                isSignedIn = false,
+                hasAuthToken = false,
+                hasWorkerUrl = false,
+            ),
+        )
     }
 
     @Test

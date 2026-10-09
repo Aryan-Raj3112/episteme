@@ -189,6 +189,89 @@ class CloudLibrarySnapshotMergeTest {
     }
 
     @Test
+    fun `books removed by a winning tombstone are reported for local purge`() {
+        val localBook = BookItem(
+            id = "book",
+            path = "/local/book.epub",
+            coverImagePath = "/covers/book.jpg",
+            type = FileType.EPUB,
+            displayName = "book.epub",
+            timestamp = 100L,
+        )
+        val otherBook = BookItem(
+            id = "other",
+            path = "/local/other.epub",
+            type = FileType.EPUB,
+            displayName = "other.epub",
+            timestamp = 100L,
+        )
+        val tombstone = CloudBookTombstone(
+            bookId = localBook.id,
+            type = localBook.type.name,
+            deletedAt = 200L,
+        )
+
+        val merged = mergeCloudLibrarySnapshotWithDownloadedBooks(
+            local = SharedLibrarySnapshot(books = listOf(localBook, otherBook)),
+            remote = SharedLibrarySnapshot(bookTombstones = listOf(tombstone)),
+            downloadedBookPaths = emptyMap(),
+        )
+
+        val removed = booksRemovedByCloudTombstones(
+            local = SharedLibrarySnapshot(books = listOf(localBook, otherBook)),
+            merged = merged,
+        )
+
+        // Only the tombstoned book, and it keeps its local path and cover so the
+        // platform knows exactly which bytes to delete.
+        assertEquals(listOf(localBook), removed)
+        assertEquals("/local/book.epub", removed.single().path)
+        assertEquals("/covers/book.jpg", removed.single().coverImagePath)
+    }
+
+    @Test
+    fun `a tombstone that lost to a newer book removes nothing`() {
+        val localBook = BookItem(
+            id = "book",
+            path = "/local/book.epub",
+            type = FileType.EPUB,
+            displayName = "book.epub",
+            timestamp = 300L,
+        )
+        val local = SharedLibrarySnapshot(books = listOf(localBook))
+
+        val merged = mergeCloudLibrarySnapshotWithDownloadedBooks(
+            local = local,
+            remote = SharedLibrarySnapshot(
+                bookTombstones = listOf(
+                    CloudBookTombstone(
+                        bookId = localBook.id,
+                        type = localBook.type.name,
+                        deletedAt = 200L,
+                    )
+                )
+            ),
+            downloadedBookPaths = emptyMap(),
+        )
+
+        assertEquals(emptyList(), booksRemovedByCloudTombstones(local, merged))
+    }
+
+    @Test
+    fun `a tombstone for a book this device never had removes nothing`() {
+        val local = SharedLibrarySnapshot(books = emptyList())
+        val tombstone = CloudBookTombstone(bookId = "remote-only", type = "EPUB", deletedAt = 200L)
+
+        val merged = mergeCloudLibrarySnapshotWithDownloadedBooks(
+            local = local,
+            remote = SharedLibrarySnapshot(bookTombstones = listOf(tombstone)),
+            downloadedBookPaths = emptyMap(),
+        )
+
+        assertEquals(emptyList(), booksRemovedByCloudTombstones(local, merged))
+    }
+
+    @Test
     fun `newer local book resurrects over stale remote deletion`() {
         val local = BookItem(
             id = "book",

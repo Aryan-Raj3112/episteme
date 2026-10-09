@@ -26,6 +26,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import androidx.compose.ui.graphics.toArgb
 
 class ReaderHtmlDocumentBuilderTest {
 
@@ -206,7 +207,7 @@ class ReaderHtmlDocumentBuilderTest {
         )
 
         assertEquals(1, Regex("<span class=\"reader-user-highlight").findAll(html).count())
-        assertTrue(html.contains("""alpha beta <span class="reader-user-highlight user-highlight-yellow" style="background-color:#12ABEF !important" data-reader-highlight-style="background" data-reader-highlight-id="highlight-1" data-cfi="desktop:0:11:16" data-reader-start-offset="11" data-reader-end-offset="16">alpha</span> beta"""))
+        assertTrue(html.contains("""alpha beta <span class="reader-user-highlight user-highlight-yellow" style="background-color:rgba(18,171,239,0.4) !important" data-reader-highlight-style="background" data-reader-highlight-id="highlight-1" data-cfi="desktop:0:11:16" data-reader-start-offset="11" data-reader-end-offset="16">alpha</span> beta"""))
     }
 
     @Test
@@ -262,7 +263,16 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("var sourceCfiBases = readerCfiBases(sourceCfi);"))
         assertTrue(html.contains("return readerHostMatchesCfi(host, sourceCfiBases);"))
         assertTrue(html.contains("if (cfiOffsets) {"))
-        assertTrue(html.contains("if (hasPreciseOffsets) return;"))
+        // A highlight whose offsets address nothing in this document is placed from its stored text
+        // instead of being dropped. It used to return early whenever the offsets looked precise, which
+        // left a highlight unpainted in this surface and placed correctly in every other one, because
+        // the same offsets addressed a chapter split differently here.
+        assertFalse(
+            html.contains("if (hasPreciseOffsets) return;"),
+            "precise offsets must not abandon a highlight; they only say where it was recorded"
+        )
+        assertTrue(html.contains("logHighlightWebDecision(highlight, 'no_target_chapters'"))
+        assertTrue(html.contains("logHighlightWebDecision(highlight, 'no_segments_applied'"))
     }
 
     @Test
@@ -499,7 +509,7 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
-    fun `vertical document centers followed tts locator without changing active locator scroll`() {
+    fun `vertical document follows tts locator only when it is not already visible`() {
         val html = ReaderHtmlDocumentBuilder.verticalDocument(
             book = repeatedWordBook("alpha beta gamma"),
             settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL)
@@ -516,9 +526,51 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("function shouldCenterScrollTarget(options)"))
         assertTrue(html.contains("function shouldTrackScrollRestore(options)"))
         assertTrue(html.contains("return documentTop - Math.round((viewportHeight - rectHeight) / 2);"))
-        assertTrue(html.contains("if (follow && locator) scrollToLocator(locator, { align: 'center', trackRestore: false });"))
+        // Android parity (keepVisible = true): the TTS follow must not
+        // unconditionally re-center the spoken chunk, and when it does move the
+        // page it animates instead of jumping.
+        assertTrue(html.contains("function ttsLocatorNeedsFollowScroll(locator)"))
+        assertTrue(html.contains("if (ttsLocatorNeedsFollowScroll(locator))"))
+        assertTrue(html.contains("scrollToLocator(locator, { align: 'nearest', smooth: true, trackRestore: false })"))
+        assertFalse(html.contains("if (follow && locator) scrollToLocator(locator, { align: 'center', trackRestore: false });"))
         assertFalse(activeScrollCall.contains("align: 'center'"))
         assertFalse(activeScrollCall.contains("trackRestore: false"))
+    }
+
+    @Test
+    fun `vertical document reasserts restore landing while chunks settle`() {
+        val body = (0 until 45).joinToString("") { index -> "<p id=\"p$index\">Paragraph $index</p>" }
+        val book = SharedEpubBook(
+            id = "restore-settle-book",
+            fileName = "restore-settle.epub",
+            title = "Restore settle",
+            chapters = listOf(SharedEpubChapter("chapter", "Chapter", "Paragraph", htmlContent = body))
+        )
+        val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(book, chapterIndex = 0)
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = book,
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+            renderedChapterRange = 0..0,
+            virtualizedChapterChunks = mapOf(0 to chunks),
+        )
+
+        // Restore settling contract (a reopen must not fall back to the
+        // chapter top after an exact landing): the window-load boot scroll
+        // skips once a landing is recorded, above-viewport chunk fills are
+        // traced, and each fill re-asserts the latest tracked landing
+        // exact-only while no takeover happened. Skipped exact scrolls
+        // return false so the didFinish navigation script keeps polling for
+        // the target chunk (Android scrollToCfi retry-loop parity).
+        assertTrue(html.contains("function restoreLandingUsable()"))
+        assertTrue(html.contains("function reassertRestoreLanding(reason)"))
+        assertTrue(html.contains("function scheduleRestoreSettle()"))
+        assertTrue(html.contains("reason=already_landed"))
+        assertTrue(html.contains("event=web_chunk_compensate index="))
+        assertTrue(html.contains("reassertRestoreLanding('chunk_settle')"))
+        assertTrue(html.contains("reassertRestoreLanding('fonts_ready')"))
+        assertTrue(html.contains("event=web_restore_settled"))
+        assertTrue(html.contains("reason=exact_only_no_range"))
+        assertTrue(html.contains("return false;"))
     }
 
     @Test
@@ -620,7 +672,7 @@ class ReaderHtmlDocumentBuilderTest {
         )
         val verticalExpansionCss = Regex(
             "body\\.reader-vertical > \\.chapter,\\s*" +
-                "body\\.reader-vertical > :not\\(\\.chapter\\):not\\(#reader-selection-menu\\):not\\(\\.reader-selection-handle\\):not\\(script\\):not\\(style\\),\\s*" +
+                "body\\.reader-vertical > :not\\(\\.chapter\\):not\\(#reader-selection-menu\\):not\\(\\.reader-selection-handle\\):not\\(#reader-tts-highlight-layer\\):not\\(#reader-media-overlay-highlight-layer\\):not\\(script\\):not\\(style\\),\\s*" +
                 "body\\.reader-vertical > \\.chapter > :not\\(\\.reader-content\\),\\s*" +
                 "body\\.reader-vertical > \\.chapter > \\.chapter-title,\\s*" +
                 "body\\.reader-vertical > \\.chapter > \\.reader-content \\{\\s*" +
@@ -634,7 +686,7 @@ class ReaderHtmlDocumentBuilderTest {
                 "margin: 0 !important;"
         )
         val verticalContentCss = Regex(
-            "body\\.reader-vertical > :not\\(\\.chapter\\):not\\(#reader-selection-menu\\):not\\(\\.reader-selection-handle\\):not\\(script\\):not\\(style\\),\\s*" +
+            "body\\.reader-vertical > :not\\(\\.chapter\\):not\\(#reader-selection-menu\\):not\\(\\.reader-selection-handle\\):not\\(#reader-tts-highlight-layer\\):not\\(#reader-media-overlay-highlight-layer\\):not\\(script\\):not\\(style\\),\\s*" +
                 "body\\.reader-vertical > \\.chapter > :not\\(\\.reader-content\\),\\s*" +
                 "body\\.reader-vertical > \\.chapter > \\.chapter-title,\\s*" +
                 "body\\.reader-vertical > \\.chapter > \\.reader-content \\{\\s*" +
@@ -982,15 +1034,16 @@ class ReaderHtmlDocumentBuilderTest {
 
     @Test
     fun `vertical selection menu renders every configured highlight palette slot`() {
+        val customArgb = 0xFF123456.toInt()
         val html = ReaderHtmlDocumentBuilder.verticalDocument(
             book = repeatedWordBook("alpha beta"),
             settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
             highlightPalette = ReaderHighlightPalette(
                 listOf(
-                    HighlightColor.CYAN,
-                    HighlightColor.MAGENTA,
-                    HighlightColor.LIME,
-                    HighlightColor.PINK
+                    HighlightColor.CYAN.color.toArgb(),
+                    HighlightColor.MAGENTA.color.toArgb(),
+                    customArgb,
+                    HighlightColor.PINK.color.toArgb()
                 )
             )
         )
@@ -998,6 +1051,10 @@ class ReaderHtmlDocumentBuilderTest {
         assertEquals(4, Regex("""class="reader-selection-color"""").findAll(html).count())
         assertTrue(html.contains("""data-color-id="cyan""""))
         assertTrue(html.contains("""data-color-id="pink""""))
+        // A slot the named enum cannot express keeps its own token and its own hex, which is the
+        // point of the palette being ARGB slots.
+        assertTrue(html.contains("""data-color-id="custom_ff123456""""))
+        assertTrue(html.contains("--selection-color:#123456"))
         assertTrue(html.contains("""class="reader-selection-spectrum""""))
         assertTrue(html.contains("""data-action="palette""""))
     }
@@ -1007,10 +1064,10 @@ class ReaderHtmlDocumentBuilderTest {
         val script = ReaderHtmlDocumentBuilder.highlightPaletteUpdateScript(
             ReaderHighlightPalette(
                 listOf(
-                    HighlightColor.CYAN,
-                    HighlightColor.MAGENTA,
-                    HighlightColor.LIME,
-                    HighlightColor.PINK
+                    HighlightColor.CYAN.color.toArgb(),
+                    HighlightColor.MAGENTA.color.toArgb(),
+                    HighlightColor.LIME.color.toArgb(),
+                    HighlightColor.PINK.color.toArgb()
                 )
             )
         )

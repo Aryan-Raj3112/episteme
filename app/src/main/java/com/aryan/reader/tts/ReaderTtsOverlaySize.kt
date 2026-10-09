@@ -5,6 +5,7 @@ import androidx.core.content.edit
 import com.aryan.reader.shared.readerTtsOverlayAlignmentBias as sharedReaderTtsOverlayAlignmentBias
 import com.aryan.reader.shared.readerTtsOverlayAlternativeSizes as sharedReaderTtsOverlayAlternativeSizes
 import com.aryan.reader.shared.resolveReaderTtsOverlaySize as sharedResolveReaderTtsOverlaySize
+import com.aryan.reader.shared.readerTtsChunkLabel
 
 /** Compatibility alias for Android call sites; the state contract lives in shared. */
 typealias ReaderTtsOverlaySize = com.aryan.reader.shared.ReaderTtsOverlaySize
@@ -34,8 +35,4 @@ internal fun saveReaderTtsOverlaySize(context: Context, size: ReaderTtsOverlaySi
     prefs.edit { putString(READER_TTS_OVERLAY_SIZE_KEY, size.name) }
 }
 
-internal fun formatReaderTtsChunkLabel(currentChunkIndex: Int, totalChunks: Int): String? {
-    if (totalChunks <= 0) return null
-    if (currentChunkIndex !in 0 until totalChunks) return null
-    return "Chunk ${currentChunkIndex + 1}/$totalChunks"
-}
+

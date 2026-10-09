@@ -3,7 +3,9 @@ package com.aryan.reader
 import com.aryan.reader.data.BookTagCrossRef
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.TagEntity
+import com.aryan.reader.shared.AddBooksSource
 import com.aryan.reader.shared.AppPinState
+import com.aryan.reader.shared.booksAvailableForShelfAddition
 import com.aryan.reader.shared.BookItem as SharedBookItem
 import com.aryan.reader.shared.LibraryFeatureState
 import com.aryan.reader.shared.Shelf as SharedShelf
@@ -112,3 +114,42 @@ private fun SharedShelf.toAndroidShelf(resolveBook: (SharedBookItem) -> RecentFi
     depth = depth,
     sortKey = sortKey,
 )
+
+fun Shelf.toSharedShelf(mapBook: (RecentFileItem) -> SharedBookItem): SharedShelf = SharedShelf(
+    id = id,
+    name = name,
+    type = type,
+    books = books.map(mapBook),
+    directBooks = directBooks.map(mapBook),
+    parentShelfId = parentShelfId,
+    childShelfIds = childShelfIds,
+    depth = depth,
+    sortKey = sortKey,
+)
+
+/**
+ * Library Beta's "add books to this shelf" candidate list.
+ *
+ * `booksAvailableForAdding` on the projected state is only filled for the legacy
+ * `isAddingBooksToShelf`/`viewingShelfId` flow, which Library Beta does not drive, so the
+ * candidates are derived here with the same shared helper iOS uses. Mapping the result back
+ * through the id of the source list keeps the original `RecentFileItem` instances, so no
+ * extra allocation survives the round trip.
+ */
+internal fun androidBooksAvailableForShelfAddition(
+    allLibraryBooks: List<RecentFileItem>,
+    shelves: List<Shelf>,
+    shelfId: String,
+    source: AddBooksSource,
+): List<RecentFileItem> {
+    if (allLibraryBooks.isEmpty()) return emptyList()
+    val bookItemCache = SharedProjectionBookItemCache(maxEntries = allLibraryBooks.size)
+    val androidBooksById = allLibraryBooks.associateBy { it.bookId }
+    val sharedShelves = shelves.map { shelf -> shelf.toSharedShelf(bookItemCache::map) }
+    return booksAvailableForShelfAddition(
+        allLibraryBooks = bookItemCache.map(allLibraryBooks),
+        shelves = sharedShelves,
+        shelfId = shelfId,
+        source = source,
+    ).mapNotNull { sharedBook -> androidBooksById[sharedBook.id] }
+}

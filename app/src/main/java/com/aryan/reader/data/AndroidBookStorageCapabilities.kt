@@ -12,6 +12,12 @@ interface AndroidBookStore {
     suspend fun getFileByUri(uriString: String): RecentFileItem?
     suspend fun getFilesBySourceFolder(sourceFolderUri: String): List<RecentFileItem>
     suspend fun getAllFilesForSync(): List<RecentFileItem>
+    /**
+     * Ids only. For maintenance tasks that need the id set and nothing else:
+     * avoids the full-table `SELECT *` plus its mapped copy that
+     * [getAllFilesForSync] builds.
+     */
+    suspend fun getAllBookIdsForMaintenance(): Set<String>
     suspend fun addRecentFile(item: RecentFileItem)
     suspend fun addRecentFiles(items: List<RecentFileItem>)
     suspend fun updateUserEditableMetadata(

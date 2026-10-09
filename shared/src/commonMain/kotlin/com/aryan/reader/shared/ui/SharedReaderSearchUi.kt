@@ -24,7 +24,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
@@ -259,7 +258,37 @@ fun SharedAndroidReaderTocTreeItem(
     }
 }
 
-data class SharedAndroidEpubBookmarkStrings(
+/**
+ * The slice of a bookmark the drawer row renders. Android and iOS persist different bookmark
+ * models (`EpubBookmark` keyed by CFI, `ReaderBookmark` keyed by id), and neither can be widened
+ * to the other without changing dedup semantics, so the row is projected from whichever model the
+ * host owns.
+ */
+data class SharedEpubBookmarkRow(
+    /** Stable list key; must be unique within the list. */
+    val key: String,
+    val title: String,
+    val chapterTitle: String,
+    /** "Page 3 of 12" caption, or null when the host has no page information. */
+    val pageOf: String? = null,
+)
+
+/** Android/EpubBookmark projection (the model Android persists, keyed by CFI). */
+fun EpubBookmark.toBookmarkRow(
+    defaultLabel: String,
+    pageOf: (page: Int, total: Int) -> String,
+): SharedEpubBookmarkRow = SharedEpubBookmarkRow(
+    key = cfi,
+    title = label?.takeIf { it.isNotBlank() } ?: snippet.ifBlank { defaultLabel },
+    chapterTitle = chapterTitle,
+    pageOf = if (pageInChapter != null && totalPagesInChapter != null) {
+        pageOf(pageInChapter, totalPagesInChapter)
+    } else {
+        null
+    }
+)
+
+data class SharedEpubBookmarkStrings(
     val empty: String,
     val defaultLabel: String,
     val pageOf: (page: Int, total: Int) -> String,
@@ -389,7 +418,7 @@ fun <T> SharedAndroidPdfHighlightsList(
                             IconButton(onClick = { menuExpanded = true }) {
                                 Icon(Icons.Default.MoreVert, contentDescription = strings.optionsDescription)
                             }
-                            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                            SharedDropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                                 DropdownMenuItem(
                                     text = { Text(if (note(highlight).isNullOrBlank()) strings.addNoteAction else strings.editNoteAction) },
                                     onClick = {
@@ -479,7 +508,7 @@ fun <T> SharedAndroidPdfBookmarksList(
                         IconButton(onClick = { bookmarkMenuExpandedFor = bookmark }) {
                             Icon(Icons.Default.MoreVert, contentDescription = strings.moreOptionsDescription)
                         }
-                        DropdownMenu(
+                        SharedDropdownMenu(
                             expanded = bookmarkMenuExpandedFor == bookmark,
                             onDismissRequest = { bookmarkMenuExpandedFor = null },
                         ) {
@@ -554,13 +583,14 @@ fun <T> SharedAndroidPdfBookmarksList(
 
 /** Android EPUB bookmark list and dialogs, with platform localization and scrollbar injected. */
 @Composable
-fun SharedAndroidEpubBookmarksList(
-    bookmarks: Set<EpubBookmark>,
-    strings: SharedAndroidEpubBookmarkStrings,
-    onNavigateToBookmark: (EpubBookmark) -> Unit,
-    onRenameBookmark: (EpubBookmark, String) -> Unit,
-    onDeleteBookmark: (EpubBookmark) -> Unit,
-    scrollbar: @Composable BoxScope.(LazyListState) -> Unit,
+fun <T> SharedEpubBookmarksList(
+    bookmarks: List<T>,
+    rowOf: (T) -> SharedEpubBookmarkRow,
+    strings: SharedEpubBookmarkStrings,
+    onNavigateToBookmark: (T) -> Unit,
+    onRenameBookmark: (T, String) -> Unit,
+    onDeleteBookmark: (T) -> Unit,
+    scrollbar: @Composable BoxScope.(LazyListState) -> Unit = {},
 ) {
     if (bookmarks.isEmpty()) {
         Box(
@@ -572,9 +602,12 @@ fun SharedAndroidEpubBookmarksList(
         return
     }
 
-    var bookmarkMenuExpandedFor by remember { mutableStateOf<EpubBookmark?>(null) }
-    var showDeleteConfirmDialogFor by remember { mutableStateOf<EpubBookmark?>(null) }
-    var showRenameBookmarkDialog by remember { mutableStateOf<EpubBookmark?>(null) }
+    // Host owns the model, so ordering/dedup of the projected rows happens here rather
+    // than in each platform's copy of this list.
+    val rows = remember(bookmarks) { bookmarks.map(rowOf).distinctBy { it.key }.sortedBy { it.key } }
+    var bookmarkMenuExpandedFor by remember { mutableStateOf<String?>(null) }
+    var showDeleteConfirmDialogFor by remember { mutableStateOf<T?>(null) }
+    var showRenameBookmarkDialog by remember { mutableStateOf<T?>(null) }
     val listState = rememberLazyListState()
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -583,14 +616,14 @@ fun SharedAndroidEpubBookmarksList(
             modifier = Modifier.fillMaxSize().padding(end = 4.dp),
         ) {
             items(
-                items = bookmarks.distinctBy { it.cfi }.sortedBy { it.cfi },
-                key = { it.cfi },
-            ) { bookmark ->
+                items = rows,
+                key = { it.key },
+            ) { row ->
+                val host = bookmarks.first { rowOf(it).key == row.key }
                 ListItem(
                     headlineContent = {
                         Text(
-                            text = bookmark.label?.takeIf { it.isNotBlank() }
-                                ?: bookmark.snippet.ifBlank { strings.defaultLabel },
+                            text = row.title.ifBlank { strings.defaultLabel },
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -600,15 +633,15 @@ fun SharedAndroidEpubBookmarksList(
                     supportingContent = {
                         Column {
                             Text(
-                                text = bookmark.chapterTitle,
+                                text = row.chapterTitle,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
-                            if (bookmark.pageInChapter != null && bookmark.totalPagesInChapter != null) {
+                            row.pageOf?.let { pageOf ->
                                 Text(
-                                    text = strings.pageOf(bookmark.pageInChapter, bookmark.totalPagesInChapter),
+                                    text = pageOf,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -617,31 +650,31 @@ fun SharedAndroidEpubBookmarksList(
                     },
                     trailingContent = {
                         Box {
-                            IconButton(onClick = { bookmarkMenuExpandedFor = bookmark }) {
+                            IconButton(onClick = { bookmarkMenuExpandedFor = row.key }) {
                                 Icon(Icons.Default.MoreVert, contentDescription = strings.moreOptionsDescription)
                             }
-                            DropdownMenu(
-                                expanded = bookmarkMenuExpandedFor == bookmark,
+                            SharedDropdownMenu(
+                                expanded = bookmarkMenuExpandedFor == row.key,
                                 onDismissRequest = { bookmarkMenuExpandedFor = null },
                             ) {
                                 DropdownMenuItem(
                                     text = { Text(strings.renameAction) },
                                     onClick = {
-                                        showRenameBookmarkDialog = bookmark
+                                        showRenameBookmarkDialog = host
                                         bookmarkMenuExpandedFor = null
                                     },
                                 )
                                 DropdownMenuItem(
                                     text = { Text(strings.deleteAction) },
                                     onClick = {
-                                        showDeleteConfirmDialogFor = bookmark
+                                        showDeleteConfirmDialogFor = host
                                         bookmarkMenuExpandedFor = null
                                     },
                                 )
                             }
                         }
                     },
-                    modifier = Modifier.clickable { onNavigateToBookmark(bookmark) },
+                    modifier = Modifier.clickable { onNavigateToBookmark(host) },
                 )
                 HorizontalDivider()
             }
@@ -650,7 +683,7 @@ fun SharedAndroidEpubBookmarksList(
     }
 
     showRenameBookmarkDialog?.let { bookmarkToRename ->
-        val currentName = bookmarkToRename.label?.takeIf { it.isNotBlank() } ?: bookmarkToRename.snippet
+        val currentName = rowOf(bookmarkToRename).title
         var newTitle by remember(bookmarkToRename) { mutableStateOf(currentName) }
         AlertDialog(
             onDismissRequest = { showRenameBookmarkDialog = null },

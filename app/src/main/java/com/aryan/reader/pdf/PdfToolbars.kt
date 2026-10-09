@@ -1,6 +1,9 @@
 // PdfToolbars.kt
 package com.aryan.reader.pdf
 
+import com.aryan.reader.shared.ui.SharedMobilePdfJumpHistoryBar
+import com.aryan.reader.shared.ui.SharedPdfJumpHistoryBarLabels
+import com.aryan.reader.shared.ui.SharedMobilePdfReflowProgressOverlay
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -812,35 +815,7 @@ fun ReflowProgressOverlay(
         exit = fadeOut(animationSpec = tween(200)) + slideOutVertically(animationSpec = tween(200)),
         modifier = modifier
     ) {
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp),
-            shadowElevation = 4.dp
-        ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = stringResource(R.string.generating_text_view),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Text(
-                        text = "${(reflowProgressValue * 100).toInt()}%",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-                LinearProgressIndicator(
-                    progress = { reflowProgressValue },
-                    modifier = Modifier.fillMaxWidth().height(6.dp),
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                )
-            }
-        }
+        SharedMobilePdfReflowProgressOverlay(progress = reflowProgressValue)
     }
 }
 
@@ -861,69 +836,20 @@ fun PdfJumpHistoryBar(
         exit = slideOutVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeOut(animationSpec = tween(200)),
         modifier = modifier
     ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            tonalElevation = 3.dp
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(40.dp)
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                TextButton(
-                    onClick = onBack,
-                    enabled = backPage != null,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = stringResource(R.string.content_desc_jump_back),
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = backPage?.let { stringResource(R.string.pdf_page_short, it + 1) } ?: "",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                TextButton(
-                    onClick = onClear,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        Icons.Default.Close,
-                        contentDescription = stringResource(R.string.action_clear),
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(stringResource(R.string.action_clear), maxLines = 1)
-                }
-
-                TextButton(
-                    onClick = onForward,
-                    enabled = forwardPage != null,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        text = forwardPage?.let { stringResource(R.string.pdf_page_short, it + 1) } ?: "",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = stringResource(R.string.content_desc_jump_forward),
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-        }
+        val pageTemplate = stringResource(R.string.pdf_page_short)
+        SharedMobilePdfJumpHistoryBar(
+            backPage = backPage,
+            forwardPage = forwardPage,
+            onBack = onBack,
+            onForward = onForward,
+            onClear = onClear,
+            labels = SharedPdfJumpHistoryBarLabels(
+                jumpBack = stringResource(R.string.content_desc_jump_back),
+                jumpForward = stringResource(R.string.content_desc_jump_forward),
+                clear = stringResource(R.string.action_clear),
+                page = { pageTemplate.format(it) }
+            )
+        )
     }
 }
 

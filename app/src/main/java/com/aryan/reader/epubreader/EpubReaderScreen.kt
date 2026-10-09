@@ -29,6 +29,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.Intent
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioManager
@@ -63,6 +64,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -70,11 +72,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.windowInsetsEndWidth
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.windowInsetsStartWidth
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -163,8 +168,13 @@ import com.aryan.reader.ReaderScreenOrientationEffect
 import com.aryan.reader.ReaderScreenOrientationSheet
 import com.aryan.reader.ReaderThemePanel
 import com.aryan.reader.RenderMode
+import com.aryan.reader.audiobook.ACTION_AUDIOBOOK_STOP
+import com.aryan.reader.audiobook.AudiobookPlaybackService
 import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.shared.SummarizationResult
+import com.aryan.reader.shared.AnnotationExportFormat
+import com.aryan.reader.shared.AnnotationExportFormatter
+import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.hasSpendableBalance
 import com.aryan.reader.shared.spendableDisplayText
 import com.aryan.reader.shared.parseSpendGuardSentinel
@@ -177,6 +187,9 @@ import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.isByokModelReady
 import com.aryan.reader.isByokTtsReady
 import com.aryan.reader.shared.ReaderAiFeature as AiFeature
+import com.aryan.reader.shared.ui.SharedAnnotationExportFormatDialog
+import com.aryan.reader.shared.ui.rememberSharedReaderClockTime
+import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.hasReadableExtractedContent
@@ -244,6 +257,8 @@ import com.aryan.reader.tts.saveReaderTtsOverlaySize
 import com.aryan.reader.tts.splitTextIntoChunks
 import com.aryan.reader.withTtsReplacements
 import com.aryan.reader.shared.reader.ReaderJumpHistory
+import com.aryan.reader.shared.reader.SharedMediaOverlayProjection
+import com.aryan.reader.shared.ui.SharedMobileEpubMediaOverlayBar
 import com.aryan.reader.shared.reader.mobileEpubChapterScrollFraction
 import com.aryan.reader.shared.reader.mobileEpubCharacterProgress
 import com.aryan.reader.shared.reader.mobileEpubCharacterDisplayProgress
@@ -263,6 +278,13 @@ import com.aryan.reader.shared.ui.SharedMobileReaderDrawer
 import com.aryan.reader.shared.ui.SharedMobileReaderScaffold
 import com.aryan.reader.shared.ui.SharedMobileReaderRecoveryGate
 import com.aryan.reader.shared.ui.rememberReaderMotionPolicy
+import com.aryan.reader.shared.ui.SharedReaderPageInfoBarRow
+import com.aryan.reader.shared.ui.SharedReaderPageInfoBarSidePadding
+import com.aryan.reader.shared.ui.sharedMobileEpubBottomChromePadding
+import com.aryan.reader.shared.ui.sharedMobileEpubMediaOverlayBottomPadding
+import com.aryan.reader.shared.ui.sharedMobileEpubPageInfoBarContentHeight
+import com.aryan.reader.shared.ui.sharedMobileEpubPageInfoCornerClearance
+import com.aryan.reader.shared.ui.SharedMobileEpubLoading
 import com.aryan.reader.shared.reader.MobileEpubReaderBackAction
 import com.aryan.reader.shared.reader.selectMobileEpubReaderBackAction
 import org.json.JSONArray
@@ -688,6 +710,28 @@ fun EpubReaderHost(
 
     val webViewRefForTtsState = remember { mutableStateOf<WebView?>(null) }
     var webViewRefForTts by webViewRefForTtsState
+
+    val isVerticalRestoreSettledState = remember { mutableStateOf(true) }
+    var isVerticalRestoreSettled by isVerticalRestoreSettledState
+    var verticalRestoreStartedAtMillis by remember { mutableLongStateOf(0L) }
+
+    // Last position handed to the persistence layer. The locator doubles as the dedupe key for
+    // the background flush so lifecycle events never re-write a position already stored, and the
+    // CFI is retained separately because the vertical surface restores from it: writing a position
+    // without one would fall the next open back to a chapter-start restore.
+    val lastPersistedLocatorState = remember { mutableStateOf(initialLocator) }
+    var lastPersistedLocator by lastPersistedLocatorState
+    val lastPersistedCfiState = remember { mutableStateOf(initialCfi) }
+    var lastPersistedCfi by lastPersistedCfiState
+    var lastPersistedCfiChapter by remember { mutableIntStateOf(initialLocator?.chapterIndex ?: -1) }
+    val emitReadingPosition by rememberUpdatedState<(Locator, String?, Float) -> Unit>({ locator, cfi, progress ->
+        lastPersistedLocator = locator
+        if (!cfi.isNullOrBlank()) {
+            lastPersistedCfi = cfi
+            lastPersistedCfiChapter = locator.chapterIndex
+        }
+        onSavePosition(locator, cfi, progress)
+    })
 
     val showAiHubSheetState = remember { mutableStateOf(false) }
     var showAiHubSheet by showAiHubSheetState
@@ -1269,7 +1313,49 @@ fun EpubReaderHost(
 
         Timber.tag("TTS_LOCATE")
             .d("Saving resolved locator position. chapter=${locator.chapterIndex}, block=${locator.blockIndex}, progress=$progress")
-        onSavePosition(locator, cfiForWebView, progress)
+        emitReadingPosition(locator, cfiForWebView, progress)
+    }
+
+    /**
+     * Persists the last locator this reader is certain about, without waiting on the WebView.
+     *
+     * The live position for the vertical surfaces can only be resolved by a JavaScript round trip
+     * that needs the main looper. Android freezes cached processes shortly after the app leaves the
+     * foreground, so that round trip is regularly cut short and the session's last position is lost.
+     * Writing the locator we already resolved in memory keeps a durable record; whenever the
+     * JavaScript path does complete it lands afterwards and overwrites this with the exact value.
+     */
+    fun flushInMemoryReadingPosition(reason: String) {
+        val locator = if (isNativeVerticalMode) currentNativeVerticalLocator() else lastKnownLocator
+        if (locator == null || locator == lastPersistedLocator) {
+            Timber.tag(TAG_EPUB_VERTICAL_OPEN_DIAG).d(
+                "flush_skip reason=$reason locator=${locator ?: "none"} persisted=${lastPersistedLocator ?: "none"}"
+            )
+            return
+        }
+
+        val chapterLengthChars = chapters.getOrNull(locator.chapterIndex)?.plainTextCharacterCount()?.toLong() ?: 0L
+        val boundedOffset = locator.charOffset.toLong().coerceIn(0L, chapterLengthChars)
+        val completedCharsInPreviousChapters =
+            chapters.take(locator.chapterIndex).sumOf { it.plainTextCharacterCount().toLong() }
+        val progress = if (totalBookLengthChars > 0) {
+            mobileEpubCharacterProgress(
+                totalBookCharacters = totalBookLengthChars,
+                completedChapterCharacters = completedCharsInPreviousChapters,
+                currentChapterOffset = boundedOffset,
+                isAtEndOfBook = locator.chapterIndex == chapters.lastIndex && chapterLengthChars > 0 && boundedOffset >= chapterLengthChars
+            )
+        } else {
+            0f
+        }
+        // Only reuse a retained CFI when it was resolved for this same chapter; a CFI from another
+        // chapter would resolve against the wrong document and drop the next open to chapter start.
+        val cfiForFlushedLocator = lastPersistedCfi.takeIf { lastPersistedCfiChapter == locator.chapterIndex }
+
+        Timber.tag(TAG_EPUB_VERTICAL_OPEN_DIAG).d(
+            "flush reason=$reason locator=$locator progress=$progress"
+        )
+        emitReadingPosition(locator, cfiForFlushedLocator, progress)
     }
 
     fun ensureVerticalChunksLoaded(targetChunk: Int) {
@@ -1434,10 +1520,15 @@ fun EpubReaderHost(
     }
 
     val onHighlightColorChange: (UserHighlight, Int) -> Unit = { targetHighlight, newColorArgb ->
-        val index = userHighlights.indexOfFirst { it.cfi == targetHighlight.cfi }
+        val index = userHighlights.indexOfFirst { it.id == targetHighlight.id }
         if (index != -1) {
             val legacyColor = legacyHighlightColorForArgb(newColorArgb)
-            userHighlights[index] = targetHighlight.copy(color = legacyColor, colorArgb = newColorArgb)
+            // Applied to the entry in the list, not to the snapshot the sheet was opened with: a
+            // locator repaired while the sheet was open would otherwise be reverted by this write.
+            userHighlights[index] = userHighlights[index].copy(
+                color = legacyColor,
+                colorArgb = newColorArgb
+            )
             if (currentRenderMode == RenderMode.VERTICAL_SCROLL && targetHighlight.chapterIndex == currentChapterIndex) {
                 val cssClass = legacyColor.cssClass
                 val colorCss = String.format("#%06X", 0xFFFFFF and newColorArgb)
@@ -1448,7 +1539,7 @@ fun EpubReaderHost(
     }
 
     val onHighlightStyleChange: (UserHighlight, HighlightStyle) -> Unit = { targetHighlight, newStyle ->
-        val index = userHighlights.indexOfFirst { it.cfi == targetHighlight.cfi }
+        val index = userHighlights.indexOfFirst { it.id == targetHighlight.id }
         if (index != -1) {
             val current = userHighlights[index]
             userHighlights[index] = current.copy(style = newStyle)
@@ -1588,6 +1679,66 @@ fun EpubReaderHost(
             }
         }
     )
+
+    var showAnnotationExportDialog by remember { mutableStateOf(false) }
+    var pendingAnnotationExportText by remember { mutableStateOf<String?>(null) }
+    val saveMarkdownAnnotationsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.MARKDOWN.mimeType)
+    ) { uri ->
+        val exportText = pendingAnnotationExportText
+        pendingAnnotationExportText = null
+        if (uri != null && exportText != null) viewModel.saveAnnotationExport(exportText, uri)
+    }
+    val saveTextAnnotationsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.TEXT.mimeType)
+    ) { uri ->
+        val exportText = pendingAnnotationExportText
+        pendingAnnotationExportText = null
+        if (uri != null && exportText != null) viewModel.saveAnnotationExport(exportText, uri)
+    }
+    val saveJsonAnnotationsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.JSON.mimeType)
+    ) { uri ->
+        val exportText = pendingAnnotationExportText
+        pendingAnnotationExportText = null
+        if (uri != null && exportText != null) viewModel.saveAnnotationExport(exportText, uri)
+    }
+    val saveCsvAnnotationsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.CSV.mimeType)
+    ) { uri ->
+        val exportText = pendingAnnotationExportText
+        pendingAnnotationExportText = null
+        if (uri != null && exportText != null) viewModel.saveAnnotationExport(exportText, uri)
+    }
+
+    fun exportReaderAnnotations(format: AnnotationExportFormat) {
+        val currentHighlights = userHighlights.toList()
+        val sourceType = uiState.recentFiles.firstOrNull { it.bookId == (uiState.selectedBookId ?: stableBookId) }?.type
+            ?: FileType.EPUB
+        val document = AnnotationExportFormatter.fromEpubHighlights(
+            bookTitle = epubBook.title,
+            sourceType = sourceType,
+            highlights = currentHighlights
+        )
+        val exportText = AnnotationExportFormatter.render(document, format)
+        if (exportText.isBlank()) {
+            viewModel.showBanner(context.getString(R.string.banner_no_annotations_to_export), isError = true)
+            return
+        }
+        pendingAnnotationExportText = exportText
+        val fileName = AnnotationExportFormatter.suggestedFileName(document.bookTitle, format)
+        try {
+            when (format) {
+                AnnotationExportFormat.MARKDOWN -> saveMarkdownAnnotationsLauncher.launch(fileName)
+                AnnotationExportFormat.TEXT -> saveTextAnnotationsLauncher.launch(fileName)
+                AnnotationExportFormat.JSON -> saveJsonAnnotationsLauncher.launch(fileName)
+                AnnotationExportFormat.CSV -> saveCsvAnnotationsLauncher.launch(fileName)
+            }
+        } catch (_: android.content.ActivityNotFoundException) {
+            pendingAnnotationExportText = null
+            viewModel.showBanner(context.getString(R.string.document_picker_unavailable), isError = true)
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -1740,6 +1891,201 @@ fun EpubReaderHost(
         isTwoPageSpread = isTwoPageSpread,
         totalBookPageCount = totalBookPageCount()
     )
+
+    // --- EPUB media overlays: the publisher's own narration -------------------------------------
+    //
+    // One engine, one projection, one follow rule, mirroring the read-aloud wiring directly above.
+    // The two never run at once (starting narration stops read-aloud and vice versa), so the
+    // surfaces' single playback fragment parameter always holds the live engine's position.
+
+    val mediaOverlayBookFile = remember(uiState.selectedEpubUri, epubBook.fileName) {
+        mediaOverlayArchiveFile(uiState.selectedEpubUri?.toString())
+    }
+    val mediaOverlaySession = rememberEpubMediaOverlaySession(
+        bookId = bookId,
+        bookTitle = epubBook.title,
+        narrator = epubBook.mediaOverlays.narrator,
+        totalDurationMs = epubBook.mediaOverlays.totalDurationMs,
+        overlayIndex = epubBook.mediaOverlays,
+        chapters = chapters,
+        archiveFile = mediaOverlayBookFile,
+        blocksForChapter = { chapterIndex -> paginator?.getChapterTextBlocks(chapterIndex) }
+    )
+    val mediaOverlayPlaybackState by (mediaOverlaySession?.engine?.state ?: EmptyMediaOverlayPlaybackState)
+        .collectAsStateWithLifecycle()
+    var mediaOverlayProjection by remember(bookId) { mutableStateOf<SharedMediaOverlayProjection?>(null) }
+    // Which chapter the WebView last followed, so the follow-scroll fires on a chapter change and
+    // not on every clip. Nothing else reads it; it is the WebView's counterpart to a surface's own
+    // rectangle check.
+    var lastMediaOverlayWebViewChapter by remember(bookId) { mutableStateOf<Int?>(null) }
+    // The chapter narration asked the reader to show, so the rule below can tell "the reader
+    // navigated" apart from "narration moved and we followed it". Without it, carrying narration into
+    // the next chapter would look like a manual navigation — and the answer to that is to restart the
+    // chapter narration just began, so following forward would rewind to the top of every chapter.
+    // Consumed on the first use: a change that is *not* the follow is the reader's, by definition.
+    var mediaOverlayFollowedChapter by remember(bookId) { mutableStateOf<Int?>(null) }
+
+    // Playback position -> reader coordinates. Keyed on the clip, so a chapter's anchors resolve
+    // once and a clip advance within the chapter is a map lookup.
+    LaunchedEffect(mediaOverlaySession, mediaOverlayPlaybackState.spineItemIndex, mediaOverlayPlaybackState.clipIndex) {
+        val session = mediaOverlaySession ?: return@LaunchedEffect
+        val spineItemIndex = mediaOverlayPlaybackState.spineItemIndex
+        // `session.project` records the chapter it resolved, which is what the follow rule below
+        // compares against the visible one; the screen keeps no second copy of that.
+        mediaOverlayProjection = spineItemIndex?.let { session.project(it, mediaOverlayPlaybackState.clipIndex) }
+    }
+
+    // One line per clip, next to the chapter the reader is showing. The failures this feature has are
+    // all disagreements *between* those two numbers — a clip that advances while the reader stays put, a
+    // chapter that loads and never plays, a follow that bounces back — and every one of them is
+    // invisible in a screenshot and obvious in this line.
+    LaunchedEffect(
+        mediaOverlayPlaybackState.spineItemIndex,
+        mediaOverlayPlaybackState.clipIndex,
+        mediaOverlayPlaybackState.isPlaying
+    ) {
+        Timber.tag("MediaOverlayDiag").d(
+            "state spine=${mediaOverlayPlaybackState.spineItemIndex} clip=${mediaOverlayPlaybackState.clipIndex} " +
+                "playing=${mediaOverlayPlaybackState.isPlaying} chapter=$currentChapterIndex"
+        )
+    }
+
+    fun readerOffsetForChapter(chapterIndex: Int): Int? =
+        lastKnownLocator
+            ?.takeIf { it.chapterIndex == chapterIndex }
+            ?.charOffset
+            ?.takeIf { it >= 0 }
+
+    // Narration drives the reader: when the narrated chapter is not the visible one, follow it.
+    // Within a chapter each surface does better than any rule here — the WebView keeps the line
+    // on screen, the paginated reader turns the page — so only a chapter change navigates.
+    LaunchedEffect(
+        mediaOverlayPlaybackState.spineItemIndex,
+        mediaOverlayPlaybackState.clipIndex,
+        currentChapterIndex
+    ) {
+        val session = mediaOverlaySession ?: return@LaunchedEffect
+        val target = session.chapterIndex ?: return@LaunchedEffect
+        if (!mediaOverlayPlaybackState.hasBook) return@LaunchedEffect
+        if (target == currentChapterIndex) return@LaunchedEffect
+        Timber.tag("MediaOverlayDiag").d("Narration moved to chapter $target; following")
+        mediaOverlayFollowedChapter = target
+        if (isNativeVerticalMode) {
+            requestNativeVerticalLocatorScroll(
+                locator = Locator(target, 0, 0),
+                fallbackChapterIndex = target
+            )
+            verticalScrollRequests.nativeVerticalProgressScrollRequest = null
+        } else {
+            initialScrollTargetForChapter = ChapterScrollPosition.START
+            cfiToLoad = null
+            currentScrollYPosition = 0
+            currentScrollHeightValue = 0
+            currentChapterIndex = target
+        }
+    }
+
+    // The reader drives the narration: navigating away while narration plays resumes it there.
+    // `RS §9.3.1` requires this — a reader who jumps to another chapter must hear that chapter,
+    // not the one they left.
+    LaunchedEffect(currentChapterIndex) {
+        val session = mediaOverlaySession ?: return@LaunchedEffect
+        if (mediaOverlayFollowedChapter == currentChapterIndex) {
+            mediaOverlayFollowedChapter = null
+            return@LaunchedEffect
+        }
+        mediaOverlayFollowedChapter = null
+        if (!mediaOverlayPlaybackState.hasBook) return@LaunchedEffect
+        val narratedChapter = session.chapterIndex ?: return@LaunchedEffect
+        if (narratedChapter == currentChapterIndex) return@LaunchedEffect
+        Timber.tag("MediaOverlayDiag").d("Reader navigated to $currentChapterIndex; seeking narration")
+        session.start(currentChapterIndex, readerOffsetForChapter(currentChapterIndex))
+    }
+
+    // The band on the WebView vertical surface, and its follow-scroll. A chapter change scrolls;
+    // within a chapter the JS keeps the line on screen only when it has left the viewport, so a
+    // new line — every couple of seconds — does not re-centre the page.
+    val mediaOverlayElementId = mediaOverlayProjection?.elementId
+    LaunchedEffect(mediaOverlayElementId, mediaOverlayProjection?.chapterIndex, webViewRefForTts) {
+        if (isNativeVerticalMode || currentRenderMode != RenderMode.VERTICAL_SCROLL) return@LaunchedEffect
+        val webView = webViewRefForTts ?: return@LaunchedEffect
+        val elementId = mediaOverlayElementId
+        if (elementId == null) {
+            webView.evaluateJavascript("javascript:window.readerMediaOverlay && window.readerMediaOverlay.clear();", null)
+            return@LaunchedEffect
+        }
+        val activeClass = epubBook.mediaOverlays.activeClass
+        val follow = mediaOverlayProjection?.chapterIndex != lastMediaOverlayWebViewChapter
+        lastMediaOverlayWebViewChapter = mediaOverlayProjection?.chapterIndex
+        val script = buildString {
+            append("javascript:window.readerMediaOverlay && window.readerMediaOverlay.show(")
+            append("'").append(escapeJsString(elementId)).append("', ")
+            append(activeClass?.let { "'" + escapeJsString(it) + "'" } ?: "null").append(", ")
+            append(if (follow) "true" else "false")
+            append(");")
+        }
+        webView.evaluateJavascript(script, null)
+    }
+
+    // Paginated follow: the clip's page, in the pager's spread space. Page changes within a
+    // chapter scroll only when the target page is not already visible.
+    LaunchedEffect(
+        mediaOverlayProjection?.chapterIndex,
+        mediaOverlayProjection?.fragment?.blockCfi,
+        mediaOverlayProjection?.fragment?.startAbs,
+        paginator,
+        isTwoPageSpread
+    ) {
+        if (currentRenderMode != RenderMode.PAGINATED) return@LaunchedEffect
+        val session = mediaOverlaySession ?: return@LaunchedEffect
+        if (!mediaOverlayPlaybackState.hasBook) return@LaunchedEffect
+        val chapterIndex = mediaOverlayProjection?.chapterIndex ?: return@LaunchedEffect
+        if (chapterIndex != currentChapterIndex) return@LaunchedEffect
+        val fragment = mediaOverlayProjection?.fragment ?: return@LaunchedEffect
+        val cfi = fragment.blockCfi ?: return@LaunchedEffect
+        val pag = paginator ?: return@LaunchedEffect
+        val targetPage = pag.findPageForCfiAndOffset(chapterIndex, cfi, fragment.startAbs) ?: return@LaunchedEffect
+        val totalBookPages = totalBookPageCount()
+        val targetPagerPage = if (isTwoPageSpread && totalBookPages > 0) {
+            EpubPageSpread.bookPageToSpread(targetPage, totalBookPages, true)
+        } else {
+            targetPage
+        }
+        val isVisible = if (isTwoPageSpread && totalBookPages > 0) {
+            targetPage in EpubPageSpread.visibleBookPages(paginatedPagerState.currentPage, totalBookPages, true)
+        } else {
+            targetPage == paginatedPagerState.currentPage
+        }
+        if (!isVisible) {
+            paginatedPagerState.scrollToPage(targetPagerPage)
+        }
+    }
+
+    // Native vertical follow: a locator scroll that only moves when the line has left the screen.
+    LaunchedEffect(
+        mediaOverlayProjection?.chapterIndex,
+        mediaOverlayProjection?.fragment?.blockCfi,
+        mediaOverlayProjection?.fragment?.startAbs,
+        isNativeVerticalMode
+    ) {
+        if (!isNativeVerticalMode) return@LaunchedEffect
+        val session = mediaOverlaySession ?: return@LaunchedEffect
+        if (!mediaOverlayPlaybackState.hasBook) return@LaunchedEffect
+        val chapterIndex = mediaOverlayProjection?.chapterIndex ?: return@LaunchedEffect
+        if (chapterIndex != currentChapterIndex) return@LaunchedEffect
+        val fragment = mediaOverlayProjection?.fragment ?: return@LaunchedEffect
+        val cfi = fragment.blockCfi ?: return@LaunchedEffect
+        val locator = locatorConverter.getLocatorFromCfi(epubBook, chapterIndex, cfi, bookId) ?: return@LaunchedEffect
+        val target = locator.copy(charOffset = fragment.startAbs)
+        val fallbackPage = (paginator as? BookPaginator)?.findStablePageForLocator(target)
+            ?: (paginator as? BookPaginator)?.findStableChapterStartPage(chapterIndex)
+        requestNativeVerticalLocatorScroll(
+            locator = target,
+            fallbackPage = fallbackPage,
+            fallbackChapterIndex = chapterIndex,
+            keepVisible = true
+        )
+    }
 
     LaunchedEffect(
         isNativeVerticalMode,
@@ -2050,6 +2396,9 @@ fun EpubReaderHost(
 
     val lifecycleOwner = LocalLifecycleOwner.current
     val latestWebViewRefForTts by rememberUpdatedState(webViewRefForTts)
+    val latestFlushInMemoryReadingPosition by rememberUpdatedState<(String) -> Unit>({ reason ->
+        flushInMemoryReadingPosition(reason)
+    })
     val latestIsActiveReaderTtsForCurrentBook by rememberUpdatedState(isActiveReaderTtsForCurrentBook())
     val latestSaveActiveTtsPosition by rememberUpdatedState<suspend (String) -> Boolean>({ reason ->
         saveActiveTtsPosition(reason)
@@ -2067,20 +2416,35 @@ fun EpubReaderHost(
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE) {
-                if (latestIsActiveReaderTtsForCurrentBook) {
-                    scope.launch {
-                        if (!latestSaveActiveTtsPosition("lifecycle_pause")) {
-                            Timber.d("ON_PAUSE detected. Falling back to WebView CFI save.")
-                            latestWebViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> {
+                    latestFlushInMemoryReadingPosition("lifecycle_pause")
+                    if (latestIsActiveReaderTtsForCurrentBook) {
+                        scope.launch {
+                            if (!latestSaveActiveTtsPosition("lifecycle_pause")) {
+                                Timber.d("ON_PAUSE detected. Falling back to WebView CFI save.")
+                                latestWebViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
+                            }
                         }
+                    } else {
+                        Timber.d("ON_PAUSE detected. Requesting final CFI for robust save.")
+                        latestWebViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
                     }
-                } else {
-                    Timber.d("ON_PAUSE detected. Requesting final CFI for robust save.")
-                    latestWebViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
                 }
-            } else if (event == Lifecycle.Event.ON_RESUME && latestIsActiveReaderTtsForCurrentBook) {
-                latestQueueLifecycleTtsLocate()
+
+                Lifecycle.Event.ON_STOP -> {
+                    // ON_PAUSE is not guaranteed to reach the persistence layer before Android
+                    // freezes the process, so the last in-memory position is written again here.
+                    latestFlushInMemoryReadingPosition("lifecycle_stop")
+                }
+
+                Lifecycle.Event.ON_RESUME -> {
+                    if (latestIsActiveReaderTtsForCurrentBook) {
+                        latestQueueLifecycleTtsLocate()
+                    }
+                }
+
+                else -> Unit
             }
         }
 
@@ -2094,6 +2458,7 @@ fun EpubReaderHost(
     DisposableEffect(Unit) {
         onDispose {
             Timber.d("Disposing reader. Last known chapter was ${latestChapterIndex}. Position saved periodically.")
+            flushInMemoryReadingPosition("reader_dispose")
             webViewRefForTts = null
             chapterHead = ""
             chapterChunks = emptyList()
@@ -2104,10 +2469,38 @@ fun EpubReaderHost(
         }
     }
 
-    LaunchedEffect(currentScrollYPosition, isChapterReadyForBookmarkCheck) {
+    LaunchedEffect(verticalRestoreStartedAtMillis, isVerticalRestoreSettled) {
+        if (isVerticalRestoreSettled || verticalRestoreStartedAtMillis <= 0L) return@LaunchedEffect
+        delay(VERTICAL_RESTORE_SETTLE_TIMEOUT_MILLIS)
+        if (isVerticalRestoreSettled) return@LaunchedEffect
+        Timber.tag(TAG_EPUB_VERTICAL_OPEN_DIAG).w(
+            "restore_settle_timeout chapter=$currentChapterIndex afterMs=${VERTICAL_RESTORE_SETTLE_TIMEOUT_MILLIS}"
+        )
+        isVerticalRestoreSettled = true
+    }
+
+    LaunchedEffect(currentScrollYPosition, isChapterReadyForBookmarkCheck, isVerticalRestoreSettled) {
         if (!isChapterReadyForBookmarkCheck) return@LaunchedEffect
+        if (!shouldSaveVerticalOpenPosition(
+                isVerticalMode = currentRenderMode == RenderMode.VERTICAL_SCROLL && !isNativeVerticalMode,
+                hasWebView = webViewRefForTts != null,
+                isChapterReady = isChapterReadyForBookmarkCheck,
+                isRestoreSettled = isVerticalRestoreSettled
+            )
+        ) {
+            Timber.tag(TAG_EPUB_VERTICAL_OPEN_DIAG).d(
+                "save_skip mode=$currentRenderMode native=$isNativeVerticalMode " +
+                    "hasWebView=${webViewRefForTts != null} chapterReady=$isChapterReadyForBookmarkCheck " +
+                    "restoreSettled=$isVerticalRestoreSettled y=$currentScrollYPosition"
+            )
+            return@LaunchedEffect
+        }
 
         delay(1500L)
+        if (!isVerticalRestoreSettled) {
+            Timber.tag(TAG_EPUB_VERTICAL_OPEN_DIAG).d("save_skip_after_delay restore_settled=false")
+            return@LaunchedEffect
+        }
         Timber.d("User stopped scrolling. Requesting CFI for auto-save...")
         webViewRefForTts?.evaluateJavascript("javascript:CfiBridge.onCfiExtracted(window.getCurrentCfi());", null)
     }
@@ -2168,6 +2561,15 @@ fun EpubReaderHost(
         isChapterParsing = true
         isChapterReadyForBookmarkCheck = false
         navigation.activeFragmentId = null
+
+        val restoringFromCfi = !cfiToLoad.isNullOrBlank()
+        if (restoringFromCfi) {
+            verticalRestoreStartedAtMillis = System.currentTimeMillis()
+            isVerticalRestoreSettled = false
+            Timber.tag(TAG_EPUB_VERTICAL_OPEN_DIAG).d(
+                "restore_pending chapter=$currentChapterIndex cfi=${cfiToLoad?.take(80)}"
+            )
+        }
 
         val result = loadChapterContent(
             context = context,
@@ -2406,7 +2808,7 @@ fun EpubReaderHost(
             Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
                 "save_position page=$pageToSave locator=$locator chapter=$chapterIndex progress=$progress"
             )
-            onSavePosition(locator, null, progress)
+            emitReadingPosition(locator, null, progress)
         } else {
             Timber.w("Could not auto-save paginated position. Locator or chapterIndex was null.")
             Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).w(
@@ -2415,7 +2817,9 @@ fun EpubReaderHost(
         }
     }
 
-    val pageInfoBarHeight = PAGE_INFO_BAR_HEIGHT + pageInfoCornerBottomPadding
+    val pageInfoBarContentHeight = sharedMobileEpubPageInfoBarContentHeight()
+    val pageInfoCornerClearance = sharedMobileEpubPageInfoCornerClearance()
+    val pageInfoBarHeight = pageInfoBarContentHeight + pageInfoCornerBottomPadding
 
     val isPageInfoVisible = shouldShowEpubPageInfoBar(
         pageInfoMode = prefs.pageInfoMode,
@@ -2560,7 +2964,7 @@ fun EpubReaderHost(
                                 }
 
                                 Timber.d("Final save for native vertical view. Page: $pageToSave, Locator: $locator, Progress: $progress%")
-                                onSavePosition(locator, null, progress)
+                                emitReadingPosition(locator, null, progress)
                             } else {
                                 Timber.w("Final save for native vertical view failed. Locator is null.")
                             }
@@ -2611,7 +3015,7 @@ fun EpubReaderHost(
 
                             Timber.d("Final save for paginated view. Page: $pageToSave, Locator: $locator, Progress: $progress%"
                             )
-                            onSavePosition(locator, null, progress)
+                            emitReadingPosition(locator, null, progress)
                         } else {
                             Timber.w("Final save for paginated view failed. Locator is null."
                             )
@@ -3341,6 +3745,7 @@ fun EpubReaderHost(
                 activeHighlightPalette = currentHighlightPalette,
                 onOpenPaletteManager = { showPaletteManager = true },
                 onHighlightColorChange = onHighlightColorChange,
+                onExportAnnotations = { showAnnotationExportDialog = true },
                 onNavigateToImage = { image ->
                     scope.launch {
                         drawerState.close()
@@ -4424,6 +4829,7 @@ fun EpubReaderHost(
                     isSavingAndExitingState = isSavingAndExitingState,
                     isSummarizationLoadingState = isSummarizationLoadingState,
                     isSwitchingToPaginatedState = isSwitchingToPaginatedState,
+                    isVerticalRestoreSettledState = isVerticalRestoreSettledState,
                     lastHighlightClickTimeState = lastHighlightClickTimeState,
                     lastKnownLocatorState = lastKnownLocatorState,
                     lastScrollHideTimeState = lastScrollHideTimeState,
@@ -4486,12 +4892,13 @@ fun EpubReaderHost(
                     walletMicros = walletMicros,
                     walletMigrated = walletMigrated,
                     coverImagePath = coverImagePath,
-                    onSavePosition = onSavePosition,
+                    onSavePosition = { locator, cfi, progress -> emitReadingPosition(locator, cfi, progress) },
                     onRenderModeChange = onRenderModeChange,
                     onNavigateBack = onNavigateBack,
                     currentChapterInPaginatedMode = currentChapterInPaginatedMode,
                     latestChapterIndex = latestChapterIndex,
                     ttsState = ttsState,
+                    mediaOverlayFragment = mediaOverlayProjection?.fragment,
                     ttsController = ttsController,
                     ttsReplacementPreferences = ttsReplacementPreferences,
                     totalPagesInCurrentChapter = totalPagesInCurrentChapter,
@@ -4768,7 +5175,7 @@ fun EpubReaderHost(
                     } else {
                         0.dp
                     }
-                val readerClockTime = rememberReaderClockTime()
+                val readerClockTime = rememberSharedReaderClockTime()
 
                 // Page Info Bar (Vertical)
                 AnimatedVisibility(
@@ -4793,11 +5200,32 @@ fun EpubReaderHost(
                             .height(pageInfoBarHeight)
                             .background(infoBarBgColor)
                             .then(activeTextureModifier)
-                            .padding(horizontal = 16.dp),
+                            // The clock and the percentage are pinned to the very
+                            // edges, so they are the only parts of the reader that can
+                            // sit under a cutout or a gesture-nav pill, and the only
+                            // ones the corner curve can slice. The toolbar beside this
+                            // bar already takes navigationBars horizontally
+                            // (EpubReaderControls); safeDrawing adds the cutout on top
+                            // of that and is what iOS's bar uses too.
+                            .windowInsetsPadding(
+                                WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+                            )
+                            // Plus the measured corner radius: safeDrawing covers
+                            // bars/cutouts/waterfall, never the rounded corners, which
+                            // on a bezel-less phone in portrait has no inset at all.
+                            // Per side: the corner radii and the system insets
+                            // both differ per edge, so a single symmetric value
+                            // would sit the labels off-centre.
+                            .padding(
+                                start = SharedReaderPageInfoBarSidePadding +
+                                    pageInfoCornerClearance.start,
+                                end = SharedReaderPageInfoBarSidePadding +
+                                    pageInfoCornerClearance.end
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         val chapterTitle =
-                            chapters.getOrNull(currentChapterIndex)?.title?.take(30)?.trim()
+                            chapters.getOrNull(currentChapterIndex)?.title?.trim()
                                 ?: "Chapter"
 
                         val displayPageInfo = when {
@@ -4807,34 +5235,21 @@ fun EpubReaderHost(
                             else -> " ($currentPageInChapter/$totalPagesInCurrentChapter)"
                         }
 
-                        Text(
-                            text = readerClockTime,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = effectiveText.copy(alpha = 0.8f),
-                            modifier = Modifier.align(Alignment.CenterStart)
-                        )
+                        val progressText =
+                            if (totalBookLengthChars > 0 && currentScrollHeightValue > 0 && (!isChapterParsing || isNativeVerticalMode)) {
+                                "%.1f%%".format(currentBookProgress)
+                            } else {
+                                null
+                            }
 
-                        Text(
-                            text = "$chapterTitle$displayPageInfo",
-                            style = MaterialTheme.typography.bodySmall,
+                        SharedReaderPageInfoBarRow(
+                            clockText = readerClockTime,
+                            titleText = "$chapterTitle$displayPageInfo",
+                            progressText = progressText,
                             color = effectiveText.copy(alpha = 0.8f),
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 48.dp)
+                            contentHeight = pageInfoBarContentHeight,
+                            modifier = Modifier.fillMaxSize()
                         )
-
-                        if (totalBookLengthChars > 0 && currentScrollHeightValue > 0 && (!isChapterParsing || isNativeVerticalMode)) {
-                            Text(
-                                text = "%.1f%%".format(currentBookProgress),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = effectiveText.copy(alpha = 0.8f),
-                                textAlign = TextAlign.End,
-                                modifier = Modifier.align(Alignment.CenterEnd)
-                            )
-                        }
                     }
                 }
 
@@ -4861,7 +5276,20 @@ fun EpubReaderHost(
                             .height(pageInfoBarHeight)
                             .background(infoBarBgColor)
                             .then(activeTextureModifier)
-                            .padding(horizontal = 16.dp),
+                            // Same edge handling as the vertical bar above; see the
+                            // comment there.
+                            .windowInsetsPadding(
+                                WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+                            )
+                            // Per side: the corner radii and the system insets
+                            // both differ per edge, so a single symmetric value
+                            // would sit the labels off-centre.
+                            .padding(
+                                start = SharedReaderPageInfoBarSidePadding +
+                                    pageInfoCornerClearance.start,
+                                end = SharedReaderPageInfoBarSidePadding +
+                                    pageInfoCornerClearance.end
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         val bookPaginator = paginator as? BookPaginator
@@ -4869,7 +5297,7 @@ fun EpubReaderHost(
 
                         val textToShow = if (bookPaginator != null && chapterIndex != null) {
                             val chapterTitle =
-                                chapters.getOrNull(chapterIndex)?.title?.take(30)?.trim()
+                                chapters.getOrNull(chapterIndex)?.title?.trim()
                                     ?: stringResource(R.string.chapter)
                             val totalPagesInChapter = bookPaginator.chapterPageCounts[chapterIndex]
                             val chapterStartPage = bookPaginator.chapterStartPageIndices[chapterIndex]
@@ -4897,27 +5325,8 @@ fun EpubReaderHost(
                             stringResource(R.string.page_number_of_total, currentSpreadFirstBookPage() + 1, totalBookPageCount())
                         }
 
-                        Text(
-                            text = readerClockTime,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = effectiveText.copy(alpha = 0.8f),
-                            modifier = Modifier.align(Alignment.CenterStart)
-                        )
-
-                        Text(
-                            text = textToShow,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = effectiveText.copy(alpha = 0.8f),
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 48.dp)
-                        )
-
                         // Right-aligned Percentage
-                        if (paginatedPagerState.pageCount > 0) {
+                        val progressText = if (paginatedPagerState.pageCount > 0) {
                             if (totalBookLengthChars > 0 && bookPaginator != null && chapterIndex != null) {
                                 val completedCharsInPreviousChapters = remember(chapters, chapterIndex) {
                                     chapters.take(chapterIndex).sumOf { it.plainTextCharacterCount().toLong() }
@@ -4937,13 +5346,7 @@ fun EpubReaderHost(
                                     isLastPageOfBook = isLastPageOfBook
                                 )
 
-                                Text(
-                                    text = "%.1f%%".format(displayProgress),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = effectiveText.copy(alpha = 0.8f),
-                                    textAlign = TextAlign.End,
-                                    modifier = Modifier.align(Alignment.CenterEnd)
-                                )
+                                "%.1f%%".format(displayProgress)
                             } else {
                                 val totalPages = if (currentRenderMode == RenderMode.VERTICAL_SCROLL) {
                                     totalPagesInCurrentChapter
@@ -4952,15 +5355,20 @@ fun EpubReaderHost(
                                 }
                                 val currentPageOneIndexed = paginatedPagerState.currentPage + 1
                                 val percentage = (currentPageOneIndexed.toFloat() / totalPages.toFloat()) * 100f
-                                Text(
-                                    text = "%.1f%%".format(percentage),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = effectiveText.copy(alpha = 0.8f),
-                                    textAlign = TextAlign.End,
-                                    modifier = Modifier.align(Alignment.CenterEnd)
-                                )
+                                "%.1f%%".format(percentage)
                             }
+                        } else {
+                            null
                         }
+
+                        SharedReaderPageInfoBarRow(
+                            clockText = readerClockTime,
+                            titleText = textToShow,
+                            progressText = progressText,
+                            color = effectiveText.copy(alpha = 0.8f),
+                            contentHeight = pageInfoBarContentHeight,
+                            modifier = Modifier.fillMaxSize()
+                        )
                     }
                 }
 
@@ -5166,6 +5574,42 @@ fun EpubReaderHost(
                     currentRenderMode = currentRenderMode,
                     isBookmarked = isBookmarked,
                     isTtsActive = isTtsSessionActive,
+                    hasMediaOverlayNarration = mediaOverlaySession != null,
+                    isMediaOverlayActive = mediaOverlayPlaybackState.hasBook,
+                    onToggleMediaOverlay = {
+                        val session = mediaOverlaySession
+                        when {
+                            session == null -> Unit
+                            mediaOverlayPlaybackState.hasBook -> session.stop()
+                            else -> {
+                                // Arbitration before anything is loaded: read-aloud and the
+                                // audiobook own real audio on their own engines, and a narration
+                                // started over either would be two voices at once.
+                                if (isActiveReaderTtsForCurrentBook()) {
+                                    userStoppedTts = true
+                                    ttsController.stop()
+                                }
+                                runCatching {
+                                    context.startService(
+                                        Intent(context, AudiobookPlaybackService::class.java)
+                                            .setAction(ACTION_AUDIOBOOK_STOP)
+                                    )
+                                }
+                                scope.launch {
+                                    val started = session.start(
+                                        currentChapterIndex,
+                                        readerOffsetForChapter(currentChapterIndex)
+                                    )
+                                    if (!started) {
+                                        viewModel.showBanner(
+                                            context.getString(R.string.media_overlay_chapter_unavailable),
+                                            isError = false
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    },
                     isSliderActive = isPageSliderVisible,
                     tapToNavigateEnabled = prefs.tapToNavigateEnabled,
                     volumeScrollEnabled = prefs.volumeScrollEnabled,
@@ -5382,6 +5826,7 @@ fun EpubReaderHost(
                         }
                     } else null,
                     onDeleteReflow = onDeleteReflow,
+                    onExportAnnotations = { showAnnotationExportDialog = true },
                     readerMotionPolicy = motionPolicy,
                 )
 
@@ -5401,6 +5846,29 @@ fun EpubReaderHost(
                     targetValue = if (showBars) (bottomPadding + 45.dp + 16.dp) else 32.dp,
                     animationSpec = tween(motionPolicy.durationMillis(200)),
                     label = "TtsOverlayPadding"
+                )
+
+                // The narration card's own lift, which unlike the read-aloud overlay's has to clear
+                // the jump bar and a bottom-positioned page info bar as well as the toolbar. It was
+                // sharing `ttsOverlayPadding`, which reserves for the toolbar only, so the jump bar
+                // painted over the card's lower ~24dp.
+                val mediaOverlayBottomPadding by animateDpAsState(
+                    targetValue = sharedMobileEpubMediaOverlayBottomPadding(
+                        bottomChromePadding = sharedMobileEpubBottomChromePadding(bottomPadding),
+                        // Same condition the page info bar itself uses to sit at the bottom, so the
+                        // reserve and the thing it reserves for can never disagree.
+                        pageInfoReserve = if (
+                            prefs.pageInfoPosition == PageInfoPosition.BOTTOM && showBars
+                        ) {
+                            pageInfoBarHeight
+                        } else {
+                            0.dp
+                        },
+                        jumpBarVisible = isEpubJumpHistoryVisible,
+                        chromeVisible = showBars
+                    ),
+                    animationSpec = tween(motionPolicy.durationMillis(200)),
+                    label = "MediaOverlayBottomPadding"
                 )
 
                 val ttsAlignmentBias by animateFloatAsState(
@@ -5448,6 +5916,52 @@ fun EpubReaderHost(
                         walletMicros = walletMicros,
                         walletMigrated = walletMigrated,
                         readerMotionPolicy = motionPolicy
+                    )
+                }
+
+                // The narration bar. Same animation as the read-aloud overlay, and shown only
+                // while a narration session is loaded, so an idle reader is unchanged. Gated on
+                // `showBars` so it goes down with the bottom app bar rather than hanging on its own
+                // over the text, which is what iOS already does.
+                val mediaOverlayClipCount = mediaOverlaySession?.clipCount ?: 0
+                val mediaOverlayClipIndex = mediaOverlayPlaybackState.clipIndex
+                val mediaOverlayBarSubtitle = listOfNotNull(
+                    mediaOverlayPlaybackState.narrator?.takeIf { it.isNotBlank() },
+                    if (mediaOverlayClipCount > 0) "${mediaOverlayClipIndex + 1} / $mediaOverlayClipCount" else null
+                ).joinToString(" · ")
+                AnimatedVisibility(
+                    visible = mediaOverlayPlaybackState.hasBook && showBars,
+                    enter = if (motionPolicy.reduceMotion) {
+                        androidx.compose.animation.EnterTransition.None
+                    } else {
+                        slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200))
+                    },
+                    exit = if (motionPolicy.reduceMotion) {
+                        androidx.compose.animation.ExitTransition.None
+                    } else {
+                        slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200))
+                    },
+                    modifier = Modifier
+                        .align(BiasAlignment(1f, 1f))
+                        .padding(bottom = mediaOverlayBottomPadding)
+                        .padding(horizontal = 16.dp)
+                ) {
+                    SharedMobileEpubMediaOverlayBar(
+                        title = epubBook.mediaOverlays.narrator
+                            ?.takeIf { it.isNotBlank() }
+                            ?: context.getString(R.string.media_overlay_title),
+                        subtitle = mediaOverlayBarSubtitle,
+                        isPlaying = mediaOverlayPlaybackState.isPlaying,
+                        isLoading = mediaOverlayPlaybackState.isLoading,
+                        speed = mediaOverlayPlaybackState.speed,
+                        canSkipPrevious = mediaOverlayClipIndex > 0,
+                        canSkipNext = mediaOverlayClipCount > 0 && mediaOverlayClipIndex < mediaOverlayClipCount - 1,
+                        onTogglePlayPause = { mediaOverlaySession?.togglePlayPause() },
+                        onPreviousClip = { mediaOverlaySession?.previousClip() },
+                        onNextClip = { mediaOverlaySession?.nextClip() },
+                        onSpeedSelected = { mediaOverlaySession?.setSpeed(it) },
+                        onStop = { mediaOverlaySession?.stop() },
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
 
@@ -5764,7 +6278,7 @@ fun EpubReaderHost(
                 )
 
                 if (navigation.isNavigatingToPosition && currentRenderMode == RenderMode.PAGINATED) {
-                    EpubReaderBusyScrim(label = stringResource(R.string.navigating_to_position))
+                    SharedMobileEpubLoading(label = stringResource(R.string.navigating_to_position))
                 }
 
                 if (showPermissionRationaleDialog) {
@@ -5943,6 +6457,28 @@ fun EpubReaderHost(
             uriString = uiState.selectedEpubUri?.toString(),
             viewModel = viewModel
         )
+
+        if (showAnnotationExportDialog) {
+            SharedAnnotationExportFormatDialog(
+                title = stringResource(R.string.dialog_export_annotations_title),
+                cancelLabel = stringResource(R.string.action_cancel),
+                options = sharedAnnotationExportFormatOptions(
+                    markdownLabel = stringResource(R.string.export_annotations_markdown),
+                    markdownDescription = stringResource(R.string.export_annotations_markdown_description),
+                    textLabel = stringResource(R.string.export_annotations_text),
+                    textDescription = stringResource(R.string.export_annotations_text_description),
+                    jsonLabel = stringResource(R.string.export_annotations_json),
+                    jsonDescription = stringResource(R.string.export_annotations_json_description),
+                    csvLabel = stringResource(R.string.export_annotations_csv),
+                    csvDescription = stringResource(R.string.export_annotations_csv_description)
+                ),
+                onDismiss = { showAnnotationExportDialog = false },
+                onExport = { format ->
+                    showAnnotationExportDialog = false
+                    exportReaderAnnotations(format)
+                }
+            )
+        }
 
         if (dictTools.showCustomizeToolsSheet) {
             CustomizeToolsSheet(

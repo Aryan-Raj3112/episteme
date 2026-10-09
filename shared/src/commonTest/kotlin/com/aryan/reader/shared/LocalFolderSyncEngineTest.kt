@@ -317,6 +317,32 @@ class LocalFolderSyncEngineTest {
     }
 
     @Test
+    fun `unavailable folder scan keeps missing books and scan watermark`() {
+        val missing = book(id = "local_Missing.pdf", path = "C:/Library/Missing.pdf")
+        val folder = syncedFolder().copy(lastScanTime = 800L)
+        val state = SharedReaderScreenState(
+            rawLibraryBooks = listOf(missing),
+            syncedFolders = listOf(folder),
+            lastFolderScanTime = 800L
+        )
+
+        val result = LocalFolderSyncEngine.syncFolder(
+            state = state,
+            folder = folder,
+            files = emptyList(),
+            remoteMetadata = emptyMap(),
+            nowMillis = 1_000L,
+            scanStatus = LocalFolderScanStatus.UNAVAILABLE
+        )
+
+        assertEquals(listOf(missing), result.state.rawLibraryBooks)
+        assertTrue(result.removedBookIds.isEmpty())
+        assertEquals(0, result.stats.removedBooks)
+        assertEquals(800L, result.state.syncedFolders.single().lastScanTime)
+        assertEquals(800L, result.state.lastFolderScanTime)
+    }
+
+    @Test
     fun `metadata-only pass does not advance physical scan watermark`() {
         val folder = syncedFolder().copy(lastScanTime = 800L)
         val state = SharedReaderScreenState(
@@ -615,6 +641,95 @@ class LocalFolderSyncEngineTest {
         assertNull(book.coverImagePath)
         assertFalse(book.folderTextMetadataParsed)
         assertEquals(1, result.stats.updatedBooks)
+    }
+
+    @Test
+    fun `rescan of an unchanged folder reports unchanged and keeps extracted metadata`() {
+        val existing = book(
+            id = "local_Book.pdf",
+            fileSize = 123L,
+            title = "Extracted title",
+            coverImagePath = "C:/Covers/book.png",
+            folderTextMetadataParsed = true
+        ).copy(
+            author = "Extracted author",
+            description = "Extracted summary",
+            seriesName = "Extracted series",
+            seriesIndex = 1.0,
+            fileContentModifiedTimestamp = 500L
+        )
+        val result = LocalFolderSyncEngine.syncFolder(
+            state = SharedReaderScreenState(rawLibraryBooks = listOf(existing)),
+            folder = syncedFolder(),
+            files = listOf(scannedFile("Book.pdf", "Book.pdf", size = 123L, lastModified = 500L)),
+            remoteMetadata = emptyMap(),
+            nowMillis = 1_000L
+        )
+
+        assertEquals(0, result.stats.newBooks)
+        assertEquals(0, result.stats.updatedBooks)
+        assertEquals(1, result.stats.unchangedBooks)
+        assertEquals(0, result.stats.removedBooks)
+        val rescanned = result.state.rawLibraryBooks.single()
+        assertEquals("Extracted title", rescanned.title)
+        assertEquals("Extracted author", rescanned.author)
+        assertEquals("C:/Covers/book.png", rescanned.coverImagePath)
+        assertTrue(rescanned.folderTextMetadataParsed)
+    }
+
+    @Test
+    fun `rescan keeps extracted metadata when a provider reports a zero timestamp`() {
+        // Some document providers report no modification date. That is missing
+        // information, not evidence of a content change, so a rescan must not
+        // wipe the extracted title/cover the previous complete scan produced.
+        val existing = book(
+            id = "local_Book.pdf",
+            fileSize = 123L,
+            title = "Extracted title",
+            coverImagePath = "C:/Covers/book.png",
+            folderTextMetadataParsed = true
+        ).copy(
+            author = "Extracted author",
+            fileContentModifiedTimestamp = 500L
+        )
+        val result = LocalFolderSyncEngine.syncFolder(
+            state = SharedReaderScreenState(rawLibraryBooks = listOf(existing)),
+            folder = syncedFolder(),
+            files = listOf(scannedFile("Book.pdf", "Book.pdf", size = 123L, lastModified = 0L)),
+            remoteMetadata = emptyMap(),
+            nowMillis = 1_000L
+        )
+
+        assertEquals(1, result.stats.unchangedBooks)
+        val rescanned = result.state.rawLibraryBooks.single()
+        assertEquals("Extracted title", rescanned.title)
+        assertEquals("Extracted author", rescanned.author)
+        assertEquals("C:/Covers/book.png", rescanned.coverImagePath)
+        assertTrue(rescanned.folderTextMetadataParsed)
+        // The last known good timestamp is retained rather than downgraded to 0.
+        assertEquals(500L, rescanned.fileContentModifiedTimestamp)
+    }
+
+    @Test
+    fun `rescan reports unchanged when a provider reports a zero size`() {
+        val existing = book(
+            id = "local_Book.pdf",
+            title = "Extracted title",
+            coverImagePath = "C:/Covers/book.png",
+            folderTextMetadataParsed = true
+        ).copy(fileContentModifiedTimestamp = 500L)
+        val result = LocalFolderSyncEngine.syncFolder(
+            state = SharedReaderScreenState(rawLibraryBooks = listOf(existing)),
+            folder = syncedFolder(),
+            files = listOf(scannedFile("Book.pdf", "Book.pdf", size = 0L, lastModified = 500L)),
+            remoteMetadata = emptyMap(),
+            nowMillis = 1_000L
+        )
+
+        assertEquals(1, result.stats.unchangedBooks)
+        val rescanned = result.state.rawLibraryBooks.single()
+        assertEquals("Extracted title", rescanned.title)
+        assertEquals("C:/Covers/book.png", rescanned.coverImagePath)
     }
 
     private fun syncedFolder(): SyncedFolder {

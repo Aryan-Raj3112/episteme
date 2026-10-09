@@ -4,6 +4,8 @@ package com.aryan.reader.shared.ios
 
 import com.aryan.reader.shared.AiAdapter
 import com.aryan.reader.shared.AiDefinitionResult
+import com.aryan.reader.shared.AiKeySaveError
+import com.aryan.reader.shared.AiKeySaveResult
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderByokTextRequest
@@ -11,12 +13,13 @@ import com.aryan.reader.shared.ReaderByokTextRequestResult
 import com.aryan.reader.shared.ReaderByokTextRequests
 import com.aryan.reader.shared.RecapResult
 import com.aryan.reader.shared.SummarizationResult
-import com.aryan.reader.shared.formatMicrosUsd
-import com.aryan.reader.shared.formatSpendGuardCountdown
+import com.aryan.reader.shared.mapSpendGuardHttpError
+import com.aryan.reader.shared.mapSpendGuardStreamError
 import com.aryan.reader.shared.hasSpendableBalance
 import com.aryan.reader.shared.isFishVoiceListCacheFresh
-import com.aryan.reader.shared.parseSpendGuardError
 import com.aryan.reader.shared.maskedReaderAiKey
+import com.aryan.reader.shared.normalizeAiKeyEntry
+import com.aryan.reader.shared.normalizedAiKeyEntry
 import kotlin.time.Clock
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.alloc
@@ -44,12 +47,23 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import platform.CoreFoundation.CFDictionaryRef
+import platform.CoreFoundation.CFDataCreate
 import platform.CoreFoundation.CFDataGetBytePtr
 import platform.CoreFoundation.CFDataGetLength
 import platform.CoreFoundation.CFDataRef
+import platform.CoreFoundation.CFDictionaryCreateMutable
+import platform.CoreFoundation.CFDictionaryRef
+import platform.CoreFoundation.CFDictionarySetValue
 import platform.CoreFoundation.CFRelease
+import kotlinx.cinterop.ByteVar
+import kotlinx.cinterop.allocArray
+import kotlinx.cinterop.reinterpret
+import platform.CoreFoundation.CFStringCreateWithCString
 import platform.CoreFoundation.CFTypeRefVar
+import kotlinx.cinterop.CPointed
+import kotlinx.cinterop.CPointer
+import platform.CoreFoundation.kCFBooleanTrue
+import platform.CoreFoundation.kCFStringEncodingUTF8
 import platform.Foundation.NSData
 import platform.Foundation.NSError
 import platform.Foundation.NSHTTPURLResponse
@@ -80,8 +94,23 @@ import platform.Security.SecItemAdd
 import platform.Security.SecItemCopyMatching
 import platform.Security.SecItemDelete
 import platform.Security.SecItemUpdate
+import platform.Security.errSecAuthFailed
 import platform.Security.errSecDuplicateItem
+import platform.Security.errSecInteractionNotAllowed
+import platform.Security.errSecItemNotFound
+import platform.Security.errSecMissingEntitlement
+import platform.Security.errSecParam
 import platform.Security.errSecSuccess
+import platform.Security.kSecAttrAccessible
+import platform.Security.kSecAttrAccessibleWhenUnlocked
+import platform.Security.kSecAttrAccount
+import platform.Security.kSecAttrService
+import platform.Security.kSecClass
+import platform.Security.kSecClassGenericPassword
+import platform.Security.kSecMatchLimit
+import platform.Security.kSecMatchLimitOne
+import platform.Security.kSecReturnData
+import platform.Security.kSecValueData
 
 /**
  * iOS uses the same shared model IDs and prompt contract as Android. The
@@ -132,6 +161,7 @@ internal class IosReaderAiSettingsStore(
         return ReaderAiByokSettings(
             geminiKey = IosReaderAiKeychain.read(IosReaderAiKeychain.GEMINI_ACCOUNT),
             groqKey = IosReaderAiKeychain.read(IosReaderAiKeychain.GROQ_ACCOUNT),
+            fishKey = IosReaderAiKeychain.read(IosReaderAiKeychain.FISH_ACCOUNT),
             useOneModel = defaults.objectForKey(KEY_USE_ONE_MODEL)?.let { defaults.boolForKey(KEY_USE_ONE_MODEL) } ?: true,
             modelForAll = defaults.stringForKey(KEY_MODEL_ALL).orEmpty(),
             defineModel = defaults.stringForKey(KEY_MODEL_DEFINE).orEmpty(),
@@ -145,8 +175,19 @@ internal class IosReaderAiSettingsStore(
 
     fun save(settings: ReaderAiByokSettings) {
         val sanitized = settings.sanitized()
-        IosReaderAiKeychain.write(IosReaderAiKeychain.GEMINI_ACCOUNT, sanitized.geminiKey)
-        IosReaderAiKeychain.write(IosReaderAiKeychain.GROQ_ACCOUNT, sanitized.groqKey)
+        // Every settings change rewrites all three keys, so a rejected write
+        // here would drop a key the user had already saved. Report it instead
+        // of letting the next load quietly show "No key saved".
+        val failures = listOf(
+            "gemini" to IosReaderAiKeychain.write(IosReaderAiKeychain.GEMINI_ACCOUNT, sanitized.geminiKey),
+            "groq" to IosReaderAiKeychain.write(IosReaderAiKeychain.GROQ_ACCOUNT, sanitized.groqKey),
+            "fish" to IosReaderAiKeychain.write(IosReaderAiKeychain.FISH_ACCOUNT, sanitized.fishKey),
+        ).filter { (_, error) -> error != null }
+        if (failures.isNotEmpty()) {
+            failures.forEach { (provider, error) ->
+                iosAiSettingsLog("settings.save keychain $provider $error")
+            }
+        }
         defaults.setBool(sanitized.useOneModel, forKey = KEY_USE_ONE_MODEL)
         defaults.setObject(sanitized.modelForAll, forKey = KEY_MODEL_ALL)
         defaults.setObject(sanitized.defineModel, forKey = KEY_MODEL_DEFINE)
@@ -157,8 +198,34 @@ internal class IosReaderAiSettingsStore(
         defaults.setObject(sanitized.ttsSpeakerId, forKey = KEY_TTS_SPEAKER)
     }
 
-    fun saveKey(provider: String, key: String) {
-        IosReaderAiKeychain.write(provider.accountName(), key.trim())
+    fun saveKey(provider: String, key: String): AiKeySaveResult {
+        when (val validated = normalizeAiKeyEntry(key)) {
+            is AiKeySaveResult.Invalid -> return validated
+            else -> Unit
+        }
+        val normalized = normalizedAiKeyEntry(key) ?: return AiKeySaveResult.Invalid(AiKeySaveError.BLANK)
+        val account = provider.accountName()
+        // Write, then read back. A write-only check passes on the partial
+        // failures that actually happen (entitlement/ACL problems), and the
+        // read-back is what makes "saved" a claim we can stand behind.
+        val writeError = IosReaderAiKeychain.write(account, normalized)
+        if (writeError != null) {
+            iosAiSettingsLog("keychain.write_failed provider=$provider $writeError")
+            return AiKeySaveResult.Failed(AiKeySaveError.KEYCHAIN_UNAVAILABLE)
+        }
+        val (stored, status) = IosReaderAiKeychain.readOrNull(account)
+        if (stored == normalized) {
+            iosAiSettingsLog("keychain.write_ok provider=$provider verifyStatus=$status")
+            return AiKeySaveResult.Saved
+        }
+        // The read-back is the step that decides the user's experience, so log
+        // exactly which of the two halves disagreed: no item at all, an item we
+        // could not read, or an item holding different bytes.
+        iosAiSettingsLog(
+            "keychain.verify_failed provider=$provider status=$status " +
+                "storedChars=${stored?.length ?: -1} expectedChars=${normalized.length}"
+        )
+        return AiKeySaveResult.Failed(AiKeySaveError.VERIFY_FAILED)
     }
 
     fun deleteKey(provider: String) {
@@ -169,12 +236,14 @@ internal class IosReaderAiSettingsStore(
         return mapOf(
             "gemini" to maskedReaderAiKey(IosReaderAiKeychain.read(IosReaderAiKeychain.GEMINI_ACCOUNT)),
             "groq" to maskedReaderAiKey(IosReaderAiKeychain.read(IosReaderAiKeychain.GROQ_ACCOUNT)),
+            "fish" to maskedReaderAiKey(IosReaderAiKeychain.read(IosReaderAiKeychain.FISH_ACCOUNT)),
         )
     }
 
     private fun String.accountName(): String = when (lowercase()) {
         "gemini" -> IosReaderAiKeychain.GEMINI_ACCOUNT
         "groq" -> IosReaderAiKeychain.GROQ_ACCOUNT
+        "fish" -> IosReaderAiKeychain.FISH_ACCOUNT
         else -> error("Unsupported AI provider: $this")
     }
 
@@ -242,28 +311,52 @@ private fun iosStoreFishVoices(cacheKey: String, voices: List<com.aryan.reader.s
     iosFishVoicesCache[cacheKey] = IosCachedFishVoices(voices, Clock.System.now().toEpochMilliseconds())
 }
 
-/** Small Keychain wrapper; values never enter NSUserDefaults or cloud snapshots. */
+/**
+ * Key-persistence trace. Ungated like the other iOS TTS diagnostics: a key that
+ * silently fails to save leaves the app working but wrong, so the console (and
+ * Export logs) must show the write attempt and its outcome.
+ *
+ * Never logs the key itself — provider and outcome only.
+ */
+internal fun iosAiSettingsLog(message: String) {
+    IosDiagnosticLogStore.record("ReaderAiSettings", message)
+    println("[ReaderAiSettings] $message")
+}
+
+/** An opaque CoreFoundation reference as seen by the Keychain APIs. */
+private typealias CFRef = CPointer<out CPointed>
+
 internal object IosReaderAiKeychain {
     const val GEMINI_ACCOUNT = "gemini"
     const val GROQ_ACCOUNT = "groq"
+    const val FISH_ACCOUNT = "fish"
     private const val SERVICE = "com.aryan.reader.ai.byok.v1"
 
-    fun read(account: String): String {
-        val query = baseQuery(account).toMutableMap().apply {
-            put("r_Data", true)
-            put("m_Limit", "m_LimitOne")
-        }
-        return memScoped {
+    /**
+     * Reads a stored key together with the real `OSStatus`.
+     *
+     * The pair matters: "no item" (`errSecItemNotFound`), "cannot read right
+     * now" (`errSecInteractionNotAllowed` on a locked device) and "the query
+     * itself was malformed" (`errSecParam`) are completely different bugs, and
+     * the previous `String`-only read collapsed all of them into `""` — which
+     * is exactly why a broken read query was indistinguishable from "no key
+     * saved".
+     */
+    fun readOrNull(account: String): Pair<String?, Int> {
+        val query = keychainQuery(account)
+        query[kSecReturnData] = kCFBooleanTrue
+        query[kSecMatchLimit] = kSecMatchLimitOne
+        var status = errSecSuccess
+        val value = memScoped {
             val result = alloc<CFTypeRefVar>()
-            val queryDictionary = query.toNSDictionary()
-            val status = SecItemCopyMatching(queryDictionary.toCFDictionary(), result.ptr)
-            if (status != errSecSuccess) return@memScoped ""
-            val dataPointer = result.value ?: return@memScoped ""
-            val dataRef: CFDataRef = dataPointer.reinterpret()
+            status = SecItemCopyMatching(query.toCFDictionary(), result.ptr)
+            if (status != errSecSuccess) return@memScoped null
+            val dataPointer = result.value ?: return@memScoped null
             try {
+                val dataRef: CFDataRef = dataPointer.reinterpret()
                 val length = CFDataGetLength(dataRef).toInt()
-                if (length <= 0) return@memScoped ""
-                val bytes = CFDataGetBytePtr(dataRef) ?: return@memScoped ""
+                if (length <= 0) return@memScoped null
+                val bytes = CFDataGetBytePtr(dataRef) ?: return@memScoped null
                 val output = ByteArray(length)
                 output.usePinned { pinned ->
                     memcpy(pinned.addressOf(0), bytes, length.toULong())
@@ -273,57 +366,97 @@ internal object IosReaderAiKeychain {
                 CFRelease(dataPointer)
             }
         }
+        return value to status
     }
 
+    fun read(account: String): String = readOrNull(account).first.orEmpty()
+
     /**
-     * Returns true when the value is stored (or updated). False means the Security
-     * framework rejected the write (e.g. errSecMissingEntitlement on an unsigned
-     * test host) — callers must not assume the previous secret was replaced.
+     * Stores a key. Returns null on success, otherwise a reason naming the
+     * failure and its `OSStatus`. The old `Boolean` return threw the status
+     * code away, so a malformed query and a missing entitlement looked the
+     * same from the caller's side.
      */
-    fun write(account: String, value: String): Boolean {
+    fun write(account: String, value: String): String? {
         if (value.isBlank()) {
             delete(account)
-            return true
+            return null
         }
-        val data = value.toNSData()
-        val query = baseQuery(account)
-        val attributes = mapOf(
-            "v_Data" to data,
-            "pdmn" to "cku",
-        )
-        val addDictionary = (query + attributes).toNSDictionary()
-        val addStatus = SecItemAdd(addDictionary.toCFDictionary(), null)
-        if (addStatus == errSecSuccess) return true
+        val data = value.toCFData()
+        val addQuery = keychainQuery(account)
+        addQuery[kSecValueData] = data
+        addQuery[kSecAttrAccessible] = kSecAttrAccessibleWhenUnlocked
+        val addStatus = SecItemAdd(addQuery.toCFDictionary(), null)
+        if (addStatus == errSecSuccess) {
+            CFRelease(data)
+            return null
+        }
         if (addStatus == errSecDuplicateItem) {
-            val queryDictionary = query.toNSDictionary()
-            val attributesDictionary = attributes.toNSDictionary()
-            return SecItemUpdate(queryDictionary.toCFDictionary(), attributesDictionary.toCFDictionary()) == errSecSuccess
+            val updateAttributes = LinkedHashMap<CFRef?, CFRef?>()
+            updateAttributes[kSecValueData] = data
+            val updateStatus = SecItemUpdate(
+                keychainQuery(account).toCFDictionary(),
+                updateAttributes.toCFDictionary(),
+            )
+            CFRelease(data)
+            if (updateStatus == errSecSuccess) return null
+            return "update status=$updateStatus (${describeKeychainStatus(updateStatus)})"
         }
-        return false
+        CFRelease(data)
+        return "add status=$addStatus (${describeKeychainStatus(addStatus)})"
     }
 
     fun delete(account: String) {
-        val queryDictionary = baseQuery(account).toNSDictionary()
-        SecItemDelete(queryDictionary.toCFDictionary())
+        val status = SecItemDelete(keychainQuery(account).toCFDictionary())
+        iosAiSettingsLog("keychain.delete status=$status (${describeKeychainStatus(status)})")
     }
 
-    private fun baseQuery(account: String): Map<Any?, Any?> = mapOf(
-        "class" to "genp",
-        "svce" to SERVICE,
-        "acct" to account,
-    )
+    /** The identity triple every keychain query in this app is scoped by. */
+    private fun keychainQuery(account: String): LinkedHashMap<CFRef?, CFRef?> {
+        val query = LinkedHashMap<CFRef?, CFRef?>()
+        query[kSecClass] = kSecClassGenericPassword
+        query[kSecAttrService] = cfString(SERVICE)
+        query[kSecAttrAccount] = cfString(account)
+        return query
+    }
 
-    private fun Map<*, *>.toNSDictionary(): NSMutableDictionary = NSMutableDictionary().apply {
-        for ((key, value) in this@toNSDictionary) {
-            if (key != null && value != null) {
-                setObject(value, forKey = NSString.create(key.toString()))
+    private fun String.toCFData(): CFRef? {
+        val bytes = encodeToByteArray()
+        if (bytes.isEmpty()) return null
+        return memScoped {
+            val buffer = allocArray<ByteVar>(bytes.size)
+            bytes.usePinned { pinned ->
+                memcpy(buffer, pinned.addressOf(0), bytes.size.toULong())
             }
+            CFDataCreate(null, buffer.reinterpret(), bytes.size.toLong())
         }
     }
 
-    private fun NSMutableDictionary.toCFDictionary(): CFDictionaryRef =
-        interpretCPointer(objcPtr())!!
+    private fun cfString(value: String): CFRef? = memScoped {
+        CFStringCreateWithCString(null, value, kCFStringEncodingUTF8)
+    }
 
+    private fun LinkedHashMap<CFRef?, CFRef?>.toCFDictionary(): CFDictionaryRef {
+        val dictionary = CFDictionaryCreateMutable(null, size.toLong(), null, null)
+            ?: error("Could not allocate a Keychain query dictionary")
+        for ((key, entryValue) in this) {
+            if (key != null && entryValue != null) {
+                CFDictionarySetValue(dictionary, key, entryValue)
+            }
+        }
+        return dictionary
+    }
+
+    private fun describeKeychainStatus(status: Int): String = when (status) {
+        errSecSuccess -> "success"
+        errSecDuplicateItem -> "duplicate item"
+        errSecItemNotFound -> "item not found"
+        errSecParam -> "invalid parameter (malformed query)"
+        errSecMissingEntitlement -> "missing entitlement (signing/keychain access group)"
+        errSecInteractionNotAllowed -> "interaction not allowed (device locked?)"
+        errSecAuthFailed -> "authentication failed"
+        else -> "unrecognized"
+    }
 }
 
 /**
@@ -402,6 +535,7 @@ internal class IosReaderAiAdapter(
     internal suspend fun recapWithContext(
         pastSummaries: List<String>,
         currentText: String,
+        onUpdate: (String) -> Unit = {},
     ): RecapResult {
         val trimmed = currentText.trim()
         if (trimmed.isBlank()) return RecapResult(error = "There is no reading context for a recap.")
@@ -411,7 +545,7 @@ internal class IosReaderAiAdapter(
             feature = ReaderAiFeature.RECAP,
             text = trimmed,
             context = null,
-            onUpdate = {},
+            onUpdate = onUpdate,
             onUsageReceived = { _, _ -> },
             pastSummaries = pastSummaries.filter { it.isNotBlank() },
         )
@@ -421,6 +555,59 @@ internal class IosReaderAiAdapter(
             cost = result.cost,
             freeRemaining = result.freeRemaining,
         )
+    }
+
+    /**
+     * Android `executeRecapLogic` parity: past sections resolve through the
+     * summary cache (misses summarize on the fly and backfill the cache),
+     * then the final recap streams with progress callbacks. A failed past
+     * chapter aborts with its error so spend-gate tokens still route.
+     */
+    internal suspend fun recapChained(
+        request: com.aryan.reader.shared.ReaderRecapRequest,
+        onProgress: (String) -> Unit = {},
+        onUpdate: (String) -> Unit = {},
+    ): RecapResult {
+        if (request.currentText.trim().isBlank() && request.pastSections.all { it.text.isBlank() }) {
+            return RecapResult(error = "There is no reading context for a recap.")
+        }
+        val pastSummaries = mutableListOf<String>()
+        if (request.pastSections.isNotEmpty()) {
+            onProgress("CHECKING_PAST")
+            request.pastSections.forEachIndexed { offset, section ->
+                val sectionIndex = request.sectionIndex - request.pastSections.size + offset
+                onProgress("ANALYZING:${offset + 1}")
+                val cached = request.summaryCache?.getSummary(request.bookTitle, sectionIndex)?.summary
+                if (!cached.isNullOrBlank()) {
+                    pastSummaries.add(cached)
+                } else if (section.text.length > 100) {
+                    val chapterSummary = StringBuilder()
+                    val chapterResult = summarizeStreaming(
+                        section.text,
+                        onUsageReceived = { _, _ -> },
+                        onUpdate = { chapterSummary.append(it) },
+                    )
+                    if (chapterResult.error != null) return RecapResult(
+                        recap = null,
+                        error = chapterResult.error,
+                        cost = chapterResult.cost,
+                        freeRemaining = chapterResult.freeRemaining,
+                    )
+                    val summary = chapterSummary.toString().trim().ifBlank { chapterResult.summary.orEmpty() }
+                    if (summary.isNotBlank()) {
+                        request.summaryCache?.saveSummary(request.bookTitle, sectionIndex, section.title, summary)
+                        pastSummaries.add(summary)
+                    }
+                }
+            }
+        }
+        onProgress("READING_POSITION")
+        val currentText = request.currentText.trim().take(24_000)
+        if (currentText.isBlank() && pastSummaries.isEmpty()) {
+            return RecapResult(error = "There is no reading context for a recap.")
+        }
+        onProgress("GENERATING")
+        return recapWithContext(pastSummaries, currentText.ifBlank { pastSummaries.joinToString("\n\n") }, onUpdate)
     }
 
     private fun hasByokModel(feature: ReaderAiFeature): Boolean {
@@ -509,28 +696,19 @@ internal class IosReaderAiAdapter(
             )
         }.getOrElse { error -> return IosReaderAiTextResult(error = error.message ?: "AI request failed.") }
         if (response.statusCode == 401) return IosReaderAiTextResult(error = "Sign in again to use this AI feature.")
-        // Spend guards (Android benchmark parity): velocity throttle (429) and
-        // daily spend fraud cap (402 DAILY_SPEND_LIMIT) surface user-facing
-        // countdown text; an empty wallet keeps the legacy message.
+        // Android parity (mapAiHttpError): HTTP errors become routing tokens
+        // ("RATE_LIMITED:<s>", "DAILY_SPEND_LIMIT:<s>", "INSUFFICIENT_CREDITS")
+        // that the host turns into notices/dialogs. Tokens are never shown.
         if (response.statusCode == 429) {
-            val retry = parseSpendGuardError(response.body)?.second ?: 30
-            return IosReaderAiTextResult(error = "Slowing down — please retry in ${formatSpendGuardCountdown(retry)}.")
+            return IosReaderAiTextResult(error = mapSpendGuardHttpError(429, response.body))
         }
         val workerError = workerErrorMessage(response.body)
         if (response.statusCode == 402 || response.body.contains("INSUFFICIENT_CREDITS", ignoreCase = true)) {
             onUsageReported(IosReaderAiUsage())
-            val spendGuard = parseSpendGuardError(response.body)
-            if (spendGuard?.first == "DAILY_SPEND_LIMIT") {
-                val account = accountStateProvider()
-                return IosReaderAiTextResult(
-                    error = "Daily spending cap reached — resets in ${formatSpendGuardCountdown(spendGuard.second)}. " +
-                        "Balance: ${formatMicrosUsd(account.walletMicros)}."
-                )
-            }
-            val account = accountStateProvider()
+            val token = mapSpendGuardHttpError(response.statusCode, response.body)
+                ?: if (response.body.contains("INSUFFICIENT_CREDITS", ignoreCase = true)) "INSUFFICIENT_CREDITS" else null
             return IosReaderAiTextResult(
-                error = workerError ?: if (account.walletMigrated) "You're out of balance. Top up your wallet to continue."
-                else "Out of credits."
+                error = token ?: workerError ?: "AI request failed."
             )
         }
         if (response.statusCode !in 200..299) {
@@ -624,13 +802,11 @@ internal class IosReaderAiAdapter(
             }
             obj["error"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { streamError ->
                 // Concurrency-slot throttle arrives as a stream payload
-                // ({error, retry_after_seconds}); surface the countdown.
+                // ({error, retry_after_seconds}); Android parity
+                // (mapAiStreamError): keep the routing token so the host can
+                // turn it into a notice/dialog. Tokens are never shown.
                 val retry = obj["retry_after_seconds"]?.jsonPrimitive?.intOrNull ?: 0
-                val text = when (streamError) {
-                    "RATE_LIMITED" -> "Slowing down — please retry in ${formatSpendGuardCountdown(retry)}."
-                    "DAILY_SPEND_LIMIT" -> "Daily spending cap reached — resets in ${formatSpendGuardCountdown(retry)}."
-                    else -> streamError
-                }
+                val text = mapSpendGuardStreamError(streamError, retry)
                 return IosReaderAiTextResult(text = output.toString(), error = text, cost = cost, freeRemaining = freeRemaining)
             }
             obj["cost_deducted"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()?.let { cost = it }
@@ -750,6 +926,34 @@ private fun workerErrorMessage(body: String): String? {
  * (the `licensed=true` pool is only 7 voices and a subset of this catalog).
  */
 private const val FISH_OFFICIAL_AUTHOR_ID = "d8b0991f96b44e489422ca2ddf0bd31d"
+
+/**
+ * Localized copy for a chained-recap progress token (`recapChained`
+ * emits stable tokens; the host resolves them so progress localizes like
+ * every other reader string). Unknown tokens pass through as-is.
+ */
+internal data class RecapProgressCopy(
+    val key: String,
+    val fallback: String,
+    val chapterNumber: Int? = null
+)
+
+internal fun recapProgressCopy(token: String): RecapProgressCopy {
+    if (token.startsWith("ANALYZING:")) {
+        val number = token.substringAfter(":").toIntOrNull() ?: 0
+        return RecapProgressCopy(
+            key = "ai_recap_analyzing_chapter",
+            fallback = "Analyzing Chapter %1\$d...",
+            chapterNumber = number,
+        )
+    }
+    return when (token) {
+        "CHECKING_PAST" -> RecapProgressCopy("ai_recap_checking_past", "Checking past chapters...")
+        "READING_POSITION" -> RecapProgressCopy("ai_recap_reading_position", "Reading current position...")
+        "GENERATING" -> RecapProgressCopy("ai_recap_generating", "Generating Recap...")
+        else -> RecapProgressCopy("ai_thinking", token)
+    }
+}
 
 /**
  * Fish voice catalog for the iOS voice picker (Android `fetchFishVoices` +
@@ -937,6 +1141,10 @@ internal object IosReaderAiHttpClient {
         return request(url = url, method = "POST", body = body.toNSData(), headers = headers)
     }
 
+    suspend fun getBytes(url: String, headers: Map<String, String> = emptyMap()): IosReaderAiHttpResponse {
+        return request(url = url, method = "GET", body = null, headers = headers)
+    }
+
     private suspend fun request(
         url: String,
         method: String,
@@ -958,7 +1166,22 @@ internal object IosReaderAiHttpClient {
             if (body != null) setHTTPBody(body)
         }
         return suspendCancellableCoroutine { continuation ->
+            val host = nsUrl.host.orEmpty()
+            iosCloudTtsTraceLog("http.start", "method=$method host=$host bodyBytes=${body?.length?.toInt() ?: 0}")
             val delegate = IosReaderAiHttpDelegate { result ->
+                result
+                    .onSuccess { response ->
+                        iosCloudTtsTraceLog(
+                            "http.done",
+                            "method=$method host=$host status=${response.statusCode} bytes=${response.bodyBytes.size}"
+                        )
+                    }
+                    .onFailure { error ->
+                        iosCloudTtsTraceLog(
+                            "http.done",
+                            "method=$method host=$host error=${error::class.simpleName}:${error.message?.take(120)}"
+                        )
+                    }
                 if (continuation.isActive) continuation.resumeWith(result)
             }
             val session = NSURLSession.sessionWithConfiguration(

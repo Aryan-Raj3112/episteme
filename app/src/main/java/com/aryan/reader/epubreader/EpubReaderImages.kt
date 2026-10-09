@@ -10,6 +10,9 @@ import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.Base64
+import com.aryan.reader.shared.reader.ReaderImageSourceIdentity
+import com.aryan.reader.shared.reader.SharedEpubDrawerImage
+import com.aryan.reader.shared.reader.isSharedEpubSvgSource
 
 data class EpubReaderImageReference(
     val id: String,
@@ -25,9 +28,25 @@ data class EpubReaderImageReference(
     val intrinsicWidth: Int?,
     val intrinsicHeight: Int?
 ) {
+    /**
+     * One resolution of the source pair, in one order, shared with
+     * `ReaderImageReference` (parity item B9).
+     *
+     * These two fields used to be consulted independently — `sourceName()`
+     * preferred `originalSource` while the extension and MIME preferred
+     * `sourcePath` — so one image could be named after one source, typed from
+     * another, and loaded from a third. `sourcePath` wins everywhere now,
+     * because it is the resolved, percent-decoded, guaranteed-non-blank path
+     * that `readDownloadBytes()` actually reads.
+     */
+    private val identity = ReaderImageSourceIdentity(
+        resolved = sourcePath,
+        declared = originalSource,
+    )
+
     val displayTitle: String
         get() = altText?.trim()?.takeIf { it.isNotBlank() }
-            ?: sourceName()?.substringBeforeLast('.')?.takeIf { it.isNotBlank() }
+            ?: identity.sourceName()?.substringBeforeLast('.')?.takeIf { it.isNotBlank() }
             ?: "Image ${index + 1}"
 
     val dimensionLabel: String?
@@ -37,41 +56,11 @@ data class EpubReaderImageReference(
             return if (width != null && height != null) "${width}x$height" else null
         }
 
-    fun sourceName(): String? {
-        val source = originalSource.takeIf { it.isNotBlank() } ?: sourcePath
-        if (source.startsWith("data:", ignoreCase = true)) return null
-        return source
-            .substringBefore('#')
-            .substringBefore('?')
-            .replace('\\', '/')
-            .substringAfterLast('/')
-            .takeIf { it.isNotBlank() }
-    }
+    fun sourceName(): String? = identity.sourceName()
 
-    fun suggestedDownloadFileName(): String {
-        val extension = sourcePath.readerImageExtension()
-            ?: originalSource.readerImageExtension()
-            ?: "png"
-        val base = altText?.trim()?.takeIf { it.isNotBlank() }
-            ?: sourceName()?.substringBeforeLast('.')?.takeIf { it.isNotBlank() }
-            ?: "image-${index + 1}"
-        val safeBase = base.sanitizedReaderImageFileBase().ifBlank { "image-${index + 1}" }
-        return "$safeBase.$extension"
-    }
+    fun suggestedDownloadFileName(): String = identity.suggestedDownloadFileName(altText, index)
 
-    fun mimeType(): String {
-        val dataMime = readerDataUriMimeType(sourcePath)
-        if (dataMime != null) return dataMime
-        return when (sourcePath.readerImageExtension() ?: originalSource.readerImageExtension()) {
-            "jpg", "jpeg" -> "image/jpeg"
-            "png" -> "image/png"
-            "gif" -> "image/gif"
-            "webp" -> "image/webp"
-            "bmp" -> "image/bmp"
-            "svg" -> "image/svg+xml"
-            else -> "image/*"
-        }
-    }
+    fun mimeType(): String = identity.mimeType()
 }
 
 fun EpubBook.readerImageReferencesForDrawer(): List<EpubReaderImageReference> {
@@ -194,25 +183,6 @@ private fun String.readerImageLookupKey(): String {
         .lowercase()
 }
 
-private fun String.readerImageExtension(): String? {
-    readerDataUriMimeType(this)?.let { mime ->
-        return when (mime.lowercase()) {
-            "image/jpeg" -> "jpg"
-            "image/png" -> "png"
-            "image/gif" -> "gif"
-            "image/webp" -> "webp"
-            "image/bmp" -> "bmp"
-            "image/svg+xml" -> "svg"
-            else -> null
-        }
-    }
-    return substringBefore('#')
-        .substringBefore('?')
-        .substringAfterLast('.', "")
-        .lowercase()
-        .takeIf { it in setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "svg") }
-}
-
 private fun readerDataUriMimeType(source: String): String? {
     if (!source.startsWith("data:", ignoreCase = true)) return null
     return source
@@ -236,10 +206,21 @@ private fun String.readerDataUriBytes(): ByteArray? {
     }.getOrNull()
 }
 
-private fun String.sanitizedReaderImageFileBase(): String {
-    return replace(Regex("""[\\/:*?"<>|]+"""), "_")
-        .replace(Regex("""\s+"""), " ")
-        .trim()
-        .trim('.')
-        .take(80)
-}
+/**
+ * Adapts the paginated reader's image model to the shared EPUB drawer row.
+ *
+ * The shared row is deliberately narrow (see `SharedEpubDrawerImage`): it carries only what the
+ * list and thumbnail render, so the paginated reader does not have to fabricate the
+ * `ReaderLocator` that `ReaderImageReference` requires but cannot supply for an image.
+ */
+internal fun EpubReaderImageReference.toDrawerImage() = SharedEpubDrawerImage(
+    id = id,
+    ordinal = index + 1,
+    displayTitle = displayTitle,
+    chapterTitle = chapterTitle,
+    dimensionLabel = dimensionLabel,
+    sourceName = sourceName(),
+    source = sourcePath,
+    isSvg = sourcePath.isSharedEpubSvgSource() || originalSource.isSharedEpubSvgSource(),
+    loadBytes = { readDownloadBytes() }
+)

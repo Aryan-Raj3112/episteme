@@ -1249,7 +1249,7 @@
     <string name="settings_hub_literal_23">Recent files and local reading fonts</string>
     <string name="settings_hub_literal_24">Sync &amp; Accounts</string>
     <string name="settings_hub_literal_25">Sign-in, cloud sync, folder sync, and devices</string>
-    <string name="settings_hub_literal_26">More-menu options, maintenance actions, diagnostics, and app info</string>
+    <string name="settings_hub_literal_26">More-menu options, maintenance actions, and diagnostics</string>
     <string name="settings_hub_literal_27">Help &amp; About</string>
     <string name="settings_hub_literal_28">Feedback, support, project information, and licenses</string>
     <string name="settings_hub_literal_29">Format Defaults</string>
@@ -1268,7 +1268,7 @@
     <string name="settings_hub_literal_42">Words and phrases replaced only during speech playback</string>
     <string name="settings_hub_literal_43">Format, EPUB theme, visual defaults, and reader tools</string>
     <string name="settings_hub_literal_44">Separate PDF theme and fixed-layout reader defaults</string>
-    <string name="settings_hub_literal_45">More-menu options, maintenance, diagnostics, and app info</string>
+    <string name="settings_hub_literal_45">More-menu options, maintenance, and diagnostics</string>
     <string name="settings_hub_literal_46">Format defaults</string>
     <string name="settings_hub_literal_47">Font, size, line spacing, margins, alignment, and reading mode</string>
     <string name="settings_hub_literal_48">Theme and texture</string>
@@ -1811,7 +1811,6 @@
     <string name="option_selected_format">%1$s selected</string>
     <string name="reader_defaults">Reader defaults</string>
     <!-- Debug-only placeholder, not shown in normal user flows. -->
-    <string name="debug_actions_existing_menus" translatable="false">Debug actions remain in their existing menus.</string>
     <!-- PDF and OCR are technical feature names; keep the acronyms as-is. -->
     <string name="pdf_specific_settings_existing_reader">PDF-specific OCR, annotation, and tool settings remain in the PDF reader.</string>
     <!-- Provider/product name. Do not translate. -->
@@ -2678,4 +2677,15 @@
     <!-- %1$d = number of pages carrying legacy page text. Example: "Only text boxes are available now — convert legacy text on 3 pages?". -->
     <string name="banner_legacy_page_text">Only text boxes are available now — convert legacy text on %1$d pages?</string>
     <string name="action_convert_to_text_boxes">Convert</string>
+
+    <!-- EPUB 3 media overlays: the publisher's pre-recorded narration of the open book. -->
+    <string name="media_overlay_title">Narration</string>
+    <string name="media_overlay_notification_channel_name">Narration playback</string>
+    <string name="content_desc_media_overlay_start">Start narration</string>
+    <string name="content_desc_media_overlay_stop">Stop narration</string>
+    <string name="content_desc_media_overlay_play_pause">Play or pause narration</string>
+    <string name="content_desc_media_overlay_previous">Previous narrated passage</string>
+    <string name="content_desc_media_overlay_next">Next narrated passage</string>
+    <string name="content_desc_media_overlay_speed">Narration speed</string>
+    <string name="media_overlay_chapter_unavailable">This chapter has no narration</string>
 </resources>

@@ -44,6 +44,11 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
     private var chunks: List<ReaderTtsChunk> = emptyList()
     private var pendingPauseOnStart = false
     private var lastFinished = false
+    // Session identity, so a surface sharing this engine can tell its own session
+    // apart from another surface's. Android benchmark: `TtsState.playbackSource`.
+    private var activePlaybackSource: String? = null
+    private var activeBookId: String? = null
+    private var activeTotalChapters: Int = 0
     private var previewEngine: TextToSpeech? = null
 
     override var state by mutableStateOf(SharedMobileEpubLocalTtsState.IDLE)
@@ -101,16 +106,30 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
     // Android parity: merely opening a reader must not bind or warm the TTS service.
     override fun prepare() = Unit
 
+    override val playbackSource: String? get() = activePlaybackSource
+    override val sessionBookId: String? get() = activeBookId
+    override val sessionTotalChapters: Int get() = activeTotalChapters
+    // TtsPlaybackManager reports the spoken word position on its state stream; the reader does
+    // not need it, so it is not mirrored here.
+    override val currentSpokenOffset: Int get() = 0
+
     override fun start(
         chunks: List<ReaderTtsChunk>,
         bookTitle: String,
         bookId: String?,
         startChunkIndex: Int,
         playWhenReady: Boolean,
+        playbackSource: String?,
+        totalChapters: Int,
+        continueSession: Boolean,
+        authToken: String?,
     ) {
         val readable = chunks.filter { it.spokenText.isNotBlank() }
         if (readable.isEmpty()) return
         this.chunks = readable
+        activePlaybackSource = playbackSource
+        activeBookId = bookId
+        activeTotalChapters = totalChapters
         sessionId += 1
         isSessionActive = true
         pendingPauseOnStart = !playWhenReady
@@ -208,6 +227,10 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
         chunks = emptyList()
         progress = ReaderTtsProgress()
         isSessionActive = false
+        // Clearing the session tag is what lets another surface claim the engine next.
+        activePlaybackSource = null
+        activeBookId = null
+        activeTotalChapters = 0
         state = SharedMobileEpubLocalTtsState.IDLE
     }
 

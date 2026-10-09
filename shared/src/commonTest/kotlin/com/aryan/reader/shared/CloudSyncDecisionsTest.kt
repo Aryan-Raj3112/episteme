@@ -113,6 +113,37 @@ class CloudSyncDecisionsTest {
     }
 
     @Test
+    fun `startup merge recovers a reading position that was never pushed`() {
+        // A position saved while reading and then killed before any flush only
+        // exists in Room. The startup merge is the safety net: a local row
+        // newer than its remote counterpart must upload, not be ignored.
+        assertTrue(
+            shouldUploadLocalCloudBookMetadataUpdate(
+                localModifiedTimestamp = 5_000L,
+                remoteModifiedTimestamp = 1_000L
+            )
+        )
+    }
+
+    @Test
+    fun `already synced position does not re-upload on every startup`() {
+        // The flip side of the safety net: without this the periodic merge
+        // would re-push every book on every launch.
+        assertFalse(
+            shouldUploadLocalCloudBookMetadataUpdate(
+                localModifiedTimestamp = 1_000L,
+                remoteModifiedTimestamp = 1_000L
+            )
+        )
+        assertFalse(
+            shouldUploadLocalCloudBookMetadataUpdate(
+                localModifiedTimestamp = 1_000L,
+                remoteModifiedTimestamp = 9_000L
+            )
+        )
+    }
+
+    @Test
     fun `cloud book content file name uses shared primary extension`() {
         assertEquals("book-1.epub", sharedCloudBookContentFileName("book-1", FileType.EPUB))
         assertEquals("book-1.md", sharedCloudBookContentFileName("book-1", FileType.MD))

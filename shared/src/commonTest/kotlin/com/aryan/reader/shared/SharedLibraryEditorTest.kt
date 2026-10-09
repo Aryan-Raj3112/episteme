@@ -117,6 +117,36 @@ class SharedLibraryEditorTest {
     }
 
     @Test
+    fun `addBooksToShelvesInState keeps the shelf in the active sort order`() {
+        val existing = book("existing", title = "Existing")
+        val added = book("added", title = "Added")
+        val state = SharedReaderScreenState(
+            sortOrder = SortOrder.TITLE_ASC,
+            rawLibraryBooks = listOf(existing, added),
+            selectedBookIds = setOf("added"),
+            shelves = listOf(
+                Shelf(
+                    id = "first",
+                    name = "First",
+                    type = ShelfType.MANUAL,
+                    books = listOf(existing),
+                    directBooks = listOf(existing),
+                ),
+            ),
+        )
+
+        val result = SharedLibraryEditor.addBooksToShelvesInState(
+            state = state,
+            bookIds = setOf("added"),
+            shelfIds = setOf("first"),
+        )
+
+        requireNotNull(result)
+        assertEquals(listOf("added", "existing"), result.shelves.single().books.ids())
+        assertEquals(listOf("added", "existing"), result.shelves.single().directBooks.ids())
+    }
+
+    @Test
     fun `removeBooksFromRecentsInState preserves library files shelves and tabs`() {
         val removed = book("removed").copy(
             path = "/managed/removed.epub",

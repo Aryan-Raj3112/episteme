@@ -74,11 +74,16 @@ fun SharedMobileAiResultContent(
     emptyText: String? = null,
     /**
      * Usage badge (cost / free-remaining / cache-hit) mirrors Android's
-     * credits UI. iOS hides it until credits launch — callers pass
-     * `aiCredits != null`.
+     * credits UI. Android (`AiResultContentView`) gates it on the result
+     * alone (cache hit, cost present, or loading) with no account
+     * condition, so iOS passes true and lets [sharedAiUsageBadgeVisible]
+     * decide — never on credits availability.
      */
     showUsageBadge: Boolean = true,
     walletMigrated: Boolean = false,
+    // Android parity (executeRecapLogic progress): staged recap status while
+    // loading with blank text; null keeps the generic "Thinking…".
+    progressMessage: String? = null,
     modifier: Modifier = Modifier
 ) {
     val popupTts = rememberSharedMobileEpubLocalTts()
@@ -129,7 +134,7 @@ fun SharedMobileAiResultContent(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator()
                     Text(
-                        readerString("ai_thinking", "Thinking…"),
+                        progressMessage ?: readerString("ai_thinking", "Thinking…"),
                         modifier = Modifier.padding(start = 12.dp),
                         style = MaterialTheme.typography.bodyLarge
                     )
@@ -329,6 +334,7 @@ fun SharedMobileAiTextResultSheet(
                 ttsChapterTitle = result.title.orEmpty(),
                 showUsageBadge = showUsageBadge,
                 walletMigrated = walletMigrated,
+                progressMessage = result.progressMessage,
             )
         }
     }

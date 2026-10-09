@@ -14,22 +14,19 @@ import android.view.View
 import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.core.content.edit
-import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.paginatedreader.TtsChunk
-import java.util.Date
-import kotlinx.coroutines.delay
+import com.aryan.reader.shared.loadAndroidReaderLookupUsesAiDictionary
+import com.aryan.reader.shared.saveAndroidReaderLookupUsesAiDictionary
 import kotlinx.coroutines.flow.filter
 import kotlin.math.max
 import kotlin.math.min
@@ -88,23 +85,6 @@ internal fun List<TtsChunk>.withInitialChunkOverride(
     return toMutableList().also { chunks ->
         chunks[startChunkIndex] = initialChunk
     }
-}
-
-@Composable
-internal fun rememberReaderClockTime(): String {
-    val context = LocalContext.current
-    val formatter = remember(context) {
-        android.text.format.DateFormat.getTimeFormat(context)
-    }
-    var currentTimeMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            val now = System.currentTimeMillis()
-            currentTimeMillis = now
-            delay(60_000L - now.mod(60_000L))
-        }
-    }
-    return formatter.format(Date(currentTimeMillis))
 }
 
 internal fun View.bottomRoundedCornerRadiusPx(): Int {
@@ -299,23 +279,20 @@ internal fun saveTtsMode(context: Context, modeName: String) {
     prefs.edit { putString(TTS_MODE_KEY, modeName) }
 }
 
-private const val PREF_USE_ONLINE_DICT = "use_online_dictionary"
 private const val PREF_EXTERNAL_DICT_PKG = "external_dictionary_package"
 private const val PREF_EXTERNAL_TRANSLATE_PKG = "external_translate_package"
 private const val PREF_EXTERNAL_SEARCH_PKG = "external_search_package"
 
 internal fun loadUseOnlineDict(context: Context): Boolean {
     @Suppress("KotlinConstantConditions") if (BuildConfig.FLAVOR == "oss" && BuildConfig.IS_OFFLINE) return false
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    // Default false ("no selection"): nothing is preselected, so a lookup
-    // with no external app chosen opens the dictionary settings sheet and
-    // lets the user pick Smart AI or an external app.
-    return prefs.getBoolean(PREF_USE_ONLINE_DICT, false)
+    // Android benchmark: Smart AI is the default engine. The shared module owns
+    // the persisted copy (migrating this reader's legacy "reader_prefs" value
+    // once) so the selection menu and this sheet always agree.
+    return loadAndroidReaderLookupUsesAiDictionary(context)
 }
 
 internal fun saveUseOnlineDict(context: Context, useOnline: Boolean) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(PREF_USE_ONLINE_DICT, useOnline) }
+    saveAndroidReaderLookupUsesAiDictionary(context, useOnline)
 }
 
 internal fun loadExternalDictPackage(context: Context): String? {

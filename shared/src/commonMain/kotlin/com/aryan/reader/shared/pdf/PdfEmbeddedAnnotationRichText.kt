@@ -1,6 +1,8 @@
 package com.aryan.reader.shared.pdf
 
-private val pdfRichTextPrelude = Regex("<\\?[^>]*\\?>|<!--.*?-->|<!\\[CDATA\\[|\\]\\]>", RegexOption.DOT_MATCHES_ALL)
+// `(?s)` rather than RegexOption.DOT_MATCHES_ALL: the option is absent from the common stdlib,
+// so naming it here breaks the shared metadata compilation. Inline flag is equivalent.
+private val pdfRichTextPrelude = Regex("""(?s)<\?[^>]*\?>|<!--.*?-->|<!\[CDATA\[|\]\]>""")
 private val pdfRichTextLineBreak = Regex("<br\\s*/?>|</(?:p|div|span|h[1-6]|li)\\s*>", RegexOption.IGNORE_CASE)
 private val pdfRichTextTag = Regex("<[^>]*>")
 private val pdfRichTextEntity = Regex("&(?:#x([0-9A-Fa-f]+)|#([0-9]+)|([A-Za-z][A-Za-z0-9]*));")

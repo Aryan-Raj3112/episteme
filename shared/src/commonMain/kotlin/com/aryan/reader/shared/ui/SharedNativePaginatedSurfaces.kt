@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -68,8 +69,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.paginatedreader.SemanticImage
-import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.HighlightStyle
+import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.paintOnlyColorOverlayText
 import com.aryan.reader.shared.reader.withoutForegroundColorSpans
@@ -101,7 +102,11 @@ internal fun SharedNativePaginatedPage(
 ) {
     val settings = renderPlan.settings
     val fallbackTextAlign = settings.textAlign.toComposeTextAlign()
-    val visibleHighlights = renderPlan.highlights.visibleInPage(page)
+    val visibleHighlights = renderPlan.highlights.visibleInPage(
+        page = page,
+        chapterTextIndex = renderPlan.chapterTextIndexes[page.chapterIndex]
+    )
+    val chapterTextIndex = renderPlan.chapterTextIndexes[page.chapterIndex]
     val blocks = page.semanticBlocks
     val visibleHighlightSignature = remember(visibleHighlights) {
         visibleHighlights.joinToString(separator = "|") { highlight -> highlight.id }
@@ -227,116 +232,128 @@ internal fun SharedNativePaginatedPage(
         shadowElevation = if (showsPageChrome) 1.dp else 0.dp,
         border = if (showsPageChrome) BorderStroke(1.dp, renderPlan.foreground.copy(alpha = 0.14f)) else null
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(
-                    horizontal = settings.resolvedHorizontalMargin.dp,
-                    vertical = settings.resolvedVerticalMargin.dp
-                )
-                .onGloballyPositioned { coordinates ->
-                    val nextFit = SharedNativeContentFit(
-                        rootTopPx = coordinates.positionInRoot().y.roundToInt(),
-                        heightPx = coordinates.size.height
-                    )
-                    if (contentFit != nextFit) {
-                        contentFit = nextFit
-                    }
-                },
-            verticalArrangement = Arrangement.Top
+        // Android reads the image height budget back out of `ImageBlock.expectedHeight`; the
+        // shared render path has no such field, so the page's own height stands in for it. See
+        // `LocalSharedNativePageImageMaxHeightPx`.
+        CompositionLocalProvider(
+            LocalSharedNativePageImageMaxHeightPx provides renderGeometry.pageContentHeightPx.toFloat()
         ) {
-            if (blocks.isEmpty()) {
-                SharedNativeInteractiveText(
-                    text = page.text.toReaderAnnotatedString(
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(
+                        horizontal = settings.resolvedHorizontalMargin.dp,
+                        vertical = settings.resolvedVerticalMargin.dp
+                    )
+                    .onGloballyPositioned { coordinates ->
+                        val nextFit = SharedNativeContentFit(
+                            rootTopPx = coordinates.positionInRoot().y.roundToInt(),
+                            heightPx = coordinates.size.height
+                        )
+                        if (contentFit != nextFit) {
+                            contentFit = nextFit
+                        }
+                    },
+                verticalArrangement = Arrangement.Top
+            ) {
+                if (blocks.isEmpty()) {
+                    SharedNativeInteractiveText(
+                        text = page.text.toReaderAnnotatedString(
+                            searchQuery = renderPlan.searchQuery,
+                            searchHighlight = searchHighlight,
+                            chapterIndex = page.chapterIndex,
+                            pageIndex = page.pageIndex,
+                            absoluteStartOffset = page.startOffset,
+                            highlights = visibleHighlights,
+                            activeSelection = activeSelection,
+                            selectionHighlight = selectionHighlight,
+                            // Deliberately no chapter index. A page the paginator could not split
+                            // into blocks has no block for the resolver to place a highlight in, and
+                            // handing it one makes it decline every highlight. Placement here goes by
+                            // the page's own text, which is all this page has.
+                            chapterTextIndex = null
+                        ),
+                        page = page,
+                        textBlock = SharedNativeTextBlockDescriptor(
+                            chapterIndex = page.chapterIndex,
+                            pageIndex = page.pageIndex,
+                            blockIndex = -1,
+                            blockCharOffset = page.startOffset,
+                            baseCfi = null,
+                            textStartOffset = page.startOffset,
+                            text = page.text
+                        ),
+                        textStartOffset = page.startOffset,
+                        color = renderPlan.foreground,
+                        textAlign = fallbackTextAlign,
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontSize = settings.fontSize.sp,
+                            lineHeight = (settings.fontSize * settings.lineSpacing).sp,
+                            fontFamily = readerFontFamily,
+                            fontWeight = settings.fontWeight.takeIf { it > 0 }?.let(::FontWeight),
+                            letterSpacing = settings.letterSpacing.em
+                        ).withAndroidPaginationTextMetrics(settings.letterSpacing),
+                        activeSelection = activeSelection,
+                        onReaderTap = onReaderTap,
+                        onReaderHorizontalTap = onReaderHorizontalTap,
+                        immediateDragSelectEnabled = immediateDragSelectEnabled,
+                        onSelectionChange = onSelectionChange,
+                        onSelectionGestureActiveChange = onSelectionGestureActiveChange,
+                        onHighlightSelected = onHighlightSelected,
+                        onLinkClicked = onLinkClicked,
+                        selectionLayouts = selectionLayouts,
+                        onTextLaidOut = { fit ->
+                            if (textLayouts[fit.key] != fit) {
+                                textLayouts[fit.key] = fit
+                                layoutVersion += 1
+                            }
+                        },
+                        fitLabel = SharedNativeTextFitLabel(
+                            page = page,
+                            blockIndex = -1,
+                            kind = "plain",
+                            sourceRange = "${page.startOffset}..${page.endOffset}",
+                            textChars = page.text.length
+                        )
+                    )
+                } else {
+                    SharedSemanticBlockStack(
+                        blocks = blocks,
+                        page = page,
+                        background = renderPlan.background,
+                        foreground = renderPlan.foreground,
                         searchQuery = renderPlan.searchQuery,
                         searchHighlight = searchHighlight,
-                        chapterIndex = page.chapterIndex,
-                        pageIndex = page.pageIndex,
-                        absoluteStartOffset = page.startOffset,
                         highlights = visibleHighlights,
                         activeSelection = activeSelection,
-                        selectionHighlight = selectionHighlight
-                    ),
-                    page = page,
-                    textBlock = SharedNativeTextBlockDescriptor(
-                        chapterIndex = page.chapterIndex,
-                        pageIndex = page.pageIndex,
-                        blockIndex = -1,
-                        blockCharOffset = page.startOffset,
-                        baseCfi = null,
-                        textStartOffset = page.startOffset,
-                        text = page.text
-                    ),
-                    textStartOffset = page.startOffset,
-                    color = renderPlan.foreground,
-                    textAlign = fallbackTextAlign,
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = settings.fontSize.sp,
-                        lineHeight = (settings.fontSize * settings.lineSpacing).sp,
-                        fontFamily = readerFontFamily,
-                        fontWeight = settings.fontWeight.takeIf { it > 0 }?.let(::FontWeight),
-                        letterSpacing = settings.letterSpacing.em
-                    ).withAndroidPaginationTextMetrics(settings.letterSpacing),
-                    activeSelection = activeSelection,
-                    onReaderTap = onReaderTap,
-                    onReaderHorizontalTap = onReaderHorizontalTap,
-                    immediateDragSelectEnabled = immediateDragSelectEnabled,
-                    onSelectionChange = onSelectionChange,
-                    onSelectionGestureActiveChange = onSelectionGestureActiveChange,
-                    onHighlightSelected = onHighlightSelected,
-                    onLinkClicked = onLinkClicked,
-                    selectionLayouts = selectionLayouts,
-                    onTextLaidOut = { fit ->
-                        if (textLayouts[fit.key] != fit) {
-                            textLayouts[fit.key] = fit
-                            layoutVersion += 1
+                        selectionHighlight = selectionHighlight,
+                        fallbackTextAlign = fallbackTextAlign,
+                        fallbackFontFamily = readerFontFamily,
+                        settings = settings,
+                        includeTrailingBottomMargin = false,
+                        onReaderTap = onReaderTap,
+                        onReaderHorizontalTap = onReaderHorizontalTap,
+                        immediateDragSelectEnabled = immediateDragSelectEnabled,
+                        onSelectionChange = onSelectionChange,
+                        onSelectionGestureActiveChange = onSelectionGestureActiveChange,
+                        onHighlightSelected = onHighlightSelected,
+                        onLinkClicked = onLinkClicked,
+                        selectionLayouts = selectionLayouts,
+                        imageContent = imageContent,
+                        onTextLaidOut = { fit ->
+                            if (textLayouts[fit.key] != fit) {
+                                textLayouts[fit.key] = fit
+                                layoutVersion += 1
+                            }
+                        },
+                        onBlockLaidOut = { fit ->
+                            if (blockLayouts[fit.index] != fit) {
+                                blockLayouts[fit.index] = fit
+                                layoutVersion += 1
+                            }
                         }
-                    },
-                    fitLabel = SharedNativeTextFitLabel(
-                        page = page,
-                        blockIndex = -1,
-                        kind = "plain",
-                        sourceRange = "${page.startOffset}..${page.endOffset}",
-                        textChars = page.text.length
                     )
-                )
-            } else {
-                SharedSemanticBlockStack(
-                    blocks = blocks,
-                    page = page,
-                    background = renderPlan.background,
-                    foreground = renderPlan.foreground,
-                    searchQuery = renderPlan.searchQuery,
-                    searchHighlight = searchHighlight,
-                    highlights = visibleHighlights,
-                    activeSelection = activeSelection,
-                    selectionHighlight = selectionHighlight,
-                    fallbackTextAlign = fallbackTextAlign,
-                    fallbackFontFamily = readerFontFamily,
-                    settings = settings,
-                    includeTrailingBottomMargin = false,
-                    onReaderTap = onReaderTap,
-                    onReaderHorizontalTap = onReaderHorizontalTap,
-                    immediateDragSelectEnabled = immediateDragSelectEnabled,
-                    onSelectionChange = onSelectionChange,
-                    onSelectionGestureActiveChange = onSelectionGestureActiveChange,
-                    onHighlightSelected = onHighlightSelected,
-                    onLinkClicked = onLinkClicked,
-                    selectionLayouts = selectionLayouts,
-                    imageContent = imageContent,
-                    onTextLaidOut = { fit ->
-                        if (textLayouts[fit.key] != fit) {
-                            textLayouts[fit.key] = fit
-                            layoutVersion += 1
-                        }
-                    },
-                    onBlockLaidOut = { fit ->
-                        if (blockLayouts[fit.index] != fit) {
-                            blockLayouts[fit.index] = fit
-                            layoutVersion += 1
-                        }
-                    }
-                )
+                }
             }
         }
     }
@@ -346,13 +363,13 @@ internal fun SharedNativePaginatedPage(
 internal fun SharedNativeSelectionMenu(
     @Suppress("UNUSED_PARAMETER")
     selection: SharedNativeReaderTextSelection,
-    highlightPalette: List<HighlightColor>,
+    highlightPalette: ReaderHighlightPalette,
     enabledSelectionActions: Set<SharedNativeReaderSelectionAction>,
     background: Color,
     foreground: Color,
     onCopy: () -> Unit,
     onSelectionAction: (SharedNativeReaderSelectionAction) -> Unit,
-    onHighlight: (HighlightColor, HighlightStyle) -> Unit,
+    onHighlight: (Int, HighlightStyle) -> Unit,
     onOpenHighlightPaletteManager: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
@@ -439,7 +456,7 @@ internal fun SharedNativeSelectionMenu(
                 .widthIn(max = 280.dp)
                 .padding(bottom = 6.dp)
         ) {
-            if (highlightPalette.isNotEmpty()) {
+            if (highlightPalette.sanitized().colors.isNotEmpty()) {
                 // WebView parity (#reader-selection-menu styles + colors divs):
                 // two centered rows instead of one combined scrolling row, so
                 // swatches never squeeze off the menu edge on narrow screens.
@@ -468,19 +485,20 @@ internal fun SharedNativeSelectionMenu(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    highlightPalette.forEach { color ->
+                    highlightPalette.sanitized().colors.indices.forEach { slot ->
+                        val slotArgb = highlightPalette.sanitized().argbAt(slot)
                         Box(
                             modifier = Modifier
                                 .padding(horizontal = 4.dp)
                                 .size(28.dp)
                                 .clip(CircleShape)
-                                .background(color.color)
+                                .background(Color(slotArgb))
                                 .border(
                                     width = 1.dp,
                                     color = borderColor,
                                     shape = CircleShape
                                 )
-                                .clickable { onHighlight(color, selectedStyle) }
+                                .clickable { onHighlight(slotArgb, selectedStyle) }
                         )
                     }
                     Spacer(modifier = Modifier.width(6.dp))

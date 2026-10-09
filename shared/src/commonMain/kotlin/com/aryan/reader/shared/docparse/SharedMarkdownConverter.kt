@@ -59,12 +59,17 @@ internal object SharedMarkdownConverter {
 
     /** Returns (level, text) when [block] is a rendered heading element. */
     private fun headingOf(block: String): Pair<Int, String>? {
-        val match = Regex("""^<h([1-6])(?:\s[^>]*)?>(.*)</h[1-6]>${'$'}""", RegexOption.DOT_MATCHES_ALL).find(block.trimEnd())
-            ?: return null
+        // `(?s)` rather than RegexOption.DOT_MATCHES_ALL: the option is absent from the common
+        // stdlib, so naming it here breaks the shared metadata compilation even though every
+        // platform target accepts it. The inline flag is equivalent and portable.
+        val match = HeadingElementRegex.find(block.trimEnd()) ?: return null
         val innerText = HtmlTagRegex.replace(match.groupValues[2], "")
             .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
         return match.groupValues[1].toInt() to innerText.trim()
     }
+
+    /** Matches a rendered `<hN ...>` element, capturing level and inner HTML. `(?s)` spans newlines. */
+    private val HeadingElementRegex = Regex("""(?s)^<h([1-6])(?:\s[^>]*)?>(.*)</h[1-6]>${'$'}""")
 
     private val HtmlTagRegex = Regex("<[^>]+>")
 

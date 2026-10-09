@@ -56,7 +56,6 @@ import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -332,7 +331,7 @@ internal fun BookActionMenu(
     onShareOriginalFile: (() -> Unit)? = null,
     onAddToShelf: (() -> Unit)? = null
 ) {
-    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+    SharedDropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
         DropdownMenuItem(
             leadingIcon = { Icon(Icons.Default.PushPin, contentDescription = null) },
             text = { Text(if (pinned) readerString("desktop_unpin", "Unpin") else readerString("desktop_pin", "Pin")) },
@@ -1008,7 +1007,7 @@ internal fun SortMenu(
             Spacer(Modifier.width(8.dp))
             Text(sortOrder.label())
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        SharedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             SortOrder.entries.forEach { order ->
                 DropdownMenuItem(
                     text = { Text(order.label()) },

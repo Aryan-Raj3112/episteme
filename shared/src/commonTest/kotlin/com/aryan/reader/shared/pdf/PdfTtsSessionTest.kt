@@ -102,4 +102,41 @@ class PdfTtsSessionTest {
         val chunk = PdfTtsSessionPlanner.page(0, "A complete sentence.").chunks.first()
         assertEquals(PdfTextSelectionRange(0, 5), PdfTtsSessionPlanner.highlightRange(chunk.copy(endOffset = 99), 5))
     }
+
+    @Test
+    fun `raw pdfium planning maps selection start through hyphen normalization`() {
+        // Android parity: raw "understand-\ning" speaks as "understanding".
+        val raw = "understand-\ning is good."
+        val planned = PdfTtsSessionPlanner.pageFromRawPdfium(0, raw, 0)
+        assertTrue(planned.chunks.isNotEmpty())
+        assertTrue(planned.processed != null)
+        assertTrue(planned.chunks.first().text.startsWith("understanding"))
+        assertEquals(0, planned.chunks.first().startOffset)
+        // A raw selection inside the joined word (raw 'e' at index 3) still
+        // lands in the first chunk with the head trimmed, like Android's
+        // cleanStartIndex slicing.
+        val midWord = PdfTtsSessionPlanner.pageFromRawPdfium(0, raw, 3)
+        assertTrue(midWord.chunks.isNotEmpty())
+        assertTrue(midWord.chunks.first().text.startsWith("erstanding"))
+        val rawRange = PdfTtsSessionPlanner.rawHighlightRange(
+            planned.processed, planned.chunks.first()
+        )
+        assertTrue(rawRange != null)
+        assertTrue(rawRange!!.start >= 0)
+    }
+
+    @Test
+    fun `raw start past cleaned text yields empty page for skip`() {
+        val planned = PdfTtsSessionPlanner.pageFromRawPdfium(0, "Short.", 500)
+        assertTrue(planned.chunks.isEmpty())
+    }
+
+    @Test
+    fun `active chunk prefers device speech and falls back to cloud`() {
+        val local = PdfTtsSessionPlanner.page(0, "Local sentence.").chunks.first()
+        val cloud = PdfTtsSessionPlanner.page(0, "Cloud sentence.").chunks.first()
+        assertEquals(local, PdfTtsSessionPlanner.activeChunk(local, cloud))
+        assertEquals(cloud, PdfTtsSessionPlanner.activeChunk(null, cloud))
+        assertNull(PdfTtsSessionPlanner.activeChunk(null, null))
+    }
 }

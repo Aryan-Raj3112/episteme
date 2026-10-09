@@ -98,7 +98,6 @@ import com.aryan.reader.loadReaderTextureBitmap
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.plainTextCharacterCount
 import com.aryan.reader.epubreader.ReaderTextAlign
-import com.aryan.reader.epubreader.TtsHighlightInfo
 import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.shared.HighlightStyle
@@ -123,6 +122,7 @@ import java.net.URLDecoder
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
+import com.aryan.reader.shared.reader.SharedPlaybackFragment
 
 
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
@@ -154,7 +154,7 @@ fun PaginatedReaderScreen(
     textAlign: ReaderTextAlign,
     bookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
     bookReplacementFileId: String? = bookId,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     initialChapterIndexInBook: Int?,
     fallbackLocatorForReconfiguration: Locator? = null,
     explicitNavigationAnchor: Locator? = null,
@@ -177,6 +177,11 @@ fun PaginatedReaderScreen(
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String, SharedReaderLocator, HighlightStyle) -> Unit,
     onHighlightDeleted: (String) -> Unit,
+    /**
+     * The reader-wide chapter indexes highlights are placed against, built and repaired by the reader
+     * rather than by each surface, so switching reading modes reuses one answer.
+     */
+    chapterHighlightIndexes: ChapterHighlightIndexes,
     activeHighlightPalette: List<Int>,
     onUpdatePalette: (Int, Int) -> Unit,
     activeTextureId: String? = null,
@@ -936,6 +941,7 @@ fun PaginatedReaderScreen(
             userHighlights = userHighlights,
             onHighlightCreated = onHighlightCreated,
             onHighlightDeleted = onHighlightDeleted,
+            chapterHighlightIndexes = chapterHighlightIndexes,
             isDarkTheme = isDarkTheme,
             activeHighlightPalette = activeHighlightPalette,
             onUpdatePalette = onUpdatePalette,

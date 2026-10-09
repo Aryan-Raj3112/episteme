@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.reader
 
+import com.aryan.reader.shared.ui.SharedNativeHighlightPaintPlan
 import com.aryan.reader.paginatedreader.SemanticBlock
 import com.aryan.reader.paginatedreader.SemanticFlexContainer
 import com.aryan.reader.paginatedreader.SemanticImage
@@ -13,6 +14,7 @@ import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.UserHighlight
+import androidx.compose.ui.graphics.Color
 import kotlin.math.roundToInt
 
 internal fun String.applyUserHighlights(
@@ -66,8 +68,15 @@ internal fun highlightAttributes(style: HighlightStyle, colorArgb: Int?): String
 }
 
 internal fun highlightStyleDeclarations(style: HighlightStyle, colorArgb: Int?): String {
+    // The stored ARGB's alpha is deliberately ignored. A highlight is a tint over the page, so it is
+    // filled with the legacy alpha whichever alpha it happens to carry — matching renderColor, which
+    // every other surface fills with. Emitting #RRGGBB instead made a baked highlight opaque while the
+    // same highlight painted live was tinted, so desktop and mobile showed different tones.
     val rgb = colorArgb?.let { it and 0x00FFFFFF }
-    val colorCss = rgb?.let { "#${it.toString(16).padStart(6, '0').uppercase()}" }
+    val colorCss = rgb?.let {
+        val legacy = SharedNativeHighlightPaintPlan.LEGACY_HIGHLIGHT_ALPHA
+        "rgba(${(it shr 16) and 0xFF},${(it shr 8) and 0xFF},${it and 0xFF},$legacy)"
+    }
     return when (style) {
         HighlightStyle.BACKGROUND -> colorCss?.let { "background-color:$it !important" }.orEmpty()
         HighlightStyle.UNDERLINE -> highlightLineStyle(colorCss, "underline", "solid")
@@ -609,8 +618,10 @@ internal fun readerSelectionActionButton(action: String, label: String, pathData
 }
 
 internal fun ReaderHighlightPalette.toSelectionColorButtons(): String {
-    return sanitized().colors.joinToString("\n") { color ->
-        """<button type="button" class="reader-selection-color" data-action="highlight" data-color-id="${color.id}" title="Highlight ${color.id.escapeHtml()}" style="--selection-color:${color.color.toCssHex()}"><span></span></button>"""
+    return sanitized().colors.indices.joinToString("\n") { slot ->
+        val colorId = colorIdAt(slot)
+        val cssHex = Color(argbAt(slot)).toCssHex()
+        """<button type="button" class="reader-selection-color" data-action="highlight" data-color-id="$colorId" title="Highlight ${colorId.escapeHtml()}" style="--selection-color:$cssHex"><span></span></button>"""
     }
 }
 

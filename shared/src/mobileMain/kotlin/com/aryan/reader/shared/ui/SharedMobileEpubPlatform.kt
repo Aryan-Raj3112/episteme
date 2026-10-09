@@ -13,6 +13,7 @@ import com.aryan.reader.shared.ReaderVoiceSampleState
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.ReaderLocator
+import com.aryan.reader.shared.ReaderPageInfoCornerClearance
 
 internal data class SharedMobileEpubLoadState(
     val isLoading: Boolean = true,
@@ -84,6 +85,15 @@ internal expect fun SharedMobileEpubWebView(
     navigationScript: String?,
     navigationRequestId: Long,
     highlightsApplyScript: String,
+    /**
+     * The live playback band's paint, pushed whenever it changes.
+     *
+     * Deliberately its own channel rather than part of [navigationScript]: a band advances several
+     * times a second and none of those advances are navigations, so a band that rode the navigation
+     * script was painted once per chapter load and never again. Push it on its own hash, the way
+     * [highlightsApplyScript] is pushed, and re-apply it after a document load.
+     */
+    playbackBandScript: String?,
     onBridgeMessage: (method: String, payload: String) -> Unit,
     positionController: SharedMobileEpubWebViewController? = null,
     streamPageLoader: SharedMobileEpubStreamPageLoader? = null,
@@ -95,13 +105,26 @@ internal expect fun SharedMobileEpubWebView(
 internal expect fun openSharedMobileEpubExternalLink(url: String): Boolean
 
 /**
- * Extra PageInfo side clearance for rounded screen corners.
+ * Extra horizontal clearance the PageInfo bar needs so its edge-pinned clock and
+ * percentage are not sliced off by the screen's rounded corners.
  *
- * Android keeps the benchmark 16.dp side padding untouched (0.dp here);
- * iOS adds room because portrait reports no horizontal safe inset while the
- * physical corners still curve into the bar's edge-pinned clock/percentage.
+ * Compose's [WindowInsets.safeDrawing] does **not** cover rounded corners: it is
+ * the union of the system bars, the display cutout and the waterfall insets, and
+ * a device can have generous corner radii with no bar or cutout inset at all
+ * (the common case in portrait). The platform guideline for this is to read the
+ * real radii and inset the content edge by them, less the margin and padding
+ * already applied. See [readerPageInfoCornerClearance] for the arithmetic, which
+ * is shared so both platforms resolve the radius the same way.
+ *
+ * Per side rather than symmetric: the two edges differ whenever the insets do (a
+ * landscape gesture pill on one edge), and a symmetric value would shift the
+ * labels off-centre.
+ *
+ * Composable because the Android implementation reads the live window insets, which
+ * change on rotation, on multi-window resize and when the app is letterboxed.
  */
-internal expect val sharedMobileEpubPageInfoCornerClearance: Dp
+@Composable
+expect fun sharedMobileEpubPageInfoCornerClearance(): ReaderPageInfoCornerClearance
 
 /**
  * Whether a visible bottom PageInfo bar always stays above the bottom safe
@@ -242,8 +265,33 @@ interface SharedMobileEpubLocalTts {
     val favoriteVoiceIdentifiers: Set<String>
     /** Non-null when the last playback attempt was interrupted or failed unexpectedly. */
     val errorMessage: String?
+    /**
+     * Whether voice selection must be blocked in the TTS settings panels.
+     *
+     * Defaults to [isSessionActive] — the reader's stricter rule, where any live session freezes
+     * the voice list. Surfaces where reaching a stopped state is impractical override this: on
+     * audiobook Listen the player sheet closes as soon as playback stops, so demanding a full stop
+     * makes the voice unreachable. Those surfaces allow changes whenever nothing is actively
+     * being spoken, so pausing is enough of a safe point.
+     */
+    val isVoiceSelectionLocked: Boolean get() = isSessionActive
     /** Increments only when every chunk finishes naturally; explicit stop does not increment it. */
     val completionCount: Long
+    /**
+     * Which surface owns the current session, or null when idle. Read back by a surface
+     * sharing this engine to tell its own session apart from another surface's.
+     * Android benchmark: `TtsPlaybackManager.TtsState.playbackSource`.
+     */
+    val playbackSource: String?
+    /** Book the current session is reading, or null when idle. */
+    val sessionBookId: String?
+    /** Chapter count for the current session; 0 when the caller did not supply one. */
+    val sessionTotalChapters: Int
+    /**
+     * Character offset into the current chunk that speech has reached. Listen persists this so
+     * a resumed session continues from the word rather than the start of the chunk.
+     */
+    val currentSpokenOffset: Int
     /** Starts platform audio preparation while document text is still being extracted. */
     fun prepare()
     fun start(
@@ -251,7 +299,21 @@ interface SharedMobileEpubLocalTts {
         bookTitle: String,
         bookId: String? = null,
         startChunkIndex: Int = 0,
-        playWhenReady: Boolean = true
+        playWhenReady: Boolean = true,
+        // Which surface owns this session. Null = the in-book reader, which is the
+        // historical behaviour; audiobook Listen passes
+        // [SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK] so the two surfaces can share one
+        // engine without either mistaking the other's session for its own.
+        // Android benchmark: `TtsPlaybackManager.TtsState.playbackSource`.
+        playbackSource: String? = null,
+        // Total chapters in the book, when the caller knows it. Listen needs this for
+        // whole-book progress; the reader's page-based sessions leave it 0.
+        totalChapters: Int = 0,
+        // Resume an in-flight cloud session (keeps the USD session spend) rather than
+        // starting a fresh one. Android benchmark: `KEY_CONTINUE_SESSION`.
+        continueSession: Boolean = false,
+        // Signed-in credential for credited cloud synthesis, when the caller has one.
+        authToken: String? = null,
     )
     fun pause()
     fun resume()
@@ -264,6 +326,15 @@ interface SharedMobileEpubLocalTts {
     fun toggleFavoriteVoice(identifier: String)
     fun setVoice(identifier: String?)
     fun previewVoice(identifier: String?)
+    /**
+     * Stops a voice preview without touching playback.
+     *
+     * The voice settings sheet calls this when it leaves composition, so a sample cannot keep
+     * talking after the sheet closes. Distinct from [stop], which ends the reading session — that
+     * is why this is its own operation rather than reusing `stop`. Defaulted to a no-op for
+     * platforms whose preview already stops with the session.
+     */
+    fun stopVoicePreview() = Unit
     fun stop()
     fun release() = Unit
 }
@@ -301,7 +372,31 @@ interface SharedMobileEpubCloudTts {
         bookId: String? = null,
         startChunkIndex: Int = 0,
         playWhenReady: Boolean = true,
+        // Android benchmark (chapter chaining): continuing into the next
+        // chapter keeps the USD session spend (and retries budget is left to
+        // the fresh-session default). Defaulted so existing call sites keep
+        // compiling; readers pass true when chaining.
+        continueSession: Boolean = false,
+        // Which surface owns this session, mirroring
+        // [SharedMobileEpubLocalTts.start]. The reader leaves it null; audiobook Listen passes
+        // [SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK]. Without it a cloud session started by Listen is
+        // indistinguishable from the reader's, which breaks both the Listen projection and the
+        // ownership check that keeps one surface from tearing down the other's session.
+        playbackSource: String? = null,
+        // Total chapters in the book, when the caller knows it. Listen needs this for whole-book
+        // progress; the reader's page-based sessions leave it 0.
+        totalChapters: Int = 0,
     )
+
+    /**
+     * Which surface owns the session, or null when idle. Android benchmark:
+     * `TtsPlaybackManager.TtsState.playbackSource`.
+     */
+    val playbackSource: String?
+    /** Book the current session is reading, or null when idle. */
+    val sessionBookId: String?
+    /** Chapter count for the current session; 0 when the caller did not supply one. */
+    val sessionTotalChapters: Int
 
     fun pause()
     fun resume()
@@ -330,7 +425,15 @@ interface SharedMobileEpubCloudTts {
     val voiceSampleState: ReaderVoiceSampleState get() = ReaderVoiceSampleState()
 
     /** Toggles sample playback for one cloud voice (downloads once, then caches). */
-    fun playOrStopVoiceSample(voiceId: String) = Unit
+    fun playOrStopVoiceSample(
+        voiceId: String,
+        // Android `playFishSample` parity: Fish rows pass their reference id
+        // plus the catalog's free static preview URL (played unbilled when
+        // present, synthesized on demand otherwise). Null = Gemini prebuilt.
+        fishReferenceId: String? = null,
+        sampleAudioUrl: String? = null,
+        sampleText: String? = null,
+    ) = Unit
 
     /** Deletes all cached voice samples. */
     fun clearVoiceSamples() = Unit

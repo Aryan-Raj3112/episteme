@@ -60,6 +60,20 @@ class IosUnifiedLibraryParityTest {
     }
 
     @Test
+    fun `ios drawers never expose the support project donation row`() {
+        // App Review 3.1.1: iOS must not offer an external donation mechanism, so neither
+        // the app drawer nor the unified account drawer may list Support project.
+        assertFalse(
+            mobileAppDrawerModel(iosGlobalDrawerCapabilities).items
+                .contains(MobileAppDrawerItem.SUPPORT_PROJECT)
+        )
+        assertFalse(
+            mobileAppDrawerModel(iosUnifiedAccountDrawerCapabilities).items
+                .contains(MobileAppDrawerItem.SUPPORT_PROJECT)
+        )
+    }
+
+    @Test
     fun iosUnifiedLibraryExposesTheFullContextualSelectionActionSet() {
         assertEquals(
             SharedMobileUnifiedLibrarySelectionAction.entries.toSet(),

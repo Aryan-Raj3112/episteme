@@ -345,6 +345,51 @@ data class PdfToolConfig(
     val strokeWidth: Float
 )
 
+/**
+ * Android's `InkType` ↔ [PdfInkTool] mapping.
+ *
+ * `InkType` is Android's persisted tool enum; it stays platform-owned, but the
+ * mapping itself is pure and both hosts need it (Android for the annotation
+ * exporter and the tool-settings panel, iOS for reading Android-authored
+ * sidecars).
+ *
+ * `SELECT` has to round-trip even though it is never stored *on an annotation*:
+ * it is a gesture mode, but it is the current value of the *selected tool*
+ * setting, and the annotation dock writes and reads that. Mapping it to `PEN`
+ * made the dock's lasso button resolve to pen, which then hit the
+ * "already-active tool toggles its settings" branch and opened the ink popup
+ * instead of entering selection mode.
+ *
+ * `NONE` is the one lossy case: `InkType` has no counterpart, and it is never
+ * persisted as the selected tool, so it falls back to `PEN`.
+ */
+object SharedPdfInkToolMapping {
+    fun toSharedPdfInkTool(inkTypeName: String): PdfInkTool = when (inkTypeName) {
+        "PEN" -> PdfInkTool.PEN
+        "HIGHLIGHTER" -> PdfInkTool.HIGHLIGHTER
+        "HIGHLIGHTER_ROUND" -> PdfInkTool.HIGHLIGHTER_ROUND
+        "ERASER" -> PdfInkTool.ERASER
+        "FOUNTAIN_PEN" -> PdfInkTool.FOUNTAIN_PEN
+        "PENCIL" -> PdfInkTool.PENCIL
+        "TEXT" -> PdfInkTool.TEXT
+        "SELECT" -> PdfInkTool.SELECT
+        else -> PdfInkTool.PEN
+    }
+
+    /** Android `InkType` name for a shared tool, for writing back to persisted settings. */
+    fun toAndroidInkTypeName(tool: PdfInkTool): String = when (tool) {
+        PdfInkTool.HIGHLIGHTER -> "HIGHLIGHTER"
+        PdfInkTool.HIGHLIGHTER_ROUND -> "HIGHLIGHTER_ROUND"
+        PdfInkTool.FOUNTAIN_PEN -> "FOUNTAIN_PEN"
+        PdfInkTool.PENCIL -> "PENCIL"
+        PdfInkTool.TEXT -> "TEXT"
+        PdfInkTool.ERASER -> "ERASER"
+        PdfInkTool.SELECT -> "SELECT"
+        PdfInkTool.PEN,
+        PdfInkTool.NONE -> "PEN"
+    }
+}
+
 object SharedPdfAnnotationDefaults {
     val penPalette: List<Int> = listOf(
         0xFF000000.toInt(),

@@ -140,11 +140,17 @@ object SharedLibraryEditor {
                 .mapNotNull(booksById::get)
                 .toList()
             addedEntries += additions.size
+            // This mutation is applied to the projected state without a re-projection, so it has to
+            // restore the sort order the projector would have produced itself.
+            val sortedBooks = sortBooks(shelf.books + additions, state.sortOrder)
             shelf.copy(
-                books = shelf.books + additions,
-                directBooks = shelf.directBooks + additions.filterNot { addition ->
-                    shelf.directBooks.any { it.id == addition.id }
-                },
+                books = sortedBooks,
+                directBooks = sortBooks(
+                    shelf.directBooks + additions.filterNot { addition ->
+                        shelf.directBooks.any { it.id == addition.id }
+                    },
+                    state.sortOrder,
+                ),
                 directBookAddedAt = shelf.directBookAddedAt + additions.associate { it.id to nowMillis },
             )
         }

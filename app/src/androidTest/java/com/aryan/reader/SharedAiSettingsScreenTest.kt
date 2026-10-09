@@ -8,6 +8,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.isToggleable
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.aryan.reader.shared.AiKeySaveResult
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ui.SharedAiSettingsScreen
 import com.aryan.reader.shared.ui.SharedAiSettingsStrings
@@ -32,7 +33,13 @@ class SharedAiSettingsScreenTest {
                     maskedKeys = emptyMap(),
                     strings = strings(),
                     onBackClick = {},
-                    onSaveKey = { provider, key -> savedProvider = provider; savedKey = key },
+                    onSaveKey = { provider, key ->
+                        savedProvider = provider
+                        savedKey = key
+                        // The shared screen's save callback reports the outcome rather than
+                        // returning Unit, so the host decides whether the sheet stays open.
+                        AiKeySaveResult.Saved
+                    },
                     onDeleteKey = {},
                     onSettingsChange = { updated = it },
                 )

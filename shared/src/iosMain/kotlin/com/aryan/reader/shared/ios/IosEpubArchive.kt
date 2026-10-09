@@ -1232,6 +1232,33 @@ internal class IosZipEpubArchive(path: String) : SharedEpubArchive {
         val bytes = readBytes(path) ?: return null
         return bytes.decodeEpubText()
     }
+
+    /**
+     * A byte range out of one entry, for a media framework reading the entry as a stream.
+     *
+     * [offset] and [length] are in *uncompressed* bytes, because that is the coordinate space the
+     * consumer is working in: a clip's `clipBegin` is an offset into the decoded audio, not into the
+     * zip. The whole entry is inflated and the window copied out of it, which is the honest cost
+     * here — this archive holds the zip in memory rather than a file handle, so there is no
+     * streaming inflater to seek inside. See `SharedMediaOverlayArchiveReader` for why that is
+     * bounded rather than per-request.
+     *
+     * A window past the end is clamped rather than refused, and an offset at or past the end returns
+     * an empty array: a media framework routinely asks for a window the file does not have, and
+     * treating that as an error fails a read that had already been told how much data to expect.
+     */
+    fun readEntryRange(path: String, offset: Long, length: Long): ByteArray? {
+        if (offset < 0L || length <= 0L) return null
+        val bytes = readBytes(path) ?: return null
+        val start = offset.coerceAtMost(bytes.size.toLong()).toInt()
+        val end = (offset + length).coerceAtMost(bytes.size.toLong()).toInt()
+        if (end <= start) return ByteArray(0)
+        return bytes.copyOfRange(start, end)
+    }
+
+    /** An entry's uncompressed size in bytes, or null when it is absent. */
+    fun entryLengthOrNull(path: String): Long? =
+        entries[normalizeIosZipPath(path)?.lowercase()]?.uncompressedSize?.takeIf { it > 0L }
 }
 
 private fun IosZipEpubArchive.findIosOpfPath(): String? {
@@ -1700,10 +1727,21 @@ private fun inflateRawZipEntry(compressed: ByteArray, expectedSize: Int): ByteAr
     return output
 }
 
+/**
+ * A linked-folder book stores a provider ref rather than an app-managed path,
+ * so the shared resolver unwraps it. The basename fallback below is a repair
+ * path for legacy relative imports and must never run for a provider ref: the
+ * ref is not a filesystem path, so a stale one would otherwise silently
+ * resolve to an unrelated same-named file under Imports/ and read the wrong
+ * book.
+ */
 internal fun String?.resolveIosEpubSourcePath(): String? {
-    val raw = this?.takeIf(String::isNotBlank) ?: return null
-    if (NSFileManager.defaultManager.fileExistsAtPath(raw)) return raw
-    val fileName = raw.substringAfterLast('/').takeIf(String::isNotBlank) ?: return null
+    if (SharedIosBookSourceRef.isProviderRef(this)) {
+        return resolveIosFolderBookPath(this)
+    }
+    val candidate = resolveIosReadablePath() ?: return null
+    if (NSFileManager.defaultManager.fileExistsAtPath(candidate)) return candidate
+    val fileName = candidate.substringAfterLast('/').takeIf(String::isNotBlank) ?: return null
     val appSupport = NSFileManager.defaultManager.URLsForDirectory(
         directory = NSApplicationSupportDirectory,
         inDomains = NSUserDomainMask
@@ -1770,14 +1808,49 @@ internal object IosEpubResourceStore {
         return runCatching { path.readBytes(entryPath) }.getOrNull()
     }
 
+    /**
+     * The store's archive for a book, or null when nothing is registered for it.
+     *
+     * Borrowed rather than reopened, and that is the whole reason this exists. An
+     * [IosZipEpubArchive] holds the entire zip as a `ByteArray`, so opening a second one for a book
+     * the reader already has open would double resident memory on a large archive — the reference
+     * book is 124 MB — for the lifetime of the reader screen. A caller that only needs to *read*
+     * from the book it was handed must be able to get at the instance the loader made.
+     *
+     * Resolves through [archivePathFor], so it opens and caches the archive when the store holds a
+     * path but has not yet read through it. That indirection is not an optimisation: [archives] is a
+     * *lazy* cache, and an accessor that read it directly would answer null for any book the reader
+     * had opened but not yet read from — which is every book at the moment narration starts.
+     */
+    fun registeredArchive(bookId: String): IosZipEpubArchive? = archivePathFor(bookId)
+
+    /**
+     * The store's archive at [path], whichever book registered it, or null.
+     *
+     * The path-keyed form of [registeredArchive], for a caller that was handed a file path rather
+     * than a book id. Media overlays reach the reader that way: the session knows where the book is
+     * on disk, not what it is called in the library.
+     *
+     * Matching on the registered path rather than opening one is the point — a book whose archive is
+     * not resident has no narration, which `RS §9` explicitly allows a reader to report by simply
+     * not offering the feature.
+     */
+    fun registeredArchiveAtPath(path: String): IosZipEpubArchive? {
+        val bookId = lock.lockWithResult {
+            paths.entries.firstOrNull { it.value == path }?.key
+        } ?: return null
+        return archivePathFor(bookId)
+    }
+
+    /**
+     * The store's archive for [bookId], opening and caching one if only the path is registered.
+     *
+     * Cached under the same [MaxArchives] bound and the same staleness check as the read path, so a
+     * caller arriving by path cannot leave a second copy of a large book resident.
+     */
     private fun archivePathFor(bookId: String): IosZipEpubArchive? {
-        lock.lock()
-        val cached = try {
-            archives[bookId]
-        } finally {
-            lock.unlock()
-        }
-        if (cached != null) return cached
+        // Read the cache directly rather than through registeredArchive, which resolves here.
+        lock.lockWithResult { archives[bookId] }?.let { return it }
         val path = lock.lockWithResult { paths[bookId] } ?: return null
         val archive = runCatching { IosZipEpubArchive(path) }.getOrNull() ?: return null
         lock.lock()

@@ -406,31 +406,3 @@ fun pdfRotationForDrag(
 /** Pill display angle: normalized to 0..359, so -90 reads 270 and 360 reads 0. */
 fun pdfNormalizeRotationDisplay(angleDegrees: Float): Int =
     ((angleDegrees.roundToInt() % 360) + 360) % 360
-
-/** Aspect-corrected distance check: is ([x],[y]) within [radiusNorm] of segment a-b. */
-internal fun pdfPointNearSegmentNorm(
-    x: Float,
-    y: Float,
-    ax: Float,
-    ay: Float,
-    bx: Float,
-    by: Float,
-    radiusNorm: Float,
-    pageAspectRatio: Float,
-): Boolean {
-    val safeAspect = pageAspectRatio.takeIf { it.isFinite() && it > 0f } ?: 1f
-    return pdfDistSqToSegment(x, y / safeAspect, ax, ay / safeAspect, bx, by / safeAspect) <
-        radiusNorm * radiusNorm
-}
-
-internal fun pdfStrokeLengthNorm(points: List<PdfPoint>, pageAspectRatio: Float): Float {
-    if (points.size < 2) return 0f
-    val safeAspect = pageAspectRatio.takeIf { it.isFinite() && it > 0f } ?: 1f
-    var total = 0f
-    for (i in 1 until points.size) {
-        val dx = points[i].x - points[i - 1].x
-        val dy = (points[i].y - points[i - 1].y) / safeAspect
-        total += sqrt(dx * dx + dy * dy)
-    }
-    return total
-}

@@ -46,26 +46,32 @@ object SharedPdfLegacyInkCodec {
         // builds a throwaway JSON DOM for data that can never be read back —
         // and OOMs the saver on huge ink collections. Capped-out data is
         // therefore unobservable to every reader on every platform.
-        val array = JsonArray(annotations.take(MAX_ANNOTATIONS_PER_LOAD).map { annotation ->
-            JsonObject(buildMap {
-                put("id", JsonPrimitive(annotation.id))
-                put("pageIndex", JsonPrimitive(annotation.pageIndex))
-                put("annotationType", JsonPrimitive(annotation.annotationTypeName))
-                put("inkType", JsonPrimitive(annotation.inkTypeName))
-                put("color", JsonPrimitive(annotation.colorArgb))
-                put("strokeWidth", JsonPrimitive(annotation.strokeWidth.toDouble()))
-                annotation.note?.takeIf { it.isNotBlank() }?.let { put("note", JsonPrimitive(it)) }
-                put("points", JsonArray(annotation.points.take(MAX_POINTS_PER_ANNOTATION).map { point ->
-                    JsonObject(linkedMapOf(
-                        "x" to JsonPrimitive(point.x.roundedLegacyCoordinate()),
-                        "y" to JsonPrimitive(point.y.roundedLegacyCoordinate()),
-                        "t" to JsonPrimitive(point.timestamp),
-                    ))
-                }))
-            })
-        })
+        val array = JsonArray(annotations.take(MAX_ANNOTATIONS_PER_LOAD).map(::toJsonElement))
         return json.encodeToString(JsonElement.serializer(), array)
     }
+
+    /**
+     * The DOM for a single annotation, capped exactly like [encode]. Shared with
+     * the streaming encoder so both paths emit byte-identical payloads — this
+     * is the single definition of the sidecar's per-annotation shape.
+     */
+    internal fun toJsonElement(annotation: SharedPdfLegacyInkAnnotation): JsonObject =
+        JsonObject(buildMap {
+            put("id", JsonPrimitive(annotation.id))
+            put("pageIndex", JsonPrimitive(annotation.pageIndex))
+            put("annotationType", JsonPrimitive(annotation.annotationTypeName))
+            put("inkType", JsonPrimitive(annotation.inkTypeName))
+            put("color", JsonPrimitive(annotation.colorArgb))
+            put("strokeWidth", JsonPrimitive(annotation.strokeWidth.toDouble()))
+            annotation.note?.takeIf { it.isNotBlank() }?.let { put("note", JsonPrimitive(it)) }
+            put("points", JsonArray(annotation.points.take(MAX_POINTS_PER_ANNOTATION).map { point ->
+                JsonObject(linkedMapOf(
+                    "x" to JsonPrimitive(point.x.roundedLegacyCoordinate()),
+                    "y" to JsonPrimitive(point.y.roundedLegacyCoordinate()),
+                    "t" to JsonPrimitive(point.timestamp),
+                ))
+            }))
+        })
 
     fun decode(rawJson: String, newId: () -> String): SharedPdfLegacyInkDecodeResult {
         if (rawJson.isBlank()) return SharedPdfLegacyInkDecodeResult(emptyList())

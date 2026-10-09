@@ -132,7 +132,6 @@ import com.aryan.reader.countWords
 import com.aryan.reader.epubreader.HighlightColor
 import com.aryan.reader.epubreader.PaginatedTextSelectionMenu
 import com.aryan.reader.epubreader.PaletteManagerDialog
-import com.aryan.reader.epubreader.TtsHighlightInfo
 import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
@@ -148,6 +147,8 @@ import timber.log.Timber
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import com.aryan.reader.shared.reader.SharedPlaybackFragment
+import com.aryan.reader.shared.reader.withPlaybackFragmentBackground
 
 
 @Suppress("unused")
@@ -166,7 +167,7 @@ internal fun PaginatedReaderContent(
     effectiveBg: Color,
     effectiveText: Color,
     searchQuery: String,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     textStyle: TextStyle,
     imageSizeMultiplier: Float,
     hideImages: Boolean = false,
@@ -187,6 +188,22 @@ internal fun PaginatedReaderContent(
     onStartTtsFromSelection: (String, Int) -> Unit,
     onNoteRequested: (String?) -> Unit,
     onGetChapterInfo: (Int) -> Pair<String, Int?>?,
+    /**
+     * The whole chapter's text blocks, for placing highlights that carry no absolute offsets.
+     *
+     * Every highlight created in a WebView surface stores only its selected text. Resolving that
+     * against a single page's blocks is what duplicated repeated sentences and lost multi-paragraph
+     * selections, so this returns the chapter, and it suspends because the chapter may still need
+     * parsing.
+     */
+    /**
+     * The reader-wide chapter indexes highlights are placed against.
+     *
+     * Owned above this surface so every surface shares one answer: a highlight created in a WebView
+     * stores only its text, and each surface resolving that text separately meant each could anchor it
+     * differently, and switching modes redid the work.
+     */
+    chapterHighlightIndexes: ChapterHighlightIndexes,
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String, SharedReaderLocator, HighlightStyle) -> Unit,
     onHighlightDeleted: (String) -> Unit,
@@ -331,22 +348,25 @@ internal fun PaginatedReaderContent(
         val pageTextBlocks = remember(pageContent) {
             pageContent?.content?.extractTextBlocks().orEmpty()
         }
-        val pageCharRange = remember(pageTextBlocks) {
-            val starts = pageTextBlocks.map { it.startCharOffsetInSource }
-            val ends = pageTextBlocks.map {
-                it.endCharOffsetInSource.takeIf { end -> end > it.startCharOffsetInSource }
-                    ?: (it.startCharOffsetInSource + it.content.text.length)
-            }
-            if (starts.isEmpty() || ends.isEmpty()) null
-            else starts.min()..ends.max()
-        }
-        val pageUserHighlights = remember(pageChapterIndex, userHighlights, pageCharRange, pageTextBlocks) {
-            highlightsForPaginatedPage(
-                pageChapterIndex = pageChapterIndex,
-                userHighlights = userHighlights,
-                pageStartOffset = pageCharRange?.first,
-                pageEndOffset = pageCharRange?.last,
-                pageBlocks = pageTextBlocks.ifEmpty { null }
+        // Placed highlights are cached against their exact inputs. Resolving one can mean searching a
+        // whole chapter for the highlight's text, and this is called for every composed page on every
+        // recomposition, so doing it unconditionally made page turns redo the same searches dozens of
+        // times for answers that had not changed. The chapter index is a key rather than read inside,
+        // so landing one for a chapter recomputes exactly the pages that needed it.
+        val pageChapterIndexValue = chapterHighlightIndexes.forChapter(pageChapterIndex)
+        val pageUserHighlights = remember(
+            pageChapterIndex,
+            pageTextBlocks,
+            userHighlights,
+            pageChapterIndexValue
+        ) {
+            resolvePaginatedPageHighlights(
+                scope = PaginatedPageScope(
+                    chapterIndex = pageChapterIndex,
+                    textBlocks = pageTextBlocks
+                ),
+                highlights = userHighlights,
+                chapterTextIndex = pageChapterIndexValue
             )
         }
         val themedPageContent = remember(pageContent, isDarkTheme, effectiveBg, effectiveText) {
@@ -361,15 +381,6 @@ internal fun PaginatedReaderContent(
         LaunchedEffect(bookPageIndex, themedPageContent != null) {
             Timber.tag(EpubSpreadBlinkTag).d(
                 "page_shown book=$bookPageIndex hasContent=${themedPageContent != null} gen=${uiState.generation}"
-            )
-        }
-
-        if (pageUserHighlights.size != userHighlights.size) {
-            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                "page_scope page=$bookPageIndex pageChapter=$pageChapterIndex " +
-                    "inputHighlightCount=${userHighlights.size} " +
-                    "pageHighlightCount=${pageUserHighlights.size} " +
-                    "inputHighlightChapters=${userHighlights.map { it.chapterIndex }.distinct()}"
             )
         }
 
@@ -707,7 +718,9 @@ internal fun PaginatedReaderContent(
                                     searchHighlightColor = searchHighlightColor,
                                     ttsHighlightInfo = ttsHighlightInfo,
                                     ttsHighlightColor = ttsHighlightColor,
-                                    pageUserHighlights = pageUserHighlights,
+                                    pageUserHighlights = pageUserHighlights.highlights,
+                                    highlightRangesByBlock = pageUserHighlights.rangesByBlock(),
+                                    highlightById = pageUserHighlights.highlights.associateBy { it.id },
                                     fallbackTextColor = effectiveText,
                                     onLinkClick = onLinkClickCallback,
                                     onGeneralTap = onGeneralTapCallback,
@@ -1002,52 +1015,13 @@ internal fun PaginatedReaderContent(
                                                     searchQuery,
                                                     searchHighlightColor
                                                 )
-                                            val finalContent =
-                                                if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-                                                    buildAnnotatedString {
-                                                        append(searchHighlighted)
-
-                                                        // Define absolute ranges
-                                                        val blockStartAbs =
-                                                            block.startCharOffsetInSource
-                                                        val blockEndAbs =
-                                                            block.startCharOffsetInSource + searchHighlighted.length
-                                                        val highlightStartAbs =
-                                                            ttsHighlightInfo.offset
-                                                        val highlightEndAbs =
-                                                            ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-
-                                                        // Calculate intersection
-                                                        val intersectionStartAbs =
-                                                            maxOf(
-                                                                blockStartAbs,
-                                                                highlightStartAbs
-                                                            )
-                                                        val intersectionEndAbs =
-                                                            minOf(
-                                                                blockEndAbs,
-                                                                highlightEndAbs
-                                                            )
-
-                                                        // Check for overlap and apply
-                                                        // style
-                                                        if (intersectionStartAbs < intersectionEndAbs) {
-                                                            val highlightStartRelative =
-                                                                intersectionStartAbs - blockStartAbs
-                                                            val highlightEndRelative =
-                                                                intersectionEndAbs - blockStartAbs
-                                                            addStyle(
-                                                                style = SpanStyle(
-                                                                    background = ttsHighlightColor
-                                                                ),
-                                                                start = highlightStartRelative,
-                                                                end = highlightEndRelative
-                                                            )
-                                                        }
-                                                    }
-                                                } else {
-                                                    searchHighlighted
-                                                }
+                                            val finalContent = searchHighlighted.withPlaybackFragmentBackground(
+                                                fragment = ttsHighlightInfo,
+                                                blockCfi = block.cfi,
+                                                blockStartAbs = block.startCharOffsetInSource,
+                                                blockLength = searchHighlighted.length,
+                                                color = ttsHighlightColor
+                                            )
 
                                             @Suppress(
                                                 "UnusedVariable",
@@ -1084,7 +1058,8 @@ internal fun PaginatedReaderContent(
                                                 onLinkClick = onLinkClickCallback,
                                                 onGeneralTap = onGeneralTapCallback,
                                                 block = block,
-                                                userHighlights = pageUserHighlights,
+                                                userHighlights = pageUserHighlights.highlights,
+                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
                                                 activeSelection = activeSelection,
                                                 onSelectionChange = { sel ->
                                                     activeSelection = sel
@@ -1121,48 +1096,13 @@ internal fun PaginatedReaderContent(
                                                     searchQuery,
                                                     searchHighlightColor
                                                 )
-                                            val finalContent =
-                                                if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-                                                    buildAnnotatedString {
-                                                        append(searchHighlighted)
-
-                                                        val blockStartAbs =
-                                                            block.startCharOffsetInSource
-                                                        val blockEndAbs =
-                                                            block.startCharOffsetInSource + searchHighlighted.length
-                                                        val highlightStartAbs =
-                                                            ttsHighlightInfo.offset
-                                                        val highlightEndAbs =
-                                                            ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-
-                                                        val intersectionStartAbs =
-                                                            maxOf(
-                                                                blockStartAbs,
-                                                                highlightStartAbs
-                                                            )
-                                                        val intersectionEndAbs =
-                                                            minOf(
-                                                                blockEndAbs,
-                                                                highlightEndAbs
-                                                            )
-
-                                                        if (intersectionStartAbs < intersectionEndAbs) {
-                                                            val highlightStartRelative =
-                                                                intersectionStartAbs - blockStartAbs
-                                                            val highlightEndRelative =
-                                                                intersectionEndAbs - blockStartAbs
-                                                            addStyle(
-                                                                style = SpanStyle(
-                                                                    background = ttsHighlightColor
-                                                                ),
-                                                                start = highlightStartRelative,
-                                                                end = highlightEndRelative
-                                                            )
-                                                        }
-                                                    }
-                                                } else {
-                                                    searchHighlighted
-                                                }
+                                                val finalContent = searchHighlighted.withPlaybackFragmentBackground(
+                                                    fragment = ttsHighlightInfo,
+                                                    blockCfi = block.cfi,
+                                                    blockStartAbs = block.startCharOffsetInSource,
+                                                    blockLength = searchHighlighted.length,
+                                                    color = ttsHighlightColor
+                                                )
                                             TextWithEmphasis(
                                                 text = finalContent,
                                                 style = style,
@@ -1172,7 +1112,8 @@ internal fun PaginatedReaderContent(
                                                 onLinkClick = onLinkClickCallback,
                                                 onGeneralTap = onGeneralTapCallback,
                                                 block = block,
-                                                userHighlights = pageUserHighlights,
+                                                userHighlights = pageUserHighlights.highlights,
+                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
                                                 activeSelection = activeSelection,
                                                 onSelectionChange = { sel ->
                                                     activeSelection = sel
@@ -1212,48 +1153,13 @@ internal fun PaginatedReaderContent(
                                                     searchQuery,
                                                     searchHighlightColor
                                                 )
-                                            val finalContent =
-                                                if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-                                                    buildAnnotatedString {
-                                                        append(searchHighlighted)
-
-                                                        val blockStartAbs =
-                                                            block.startCharOffsetInSource
-                                                        val blockEndAbs =
-                                                            block.startCharOffsetInSource + searchHighlighted.length
-                                                        val highlightStartAbs =
-                                                            ttsHighlightInfo.offset
-                                                        val highlightEndAbs =
-                                                            ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-
-                                                        val intersectionStartAbs =
-                                                            maxOf(
-                                                                blockStartAbs,
-                                                                highlightStartAbs
-                                                            )
-                                                        val intersectionEndAbs =
-                                                            minOf(
-                                                                blockEndAbs,
-                                                                highlightEndAbs
-                                                            )
-
-                                                        if (intersectionStartAbs < intersectionEndAbs) {
-                                                            val highlightStartRelative =
-                                                                intersectionStartAbs - blockStartAbs
-                                                            val highlightEndRelative =
-                                                                intersectionEndAbs - blockStartAbs
-                                                            addStyle(
-                                                                style = SpanStyle(
-                                                                    background = ttsHighlightColor
-                                                                ),
-                                                                start = highlightStartRelative,
-                                                                end = highlightEndRelative
-                                                            )
-                                                        }
-                                                    }
-                                                } else {
-                                                    searchHighlighted
-                                                }
+                                                val finalContent = searchHighlighted.withPlaybackFragmentBackground(
+                                                    fragment = ttsHighlightInfo,
+                                                    blockCfi = block.cfi,
+                                                    blockStartAbs = block.startCharOffsetInSource,
+                                                    blockLength = searchHighlighted.length,
+                                                    color = ttsHighlightColor
+                                                )
                                             TextWithEmphasis(
                                                 text = finalContent,
                                                 style = quoteStyle,
@@ -1263,7 +1169,8 @@ internal fun PaginatedReaderContent(
                                                 onLinkClick = onLinkClickCallback,
                                                 onGeneralTap = onGeneralTapCallback,
                                                 block = block,
-                                                userHighlights = pageUserHighlights,
+                                                userHighlights = pageUserHighlights.highlights,
+                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
                                                 activeSelection = activeSelection,
                                                 onSelectionChange = { sel ->
                                                     activeSelection = sel
@@ -1334,48 +1241,13 @@ internal fun PaginatedReaderContent(
                                                         searchQuery,
                                                         searchHighlightColor
                                                     )
-                                                val finalContent =
-                                                    if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-                                                        buildAnnotatedString {
-                                                            append(searchHighlighted)
-
-                                                            val blockStartAbs =
-                                                                block.startCharOffsetInSource
-                                                            val blockEndAbs =
-                                                                block.startCharOffsetInSource + searchHighlighted.length
-                                                            val highlightStartAbs =
-                                                                ttsHighlightInfo.offset
-                                                            val highlightEndAbs =
-                                                                ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-
-                                                            val intersectionStartAbs =
-                                                                maxOf(
-                                                                    blockStartAbs,
-                                                                    highlightStartAbs
-                                                                )
-                                                            val intersectionEndAbs =
-                                                                minOf(
-                                                                    blockEndAbs,
-                                                                    highlightEndAbs
-                                                                )
-
-                                                            if (intersectionStartAbs < intersectionEndAbs) {
-                                                                val highlightStartRelative =
-                                                                    intersectionStartAbs - blockStartAbs
-                                                                val highlightEndRelative =
-                                                                    intersectionEndAbs - blockStartAbs
-                                                                addStyle(
-                                                                    style = SpanStyle(
-                                                                        background = ttsHighlightColor
-                                                                    ),
-                                                                    start = highlightStartRelative,
-                                                                    end = highlightEndRelative
-                                                                )
-                                                            }
-                                                        }
-                                                    } else {
-                                                        searchHighlighted
-                                                    }
+                                                    val finalContent = searchHighlighted.withPlaybackFragmentBackground(
+                                                        fragment = ttsHighlightInfo,
+                                                        blockCfi = block.cfi,
+                                                        blockStartAbs = block.startCharOffsetInSource,
+                                                        blockLength = searchHighlighted.length,
+                                                        color = ttsHighlightColor
+                                                    )
                                                 TextWithEmphasis(
                                                     text = finalContent,
                                                     style = textStyle,
@@ -1385,7 +1257,8 @@ internal fun PaginatedReaderContent(
                                                     onLinkClick = onLinkClickCallback,
                                                     onGeneralTap = onGeneralTapCallback,
                                                     block = block,
-                                                    userHighlights = pageUserHighlights,
+                                                    userHighlights = pageUserHighlights.highlights,
+                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
                                                     activeSelection = activeSelection,
                                                     onSelectionChange = { sel ->
                                                         activeSelection = sel
@@ -1461,7 +1334,8 @@ internal fun PaginatedReaderContent(
                                                             textMeasurer = textMeasurer,
                                                             onLinkClickCallback = onLinkClickCallback,
                                                             onGeneralTapCallback = onGeneralTapCallback,
-                                                            userHighlights = pageUserHighlights,
+                                                            userHighlights = pageUserHighlights.highlights,
+                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
                                                             activeSelection = activeSelection,
                                                             onSelectionChange = { sel ->
                                                                 activeSelection =
@@ -1532,7 +1406,8 @@ internal fun PaginatedReaderContent(
                                                             textMeasurer = textMeasurer,
                                                             onLinkClickCallback = onLinkClickCallback,
                                                             onGeneralTapCallback = onGeneralTapCallback,
-                                                            userHighlights = pageUserHighlights,
+                                                            userHighlights = pageUserHighlights.highlights,
+                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
                                                             activeSelection = activeSelection,
                                                             onSelectionChange = { sel ->
                                                                 activeSelection =
@@ -2379,74 +2254,58 @@ internal fun PaginatedReaderContent(
                                     activeSelection = null
                                 },
                                 onHighlight = { color, style ->
-                                    val startAbsoluteOffset = sel.startBlockCharOffset + sel.startOffset
-                                    val endAbsoluteOffset = sel.endBlockCharOffset + sel.endOffset
                                     val finalCfi =
                                         "${sel.startBaseCfi}:${sel.startOffset}|${sel.endBaseCfi}:${sel.endOffset}"
-                                    val absoluteCandidateCfi =
-                                        "${sel.startBaseCfi}:$startAbsoluteOffset|${sel.endBaseCfi}:$endAbsoluteOffset"
                                     val locator = sel.toSharedHighlightLocator(
                                         chapterIndex = onGetChapterIndex(sel.startPageIndex),
                                         cfi = finalCfi
                                     )
                                     Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
                                         "create_request source=highlight_menu colorArgb=$color " +
-                                            "savedCfi=$finalCfi absoluteCandidateCfi=$absoluteCandidateCfi " +
+                                            "savedCfi=$finalCfi " +
                                             "startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
                                             "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
                                             "startBaseCfi=${sel.startBaseCfi} endBaseCfi=${sel.endBaseCfi} " +
                                             "localOffsets=${sel.startOffset}..${sel.endOffset} " +
-                                            "blockAbsStarts=${sel.startBlockCharOffset}..${sel.endBlockCharOffset} " +
-                                            "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
-                                            "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                                                                                                                                    "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                     )
                                     Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
                                         "create_request surface=paginated action=highlight colorArgb=$color " +
-                                            "savedCfi=$finalCfi absoluteCandidateCfi=$absoluteCandidateCfi " +
+                                            "savedCfi=$finalCfi " +
                                             "startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
                                             "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
                                             "startBaseCfi=${sel.startBaseCfi} endBaseCfi=${sel.endBaseCfi} " +
                                             "localOffsets=${sel.startOffset}..${sel.endOffset} " +
-                                            "blockAbsStarts=${sel.startBlockCharOffset}..${sel.endBlockCharOffset} " +
-                                            "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
-                                            "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                                                                                                                                    "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                     )
                                     onHighlightCreated(finalCfi, sel.text, color.toString(), locator, style)
                                     activeSelection = null
                                 },
                                 onNote = { style ->
                                     onNoteRequested(null)
-                                    val startAbsoluteOffset = sel.startBlockCharOffset + sel.startOffset
-                                    val endAbsoluteOffset = sel.endBlockCharOffset + sel.endOffset
                                     val finalCfi =
                                         "${sel.startBaseCfi}:${sel.startOffset}|${sel.endBaseCfi}:${sel.endOffset}"
-                                    val absoluteCandidateCfi =
-                                        "${sel.startBaseCfi}:$startAbsoluteOffset|${sel.endBaseCfi}:$endAbsoluteOffset"
                                     val locator = sel.toSharedHighlightLocator(
                                         chapterIndex = onGetChapterIndex(sel.startPageIndex),
                                         cfi = finalCfi
                                     )
                                     Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
                                         "create_request source=note_menu color=${HighlightColor.YELLOW.id} " +
-                                            "savedCfi=$finalCfi absoluteCandidateCfi=$absoluteCandidateCfi " +
+                                            "savedCfi=$finalCfi " +
                                             "startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
                                             "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
                                             "startBaseCfi=${sel.startBaseCfi} endBaseCfi=${sel.endBaseCfi} " +
                                             "localOffsets=${sel.startOffset}..${sel.endOffset} " +
-                                            "blockAbsStarts=${sel.startBlockCharOffset}..${sel.endBlockCharOffset} " +
-                                            "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
-                                            "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                                                                                                                                    "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                     )
                                     Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
                                         "create_request surface=paginated action=note color=${HighlightColor.YELLOW.id} " +
-                                            "savedCfi=$finalCfi absoluteCandidateCfi=$absoluteCandidateCfi " +
+                                            "savedCfi=$finalCfi " +
                                             "startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
                                             "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
                                             "startBaseCfi=${sel.startBaseCfi} endBaseCfi=${sel.endBaseCfi} " +
                                             "localOffsets=${sel.startOffset}..${sel.endOffset} " +
-                                            "blockAbsStarts=${sel.startBlockCharOffset}..${sel.endBlockCharOffset} " +
-                                            "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
-                                            "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                                                                                                                                    "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                     )
                                     onHighlightCreated(finalCfi, sel.text, (activeHighlightPalette.firstOrNull() ?: HighlightColor.YELLOW.color.toArgb()).toString(), locator, style)
                                     activeSelection = null
@@ -2858,12 +2717,13 @@ internal fun RenderFlexChildBlock(
     hideImages: Boolean = false,
     searchQuery: String,
     searchHighlightColor: Color,
-    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightInfo: SharedPlaybackFragment?,
     ttsHighlightColor: Color,
     textMeasurer: TextMeasurer,
     onLinkClickCallback: (String) -> Unit,
     onGeneralTapCallback: (Offset) -> Unit,
     userHighlights: List<UserHighlight>,
+    highlightRanges: Map<String, List<IntRange>>,
     activeSelection: PaginatedSelection?,
     onSelectionChange: (PaginatedSelection?) -> Unit,
     onHighlightClick: (UserHighlight, Rect) -> Unit,
@@ -2880,30 +2740,13 @@ internal fun RenderFlexChildBlock(
     fun renderTextBlock(block: TextContentBlock) {
         val searchHighlighted =
             highlightQueryInText(block.content, searchQuery, searchHighlightColor)
-        val finalContent = if (ttsHighlightInfo != null && block.cfi == ttsHighlightInfo.cfi) {
-            buildAnnotatedString {
-                append(searchHighlighted)
-                val blockStartAbs = block.startCharOffsetInSource
-                val blockEndAbs = block.startCharOffsetInSource + searchHighlighted.length
-                val highlightStartAbs = ttsHighlightInfo.offset
-                val highlightEndAbs = ttsHighlightInfo.offset + ttsHighlightInfo.text.length
-
-                val intersectionStartAbs = maxOf(blockStartAbs, highlightStartAbs)
-                val intersectionEndAbs = minOf(blockEndAbs, highlightEndAbs)
-
-                if (intersectionStartAbs < intersectionEndAbs) {
-                    val highlightStartRelative = intersectionStartAbs - blockStartAbs
-                    val highlightEndRelative = intersectionEndAbs - blockStartAbs
-                    addStyle(
-                        style = SpanStyle(background = ttsHighlightColor),
-                        start = highlightStartRelative,
-                        end = highlightEndRelative
-                    )
-                }
-            }
-        } else {
-            searchHighlighted
-        }
+        val finalContent = searchHighlighted.withPlaybackFragmentBackground(
+            fragment = ttsHighlightInfo,
+            blockCfi = block.cfi,
+            blockStartAbs = block.startCharOffsetInSource,
+            blockLength = searchHighlighted.length,
+            color = ttsHighlightColor
+        )
 
         val finalStyle = when (block) {
             is HeaderBlock -> createHeaderTextStyle(
@@ -2926,6 +2769,7 @@ internal fun RenderFlexChildBlock(
             onGeneralTap = onGeneralTapCallback,
             block = block,
             userHighlights = userHighlights,
+            highlightRanges = highlightRanges,
             activeSelection = activeSelection,
             onSelectionChange = onSelectionChange,
             onHighlightClick = onHighlightClick,
@@ -3203,6 +3047,7 @@ internal fun RenderFlexChildBlock(
                         onLinkClickCallback = onLinkClickCallback,
                         onGeneralTapCallback = onGeneralTapCallback,
                         userHighlights = userHighlights,
+                        highlightRanges = highlightRanges,
                         activeSelection = activeSelection,
                         onSelectionChange = onSelectionChange,
                         onHighlightClick = onHighlightClick,

@@ -59,19 +59,30 @@
             </intent-filter>
         </activity>
 
+        <!-- External-open entry points. They get their own taskAffinity so a task
+             rooted here can never be affinity-reused by MainActivity: Recents
+             decides visibility from the *base intent* of the task, so an
+             excludeFromRecents activity sharing MainActivity's affinity hides the
+             whole reader from the recent-apps switcher. Both also stay excluded
+             themselves, because each roots a task that dies within milliseconds
+             and would otherwise leave a stale Recents card behind.
+             See AndroidTaskRecentsManifestContractTest. -->
         <activity
             android:name=".TemporaryExternalFileActivity"
             android:exported="false"
             android:theme="@style/Theme.Reader"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:windowSoftInputMode="adjustResize"
+            android:taskAffinity="${applicationId}.externalopen"
             android:excludeFromRecents="true"
             android:launchMode="standard" />
 
+        <!-- Trampoline only: it forwards and finishes inside onCreate. -->
         <activity
             android:name=".ExternalFileOpenRouterActivity"
             android:exported="true"
             android:theme="@style/Theme.App.Starting"
+            android:taskAffinity="${applicationId}.externalopen"
             android:noHistory="true"
             android:excludeFromRecents="true">
             <!-- PDF -->
@@ -343,6 +354,20 @@
 
         <service
             android:name=".audiobook.AudiobookPlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService"/>
+            </intent-filter>
+        </service>
+
+        <!--
+          EPUB media overlay narration. A sibling of the audiobook service rather than a reuse: this
+          one has no book database, no book-id keying and no resume rewind, because the unit of
+          playback is a sentence and the position must be exact.
+        -->
+        <service
+            android:name=".mediaoverlay.MediaOverlayPlaybackService"
             android:exported="true"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>

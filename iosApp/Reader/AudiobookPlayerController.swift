@@ -53,8 +53,12 @@ class AudiobookPlayerController {
             pushUpdate(isPlaying: false, isLoading: false, error: "Could not find this audiobook file")
             return
         }
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.allowAirPlay])
-        try? AVAudioSession.sharedInstance().setActive(true)
+        // setActive/setCategory can block on route negotiation
+        // (AVAudioSession_iOS.mm:978); never run them on the main thread.
+        DispatchQueue.global(qos: .userInitiated).async {
+            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.allowAirPlay])
+            try? AVAudioSession.sharedInstance().setActive(true)
+        }
         let url = URL(fileURLWithPath: filePath)
         let item = AVPlayerItem(url: url)
         let newPlayer = AVPlayer(playerItem: item)
@@ -391,7 +395,9 @@ class AudiobookPlayerController {
                 let shouldResume = AVAudioSession.InterruptionOptions(rawValue: optionsRawValue)
                     .contains(.shouldResume)
                 if self.wasPlayingBeforeInterruption && shouldResume {
-                    try? AVAudioSession.sharedInstance().setActive(true)
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        try? AVAudioSession.sharedInstance().setActive(true)
+                    }
                     self.player?.play()
                     self.pushUpdate(isPlaying: true, isLoading: false)
                 } else {
@@ -418,10 +424,12 @@ class AudiobookPlayerController {
     }
 
     private func deactivateAudioSession() {
-        try? AVAudioSession.sharedInstance().setActive(
-            false,
-            options: [.notifyOthersOnDeactivation]
-        )
+        DispatchQueue.global(qos: .userInitiated).async {
+            try? AVAudioSession.sharedInstance().setActive(
+                false,
+                options: [.notifyOthersOnDeactivation]
+            )
+        }
     }
 
     private func pushUpdate(

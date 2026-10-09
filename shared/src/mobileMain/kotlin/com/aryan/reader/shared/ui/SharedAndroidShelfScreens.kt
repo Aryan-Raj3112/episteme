@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -24,7 +25,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
@@ -173,7 +173,7 @@ fun <ShelfItem, BookItem> SharedAndroidShelfDetailScreen(
                             TextButton(onClick = { showSortMenu = true }, modifier = Modifier.testTag(sortButtonTestTag)) {
                                 sortIcon(); Spacer(Modifier.width(8.dp)); Text(strings.sortLabels.getValue(sortOrder))
                             }
-                            DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
+                            SharedDropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
                                 SortOrder.entries.forEach { order ->
                                     DropdownMenuItem(
                                         text = { Text(strings.sortLabels.getValue(order)) },
@@ -186,7 +186,7 @@ fun <ShelfItem, BookItem> SharedAndroidShelfDetailScreen(
                         IconButton(onClick = { isSearchActive = true }) { Icon(Icons.Default.Search, strings.searchShelfDescription) }
                         if (canMutateShelf) Box {
                             IconButton(onClick = { showMoreMenu = true }) { Icon(Icons.Default.MoreVert, strings.moreOptionsDescription) }
-                            DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
+                            SharedDropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
                                 DropdownMenuItem(text = { Text(strings.renameShelf) }, onClick = { onRenameShelf(); showMoreMenu = false })
                                 DropdownMenuItem(text = { Text(strings.deleteShelf) }, onClick = { onDeleteShelf(); showMoreMenu = false })
                             }
@@ -257,6 +257,10 @@ fun <BookItem> SharedAndroidAddBooksModeScreen(
     var showSortMenu by remember { mutableStateOf(false) }
     Scaffold(
         modifier = modifier,
+        // Nested inside the Library Beta scaffold, which already applies the bottom system
+        // inset to its content. Re-applying it here would lift this screen's FAB by twice
+        // the navigation bar height.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             Column {
                 SharedMobileTopAppBar(
@@ -267,7 +271,7 @@ fun <BookItem> SharedAndroidAddBooksModeScreen(
                             TextButton(onClick = { showSortMenu = true }, modifier = Modifier.testTag(sortButtonTestTag)) {
                                 sortIcon(); Spacer(Modifier.width(8.dp)); Text(strings.sortLabels.getValue(sortOrder))
                             }
-                            DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
+                            SharedDropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
                                 SortOrder.entries.forEach { order ->
                                     DropdownMenuItem(
                                         text = { Text(strings.sortLabels.getValue(order)) },

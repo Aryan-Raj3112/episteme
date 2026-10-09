@@ -379,6 +379,7 @@ fun ReaderSessionState.reduce(action: ReaderAction, readerEngine: ReaderEngine):
             state = this,
             highlightId = action.highlightId,
             color = action.color,
+            colorArgb = action.colorArgb,
             note = action.note,
             style = action.style
         )

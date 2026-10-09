@@ -20,6 +20,8 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ProvidableCompositionLocal
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,7 +53,9 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.paginatedreader.EpubChapterTextIndex
 import com.aryan.reader.paginatedreader.CssStyle
 import com.aryan.reader.paginatedreader.BlockStyle
 import com.aryan.reader.paginatedreader.SemanticBlock
@@ -66,6 +70,7 @@ import com.aryan.reader.paginatedreader.SemanticSpacer
 import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
+import com.aryan.reader.paginatedreader.imagePageHeightBudgetPx
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reader.ReaderPage
@@ -318,20 +323,21 @@ internal fun String.toReaderAnnotatedString(
     absoluteStartOffset: Int,
     highlights: List<UserHighlight>,
     activeSelection: SharedNativeReaderTextSelection?,
-    selectionHighlight: Color
+    selectionHighlight: Color,
+    /** See [SemanticTextBlock.toAnnotatedString]. Null keeps the legacy per-block chain. */
+    chapterTextIndex: EpubChapterTextIndex? = null
 ): AnnotatedString {
     val normalized = searchQuery.trim()
     return buildAnnotatedString {
         append(this@toReaderAnnotatedString)
-        highlights.forEach { highlight ->
-            applyHighlightToTextRange(
-                highlight = highlight,
-                chapterIndex = chapterIndex,
-                pageIndex = pageIndex,
-                textStartOffset = absoluteStartOffset,
-                textLength = this@toReaderAnnotatedString.length
-            )
-        }
+        applyHighlightsToTextRanges(
+            highlights = highlights,
+            chapterIndex = chapterIndex,
+            pageIndex = pageIndex,
+            textStartOffset = absoluteStartOffset,
+            textLength = this@toReaderAnnotatedString.length,
+            chapterTextIndex = chapterTextIndex
+        )
         applySelectionToTextRange(
             selection = activeSelection,
             textStartOffset = absoluteStartOffset,
@@ -379,7 +385,9 @@ internal fun SharedSemanticBlockStack(
     selectionLayouts: MutableMap<String, SharedNativeTextLayoutInfo>,
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?,
     onTextLaidOut: ((SharedNativeTextFit) -> Unit)? = null,
-    onBlockLaidOut: ((SharedNativeBlockFit) -> Unit)? = null
+    onBlockLaidOut: ((SharedNativeBlockFit) -> Unit)? = null,
+    /** See [toReaderAnnotatedString]. Null keeps the legacy per-block chain. */
+    chapterTextIndex: EpubChapterTextIndex? = null
 ) {
     var previous: SemanticBlock? = null
     blocks.forEachIndexed { index, block ->
@@ -396,6 +404,7 @@ internal fun SharedSemanticBlockStack(
             fallbackTextAlign = fallbackTextAlign,
             fallbackFontFamily = fallbackFontFamily,
             settings = settings,
+            chapterTextIndex = chapterTextIndex,
             marginTop = block.collapsedTopMarginDp(previous, settings),
             marginBottom = if (includeTrailingBottomMargin && index == blocks.lastIndex) {
                 block.effectiveBottomMarginDp(settings)
@@ -446,7 +455,9 @@ internal fun SharedSemanticBlockView(
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?,
     layoutIndex: Int? = null,
     onTextLaidOut: ((SharedNativeTextFit) -> Unit)? = null,
-    onBlockLaidOut: ((SharedNativeBlockFit) -> Unit)? = null
+    onBlockLaidOut: ((SharedNativeBlockFit) -> Unit)? = null,
+    /** See [toReaderAnnotatedString]. Null keeps the legacy per-block chain. */
+    chapterTextIndex: EpubChapterTextIndex? = null
 ) {
     val blockStyle = block.style.blockStyle.sharedNativeThemeBlockStyle(
         isDarkTheme = settings.darkMode,
@@ -515,9 +526,9 @@ internal fun SharedSemanticBlockView(
                 )
             }
 
-            is SemanticParagraph -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onReaderHorizontalTap = onReaderHorizontalTap, immediateDragSelectEnabled = immediateDragSelectEnabled, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut)
-            is SemanticListItem -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onReaderHorizontalTap = onReaderHorizontalTap, immediateDragSelectEnabled = immediateDragSelectEnabled, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut)
-            is SemanticTextBlock -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onReaderHorizontalTap = onReaderHorizontalTap, immediateDragSelectEnabled = immediateDragSelectEnabled, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut)
+            is SemanticParagraph -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onReaderHorizontalTap = onReaderHorizontalTap, immediateDragSelectEnabled = immediateDragSelectEnabled, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut, chapterTextIndex = chapterTextIndex)
+            is SemanticListItem -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onReaderHorizontalTap = onReaderHorizontalTap, immediateDragSelectEnabled = immediateDragSelectEnabled, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut, chapterTextIndex = chapterTextIndex)
+            is SemanticTextBlock -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onReaderHorizontalTap = onReaderHorizontalTap, immediateDragSelectEnabled = immediateDragSelectEnabled, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut, chapterTextIndex = chapterTextIndex)
 
             is SemanticList -> {
                 Column(modifier = contentModifier, verticalArrangement = Arrangement.Top) {
@@ -607,6 +618,7 @@ internal fun SharedSemanticBlockView(
                                 fallbackTextAlign = fallbackTextAlign,
                                 fallbackFontFamily = fallbackFontFamily,
                                 settings = settings,
+                    chapterTextIndex = chapterTextIndex,
                     onReaderTap = onReaderTap,
                     onReaderHorizontalTap = onReaderHorizontalTap,
                     immediateDragSelectEnabled = immediateDragSelectEnabled,
@@ -1064,7 +1076,8 @@ internal fun SharedNativeWrappingBlock(
             density = density,
             maxWidthPx = maxWidthPx.toFloat(),
             imageScale = imageScale,
-            settings = settings
+            settings = settings,
+            maxHeightPx = constraints.maxHeight.coerceAtLeast(0).toFloat()
         )
         val imageWidthPx = imageSize.first.roundToInt().coerceIn(0, maxWidthPx)
         val imageHeightPx = imageSize.second.roundToInt().coerceAtLeast(0)
@@ -1266,7 +1279,12 @@ internal fun SharedNativeImageBlock(
         modifier = modifier,
         contentAlignment = block.imageContentAlignment()
     ) {
-        val imageModifier = Modifier.sharedNativeImageSize(block, settings, maxWidth)
+        // Android's `boundedImageMaxHeightDp` uses the box's own max height when it is specified,
+        // finite and positive. Its second branch falls back to the paginator's stored
+        // `ImageBlock.expectedHeight`; `SemanticImage` has no such field, so a wrapping-content
+        // block here reports an unbounded max height and is left unclamped -- exactly what Android
+        // does when it has no measured height either.
+        val imageModifier = Modifier.sharedNativeImageSize(block, settings, maxWidth, maxHeight)
         if (imageContent != null) {
             imageContent(block, imageModifier)
         } else {
@@ -1361,7 +1379,8 @@ internal fun SemanticImage.sharedNativeImageColorFilter(): ColorFilter? {
 internal fun Modifier.sharedNativeImageSize(
     block: SemanticImage,
     settings: ReaderSettings,
-    maxWidth: Dp
+    maxWidth: Dp,
+    maxHeight: Dp = Dp.Unspecified
 ): Modifier {
     val density = LocalDensity.current
     val style = block.style.blockStyle
@@ -1370,7 +1389,8 @@ internal fun Modifier.sharedNativeImageSize(
         block = block,
         density = density,
         maxWidth = maxWidth,
-        imageScale = imageScale
+        imageScale = imageScale,
+        maxHeightPx = sharedNativeImageMaxHeightPx(density, maxHeight)
     )
 
     return this
@@ -1401,77 +1421,4 @@ internal fun Modifier.sharedNativeImageSize(
                 Modifier
             }
         )
-}
-
-internal fun sharedNativeImageRenderSizeDp(
-    block: SemanticImage,
-    density: Density,
-    maxWidth: Dp,
-    imageScale: Float
-): Pair<Dp, Dp>? {
-    val maxWidthPx = with(density) { maxWidth.toPx() }
-    return sharedNativeImageRenderSizePx(
-        block = block,
-        density = density,
-        maxWidthPx = maxWidthPx,
-        imageScale = imageScale
-    )?.let { (widthPx, heightPx) ->
-        with(density) {
-            widthPx.toDp() to heightPx.toDp()
-        }
-    }
-}
-
-internal fun sharedNativeImageRenderSizePx(
-    block: SemanticImage,
-    density: Density,
-    maxWidthPx: Float,
-    imageScale: Float
-): Pair<Float, Float>? {
-    val intrinsicWidth = block.intrinsicWidth
-    val intrinsicHeight = block.intrinsicHeight
-    if (intrinsicWidth == null || intrinsicHeight == null || intrinsicWidth <= 0f || intrinsicHeight <= 0f) {
-        return null
-    }
-
-    val style = block.style.blockStyle
-    val aspectRatio = intrinsicHeight / intrinsicWidth
-    val baseWidthPx = with(density) {
-        if (style.width.isPositiveSpecified()) style.width.toPx() else maxWidthPx
-    }
-
-    var scaledWidthPx = baseWidthPx * imageScale
-    if (style.maxWidth.isPositiveSpecified()) {
-        scaledWidthPx = scaledWidthPx.coerceAtMost(with(density) { style.maxWidth.toPx() } * imageScale)
-    }
-    scaledWidthPx = scaledWidthPx.coerceAtMost(maxWidthPx)
-
-    return scaledWidthPx to (scaledWidthPx * aspectRatio)
-}
-
-internal fun sharedNativeImageRenderSizePxOrFallback(
-    block: SemanticImage,
-    density: Density,
-    maxWidthPx: Float,
-    imageScale: Float,
-    settings: ReaderSettings
-): Pair<Float, Float> {
-    sharedNativeImageRenderSizePx(
-        block = block,
-        density = density,
-        maxWidthPx = maxWidthPx,
-        imageScale = imageScale
-    )?.let { return it }
-    val style = block.style.blockStyle
-    val widthPx = with(density) {
-        when {
-            style.width.isPositiveSpecified() -> style.width.toPx()
-            style.maxWidth.isPositiveSpecified() -> maxWidthPx.coerceAtMost(style.maxWidth.toPx())
-            else -> maxWidthPx
-        }
-    }.coerceAtLeast(1f)
-    val heightPx = with(density) {
-        (style.height.takeIfPositiveSpecified() ?: (settings.fontSize * 8f).sp.toDp()).toPx()
-    }.coerceAtLeast(1f)
-    return widthPx to heightPx
 }

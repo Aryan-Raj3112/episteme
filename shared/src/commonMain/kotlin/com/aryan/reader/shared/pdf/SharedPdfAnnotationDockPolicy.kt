@@ -138,6 +138,47 @@ fun sharedPdfAnnotationDockTopYPx(
 }
 
 /**
+ * Vertical padding (px, never negative) that keeps the tool-settings popup clear
+ * of a side-docked wheel: the popup is anchored to the wheel's half, so it has
+ * to start past the wheel's far edge — below its top edge when the wheel sits in
+ * the top half, above its bottom edge when it sits in the bottom half.
+ *
+ * Clamped at 0 because a fixed-height wheel (192dp) can be taller than the space
+ * it lives in — IME open, split screen, small window — and the raw difference
+ * then goes negative, which `Modifier.padding` rejects with
+ * "Padding must be non-negative". A non-finite input (unbounded constraints)
+ * yields 0 as well.
+ */
+fun sharedPdfSideWheelPopupSidePadPx(
+    wheelYPx: Float,
+    wheelHeightPx: Float,
+    boxHeightPx: Float,
+    wheelInBottomHalf: Boolean,
+): Float {
+    val pad = if (wheelInBottomHalf) {
+        boxHeightPx - wheelYPx - wheelHeightPx
+    } else {
+        wheelYPx
+    }
+    return if (pad.isFinite()) pad.coerceAtLeast(0f) else 0f
+}
+
+/**
+ * Vertical padding (px, never negative) that keeps the tool-settings popup clear
+ * of a top/bottom/floating bar: above it when the bar is in the bottom half,
+ * below it otherwise. Same clamping contract as
+ * [sharedPdfSideWheelPopupSidePadPx] — a floating bar dragged past an edge
+ * would otherwise push the popup's padding negative.
+ */
+fun sharedPdfPopupClearanceAboveBarPx(
+    dockTopYPx: Float,
+    boxHeightPx: Float,
+): Float {
+    val pad = boxHeightPx - dockTopYPx
+    return if (pad.isFinite()) pad.coerceAtLeast(0f) else 0f
+}
+
+/**
  * Left-edge X for a side-docked bar. TOP/BOTTOM are full-width so X is 0;
  * FLOATING uses the drag offset.
  */

@@ -3,7 +3,6 @@ package com.aryan.reader.pdf
 
 import android.content.Context
 import android.net.Uri
-import androidx.core.content.FileProvider
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
@@ -25,6 +24,7 @@ class PdfCoverGeneratorTest {
     private lateinit var context: Context
     private lateinit var coverGenerator: PdfCoverGenerator
     private var samplePdfUri: Uri? = null
+    private var samplePdfFile: File? = null
 
     @Before
     fun setUp() {
@@ -40,10 +40,8 @@ class PdfCoverGeneratorTest {
 
     @After
     fun tearDown() {
-        val cacheFile = File(context.cacheDir, "sample.pdf")
-        if (cacheFile.exists()) {
-            cacheFile.delete()
-        }
+        samplePdfFile?.delete()
+        samplePdfFile = null
     }
 
     @Test
@@ -66,17 +64,8 @@ class PdfCoverGeneratorTest {
     }
 
     private fun copyAssetToCache(context: Context, @Suppress("SameParameterValue") assetName: String): Uri {
-        val file = File(context.cacheDir, assetName)
-        if (file.exists()) file.delete()
-        context.assets.open(assetName).use { inputStream ->
-            file.outputStream().use { outputStream ->
-                inputStream.copyTo(outputStream)
-            }
-        }
-        return FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.provider",
-            file
-        )
+        val file = copyAssetToShareableCache(context, context, assetName)
+        samplePdfFile = file
+        return shareableCacheUri(context, file)
     }
 }

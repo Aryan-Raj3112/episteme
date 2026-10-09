@@ -305,6 +305,32 @@ class SharedMobileLibraryMutationsTest {
     }
 
     @Test
+    fun `mobile folder scan status never infers deletions from incomplete scans`() {
+        assertEquals(LocalFolderScanStatus.COMPLETE, parseLocalFolderScanStatus("COMPLETE"))
+        assertEquals(LocalFolderScanStatus.COMPLETE, parseLocalFolderScanStatus(" complete "))
+        assertEquals(LocalFolderScanStatus.PARTIAL, parseLocalFolderScanStatus("PARTIAL"))
+        assertEquals(LocalFolderScanStatus.UNAVAILABLE, parseLocalFolderScanStatus("UNAVAILABLE"))
+        assertEquals(LocalFolderScanStatus.NOT_SCANNED, parseLocalFolderScanStatus("NOT_SCANNED"))
+        // Unknown or blank native values must fail safe: the engine treats
+        // only COMPLETE as proof that missing books were deleted.
+        assertEquals(LocalFolderScanStatus.PARTIAL, parseLocalFolderScanStatus("weird"))
+        assertEquals(LocalFolderScanStatus.PARTIAL, parseLocalFolderScanStatus(null))
+        assertEquals(LocalFolderScanStatus.PARTIAL, parseLocalFolderScanStatus(""))
+
+        val failed = SharedMobileFolderScanResult("Books", emptyList(), succeeded = false)
+        assertEquals(LocalFolderScanStatus.UNAVAILABLE, failed.effectiveScanStatus)
+        val partial = SharedMobileFolderScanResult(
+            "Books",
+            emptyList(),
+            succeeded = true,
+            scanStatus = LocalFolderScanStatus.PARTIAL,
+        )
+        assertEquals(LocalFolderScanStatus.PARTIAL, partial.effectiveScanStatus)
+        val complete = SharedMobileFolderScanResult("Books", emptyList())
+        assertEquals(LocalFolderScanStatus.COMPLETE, complete.effectiveScanStatus)
+    }
+
+    @Test
     fun `mobile folder names preserve first identity and fill the first available suffix`() {
         assertEquals("Books", availableMobileFolderName(" Books ", emptyList()))
         assertEquals("Folder", availableMobileFolderName(" ", emptyList()))

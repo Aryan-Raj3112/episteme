@@ -335,6 +335,7 @@ import com.aryan.reader.shared.pdf.resolveSharedPdfBarDropX
 import com.aryan.reader.shared.pdf.resolveSharedPdfDockSnapLocation
 import com.aryan.reader.shared.pdf.resolveSharedPdfSideWheelClearOfBarBand
 import com.aryan.reader.shared.pdf.resolveSharedPdfSideWheelDropY
+import com.aryan.reader.shared.pdf.sharedPdfSideWheelPopupSidePadPx
 import com.aryan.reader.shared.pdf.pdfTextDockKeyboardLiftPx
 import com.aryan.reader.shared.pdf.pdfTextDockRestingBottomPadding
 import com.aryan.reader.shared.pdf.shouldShowPdfTextDock
@@ -368,6 +369,8 @@ import com.aryan.reader.shared.ui.SharedMobileSingleChoiceOption
 import com.aryan.reader.shared.ui.SharedMobileInfoConfirmationDialog
 import com.aryan.reader.shared.ui.SharedMobileExternalLinkDialog
 import com.aryan.reader.shared.ui.SharedMobileDocumentFormatDialog
+import com.aryan.reader.shared.ui.SharedPdfAndroidAnnotationDock
+import com.aryan.reader.shared.pdf.SharedPdfInkToolMapping
 import com.aryan.reader.shouldRenderReaderSlider
 import com.aryan.reader.summarizationUrl
 import com.aryan.reader.tts.ReaderTtsOverlaySize
@@ -7907,9 +7910,9 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                     if (currentIsHighlighter && currentSnapEnabled) {
                                         val startPoint = drawingState.currentAnnotation?.points?.firstOrNull()
                                         val effectivePoint = calculateSnappedPoint(pageIndex, point, startPoint)
-                                        drawingState.updateDrag(effectivePoint.copy(timestamp = System.currentTimeMillis()))
+                                        drawingState.updateDrag(resolveInkPointTimestamp(effectivePoint))
                                     } else {
-                                        drawingState.onDraw(point.copy(timestamp = System.currentTimeMillis()))
+                                        drawingState.onDraw(resolveInkPointTimestamp(point))
                                     }
                                 }
                             }
@@ -8121,10 +8124,10 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 lockedState = lockedState,
                                 showPageGap = showVerticalPageGap,
                                 showPageNumberOverlay = showPageNumberOverlay,
-                                onZoomAndPanChanged = { newScale, newOffset ->
-                                    currentActiveScale = newScale
-                                    currentActiveOffset = newOffset
-                                },
+                                // Vertical mode owns its own camera; nothing in this branch reads the
+                                // host mirror back, so do not pay two screen-scope state writes per
+                                // frame for it. The pagination branch below still reports.
+                                reportsCameraToHost = false,
                                 resetZoomTrigger = resetZoomTrigger,
                                 isBubbleZoomModeActive = isBubbleZoomModeActive,
                                 onDetectBubbles = { sourcePageIndex, bitmap ->
@@ -9624,13 +9627,30 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         val annotationWheelInBottomHalf =
             annotationWheelYpx + annotationWheelHeightPx / 2f > boxMaxHeightFloat / 2f
         val popupSidePad = if (isAnnotationSideDocked) SharedPdfSideWheelWidth + 16.dp else 0.dp
+        // Popup pads are clamped in the shared policy: the wheel is a fixed
+        // 192dp tall, so when it outlives the box (IME open, split screen)
+        // "space below the wheel" goes negative and padding throws.
         val popupSideTopPad = if (isAnnotationSideDocked && !annotationWheelInBottomHalf) {
-            with(density) { annotationWheelYpx.toDp() }
+            with(density) {
+                sharedPdfSideWheelPopupSidePadPx(
+                    wheelYPx = annotationWheelYpx,
+                    wheelHeightPx = annotationWheelHeightPx,
+                    boxHeightPx = boxMaxHeightFloat,
+                    wheelInBottomHalf = false,
+                ).toDp()
+            }
         } else {
             0.dp
         }
         val popupSideBottomPad = if (isAnnotationSideDocked && annotationWheelInBottomHalf) {
-            with(density) { (boxMaxHeightFloat - annotationWheelYpx - annotationWheelHeightPx).toDp() }
+            with(density) {
+                sharedPdfSideWheelPopupSidePadPx(
+                    wheelYPx = annotationWheelYpx,
+                    wheelHeightPx = annotationWheelHeightPx,
+                    boxHeightPx = boxMaxHeightFloat,
+                    wheelInBottomHalf = true,
+                ).toDp()
+            }
         } else {
             0.dp
         }
@@ -9990,18 +10010,21 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 )
                             }
                         }) {
-                    AnnotationDock(
-                        selectedTool = selectedTool,
+                    SharedPdfAndroidAnnotationDock(
+                        selectedTool = SharedPdfInkToolMapping.toSharedPdfInkTool(selectedTool.name),
                         activePenColor = dockPenColor,
                         activeHighlighterColor = dockHighlighterColor,
-                        lastPenTool = lastPenTool,
-                        lastHighlighterTool = lastHighlighterTool,
+                        lastPenTool = SharedPdfInkToolMapping.toSharedPdfInkTool(lastPenTool.name),
+                        lastHighlighterTool = SharedPdfInkToolMapping.toSharedPdfInkTool(lastHighlighterTool.name),
                         isStylusOnlyMode = isStylusOnlyMode,
                         onToggleStylusOnlyMode = {
                             isStylusOnlyMode = !isStylusOnlyMode
                             saveStylusOnlyMode(context, isStylusOnlyMode)
                         },
-                        onToolClick = { clickedTool ->
+                        onToolClick = { clickedSharedTool ->
+                            val clickedTool = InkType.valueOf(
+                                SharedPdfInkToolMapping.toAndroidInkTypeName(clickedSharedTool)
+                            )
                             if (clickedTool == InkType.TEXT) {
                                 annotationSettingsRepo.updateSelectedTool(
                                     clickedTool
@@ -12002,9 +12025,9 @@ private fun PdfViewerPaginationPage(
                     if (currentIsHighlighterState && currentSnapEnabledState) {
                         val startPoint = drawingState.currentAnnotation?.points?.firstOrNull()
                         val effectivePoint = currentCalculateSnappedPoint(pageIndex, point, startPoint)
-                        drawingState.updateDrag(effectivePoint.copy(timestamp = System.currentTimeMillis()))
+                        drawingState.updateDrag(resolveInkPointTimestamp(effectivePoint))
                     } else {
-                        drawingState.onDraw(point.copy(timestamp = System.currentTimeMillis()))
+                        drawingState.onDraw(resolveInkPointTimestamp(point))
                     }
                 }
             }

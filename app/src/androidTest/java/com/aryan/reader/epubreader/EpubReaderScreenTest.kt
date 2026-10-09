@@ -7,10 +7,15 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.isEnabled
+// Aliased because this class already has a `hasContentDescription` predicate of its own; the plain
+// import would be shadowed by it and silently type the matcher as a Boolean.
+import androidx.compose.ui.test.hasContentDescription as hasContentDescriptionMatcher
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -18,7 +23,6 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
-import androidx.core.content.FileProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -30,6 +34,8 @@ import com.aryan.reader.R
 import com.aryan.reader.RenderMode
 import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.data.RecentFileEntity
+import com.aryan.reader.pdf.copyAssetToShareableCache
+import com.aryan.reader.pdf.shareableCacheUri
 import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.ReaderLocator
 import com.google.common.truth.Truth.assertThat
@@ -40,7 +46,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
-import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class EpubReaderScreenTest {
@@ -50,6 +55,11 @@ class EpubReaderScreenTest {
 
     private val fixtureAssetName = "epub/reader_test_book.epub"
     private val fixtureBookTitle = "Reader Android UI Test Book"
+    /** The fixture's OPF narrator, which is also what the narration bar's title shows. */
+    private val fixtureNarrator = "Fixture Narrator"
+    private val fixtureNarratedClipCount = 3
+    /** Chapter two is narrated with a different clip count on purpose; see the continuation test. */
+    private val secondChapterClipCount = 2
     private val sanitizedFixtureBookTitle = "ReaderAndroidUITestBook"
     private val targetContext: Context = ApplicationProvider.getApplicationContext()
     private val instrumentationContext: Context = InstrumentationRegistry.getInstrumentation().context
@@ -406,8 +416,12 @@ class EpubReaderScreenTest {
                 .getBoolean("format_is_local_$fixtureBookId", false)
         }
 
-        composeTestRule.onAllNodesWithContentDescription(text(R.string.content_desc_increase))[0]
-            .performClick()
+        // The stepper labels its buttons per row ("Increase Font Size", "Increase Line
+        // Height", ...) so TalkBack announces which value changes; matching the bare
+        // "Increase" finds nothing.
+        composeTestRule.onNodeWithContentDescription(
+            "${text(R.string.content_desc_increase)} ${text(R.string.label_font_size)}"
+        ).performClick()
 
         composeTestRule.waitUntil(timeoutMillis = 5_000) {
             targetContext.getSharedPreferences("epub_reader_settings", Context.MODE_PRIVATE)
@@ -515,6 +529,119 @@ class EpubReaderScreenTest {
         waitForText(text(R.string.tts_replacements_tab_global))
         waitForText(text(R.string.tts_replacements_tab_this_book))
         waitForText(text(R.string.tts_replacements_enable))
+    }
+
+    /**
+     * The fixture's narrated chapter really narrates, from the button to a crossed `par` boundary.
+     *
+     * The unit and engine tests each hold one half of this: the OPF produces an index, and an engine
+     * with a request advances. Neither of them proves a *reader* does it, and the failure that
+     * motivated this test was exactly that gap — narration that loaded a chapter, published a bar and
+     * then never made a sound, because the audio never reached the archive.
+     *
+     * The assertion is deliberately monotonic rather than a fixed clip number: the bar's transport
+     * exposes `Previous` only past the first clip, and it stays enabled once narration has moved, so a
+     * poll that lands after the chapter already finished still reads as "it advanced". Asserting a
+     * specific index would be a race against 1.5-second clips on a loaded emulator.
+     */
+    /**
+     * Narration carries on into the next narrated chapter instead of stopping at the end of this one.
+     *
+     * Continuation is the difference between a narrated book and a narrated chapter, and the proof
+     * has to be the *next* chapter: chapter two has two clips against chapter one's three, so the
+     * position label changing from `1 / 3` to `1 / 2` can only mean a different chapter loaded. The
+     * run then has to end there, because chapter three declares no overlay at all — a reader that
+     * kept going would be inventing narration for a chapter that has none.
+     *
+     * The reader following along is asserted separately, through the reading position the reader
+     * persists: following is a chapter change the *narration* asked for, and the rule that restarts
+     * narration when the reader navigates must not mistake it for one the reader asked for.
+     */
+    @Test
+    fun fixtureEpub_narrationContinuesIntoTheNextChapter() {
+        targetContext.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
+            .edit().putString("render_mode", RenderMode.VERTICAL_SCROLL.name).commit()
+        launchFixtureReader()
+        waitForReader()
+
+        clickReaderControl(text(R.string.content_desc_media_overlay_start))
+
+        waitForTextContaining("1 / $fixtureNarratedClipCount", timeoutMillis = 30_000)
+        waitForTextContaining("1 / $secondChapterClipCount", timeoutMillis = 60_000)
+        waitForTextContaining("$secondChapterClipCount / $secondChapterClipCount", timeoutMillis = 60_000)
+
+        // The end of the narrated run: the third chapter has no overlay, so the bar goes away rather
+        // than narrating something that was never recorded.
+        composeTestRule.waitUntil(timeoutMillis = 30_000) {
+            !hasContentDescription(text(R.string.content_desc_media_overlay_play_pause))
+        }
+
+        waitForRecentFile(timeoutMillis = 30_000) { recentFile -> recentFile?.lastChapterIndex == 1 }
+    }
+
+    /**
+     * The same narration in pagination mode, where the surface is Compose rather than a WebView.
+     *
+     * The two modes reach the highlight by completely different code — the WebView paints an element
+     * by id through JavaScript, the paginated reader resolves a fragment against `ContentBlock`s — so a
+     * mode that was never opened is a mode whose half of the feature is unverified. What this asserts
+     * is the contract both must honour: narration starts, advances, and carries into the next chapter
+     * with the reader following it.
+     */
+    @Test
+    fun fixtureEpub_narrationPlaysAndContinuesInPaginationMode() {
+        targetContext.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
+            .edit().putString("render_mode", RenderMode.PAGINATED.name).commit()
+        launchFixtureReader()
+        waitForReader()
+        waitForRenderMode(RenderMode.PAGINATED)
+
+        clickReaderControl(text(R.string.content_desc_media_overlay_start))
+
+        waitForTextContaining("1 / $fixtureNarratedClipCount", timeoutMillis = 30_000)
+        composeTestRule.waitUntil(timeoutMillis = 60_000) {
+            composeTestRule
+                .onAllNodes(
+                    hasContentDescriptionMatcher(text(R.string.content_desc_media_overlay_previous)) and isEnabled()
+                )
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+
+        waitForTextContaining("1 / $secondChapterClipCount", timeoutMillis = 60_000)
+        waitForRecentFile(timeoutMillis = 30_000) { recentFile -> recentFile?.lastChapterIndex == 1 }
+    }
+
+    @Test
+    fun fixtureEpub_narrationPlaysAndAdvancesClips() {
+        targetContext.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
+            .edit().putString("render_mode", RenderMode.VERTICAL_SCROLL.name).commit()
+        launchFixtureReader()
+        waitForReader()
+
+        clickReaderControl(text(R.string.content_desc_media_overlay_start))
+
+        // The bar and its position label exist only after a SMIL body parsed against this chapter's
+        // spine item, so this is the OPF-attribute -> index -> document chain arriving on screen.
+        waitForTextContaining(fixtureNarrator, timeoutMillis = 30_000)
+        waitForTextContaining("1 / $fixtureNarratedClipCount", timeoutMillis = 30_000)
+        // Narration is the one playback surface where the pace is the publisher's choice, so the bar
+        // carries a speed control showing what is really playing. A literal rather than
+        // `sharedMediaOverlaySpeedLabel(1f)`, because asserting a formatter against itself proves
+        // nothing about what landed on screen.
+        waitForTextContaining("1×", timeoutMillis = 5_000)
+
+        // Past the first clip means the audio really came out of the EPUB and a `par` boundary was
+        // crossed — the engine sequencing, the service, the archive data source, and the fixture's
+        // own WAV, all in one observation.
+        composeTestRule.waitUntil(timeoutMillis = 60_000) {
+            composeTestRule
+                .onAllNodes(
+                    hasContentDescriptionMatcher(text(R.string.content_desc_media_overlay_previous)) and isEnabled()
+                )
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
     }
 
     private fun launchFixtureReader(beforeLaunch: (Uri) -> Unit = {}) {
@@ -657,20 +784,11 @@ class EpubReaderScreenTest {
     }
 
     private fun copyAndroidTestAssetToCache(assetName: String): Uri {
-        val file = File(targetContext.cacheDir, "${UUID.randomUUID()}_reader_test_book.epub")
+        // The fixture lives in src/androidTest/assets, so it is read from the instrumentation APK while
+        // the URI is issued by the app under test's provider.
+        val file = copyAssetToShareableCache(instrumentationContext, targetContext, assetName)
         currentEpubFile = file
-
-        instrumentationContext.assets.open(assetName).use { inputStream ->
-            file.outputStream().use { outputStream ->
-                inputStream.copyTo(outputStream)
-            }
-        }
-
-        return FileProvider.getUriForFile(
-            targetContext,
-            "${targetContext.packageName}.provider",
-            file
-        )
+        return shareableCacheUri(targetContext, file)
     }
 
     private fun navigateToFixtureSearchResult(query: String, expectedChapterIndex: Int) {

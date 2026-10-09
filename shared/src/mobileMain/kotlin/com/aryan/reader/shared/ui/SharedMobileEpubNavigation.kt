@@ -64,6 +64,7 @@ import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubTocEntry
+import com.aryan.reader.shared.reader.SharedMediaOverlayProjection
 import com.aryan.reader.shared.reader.findElementOffset
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import kotlinx.coroutines.delay
@@ -406,6 +407,20 @@ internal fun String.sharedMobileEpubSelectionShiftMessageOrNull(): String? {
 }
 
 /**
+ * Generic `{"message": ...}` trace payload (readerDesktopPositionTraceLog and
+ * siblings). Forwarded to native logs only while the EPUB restore guard is
+ * armed, so scroll-trace volume stays bounded to the restore window.
+ */
+internal fun String.sharedMobileEpubTraceMessageOrNull(): String? {
+    return runCatching { SharedMobileEpubJson.parseToJsonElement(this).jsonObject }
+        .getOrNull()
+        ?.get("message")
+        ?.jsonPrimitive
+        ?.contentOrNull
+        ?.takeIf(String::isNotBlank)
+}
+
+/**
  * Android parity (ChapterWebView restoreHighlights): the authoritative highlight list
  * is pushed into the WebView via window.readerApplyHighlights instead of reloading the
  * document. The JSON shape matches what the shared selection script's
@@ -617,14 +632,29 @@ internal fun sharedMobileEpubActiveTocScript(book: SharedEpubBook, chapterIndex:
 
 internal fun ReaderPage.toMobileEpubLocator(book: SharedEpubBook?): ReaderLocator {
     val chapter = book?.chapters?.getOrNull(chapterIndex)
-    val textBlock = semanticBlocks
+    // Android benchmark (LocatorConverter.getCfiFromLocator +
+    // semanticCfiForBlock): the CFI keeps the intra-block offset of the page
+    // start, not a constant `:0`. Emitting `:0` collapsed every page that
+    // starts mid-block onto the block head, which read as inaccurate resume /
+    // TTS / highlight positions vs Android.
+    val textBlocks = semanticBlocks
         .flatMap { it.flattenForLocator() }
         .filterIsInstance<SemanticTextBlock>()
-        .firstOrNull { it.text.isNotBlank() }
-    val localCharOffset = 0
-    val androidStyleCfi = textBlock?.cfi
-        ?.takeIf { it.startsWith("/") }
-        ?.let { "$it:$localCharOffset" }
+        .filter { it.text.isNotBlank() }
+    val textBlock = textBlocks.firstOrNull { block ->
+        val end = block.startCharOffsetInSource + block.text.length
+        end > startOffset
+    } ?: textBlocks.firstOrNull()
+    val androidStyleCfi = textBlock?.let { block ->
+        val base = block.cfi?.takeIf { it.startsWith("/") } ?: return@let null
+        // Keep the explicit `:offset` suffix (including `:0`) so emitted
+        // locators stay byte-stable with previously persisted CFIs; the
+        // value now carries the real intra-block offset instead of a
+        // constant 0.
+        val local = (startOffset - block.startCharOffsetInSource)
+            .coerceIn(0, block.text.length)
+        "$base:$local"
+    }
     return ReaderLocator(
         chapterIndex = chapterIndex,
         chapterId = chapter?.id,
@@ -634,7 +664,9 @@ internal fun ReaderPage.toMobileEpubLocator(book: SharedEpubBook?): ReaderLocato
         endOffset = startOffset,
         textQuote = text.take(120),
         blockIndex = textBlock?.blockIndex,
-        charOffset = textBlock?.startCharOffsetInSource,
+        // Null when no semantic block backs the page (plain-text fallback);
+        // otherwise the absolute page-start offset (Android Locator parity).
+        charOffset = textBlock?.let { startOffset },
         cfi = androidStyleCfi
     )
 }
@@ -658,7 +690,8 @@ internal fun sharedMobileEpubNavigationScript(
     locator: ReaderLocator,
     fragment: String?,
     targetChunkIndex: Int?,
-    targetChunkHtml: String?
+    targetChunkHtml: String?,
+    preferExact: Boolean = false
 ): String {
     val locatorJson = buildJsonObject {
         locator.chapterIndex?.let { put("chapterIndex", it) }
@@ -687,7 +720,42 @@ internal fun sharedMobileEpubNavigationScript(
     }
     val needsChunkWait = targetChunkIndex != null && targetChunkHtml != null &&
         targetChunkHtml.length > ReaderHtmlDocumentBuilder.MaxInlineVirtualChunkChars
-    val scrollBody = """
+    // A reopen restore must never scroll approximately: the document is still
+    // settling (the chapter can be collapsed to its intrinsic size until it is
+    // rendered), so a ratio or host_top scroll against that document parks on
+    // the chapter top and overwrites the exact landing the boot anchor and the
+    // retry loop already achieved (observed: exact_range at 3166px, then
+    // content_ratio at 528px of a 569px document, then chapter start). Android
+    // parity: scrollToCfi retries the exact target and only falls back when it
+    // genuinely cannot resolve. preferExact therefore retries exact-only and
+    // never approximates; explicit user navigations keep their immediate
+    // approximate feedback as the last step of the retry budget.
+    val scrollBody = if (preferExact) {
+        """
+          if (fragment) {
+            var chapter = null;
+            if (locator.chapterIndex !== undefined && locator.chapterIndex !== null) {
+              chapter = document.querySelector('[data-reader-chapter-index="' + locator.chapterIndex + '"]');
+            }
+            var target = null;
+            var candidates = (chapter || document).querySelectorAll('[id]');
+            for (var index = 0; index < candidates.length; index++) {
+              if (candidates[index].id === fragment) { target = candidates[index]; break; }
+            }
+            if (target) {
+              target.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'auto' });
+              return true;
+            }
+          }
+          if (window.readerScrollToLocator) {
+            try {
+              if (window.readerScrollToLocator(locator, { source: 'ios_mobile', exactOnly: true })) return true;
+            } catch (_) {}
+          }
+          return false;
+        """.trimIndent()
+    } else {
+        """
           if (fragment) {
             var chapter = null;
             if (locator.chapterIndex !== undefined && locator.chapterIndex !== null) {
@@ -710,9 +778,19 @@ internal fun sharedMobileEpubNavigationScript(
             } catch (_) {}
           }
           return false;
-    """.trimIndent()
-    return if (needsChunkWait) {
-        """
+        """.trimIndent()
+    }
+    // Both branches retry: a skipped exact scroll (target chunk still
+    // streaming in, chapter not rendered yet) must keep polling instead of
+    // giving up after one attempt, which is what an undefined return value
+    // used to do.
+    val exactRetryLimit = if (needsChunkWait) 40 else 8
+    val fallbackScroll = if (preferExact) {
+        "readerDesktopPositionTraceLog('event=web_navigation_exact_unresolved ' + readerLocatorTrace(locator));"
+    } else {
+        "try { if (window.readerScrollToLocator && !window.readerScrollToLocator(locator, { source: 'ios_mobile_fallback' })) { } } catch (_) {}"
+    }
+    return """
         (function () {
           var locator = $locatorJson;
           var fragment = $fragmentJson;
@@ -727,20 +805,55 @@ internal fun sharedMobileEpubNavigationScript(
             try {
               if (attempt()) { window.clearInterval(timer); return; }
             } catch (_) {}
-            if (tries >= 40) window.clearInterval(timer);
+            if (tries >= $exactRetryLimit) {
+              window.clearInterval(timer);
+              $fallbackScroll
+            }
           }, 125);
         })();
         """.trimIndent()
+}
+
+/**
+ * The narration band, for the WebView vertical surface.
+ *
+ * Its own bridge function rather than a variant of [sharedMobileEpubTtsNavigationScript] because the
+ * two paint through deliberately different machinery: the read-aloud path repaints a stored
+ * highlight by quote and cfi, while a media overlay anchor is resolved from the same parse that
+ * produced the blocks and so is exact by construction — reaching for the quote repair there would
+ * hide a genuinely wrong offset behind a fuzzy match.
+ *
+ * A null projection clears the band, which is what ends a narration run: without the explicit clear
+ * the last narrated line would stay painted after the audio stopped.
+ */
+internal fun sharedMobileEpubMediaOverlayFragmentScript(
+    projection: SharedMediaOverlayProjection?
+): String {
+    // The chapter comes from the projection rather than the fragment: a fragment is offsets in *a*
+    // chapter, and only the projection knows which one.
+    val chapterIndex = projection?.chapterIndex
+    val fragment = projection?.fragment
+    val fragmentJson = if (chapterIndex != null && fragment != null) {
+        buildJsonObject {
+            put("chapterIndex", chapterIndex)
+            put("startOffset", fragment.startAbs)
+            put("endOffset", fragment.endAbs)
+            fragment.blockCfi?.let { put("cfi", it) }
+        }.toString()
     } else {
-        """
-        (function () {
-          var locator = $locatorJson;
-          var fragment = $fragmentJson;
-          $chunkInjection
-        $scrollBody
-        })();
-        """.trimIndent()
+        "null"
     }
+    // Always ask, and let the script measure. Android's WebView path asks only on a chapter change
+    // (`EpubReaderScreen.kt:1997`), because it anchors by element id and has no offsets to measure
+    // against, so a chapter change is the only evidence it has. This path carries the real fragment,
+    // and `mediaOverlayFragmentNeedsFollowScroll` compares it against the actual viewport — the same
+    // answer the native surfaces reach by comparing against the page. Asking only on a chapter change
+    // here would be the approximation where the measurement is available.
+    //
+    // Followable is exactly what was sent: the script scrolls by the fragment's own chapter, so a
+    // request without one has nothing to scroll to.
+    val follow = fragmentJson != "null"
+    return "if (window.readerSetMediaOverlayFragment) window.readerSetMediaOverlayFragment($fragmentJson, $follow);"
 }
 
 internal fun sharedMobileEpubTtsNavigationScript(locator: ReaderLocator?): String {
@@ -756,6 +869,27 @@ internal fun sharedMobileEpubTtsNavigationScript(locator: ReaderLocator?): Strin
     } ?: "null"
     return "if (window.readerSetTtsLocator) window.readerSetTtsLocator($locatorJson, true);"
 }
+
+/**
+ * The playback band for the WebView surface: whichever engine is speaking, and nothing if neither is.
+ *
+ * One function because the choice of engine is a single decision with a single answer, and it is
+ * already answered once for the native surfaces by `playbackHighlights`. Starting read-aloud stops a
+ * media overlay and the other way round — the arbiter guarantees only one engine holds the audio — so
+ * at most one of these can be non-null, and picking the same one here keeps the two surfaces from
+ * disagreeing about who owns the highlight.
+ *
+ * This exists because a band is not a navigation. The scripts it composes used to ride
+ * `navigationScript`, which the WebView only evaluates when `navigationRequestId` changes — a page
+ * turn, a chapter change, a session end. A band moves several times a second and none of those are
+ * navigation, so the paint was requested once per chapter load, when the projection was still null,
+ * and never again: no band, on any clip, in either engine.
+ */
+internal fun sharedMobileEpubPlaybackBandScript(
+    mediaOverlayProjection: SharedMediaOverlayProjection?,
+    ttsLocator: ReaderLocator?
+): String = mediaOverlayProjection?.let { sharedMobileEpubMediaOverlayFragmentScript(it) }
+    ?: sharedMobileEpubTtsNavigationScript(ttsLocator)
 
 internal fun sharedMobileEpubSearchNavigationScript(result: SharedMobileEpubSearchResult, query: String, chunkHtml: String?): String {
     val injection = when {

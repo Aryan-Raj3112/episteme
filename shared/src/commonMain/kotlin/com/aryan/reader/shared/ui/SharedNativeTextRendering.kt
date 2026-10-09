@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.paginatedreader.EpubChapterTextIndex
 import com.aryan.reader.paginatedreader.CssStyle
 import com.aryan.reader.paginatedreader.MATH_PLACEHOLDER_CHAR
 import com.aryan.reader.paginatedreader.BlockStyle
@@ -58,6 +59,7 @@ import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.sharedHeadingFontScale
 import com.aryan.reader.shared.reader.resolveSharedReaderFontFeatureSettings
 import com.aryan.reader.shared.reader.resolveSharedReaderTextAlign
 import kotlin.math.abs
@@ -87,7 +89,9 @@ internal fun SharedSemanticTextView(
     onHighlightSelected: (String) -> Unit,
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit,
     selectionLayouts: MutableMap<String, SharedNativeTextLayoutInfo>,
-    onTextLaidOut: ((SharedNativeTextFit) -> Unit)? = null
+    onTextLaidOut: ((SharedNativeTextFit) -> Unit)? = null,
+    /** See [toAnnotatedString]. Null keeps the legacy per-block chain. */
+    chapterTextIndex: EpubChapterTextIndex? = null
 ) {
     val textStyle = block.renderedTextStyle(
         settings = settings,
@@ -118,7 +122,8 @@ internal fun SharedSemanticTextView(
             blockCharOffset = block.startCharOffsetInSource,
             background = background,
             foreground = foreground,
-            isDarkTheme = settings.darkMode
+            isDarkTheme = settings.darkMode,
+            chapterTextIndex = chapterTextIndex
         ),
         page = page,
         textBlock = SharedNativeTextBlockDescriptor(
@@ -172,7 +177,7 @@ internal fun SemanticTextBlock.renderedTextStyle(
         ?: style.spanStyle.fontSize.takeIfSpecified())
         ?.resolveFontSizeSp(settings.fontSize.toFloat())
         ?: when (this) {
-            is SemanticHeader -> (settings.fontSize * headerScale(level)).sp
+            is SemanticHeader -> (settings.fontSize * sharedHeadingFontScale(level)).sp
             else -> settings.fontSize.sp
         }
     val lineHeight = style.paragraphStyle.lineHeight.takeIfSpecified()
@@ -227,7 +232,14 @@ internal fun SemanticTextBlock.toAnnotatedString(
     blockCharOffset: Int,
     background: Color,
     foreground: Color,
-    isDarkTheme: Boolean
+    isDarkTheme: Boolean,
+    /**
+     * The chapter's text laid out in one coordinate space, when the caller has one.
+     *
+     * Passing it makes highlight placement use the shared resolver, which is the same rule Android
+     * uses. Null keeps the legacy per-block chain, which desktop still depends on.
+     */
+    chapterTextIndex: EpubChapterTextIndex? = null
 ): AnnotatedString {
     val normalized = query.trim()
     val mathSpans = spans.filter { it.isInlineMath }
@@ -291,19 +303,18 @@ internal fun SemanticTextBlock.toAnnotatedString(
                 }
             }
         }
-        highlights.forEach { highlight ->
-            applyHighlightToTextRange(
-                highlight = highlight,
-                chapterIndex = chapterIndex,
-                pageIndex = pageIndex,
-                blockCfi = blockCfi,
-                blockIndex = blockIndex,
-                blockCharOffset = blockCharOffset,
-                textStartOffset = startCharOffsetInSource,
-                textLength = text.length,
-                text = text
-            )
-        }
+        applyHighlightsToTextRanges(
+            highlights = highlights,
+            chapterIndex = chapterIndex,
+            pageIndex = pageIndex,
+            blockCfi = blockCfi,
+            blockIndex = blockIndex,
+            blockCharOffset = blockCharOffset,
+            textStartOffset = startCharOffsetInSource,
+            textLength = text.length,
+            text = text,
+            chapterTextIndex = chapterTextIndex
+        )
         applySelectionToTextRange(
             selection = activeSelection,
             pageIndex = pageIndex,

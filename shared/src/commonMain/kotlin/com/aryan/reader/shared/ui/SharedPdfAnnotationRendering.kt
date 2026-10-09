@@ -68,6 +68,11 @@ import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
+import com.aryan.reader.shared.pdf.pdfHighlightLinePath
+import com.aryan.reader.shared.pdf.pdfHighlightLines
+import com.aryan.reader.shared.pdf.pdfHighlightStrokeStyle
+import com.aryan.reader.shared.pdf.pdfHighlightWavePath
+import com.aryan.reader.shared.pdf.toPdfHighlightRect
 import com.aryan.reader.shared.pdf.sharedPdfTextBoxAnnotatedString
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
@@ -110,9 +115,7 @@ fun SharedPdfAnnotationOverlay(
                     PdfAnnotationKind.HIGHLIGHT -> {
                         val highlightBounds = annotation.boundsList.ifEmpty { listOfNotNull(annotation.bounds) }
                         val style = sharedPdfHighlightAnnotationOverlayStyle(annotation)
-                        highlightBounds.forEach { bounds ->
-                            drawSharedPdfHighlightAnnotation(annotation, bounds, canvasSize, style)
-                        }
+                        drawSharedPdfHighlightAnnotation(annotation, highlightBounds, canvasSize, style)
                     }
                     PdfAnnotationKind.INK -> {
                         SharedPdfInkRenderer.createRenderData(annotation, canvasSize)?.let(::drawInkRenderData)
@@ -223,83 +226,96 @@ fun SharedPdfAnnotationOverlay(
     }
 }
 
+/**
+ * Draws one text highlight's decoration stroke.
+ *
+ * [bounds] is the highlight's **whole** rect list, not a single rect. The rects are grouped into
+ * text lines first and each line is drawn as one path, so the baseline, the stroke width and the
+ * wave phase are resolved once per line. That is what removes the gaps at the end of a stroke: the
+ * old per-rect path restarted the wave at every font run and left a malformed loop past the line
+ * end. `BACKGROUND` still paints rect by rect, because adjacent rects must not double-blend their
+ * shared edge.
+ */
 internal fun DrawScope.drawSharedPdfHighlightAnnotation(
     annotation: SharedPdfAnnotation,
-    bounds: PdfPageBounds,
+    bounds: List<PdfPageBounds>,
     canvasSize: IntSize,
     overlayStyle: SharedPdfHighlightAnnotationOverlayStyle
 ) {
-    val topLeft = bounds.topLeft(canvasSize)
-    val size = bounds.size(canvasSize)
+    if (canvasSize.width <= 0 || canvasSize.height <= 0) return
+    val canvasWidth = canvasSize.width.toFloat()
+    val canvasHeight = canvasSize.height.toFloat()
+
     when (annotation.highlightStyle) {
-        HighlightStyle.BACKGROUND -> drawRect(
-            color = overlayStyle.color,
-            topLeft = topLeft,
-            size = size,
-            blendMode = overlayStyle.blendMode
-        )
-        HighlightStyle.UNDERLINE -> drawSharedPdfHighlightLine(
+        HighlightStyle.BACKGROUND -> bounds.forEach { bound ->
+            drawRect(
+                color = overlayStyle.color,
+                topLeft = bound.topLeft(canvasSize),
+                size = bound.size(canvasSize),
+                blendMode = overlayStyle.blendMode
+            )
+        }
+        HighlightStyle.UNDERLINE -> drawSharedPdfHighlightDecoration(
+            bounds = bounds,
+            canvasWidth = canvasWidth,
+            canvasHeight = canvasHeight,
             color = overlayStyle.lineColor,
-            topLeft = topLeft,
-            size = size,
-            y = topLeft.y + size.height * 0.86f
+            wave = false,
+            strikethrough = false,
         )
-        HighlightStyle.WAVY_UNDERLINE -> drawSharedPdfHighlightWave(
+        HighlightStyle.WAVY_UNDERLINE -> drawSharedPdfHighlightDecoration(
+            bounds = bounds,
+            canvasWidth = canvasWidth,
+            canvasHeight = canvasHeight,
             color = overlayStyle.lineColor,
-            topLeft = topLeft,
-            size = size,
-            baselineY = topLeft.y + size.height * 0.86f
+            wave = true,
+            strikethrough = false,
         )
-        HighlightStyle.STRIKETHROUGH -> drawSharedPdfHighlightLine(
+        HighlightStyle.STRIKETHROUGH -> drawSharedPdfHighlightDecoration(
+            bounds = bounds,
+            canvasWidth = canvasWidth,
+            canvasHeight = canvasHeight,
             color = overlayStyle.lineColor,
-            topLeft = topLeft,
-            size = size,
-            y = topLeft.y + size.height * 0.52f
+            wave = false,
+            strikethrough = true,
         )
     }
 }
 
-internal fun DrawScope.drawSharedPdfHighlightLine(
+/**
+ * Draws the underline / wavy underline / strikethrough for every text line of one highlight.
+ *
+ * One [Path] per line: a highlight that pdfium split into several font runs on the same line is
+ * unioned by [pdfHighlightLines], so the stroke is continuous instead of restarting per rect.
+ */
+private fun DrawScope.drawSharedPdfHighlightDecoration(
+    bounds: List<PdfPageBounds>,
+    canvasWidth: Float,
+    canvasHeight: Float,
     color: Color,
-    topLeft: Offset,
-    size: Size,
-    y: Float
+    wave: Boolean,
+    strikethrough: Boolean,
 ) {
-    if (size.width <= 0f || size.height <= 0f) return
-    drawLine(
-        color = color,
-        start = Offset(topLeft.x, y),
-        end = Offset(topLeft.x + size.width, y),
-        strokeWidth = (size.height * 0.08f).coerceIn(1.5f, 4f),
-        cap = StrokeCap.Round
+    val lines = pdfHighlightLines(
+        bounds.map { it.toPdfHighlightRect(canvasWidth, canvasHeight) }
     )
-}
-
-internal fun DrawScope.drawSharedPdfHighlightWave(
-    color: Color,
-    topLeft: Offset,
-    size: Size,
-    baselineY: Float
-) {
-    if (size.width <= 0f || size.height <= 0f) return
-    val amplitude = (size.height * 0.08f).coerceIn(1.2f, 3.5f)
-    val wavelength = (size.height * 0.62f).coerceIn(6f, 14f)
-    val path = Path()
-    var x = topLeft.x
-    val endX = topLeft.x + size.width
-    path.moveTo(x, baselineY)
-    while (x < endX) {
-        val midX = (x + wavelength / 2f).coerceAtMost(endX)
-        val nextX = (x + wavelength).coerceAtMost(endX)
-        path.quadraticBezierTo(x + wavelength / 4f, baselineY - amplitude, midX, baselineY)
-        path.quadraticBezierTo(x + wavelength * 0.75f, baselineY + amplitude, nextX, baselineY)
-        x += wavelength
+    lines.forEach { line ->
+        val style = pdfHighlightStrokeStyle(line.height)
+        val path = if (wave) {
+            pdfHighlightWavePath(style, line)
+        } else {
+            pdfHighlightLinePath(line, strikethrough)
+        }
+        if (path.isEmpty) return@forEach
+        drawPath(
+            path = path,
+            color = color,
+            style = Stroke(
+                width = if (wave) style.waveStrokeWidth else style.lineStrokeWidth,
+                cap = StrokeCap.Round,
+            ),
+        )
     }
-    drawPath(
-        path = path,
-        color = color,
-        style = Stroke(width = (size.height * 0.06f).coerceIn(1.2f, 3f), cap = StrokeCap.Round)
-    )
 }
 
 internal data class SharedPdfHighlightAnnotationOverlayStyle(
@@ -857,7 +873,46 @@ internal fun DrawScope.drawInkRenderData(
     }
 }
 
-internal fun DrawScope.drawMatteCylinder(color: Color, rect: Rect) {
+// Pen-icon head primitives.
+//
+// Public because Android's `PenIcons.kt` draws the same shapes and used to keep its own
+// copy of each (parity item B8). The two copies had genuinely drifted: shared's nib slit
+// was `strokeWidth = 1.2f` against Android's `2f`, which is visible -- DrawScope stroke
+// widths are in pixels, so iOS drew a ~1px slit and Android a 2px one. Shared is corrected
+// to Android here and Android now calls these instead of duplicating them.
+//
+// Note: the chisel "face" call below looked like a second visual drift but is not; see the
+// comment on it.
+//
+// These are not unit-testable in this stack: `Path` has no value equality and reports
+// empty bounds off-device, so path geometry cannot be asserted. Keeping one copy is the
+// guard; visual changes here need a device check.
+
+/**
+ * Brush head, ported from Android's `PenIcons.kt` (parity item B8).
+ *
+ * There is no `PdfInkTool.BRUSH` — Android has no brush tool either, `PenType.BRUSH` is
+ * a debug-only preview variant (see `PenPlayground`). This primitive lives in shared so
+ * all seven head shapes are single-sourced and a future brush tool has somewhere to draw.
+ */
+fun DrawScope.drawBrushHead(inkColor: Color, rect: Rect) {
+    val centerX = rect.left + rect.width / 2
+    val brushPath = Path().apply {
+        moveTo(rect.left + rect.width * 0.15f, rect.bottom)
+        lineTo(rect.right - rect.width * 0.15f, rect.bottom)
+        quadraticTo(rect.right, rect.bottom - rect.height * 0.4f, centerX, rect.top)
+        quadraticTo(rect.left, rect.bottom - rect.height * 0.4f, rect.left + rect.width * 0.15f, rect.bottom)
+        close()
+    }
+    val gradient = Brush.radialGradient(
+        colors = listOf(inkColor.lighter(0.4f), inkColor.darker(0.6f)),
+        center = Offset(centerX, rect.top + rect.height * 0.3f),
+        radius = rect.height
+    )
+    drawPath(path = brushPath, brush = gradient)
+}
+
+fun DrawScope.drawMatteCylinder(color: Color, rect: Rect) {
     drawRect(
         brush = Brush.horizontalGradient(
             0.0f to color.darker(0.6f),
@@ -873,7 +928,7 @@ internal fun DrawScope.drawMatteCylinder(color: Color, rect: Rect) {
     )
 }
 
-internal fun DrawScope.drawFountainNib(metalColor: Color, inkColor: Color, rect: Rect) {
+fun DrawScope.drawFountainNib(metalColor: Color, inkColor: Color, rect: Rect) {
     val centerX = rect.left + rect.width / 2f
     val path = Path().apply {
         moveTo(rect.left + rect.width * 0.15f, rect.bottom)
@@ -894,11 +949,11 @@ internal fun DrawScope.drawFountainNib(metalColor: Color, inkColor: Color, rect:
         )
     )
     drawCircle(Color.Black.copy(alpha = 0.7f), radius = rect.width * 0.06f, center = Offset(centerX, rect.bottom - rect.height * 0.5f))
-    drawLine(Color.Black.copy(alpha = 0.6f), start = Offset(centerX, rect.top), end = Offset(centerX, rect.bottom - rect.height * 0.5f), strokeWidth = 1.2f)
+    drawLine(Color.Black.copy(alpha = 0.6f), start = Offset(centerX, rect.top), end = Offset(centerX, rect.bottom - rect.height * 0.5f), strokeWidth = 2f)
     drawCircle(inkColor.copy(alpha = 0.5f), radius = rect.width * 0.04f, center = Offset(centerX, rect.bottom - rect.height * 0.5f))
 }
 
-internal fun DrawScope.drawMarkerHead(inkColor: Color, rect: Rect) {
+fun DrawScope.drawMarkerHead(inkColor: Color, rect: Rect) {
     val centerX = rect.left + rect.width / 2f
     val plasticColor = Color(0xFF616161)
     val coneHeight = rect.height * 0.8f
@@ -928,7 +983,7 @@ internal fun DrawScope.drawMarkerHead(inkColor: Color, rect: Rect) {
     drawPath(path = tipPath, color = inkColor)
 }
 
-internal fun DrawScope.drawPencilHead(inkColor: Color, rect: Rect) {
+fun DrawScope.drawPencilHead(inkColor: Color, rect: Rect) {
     val centerX = rect.left + rect.width / 2f
     val woodColor = Color(0xFFFFCC80)
     val woodPath = Path().apply {
@@ -966,7 +1021,7 @@ internal fun DrawScope.drawPencilHead(inkColor: Color, rect: Rect) {
     drawPath(path = leadPath, color = inkColor)
 }
 
-internal fun DrawScope.drawHighlighterChiselParts(color: Color, collarRect: Rect, tipRect: Rect) {
+fun DrawScope.drawHighlighterChiselParts(color: Color, collarRect: Rect, tipRect: Rect) {
     drawMatteCylinder(color, collarRect)
     val bodyColor = Color(0xFF454545)
     val neckHeight = tipRect.height * 0.65f
@@ -1012,9 +1067,31 @@ internal fun DrawScope.drawHighlighterChiselParts(color: Color, collarRect: Rect
             endX = centerX + neckTopHalfWidth
         )
     )
+
+    // Looks like a slanted top face for the chisel, but it encloses ZERO area on
+    // every platform: the quadratic's control point
+    // (centerX, tipRect.top + slantDrop * 0.5f) lies exactly on the chord joining
+    // the two endpoints, so the curve retraces the straight line and the closed
+    // path fills nothing.
+    //
+    // Verified on the iOS simulator by temporarily filling this with magenta: not a
+    // single magenta pixel is rasterised. Android has the same dead call, so the
+    // chisel cap looks identical on both and there was never an iOS/Android
+    // difference here — an earlier note in the parity doc claimed otherwise and was
+    // wrong.
+    //
+    // Kept verbatim from Android so the two remain a single source. It is safe to
+    // delete from both: rendering is provably unchanged.
+    val facePath = Path().apply {
+        moveTo(centerX - neckTopHalfWidth, tipRect.top)
+        lineTo(centerX + neckTopHalfWidth, tipRect.top + slantDrop)
+        quadraticTo(centerX, tipRect.top + slantDrop * 0.5f, centerX - neckTopHalfWidth, tipRect.top)
+        close()
+    }
+    drawPath(path = facePath, color = color.lighter(0.2f))
 }
 
-internal fun DrawScope.drawHighlighterRoundParts(color: Color, collarRect: Rect, tipRect: Rect) {
+fun DrawScope.drawHighlighterRoundParts(color: Color, collarRect: Rect, tipRect: Rect) {
     drawMatteCylinder(color, collarRect)
     val bodyColor = Color(0xFF454545)
     val neckHeight = tipRect.height * 0.65f
@@ -1391,7 +1468,7 @@ internal fun PdfPageBounds.size(canvasSize: IntSize): Size {
     return Size((right - left) * canvasSize.width, (bottom - top) * canvasSize.height)
 }
 
-internal fun Color.darker(factor: Float = 0.7f): Color {
+fun Color.darker(factor: Float = 0.7f): Color {
     return Color(
         red = red * factor,
         green = green * factor,
@@ -1400,7 +1477,7 @@ internal fun Color.darker(factor: Float = 0.7f): Color {
     )
 }
 
-internal fun Color.lighter(factor: Float = 0.3f): Color {
+fun Color.lighter(factor: Float = 0.3f): Color {
     return Color(
         red = red + (1 - red) * factor,
         green = green + (1 - green) * factor,

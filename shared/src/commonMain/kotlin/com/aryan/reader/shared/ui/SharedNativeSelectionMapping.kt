@@ -25,6 +25,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.paginatedreader.EpubChapterTextIndex
+import com.aryan.reader.paginatedreader.ReaderCfiPoint
 import com.aryan.reader.paginatedreader.SemanticBlock
 import com.aryan.reader.paginatedreader.SemanticHeader
 import com.aryan.reader.paginatedreader.SemanticImage
@@ -33,10 +35,13 @@ import com.aryan.reader.paginatedreader.SemanticMath
 import com.aryan.reader.paginatedreader.SemanticParagraph
 import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
-import com.aryan.reader.shared.HighlightColor
+import com.aryan.reader.paginatedreader.readerCfiPathStrictlyBetween
+import com.aryan.reader.paginatedreader.readerCfiPointOrNull
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.UserHighlight
+import com.aryan.reader.shared.epubHighlightColorTag
+import com.aryan.reader.shared.legacyEpubHighlightColorForArgb
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedEpubCutoffDiagnosticsTag
@@ -45,15 +50,59 @@ import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-internal fun List<UserHighlight>.visibleInPage(page: ReaderPage): List<UserHighlight> {
+/**
+ * The highlights this page shows, and — when [chapterTextIndex] is given — decided by the same
+ * resolver the painters use.
+ *
+ * Scoping and painting have to agree, or a highlight appears on a page it cannot paint on. When the
+ * index is available the question "does this page show it" becomes "does this page own a block the
+ * highlight resolved to", which is exactly what the painter asks, so the two cannot disagree and a
+ * repeated sentence cannot appear on every page holding a copy of it. Without the index the older
+ * locator rules apply, which is the path desktop still takes.
+ */
+internal fun List<UserHighlight>.visibleInPage(
+    page: ReaderPage,
+    chapterTextIndex: EpubChapterTextIndex? = null
+): List<UserHighlight> {
     return filter { highlight ->
         val locator = highlight.locator.withFallbacks(
             chapterIndex = highlight.chapterIndex,
             cfi = highlight.cfi,
             textQuote = highlight.text
         )
-        (locator.chapterIndex ?: highlight.chapterIndex) == page.chapterIndex &&
+        if ((locator.chapterIndex ?: highlight.chapterIndex) != page.chapterIndex) return@filter false
+        if (chapterTextIndex == null) {
             page.containsNativeHighlightLocator(locator, highlight.cfi)
+        } else {
+            page.ownsResolvedHighlight(highlight, chapterTextIndex, locator, highlight.cfi)
+        }
+    }
+}
+
+/**
+ * Whether a block on this page holds part of [highlight]'s resolved location.
+ *
+ * A page the paginator could not split into blocks has no block to own anything, so it falls back to
+ * the locator rules rather than silently dropping the highlight: those pages paint from their own
+ * text, where a per-block decision cannot apply.
+ */
+private fun ReaderPage.ownsResolvedHighlight(
+    highlight: UserHighlight,
+    chapterTextIndex: EpubChapterTextIndex,
+    locator: ReaderLocator,
+    fallbackCfi: String
+): Boolean {
+    val blocks = semanticBlocks.flattenNativeSemanticBlocks().filterIsInstance<SemanticTextBlock>()
+    if (blocks.isEmpty()) return containsNativeHighlightLocator(locator, fallbackCfi)
+    return blocks.any { block ->
+        val segment = chapterTextIndex.rangeInBlock(
+            highlight = highlight,
+            blockIndex = block.blockIndex,
+            blockCfi = block.cfi
+        ) ?: return@any false
+        val from = segment.localStart.coerceIn(0, block.text.length)
+        val to = segment.localEnd.coerceIn(from, block.text.length)
+        to > from
     }
 }
 
@@ -109,7 +158,7 @@ internal fun ReaderPage.containsNativeSourceCfiLocator(locator: ReaderLocator, f
         ?: return false
     val blocks = semanticBlocks.flattenNativeSemanticBlocks().filterIsInstance<SemanticTextBlock>()
     if (blocks.isEmpty()) return false
-    val parts = cfi.split('|').mapNotNull { it.sharedNativeCfiPointOrNull(allowMissingOffset = true) }
+    val parts = cfi.split('|').mapNotNull { it.sharedNativeCfiPointOrNull() }
     val startPoint = parts.firstOrNull() ?: return false
     val endPoint = parts.lastOrNull() ?: startPoint
     val quoteLength = locator.textQuote?.length ?: 0
@@ -120,7 +169,7 @@ internal fun ReaderPage.containsNativeSourceCfiLocator(locator: ReaderLocator, f
         val isIntermediate = parts.size > 1 &&
             !startMatches &&
             !endMatches &&
-            sharedNativeCfiPathStrictlyBetween(blockPath, startPoint.path, endPoint.path)
+            readerCfiPathStrictlyBetween(blockPath, startPoint.path, endPoint.path)
         if (!startMatches && !endMatches && !isIntermediate) return@any false
         val blockStart = block.startCharOffsetInSource
         val blockEnd = blockStart + block.text.length
@@ -236,12 +285,123 @@ internal fun AnnotatedString.Builder.applyHighlightToTextRange(
     logResult("no_match", null)
 }
 
-internal fun UserHighlight.nativeSpanStyle(): SpanStyle {
-    return when (style) {
-        HighlightStyle.BACKGROUND -> SpanStyle(background = renderColor(legacyAlpha = 0.38f))
-        HighlightStyle.UNDERLINE, HighlightStyle.WAVY_UNDERLINE -> SpanStyle(textDecoration = TextDecoration.Underline)
-        HighlightStyle.STRIKETHROUGH -> SpanStyle(textDecoration = TextDecoration.LineThrough)
+/**
+ * Applies several highlights to one block, resolving each range once.
+ *
+ * Background highlights are merged before painting so that two translucent highlights of the same
+ * colour do not compound where they overlap. Compose resolves span attributes in insertion order, so
+ * applying both separately left the shared stretch darker than the rest of the highlight, which reads
+ * as a rendering fault rather than as two highlights. Line styles are applied per highlight: they
+ * paint a decoration rather than a fill, so overlap is not visible for them.
+ *
+ * Every highlight's identity is still recorded as an annotation, including across a merged region, so
+ * tapping an overlapping stretch still resolves to a highlight.
+ */
+internal fun AnnotatedString.Builder.applyHighlightsToTextRanges(
+    highlights: List<UserHighlight>,
+    chapterIndex: Int? = null,
+    pageIndex: Int? = null,
+    blockCfi: String? = null,
+    blockIndex: Int? = null,
+    blockCharOffset: Int? = null,
+    textStartOffset: Int,
+    textLength: Int,
+    text: String? = null,
+    chapterTextIndex: EpubChapterTextIndex? = null
+) {
+    if (highlights.isEmpty()) return
+
+    val resolved = highlights.mapNotNull { highlight ->
+        sharedNativeHighlightRangeForBlock(
+            highlight = highlight,
+            blockCfi = blockCfi,
+            textStartOffset = textStartOffset,
+            textLength = textLength,
+            text = text,
+            blockIndex = blockIndex,
+            blockCharOffset = blockCharOffset,
+            chapterTextIndex = chapterTextIndex
+        )?.let { highlight to it }
     }
+    if (resolved.isEmpty()) return
+
+    // Painting and advertising are separate decisions. A read-aloud band is paint-only: it is drawn
+    // like any highlight but never reported as one, because nothing stores it and no highlight list
+    // contains its id. Annotating it meant tapping a spoken sentence opened the selection sheet on an
+    // id that could not be found — not recolourable, not deletable — and, since the band covered
+    // whatever was under it, it could shadow a real highlight there.
+    //
+    // The plan decides what to fill; the annotations below record who owns each range, which merging
+    // does not and must not destroy — two highlights drawn as one fill are still two highlights to
+    // tap on.
+    val plan = SharedNativeHighlightPaintPlan.build(
+        resolved.map { (highlight, range) ->
+            PaintableHighlight(highlight, listOf(range.start until range.end))
+        }
+    )
+    for (group in plan.groups) {
+        for (range in group.ranges) {
+            val span = nativeSpanStyle(color = group.color, style = group.style)
+            addStyle(style = span, start = range.first, end = range.last + 1)
+        }
+    }
+
+    for ((highlight, range) in resolved) {
+        if (highlight.isTransientPlaybackBand) continue
+        addStringAnnotation(ReaderNativeAnnotationHighlight, highlight.id, range.start, range.end)
+    }
+}
+
+/**
+ * Merges overlapping ranges into the smallest set of disjoint ranges covering the same characters.
+ *
+ * Ranges that merely touch are left alone: two adjacent highlights stay two spans, so editing or
+ * recolouring one never affects the other.
+ */
+internal fun mergeHighlightRanges(ranges: List<SharedNativeReaderTextRange>): List<SharedNativeReaderTextRange> {
+    if (ranges.size < 2) return ranges
+    val sorted = ranges.sortedWith(compareBy({ it.start }, { it.end }))
+    val merged = mutableListOf<SharedNativeReaderTextRange>()
+    for (range in sorted) {
+        val last = merged.lastOrNull()
+        if (last != null && range.start < last.end) {
+            merged[merged.lastIndex] = SharedNativeReaderTextRange(last.start, maxOf(last.end, range.end))
+        } else {
+            merged += range
+        }
+    }
+    return merged
+}
+
+/** Reads the inclusive-start, exclusive-end ranges a renderer's `getPathForRange` expects. */
+
+internal fun UserHighlight.nativeSpanStyle(): SpanStyle = nativeSpanStyle(
+    color = renderColor(legacyAlpha = SharedNativeHighlightPaintPlan.LEGACY_HIGHLIGHT_ALPHA),
+    style = style
+)
+
+/**
+ * Paint-only span for a highlight, given its colour and style.
+ *
+ * Background highlights paint a background, line styles paint a decoration. Line styles must carry
+ * the colour explicitly: without it the text-decoration inherits the text colour, so an underline
+ * highlight silently loses its colour wherever the two differ.
+ *
+ * Layout-affecting metrics are never set. `SpanStyle` carries no line height, and leaving font size,
+ * letter spacing, baseline shift and transform unspecified is what keeps a highlight from shifting
+ * the text around it.
+ */
+internal fun nativeSpanStyle(color: Color, style: HighlightStyle): SpanStyle = when (style) {
+    HighlightStyle.BACKGROUND -> SpanStyle(background = color)
+    HighlightStyle.UNDERLINE, HighlightStyle.WAVY_UNDERLINE -> SpanStyle(
+        textDecoration = TextDecoration.Underline,
+        color = color
+    )
+
+    HighlightStyle.STRIKETHROUGH -> SpanStyle(
+        textDecoration = TextDecoration.LineThrough,
+        color = color
+    )
 }
 
 internal fun logNativeHighlightMapResult(
@@ -413,7 +573,7 @@ internal fun UserHighlight.sharedNativeSourceCfi(): String {
 internal fun UserHighlight.hasSharedNativeMultipartCfiRange(): Boolean {
     val parts = sharedNativeSourceCfi()
         .split('|')
-        .mapNotNull { it.sharedNativeCfiPointOrNull(allowMissingOffset = true) }
+        .mapNotNull { it.sharedNativeCfiPointOrNull() }
     if (parts.size < 2) return false
     val start = parts.first().path
     return parts.drop(1).any { !sharedNativeCfiPathsEquivalent(start, it.path) }
@@ -423,7 +583,7 @@ internal fun UserHighlight.sharedNativeCfiTouchesBlock(blockCfi: String?): Boole
     val blockPath = blockCfi?.takeIf { it.startsWith("/") } ?: return false
     return sharedNativeSourceCfi()
         .split('|')
-        .mapNotNull { it.sharedNativeCfiPointOrNull(allowMissingOffset = true) }
+        .mapNotNull { it.sharedNativeCfiPointOrNull() }
         .any { sharedNativeCfiPathsEquivalent(it.path, blockPath) }
 }
 
@@ -529,8 +689,24 @@ internal fun sharedNativeHighlightRangeForBlock(
     textLength: Int,
     text: String?,
     blockIndex: Int? = null,
-    blockCharOffset: Int? = null
+    blockCharOffset: Int? = null,
+    chapterTextIndex: EpubChapterTextIndex? = null
 ): SharedNativeReaderTextRange? {
+    // With a chapter index the resolver decides, and the legacy chain below never runs. The chain's
+    // second step intersects a locator's offsets with the block's, and block offsets are
+    // element-relative (§4), so that intersection compares two coordinate spaces; the third step
+    // matches text per block, which paints a repeated sentence on every block holding a copy. Both
+    // are kept only as a fallback for surfaces with no index, such as desktop.
+    if (chapterTextIndex != null) {
+        val segment = chapterTextIndex.rangeInBlock(
+            highlight = highlight,
+            blockIndex = blockIndex,
+            blockCfi = blockCfi
+        ) ?: return null
+        val from = segment.localStart.coerceIn(0, textLength)
+        val to = segment.localEnd.coerceIn(from, textLength)
+        return if (to > from) SharedNativeReaderTextRange(from, to) else null
+    }
     sharedNativeBlockLocatorHighlightRangeInBlock(
         highlight = highlight,
         blockIndex = blockIndex,
@@ -604,12 +780,23 @@ internal fun AnnotatedString.Builder.applySelectionToTextRange(
     }
 }
 
-internal fun AnnotatedString.stringAnnotationAt(tag: String, offset: Int): String? {
-    if (isEmpty()) return null
+/**
+ * The tag's annotations covering an offset, in the order they were added.
+ *
+ * All of them, not the first. A reader may highlight the same words twice, and those annotations
+ * overlap; taking the first made whichever highlight was added second unreachable by tap, so one of
+ * the two could not be opened, recoloured or deleted.
+ */
+internal fun AnnotatedString.stringAnnotationsAt(tag: String, offset: Int): List<String> {
+    if (isEmpty()) return emptyList()
     val start = offset.coerceIn(0, (length - 1).coerceAtLeast(0))
     val end = (start + 1).coerceAtMost(length)
-    return getStringAnnotations(tag, start, end).firstOrNull()?.item
+    return getStringAnnotations(tag, start, end).map { it.item }
 }
+
+/** The last of [stringAnnotationsAt]: the annotation drawn on top, and so the one a tap means. */
+internal fun AnnotatedString.stringAnnotationAt(tag: String, offset: Int): String? =
+    stringAnnotationsAt(tag, offset).lastOrNull()
 
 internal fun sharedNativeReaderSelectionGestureKey(
     textBlockKey: String,
@@ -987,6 +1174,7 @@ internal fun sharedNativeSelectionRect(ranges: List<SharedNativeSelectedTextRang
     }
 }
 
+/** A half-open character range: [start] inclusive, [end] exclusive. */
 internal data class SharedNativeReaderTextRange(
     val start: Int,
     val end: Int
@@ -1012,11 +1200,6 @@ internal fun sharedNativeReaderTrimmedWordRange(
     }
 }
 
-internal data class SharedNativeCfiPoint(
-    val path: String,
-    val offset: Int
-)
-
 internal fun sharedNativeHighlightRangeInBlock(
     highlight: UserHighlight,
     blockCfi: String?,
@@ -1033,16 +1216,20 @@ internal fun sharedNativeHighlightRangeInBlock(
     val endMatches = sharedNativeCfiPathsEquivalent(end.path, blockPath)
     val isIntermediate = !startMatches && !endMatches &&
         parts.size > 1 &&
-        sharedNativeCfiPathStrictlyBetween(blockPath, start.path, end.path)
+        readerCfiPathStrictlyBetween(blockPath, start.path, end.path)
     if (!startMatches && !endMatches && !isIntermediate) return null
 
+    // Android benchmark (`cfiOffsetToBlockLocal`): an offset that fits neither
+    // interpretation belongs to a different block, so reject the whole mapping rather
+    // than clamping a raw offset onto this block's tail -- that used to paint ghost
+    // highlights. Shared previously returned the raw offset here and then coerced it.
     var localStart = if (startMatches) {
-        sharedNativeCfiOffsetToLocal(start.offset, textStartOffset, textLength)
+        sharedNativeScopedOffsetToLocalOrNull(start.offset, textStartOffset, textLength) ?: return null
     } else {
         0
     }
     var localEnd = if (endMatches) {
-        sharedNativeCfiOffsetToLocal(end.offset, textStartOffset, textLength)
+        sharedNativeScopedOffsetToLocalOrNull(end.offset, textStartOffset, textLength) ?: return null
     } else {
         textLength
     }
@@ -1075,24 +1262,12 @@ internal fun sharedNativeHighlightRangeInBlock(
     return cfiRange ?: quoteRange
 }
 
-internal fun sharedNativeCfiOffsetToLocal(offset: Int, textStartOffset: Int, textLength: Int): Int {
-    return when {
-        offset in 0..textLength -> offset
-        offset in textStartOffset..(textStartOffset + textLength) -> offset - textStartOffset
-        else -> offset
-    }
-}
-
-internal fun String.sharedNativeCfiPointOrNull(allowMissingOffset: Boolean = false): SharedNativeCfiPoint? {
-    val separator = lastIndexOf(':')
-    if (separator <= 0 || separator == lastIndex) {
-        if (!allowMissingOffset) return null
-        return SharedNativeCfiPoint(takeIf { it.startsWith("/") } ?: return null, 0)
-    }
-    val path = substring(0, separator).takeIf { it.startsWith("/") } ?: return null
-    val offset = substring(separator + 1).toIntOrNull() ?: return null
-    return SharedNativeCfiPoint(path, offset)
-}
+/**
+ * Split a `path:offset` CFI point. Delegates to the shared CFI arithmetic, which is Android's
+ * `CfiUtils` body moved verbatim — see `ReaderCfiPaths.kt` for why a malformed offset suffix
+ * resolves to 0 rather than rejecting the point.
+ */
+internal fun String.sharedNativeCfiPointOrNull(): ReaderCfiPoint? = readerCfiPointOrNull(this)
 
 internal fun sharedNativeCfiPathsEquivalent(first: String, second: String): Boolean {
     if (first == second || first.startsWith("$second/") || second.startsWith("$first/")) return true
@@ -1104,40 +1279,19 @@ internal fun sharedNativeCfiPathsEquivalent(first: String, second: String): Bool
         firstParts.drop(1) == secondParts.drop(1)
 }
 
-internal fun sharedNativeCfiPathStrictlyBetween(candidate: String, start: String, end: String): Boolean {
-    val candidateParts = candidate.sharedNativeCfiNumericPathParts() ?: return false
-    val startParts = start.sharedNativeCfiNumericPathParts() ?: return false
-    val endParts = end.sharedNativeCfiNumericPathParts() ?: return false
-    return sharedNativeCompareCfiPathParts(candidateParts, startParts) > 0 &&
-        sharedNativeCompareCfiPathParts(candidateParts, endParts) < 0
-}
-
-internal fun String.sharedNativeCfiNumericPathParts(): List<Int>? {
-    val parts = split('/').filter { it.isNotEmpty() }
-    if (parts.isEmpty()) return null
-    return parts.map { it.toIntOrNull() ?: return null }
-}
-
-internal fun sharedNativeCompareCfiPathParts(first: List<Int>, second: List<Int>): Int {
-    val length = minOf(first.size, second.size)
-    for (index in 0 until length) {
-        val comparison = first[index].compareTo(second[index])
-        if (comparison != 0) return comparison
-    }
-    return first.size.compareTo(second.size)
-}
-
 internal fun sharedNativeReaderHighlightForSelection(
     selection: SharedNativeReaderTextSelection,
-    color: HighlightColor,
+    colorArgb: Int,
     style: HighlightStyle = HighlightStyle.BACKGROUND
 ): UserHighlight {
     val locator = selection.toReaderLocator()
+    val colorToken = epubHighlightColorTag(colorArgb)
     return UserHighlight(
-        id = "native-${selection.chapterIndex}-${selection.startPageIndex}-${selection.startBlockIndex}-${selection.startLocalOffset}-${selection.endPageIndex}-${selection.endBlockIndex}-${selection.endLocalOffset}-${color.id}",
+        id = "native-${selection.chapterIndex}-${selection.startPageIndex}-${selection.startBlockIndex}-${selection.startLocalOffset}-${selection.endPageIndex}-${selection.endBlockIndex}-${selection.endLocalOffset}-$colorToken",
         cfi = selection.cfi,
         text = selection.text,
-        color = color,
+        color = legacyEpubHighlightColorForArgb(colorArgb),
+        colorArgb = colorArgb,
         chapterIndex = selection.chapterIndex,
         style = style,
         locator = locator
@@ -1156,16 +1310,6 @@ internal fun SharedNativeReaderTextSelection.toReaderLocator(): ReaderLocator {
         textQuote = text,
         cfi = cfi
     )
-}
-
-internal fun headerScale(level: Int): Float {
-    return when (level) {
-        1 -> 1.5f
-        2 -> 1.35f
-        3 -> 1.2f
-        4 -> 1.1f
-        else -> 1f
-    }
 }
 
 internal fun sharedNativeListMarker(index: Int, isOrdered: Boolean, listStyleType: String?): String {

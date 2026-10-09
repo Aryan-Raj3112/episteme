@@ -4,6 +4,9 @@ import android.content.Context
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import com.aryan.reader.data.hasSameUtf8Content
+import com.aryan.reader.data.hasSameUtf8ContentAs
+import com.aryan.reader.data.writeJsonAtomically
+import com.aryan.reader.data.writeJsonAtomicallyIfChanged
 import com.aryan.reader.pdf.data.PageLayoutRepository
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfAnnotationRepository
@@ -101,6 +104,102 @@ class PdfReaderRepositoryTest {
         val unicode = File(dir, "unicode.json").apply { writeText("„quote“") }
         assertTrue(unicode.hasSameUtf8Content("„quote“"))
         assertFalse(unicode.hasSameUtf8Content("„quote”"))
+    }
+
+    @Test
+    fun `streaming atomic write reports unchanged and preserves modification time`() {
+        val dir = tempRoot("atomic-stream-noop")
+        val target = File(dir, "annotation.json")
+
+        assertTrue(target.writeJsonAtomicallyIfChanged { it.write("[1]".toByteArray()) })
+        assertEquals("[1]", target.readText())
+
+        val previousModified = 1_700_000_000_000L
+        assertTrue(target.setLastModified(previousModified))
+        assertFalse(target.writeJsonAtomicallyIfChanged { it.write("[1]".toByteArray()) })
+
+        // Unchanged save must not touch mtime (cloud-sync change detection)
+        // nor leave the staging file behind.
+        assertEquals(previousModified, target.lastModified())
+        assertFalse(File(dir, "annotation.json.new").exists())
+    }
+
+    @Test
+    fun `streaming atomic write replaces changed content and leaves no staging file`() {
+        val dir = tempRoot("atomic-stream-change")
+        val target = File(dir, "annotation.json")
+
+        assertTrue(target.writeJsonAtomicallyIfChanged { it.write("[1]".toByteArray()) })
+        assertTrue(target.writeJsonAtomicallyIfChanged { it.write("[2]".toByteArray()) })
+
+        assertEquals("[2]", target.readText())
+        assertFalse(File(dir, "annotation.json.new").exists())
+        assertFalse(File(dir, "annotation.json.bak").exists())
+    }
+
+    @Test
+    fun `failed streaming write preserves the previous payload`() {
+        val dir = tempRoot("atomic-stream-fail")
+        val target = File(dir, "annotation.json")
+        target.writeJsonAtomically("[good]")
+
+        try {
+            target.writeJsonAtomicallyIfChanged { error("encode blew up") }
+            throw AssertionError("expected the streaming write to propagate")
+        } catch (expected: IllegalStateException) {
+            assertEquals("encode blew up", expected.message)
+        }
+
+        // A failed encode must leave the last good sidecar in place.
+        assertEquals("[good]", target.readText())
+    }
+
+    @Test
+    fun `hasSameUtf8ContentAs compares files without materializing them`() {
+        val dir = tempRoot("atomic-compare-files")
+        val a = File(dir, "a.json").apply { writeText("{\"ink\":[1,2,3]}") }
+        val b = File(dir, "b.json").apply { writeText("{\"ink\":[1,2,3]}") }
+        val different = File(dir, "different.json").apply { writeText("{\"ink\":[1,2,4]}") }
+        val shorter = File(dir, "shorter.json").apply { writeText("{\"ink\":[1,2") }
+
+        assertTrue(a.hasSameUtf8ContentAs(b))
+        assertTrue(b.hasSameUtf8ContentAs(a))
+        assertFalse(a.hasSameUtf8ContentAs(different))
+        assertFalse(a.hasSameUtf8ContentAs(shorter))
+        assertFalse(a.hasSameUtf8ContentAs(File(dir, "missing.json")))
+        // Multi-byte content must compare by bytes, not chars.
+        val unicodeA = File(dir, "ua.json").apply { writeText("„quote“") }
+        val unicodeB = File(dir, "ub.json").apply { writeText("„quote“") }
+        val unicodeC = File(dir, "uc.json").apply { writeText("„quote”") }
+        assertTrue(unicodeA.hasSameUtf8ContentAs(unicodeB))
+        assertFalse(unicodeA.hasSameUtf8ContentAs(unicodeC))
+    }
+
+    @Test
+    fun `PdfAnnotationRepository streamed save round trips unicode notes`() = runTest {
+        val context = contextWithFilesDir(tempRoot("annotation-stream-unicode"))
+        val repository = PdfAnnotationRepository(context)
+        val note = "Note with \\ \"quotes\" é中"
+        val annotations = mapOf(
+            0 to listOf(
+                PdfAnnotation(
+                    type = AnnotationType.INK,
+                    inkType = InkType.PEN,
+                    pageIndex = 0,
+                    points = listOf(PdfPoint(0.1f, 0.2f, 123L)),
+                    color = Color.Black,
+                    strokeWidth = 0.01f,
+                    id = "ink-unicode",
+                    note = note,
+                )
+            )
+        )
+
+        repository.saveAnnotations("book", annotations)
+
+        // Streaming encode must produce the same escaping as the DOM encoder,
+        // so notes survive the round trip intact.
+        assertEquals(note, repository.loadAnnotations("book").getValue(0).single().note)
     }
 
     @Test

@@ -45,7 +45,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -914,7 +913,7 @@ private fun SharedOpdsFacetMenu(
             },
             trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) }
         )
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        SharedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             facets.forEach { facet ->
                 DropdownMenuItem(
                     text = { Text(facet.title) },
@@ -1039,7 +1038,7 @@ private fun SharedOpdsBookCard(
                                     }
                                 )
                             }
-                            DropdownMenu(expanded = showFormatMenu, onDismissRequest = { showFormatMenu = false }) {
+                            SharedDropdownMenu(expanded = showFormatMenu, onDismissRequest = { showFormatMenu = false }) {
                                 uniqueAcquisitions.forEach { acquisition ->
                                     DropdownMenuItem(
                                         text = { Text(acquisition.formatName) },

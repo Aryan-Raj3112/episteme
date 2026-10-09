@@ -22,6 +22,7 @@ package com.aryan.reader.epub
 import android.graphics.Bitmap
 import com.aryan.reader.shared.reader.MobileEpubPageTarget
 import com.aryan.reader.shared.reader.MobileEpubTocEntry
+import com.aryan.reader.shared.reader.SharedMediaOverlayIndex
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import java.io.File
@@ -49,6 +50,13 @@ data class EpubBook(
     val seriesName: String? = null,
     val seriesIndex: Double? = null,
     val description: String? = null,
+    /**
+     * EPUB 3 media overlay facts read from the OPF: which spine items narrate, narrator, durations.
+     *
+     * [SharedMediaOverlayIndex.EMPTY] for the overwhelming majority of books. Serialized with the
+     * extracted-book cache on purpose — a narrated book re-opened from cache must still narrate.
+     */
+    val mediaOverlays: SharedMediaOverlayIndex = SharedMediaOverlayIndex.EMPTY,
 )
 
 fun epubContentFilePath(path: String): String = mobileEpubContentFilePath(path)

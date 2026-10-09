@@ -1,8 +1,12 @@
 package com.aryan.reader
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -11,9 +15,11 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -30,18 +36,25 @@ import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavHostController
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.epubreader.FormatSettings as AndroidFormatSettings
+import com.aryan.reader.epubreader.FontSelectionSheetContent
 import com.aryan.reader.epubreader.ReaderFont as AndroidReaderFont
 import com.aryan.reader.epubreader.ReaderTextAlign as AndroidReaderTextAlign
+import com.aryan.reader.epubreader.loadBottomTools
 import com.aryan.reader.epubreader.loadFormatSettings
+import com.aryan.reader.epubreader.loadHiddenTools
+import com.aryan.reader.epubreader.loadToolOrder
 import com.aryan.reader.epubreader.loadPageInfoMode
 import com.aryan.reader.epubreader.loadPageInfoPosition
 import com.aryan.reader.epubreader.loadPullToTurn
 import com.aryan.reader.epubreader.loadPullToTurnMultiplier
 import com.aryan.reader.epubreader.loadSystemUiMode
 import com.aryan.reader.epubreader.loadTapToNavigateSetting
+import com.aryan.reader.epubreader.saveBottomTools
+import com.aryan.reader.epubreader.saveHiddenTools
 import com.aryan.reader.epubreader.savePageInfoMode
 import com.aryan.reader.epubreader.savePageInfoPosition
 import com.aryan.reader.epubreader.savePullToTurn
+import com.aryan.reader.epubreader.saveToolOrder
 import com.aryan.reader.epubreader.savePullToTurnMultiplier
 import com.aryan.reader.epubreader.saveReaderSettings
 import com.aryan.reader.epubreader.saveSystemUiMode
@@ -59,6 +72,9 @@ import com.aryan.reader.savePdfReverseColorMode
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
 import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.CustomFontItem
+import com.aryan.reader.shared.ReaderTheme
+import com.aryan.reader.shared.ReaderTool
+import com.aryan.reader.shared.ReaderToolbarPreferences
 import com.aryan.reader.shared.SharedSettingsAction
 import com.aryan.reader.shared.MobileSettingsMutation
 import com.aryan.reader.shared.MobileSettingsMutationState
@@ -246,6 +262,9 @@ fun SettingsScreen(
     var showRecentLimitDialog by remember { mutableStateOf(false) }
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
     var hideReaderAi by remember { mutableStateOf(loadHideReaderAiFeatures(context)) }
+    // Home > More owned the FPS toggle before that screen was retired; the store is
+    // process-wide so Settings reads it to render the same switch state.
+    val fpsOverlayEnabled = rememberDebugFpsEnabled()
     var epubReaderDefaults by remember(context, uiState.renderMode) {
         mutableStateOf(loadAndroidEpubReaderDefaultSettings(context, uiState.renderMode))
     }
@@ -281,13 +300,42 @@ fun SettingsScreen(
         customFonts.toSharedCustomFontItems()
     }
 
+    // D1: the shared Format page disables its "Choose" button unless a picker is supplied, and
+    // expects it to synchronously return the chosen font path. Reuse the reader's own
+    // font-selection sheet so Settings and the reader cannot drift apart; importing a new file
+    // from inside it goes through the same MainViewModel path the reader uses.
+    var showFontSelectionSheet by remember { mutableStateOf(false) }
+    val fontSelectionSheetState = rememberModalBottomSheetState()
+
+    // D4: the shared hub prints "managed from the reader on this platform" when this is null,
+    // which made the row a dead end. The reader's own prefs already hold the three fields, so
+    // this bridges the shared model to them instead of inventing a second store.
+    var readerToolbarPreferences by remember(context) {
+        mutableStateOf(loadReaderToolbarPreferences(context))
+    }
+
+    // D2: custom themes are stored per-platform; the shared Theme page needs them to show the
+    // custom entries and to let them be created and edited.
+    var customThemes by remember(context) { mutableStateOf(loadCustomThemes(context)) }
+
+    // D3: imported texture ids back the custom-texture swatches in the shared Theme page.
+    var importedTextureIds by remember(context) { mutableStateOf(getImportedTextures(context)) }
+    val texturePickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            importReaderTexture(context, uri)?.let { importedTextureIds = getImportedTextures(context) }
+        }
+    }
+
     // Model build allocates section/item lists; remember on its real inputs
     // so unrelated uiState emissions (progress, sync ticks) skip it.
-    val settingsModel = remember(uiState, hideReaderAi) {
+    val settingsModel = remember(uiState, hideReaderAi, fpsOverlayEnabled) {
         sharedSettingsHubModel(
             androidSettingsHubInput(
                 uiState = uiState,
-                hideReaderAi = hideReaderAi
+                hideReaderAi = hideReaderAi,
+                fpsOverlayEnabled = fpsOverlayEnabled,
             )
         )
     }
@@ -376,6 +424,22 @@ fun SettingsScreen(
                 saveTtsReplacementPreferences(context, preferences)
             },
             customFonts = sharedFonts,
+            // The shared control applies a *synchronously returned* path, but a picker sheet is
+            // asynchronous. So this only requests the sheet and returns blank to opt out of the
+            // shared write-back; the chosen font is applied below from the sheet's own callback.
+            onPickCustomFont = if (showFontSelectionSheet) null else {
+                { showFontSelectionSheet = true; "" }
+            },
+            customReaderThemes = customThemes,
+            onCustomReaderThemesChange = { themes ->
+                customThemes = themes
+                saveCustomThemes(context, themes)
+            },
+            readerCustomTextureIds = importedTextureIds,
+            onImportReaderTexture = { current ->
+                texturePickerLauncher.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp"))
+                current
+            },
             showTopBar = false,
             destination = settingsDestination,
             onDestinationChange = { settingsDestination = it },
@@ -462,7 +526,8 @@ fun SettingsScreen(
                     SharedSettingsAction.TEST_PANEL_DETECTION -> viewModel.testPanelDetection(context)
                     SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION -> viewModel.testSpeechBubbleDetection(context)
                     SharedSettingsAction.EXPORT_LOGS -> viewModel.exportLogsToFile(context)
-                    SharedSettingsAction.DEBUG_ACTIONS -> viewModel.showBanner(context.getString(R.string.debug_actions_existing_menus))
+                    SharedSettingsAction.FPS_OVERLAY ->
+                        DebugFpsStore.setEnabled(context, !fpsOverlayEnabled)
                     SharedSettingsAction.HELP_FEEDBACK -> navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FEEDBACK)
                     SharedSettingsAction.SUPPORT -> navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.SUPPORT_PROJECT)
                     SharedSettingsAction.ABOUT -> showAboutDialog = true
@@ -796,4 +861,28 @@ private fun ReaderSettings.toAndroidRenderMode(): RenderMode {
         ReaderReadingMode.PAGINATED -> RenderMode.PAGINATED
         ReaderReadingMode.VERTICAL -> RenderMode.VERTICAL_SCROLL
     }
+}
+
+// --- D4: bridge the shared toolbar model to the reader's existing prefs ---
+//
+// The reader persists hidden tools, tool order, and bottom tools as *enum names* under
+// `reader_prefs`; the shared model speaks tool *ids*. `ReaderTool.fromId` resolves both spellings,
+// so this is a rename at the boundary rather than a second store — the reader keeps reading the
+// same prefs it always has, and nothing migrates.
+
+private fun loadReaderToolbarPreferences(context: Context): ReaderToolbarPreferences {
+    return ReaderToolbarPreferences(
+        hiddenToolIds = loadHiddenTools(context).mapNotNullTo(mutableSetOf()) { ReaderTool.fromId(it)?.id },
+        toolOrder = loadToolOrder(context),
+        bottomToolIds = loadBottomTools(context).mapNotNullTo(mutableSetOf()) { ReaderTool.fromId(it)?.id },
+    ).sanitized()
+}
+
+private fun saveReaderToolbarPreferences(context: Context, preferences: ReaderToolbarPreferences) {
+    // Write the sanitized form back so a legacy bottom-bar set is upgraded the moment the user
+    // touches this page, rather than waiting for the reader to migrate it.
+    val sanitized = preferences.sanitized()
+    saveHiddenTools(context, sanitized.hiddenToolIds.toSet())
+    saveToolOrder(context, sanitized.toolOrder)
+    saveBottomTools(context, sanitized.bottomToolIds.toSet())
 }

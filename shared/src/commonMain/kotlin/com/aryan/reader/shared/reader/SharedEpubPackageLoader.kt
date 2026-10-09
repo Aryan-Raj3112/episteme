@@ -71,7 +71,9 @@ private fun parseMobileEpubPackage(archive: SharedEpubArchive): ParsedMobileEpub
                 id = id,
                 absPath = resolveMobileEpubPackagePath(opfPath, href),
                 mediaType = item.attribute("media-type").orEmpty(),
-                properties = item.attribute("properties").orEmpty()
+                properties = item.attribute("properties").orEmpty(),
+                mediaOverlay = item.attributeByLocalName("media-overlay")
+                    ?.trim()?.takeIf(String::isNotEmpty)
             )
         }
         .toMap()
@@ -391,6 +393,15 @@ object SharedEpubPackageLoader {
         }
         sharedEpubOpenTrace { "packageLoad tocTitleResolve ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(titleResolveMark))} chapters=${chapters.size} tocEntries=${resolvedToc.size}" }
 
+        // Built from the OPF alone -- no SMIL body is read here. See SharedEpubMediaOverlay: bodies
+        // are parsed per chapter on demand because a well-produced book has one clip per line.
+        val mediaOverlayIndex = sharedMediaOverlayIndex(
+            manifest = manifest,
+            spineIds = spineIds,
+            metaElements = metadata.androidMetadataChildren("meta", "opf:meta")
+                .map(SharedXmlDocumentNode::toMobileEpubMetaElement)
+        )
+
         return SharedEpubBook(
             id = sourceId,
             fileName = resolvedMetadata.fileName,
@@ -405,7 +416,8 @@ object SharedEpubPackageLoader {
             language = resolvedMetadata.language,
             seriesName = resolvedMetadata.seriesName,
             seriesIndex = resolvedMetadata.seriesIndex,
-            description = resolvedMetadata.description
+            description = resolvedMetadata.description,
+            mediaOverlays = mediaOverlayIndex
         ).also { book ->
             sharedEpubOpenTrace {
                 "packageLoad done ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(loadMark))} chapters=${book.chapters.size} " +
@@ -853,7 +865,14 @@ private fun resolveEpubPath(ownerPath: String, reference: String): String {
 private fun resolveMobileEpubPackagePath(ownerPath: String, reference: String): String =
     resolveMobileEpubReference(ownerPath, decodeMobileEpubUrl(reference).substringBefore('#').substringBefore('?'))
 
-private fun safeEpubPathOrNull(path: String): String? {
+/**
+ * Normalizes an archive-relative path, rejecting traversal and absolute paths.
+ *
+ * `internal` rather than private because media-overlay `src` resolution needs the same guarantee:
+ * a `../..` in an overlay's `src` must not escape the container, and re-deriving the check in a
+ * second file is how one of them ends up missing.
+ */
+internal fun safeEpubPathOrNull(path: String): String? {
     if (path.startsWith('/')) return null
     val parts = ArrayDeque<String>()
     path.replace('\\', '/').split('/').forEach { part ->
@@ -869,7 +888,8 @@ private fun safeEpubPathOrNull(path: String): String? {
     return parts.joinToString("/").takeIf(String::isNotBlank)
 }
 
-private fun String.percentDecodeEpubPath(): String {
+/** `internal` so media-overlay path resolution decodes exactly like the loader's does. */
+internal fun String.percentDecodeEpubPath(): String {
     val output = ArrayList<Byte>(length)
     var index = 0
     while (index < length) {

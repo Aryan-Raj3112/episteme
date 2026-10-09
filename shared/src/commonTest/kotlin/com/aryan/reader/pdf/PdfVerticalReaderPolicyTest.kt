@@ -300,6 +300,118 @@ class PdfVerticalReaderPolicyTest {
     }
 
 
+    // --- overscroll --------------------------------------------------------------------------
+
+    @Test
+    fun `motion inside the document range is untouched by overscroll`() {
+        val hardMin = -20_000f
+        val hardMax = 200f
+        listOf(-19_999f, -5_000f, 0f, 199f).forEach { panY ->
+            assertEquals(
+                panY,
+                resolveVerticalPanYWithOverscroll(panY, hardMin, hardMax, viewportHeightPx = 2400f),
+                0.001f,
+            )
+        }
+    }
+
+    /**
+     * The document edge must not be a wall. `animateDecay` against a bare bound stops mid-curve and
+     * gives the reader no signal that there is nothing further; every other Android scrolling surface
+     * lets the content move past the edge and springs back.
+     */
+    @Test
+    fun `pulling past the end of the document stretches instead of clamping`() {
+        val hardMin = -20_000f
+        val hardMax = 200f
+        val viewport = 2400f
+        val requested = hardMin - 300f
+        val resolved = resolveVerticalPanYWithOverscroll(requested, hardMin, hardMax, viewport)
+        // Within the stretch budget the camera tracks the finger one-for-one, so it must have
+        // followed past the edge rather than clamping back to it.
+        assertEquals(requested, resolved, 0.001f)
+        assertTrue(resolved < hardMin, "camera must leave the document bounds: $resolved")
+        assertTrue(
+            resolved >= pdfVerticalOverscrollLimitPx(hardMin, viewport, outwardSign = -1) - 0.001f,
+            "must respect the stretch limit: $resolved",
+        )
+    }
+
+    @Test
+    fun `overscrollIsSymmetricAtBothEnds`() {
+        val viewport = 2400f
+        val hardMin = -20_000f
+        val hardMax = 200f
+        val beyondBottom = resolveVerticalPanYWithOverscroll(hardMin - 300f, hardMin, hardMax, viewport)
+        val beyondTop = resolveVerticalPanYWithOverscroll(hardMax + 300f, hardMin, hardMax, viewport)
+        // Same gesture distance past either edge must produce the same overshoot magnitude.
+        assertEquals(hardMin - beyondBottom, beyondTop - hardMax, 0.001f)
+    }
+
+    @Test
+    fun `overscrollResistsSoTheSurfaceNeverLocks`() {
+        val viewport = 2400f
+        val hardMin = -20_000f
+        val budget = pdfVerticalOverscrollStretchPx(viewport)
+        // A very long pull still moves, but far less than requested.
+        val hugePull = 100_000f
+        val resolved = pdfVerticalOverscrollResist(
+            requestedPanPx = hardMin - hugePull,
+            hardLimitPx = hardMin,
+            viewportHeightPx = viewport,
+            outwardSign = -1,
+        )
+        assertTrue(resolved < hardMin, "must still overshoot")
+        assertTrue(
+            hardMin - resolved < hugePull * 0.5f,
+            "resistance must be substantial: requested=$hugePull got=${hardMin - resolved}",
+        )
+        assertTrue(budget > 0f)
+    }
+
+    @Test
+    fun `resistIsTheIdentityForMotionAwayFromTheEdge`() {
+        // Moving back into the document must pass through untouched.
+        listOf(-19_000f, -1_000f, 0f, 150f).forEach { panY ->
+            assertEquals(
+                panY,
+                pdfVerticalOverscrollResist(
+                    requestedPanPx = panY,
+                    hardLimitPx = -20_000f,
+                    viewportHeightPx = 2400f,
+                    outwardSign = -1,
+                ),
+                0.001f,
+            )
+        }
+    }
+
+    @Test
+    fun `overscrollSurvivesInvalidInput`() {
+        // No viewport: fall back to the hard limit rather than producing a degenerate stretch.
+        assertEquals(
+            -20_000f,
+            resolveVerticalPanYWithOverscroll(-25_000f, -20_000f, 200f, viewportHeightPx = 0f),
+            0.001f,
+        )
+        assertEquals(
+            -20_000f,
+            resolveVerticalPanYWithOverscroll(-25_000f, -20_000f, 200f, viewportHeightPx = Float.NaN),
+            0.001f,
+        )
+        // A non-finite request resolves to the hard limits, never NaN.
+        assertEquals(
+            -20_000f,
+            resolveVerticalPanYWithOverscroll(Float.NaN, -20_000f, 200f, viewportHeightPx = 2400f),
+            0.001f,
+        )
+        assertEquals(
+            -20_000f,
+            resolveVerticalPanYWithOverscroll(Float.POSITIVE_INFINITY, -20_000f, 200f, viewportHeightPx = 2400f),
+            0.001f,
+        )
+    }
+
     private fun theme(id: String, background: Color): ReaderTheme = ReaderTheme(
         id = id,
         name = id,

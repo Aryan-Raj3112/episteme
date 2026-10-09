@@ -19,6 +19,7 @@
  */
 package com.aryan.reader.tts
 
+import com.aryan.reader.shared.readerTtsChunkLabel
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -122,15 +123,9 @@ const val KEY_START_CHUNK_INDEX = "KEY_START_CHUNK_INDEX"
 private const val PREFETCH_LOOKAHEAD = 5
 private const val TTS_SESSION_ACTIVITY_REQUEST_CODE = 4207
 private const val TTS_STREAM_WAV_HEADER_BYTES = 44L
-private const val TTS_STREAM_PCM_BYTES_PER_MS = 48L
-private const val TTS_NOTIFICATION_MIN_DURATION_MS = 1_500L
-private const val TTS_NOTIFICATION_TRAILING_BUFFER_MS = 2_000L
-private const val TTS_NOTIFICATION_AVERAGE_WORD_MS = 550L
-private const val TTS_NOTIFICATION_PUNCTUATION_PAUSE_MS = 120L
 private const val NO_DEFERRED_TRANSITION_PREFETCH_GENERATION = -1
 private const val TTS_MISSING_CHUNK_RETRY_DELAY_MS = 1_000L
 internal const val MAX_CHUNK_GENERATION_FAILURES = 2
-private val TTS_NOTIFICATION_WORD_PATTERN = Regex("""\S+""")
 
 private fun ttsSessionCommand(action: String): SessionCommand {
     return SessionCommand(action, Bundle.EMPTY)
@@ -157,10 +152,10 @@ internal fun resolveTtsTranscriptWindow(currentIndex: Int, chunkCount: Int): Pai
 internal fun resolveReusableTtsPlaylistIndex(
     playlistIndex: Int?,
     direction: Int
-): Int? {
-    if (direction != 1) return null
-    return playlistIndex?.takeIf { it >= 0 }
-}
+): Int? = com.aryan.reader.shared.resolveSharedTtsReusablePlaylistIndex(
+    playlistIndex = playlistIndex,
+    direction = direction,
+)
 
 internal fun shouldAdvanceToTtsPlaylistChunk(
     currentChunkIndex: Int,
@@ -199,7 +194,7 @@ internal fun buildTtsNotificationContextLabel(
     currentChunkIndex: Int,
     totalChunks: Int
 ): String {
-    val chunkLabel = formatReaderTtsChunkLabel(currentChunkIndex, totalChunks)
+    val chunkLabel = readerTtsChunkLabel(currentChunkIndex, totalChunks)
     return buildString {
         if (chapterIndex != null && totalChapters != null) {
             append("Chapter ${chapterIndex + 1} of $totalChapters")
@@ -240,29 +235,28 @@ internal fun shouldSkipExistingTtsPrefetchLoop(
 internal fun canExposeTtsChunkInPlaylist(
     targetChunkIndex: Int,
     playlistChunkIds: List<Int>
-): Boolean {
-    if (targetChunkIndex < 0) return false
-    if (targetChunkIndex in playlistChunkIds) return true
-    return targetChunkIndex == 0 || (targetChunkIndex - 1) in playlistChunkIds
-}
+): Boolean = com.aryan.reader.shared.canExposeSharedTtsChunkInPlaylist(
+    targetChunkIndex = targetChunkIndex,
+    playlistChunkIds = playlistChunkIds,
+)
 
 internal fun resolveContiguousTtsPlaylistInsertPosition(
     targetChunkIndex: Int,
     playlistChunkIds: List<Int>
-): Int? {
-    if (!canExposeTtsChunkInPlaylist(targetChunkIndex, playlistChunkIds)) return null
-    if (targetChunkIndex in playlistChunkIds) return null
-    val largerIndex = playlistChunkIds.indexOfFirst { it > targetChunkIndex }
-    return if (largerIndex >= 0) largerIndex else playlistChunkIds.size
-}
+): Int? = com.aryan.reader.shared.resolveSharedTtsContiguousPlaylistInsertPosition(
+    targetChunkIndex = targetChunkIndex,
+    playlistChunkIds = playlistChunkIds,
+)
 
 internal fun shouldWaitForInFlightTtsSkip(
     direction: Int,
     isTargetPrefetching: Boolean,
     targetPlaylistIndex: Int?
-): Boolean {
-    return direction == 1 && isTargetPrefetching && targetPlaylistIndex == null
-}
+): Boolean = com.aryan.reader.shared.shouldWaitForSharedInFlightTtsSkip(
+    direction = direction,
+    isTargetPrefetching = isTargetPrefetching,
+    targetPlaylistIndex = targetPlaylistIndex,
+)
 
 @Suppress("UNUSED_PARAMETER")
 internal fun resolveNextPlayableTtsChunkIndex(
@@ -277,9 +271,10 @@ internal fun resolveNextPlayableTtsChunkIndex(
 internal fun shouldGiveUpTtsChunkGeneration(
     failureCount: Int,
     maxFailures: Int = MAX_CHUNK_GENERATION_FAILURES
-): Boolean {
-    return failureCount >= maxFailures
-}
+): Boolean = com.aryan.reader.shared.shouldGiveUpSharedTtsChunkGeneration(
+    failureCount = failureCount,
+    maxFailures = maxFailures,
+)
 
 internal fun shouldRetryPrematureTtsStreamTransition(
     transitionReason: Int,
@@ -291,29 +286,16 @@ internal fun shouldRetryPrematureTtsStreamTransition(
         !previousStreamFinished
 }
 
-internal fun resolveTtsStreamPcmDurationMs(totalBytes: Long): Long? {
-    if (totalBytes <= TTS_STREAM_WAV_HEADER_BYTES) return null
-    return ((totalBytes - TTS_STREAM_WAV_HEADER_BYTES) / TTS_STREAM_PCM_BYTES_PER_MS)
-        .coerceAtLeast(1L)
-}
+internal fun resolveTtsStreamPcmDurationMs(totalBytes: Long): Long? =
+    com.aryan.reader.shared.resolveSharedTtsStreamPcmDurationMs(totalBytes)
 
 internal fun estimateTtsNotificationDurationMs(
     text: String,
     currentPositionMs: Long = 0L
-): Long? {
-    val words = TTS_NOTIFICATION_WORD_PATTERN.findAll(text).count()
-    if (words == 0) return null
-    val punctuationPauses = text.count { it == '.' || it == '?' || it == '!' || it == ';' || it == ':' }
-    val estimatedDurationMs = words * TTS_NOTIFICATION_AVERAGE_WORD_MS +
-        punctuationPauses * TTS_NOTIFICATION_PUNCTUATION_PAUSE_MS
-    val playbackPositionMinimumMs = if (currentPositionMs > 0L) {
-        currentPositionMs + TTS_NOTIFICATION_TRAILING_BUFFER_MS
-    } else {
-        TTS_NOTIFICATION_MIN_DURATION_MS
-    }
-    val minimumDurationMs = maxOf(TTS_NOTIFICATION_MIN_DURATION_MS, playbackPositionMinimumMs)
-    return estimatedDurationMs.coerceAtLeast(minimumDurationMs)
-}
+): Long? = com.aryan.reader.shared.estimateSharedTtsNotificationDurationMs(
+    text = text,
+    currentPositionMs = currentPositionMs,
+)
 
 internal fun resolveWavFileDurationMs(file: File): Long? {
     if (!file.exists() || file.length() <= TTS_STREAM_WAV_HEADER_BYTES) return null

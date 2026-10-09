@@ -616,7 +616,6 @@ private fun SharedSettingsDetailPage(
                         )
                     }
                 }
-                SharedSettingsDestination.EPUB_TTS_REPLACEMENTS,
                 SharedSettingsDestination.GLOBAL_TTS_REPLACEMENTS -> {
                     SharedReaderTtsReplacementControls(
                         preferences = ttsReplacementPreferences,
@@ -697,7 +696,6 @@ private fun SharedSettingsDestination.iconForSettingsDestination(): ImageVector 
     return when (this) {
         SharedSettingsDestination.EPUB_TEXT,
         SharedSettingsDestination.EPUB_FORMAT,
-        SharedSettingsDestination.EPUB_TTS_REPLACEMENTS,
         SharedSettingsDestination.GLOBAL_TTS_REPLACEMENTS -> Icons.Default.TextFields
         SharedSettingsDestination.PDF_COMICS,
         SharedSettingsDestination.PDF_APPEARANCE_DEFAULTS,
@@ -739,7 +737,7 @@ private fun SharedSettingsAction.iconForSettings(): ImageVector {
         SharedSettingsAction.LOCAL_OVERRIDE_NOTE,
         SharedSettingsAction.ABOUT -> Icons.Default.Info
         SharedSettingsAction.EXPORT_LOGS,
-        SharedSettingsAction.DEBUG_ACTIONS,
+        SharedSettingsAction.FPS_OVERLAY,
         SharedSettingsAction.TEST_PANEL_DETECTION,
         SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
         SharedSettingsAction.DEVICE_MANAGEMENT,

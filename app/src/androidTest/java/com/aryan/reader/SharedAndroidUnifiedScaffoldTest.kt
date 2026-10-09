@@ -2,6 +2,7 @@ package com.aryan.reader
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -41,10 +42,28 @@ class SharedAndroidUnifiedScaffoldTest {
         composeTestRule.onAllNodesWithTag("UnifiedLibraryNewShelf").assertCountEquals(0)
     }
 
+    @Test
+    fun pullToSyncIsOfferedWhenASyncMechanismExists() {
+        setScaffold(section = MobileUnifiedLibrarySection.HOME, canPullToSync = true)
+
+        composeTestRule.onNodeWithTag("UnifiedLibraryPullToRefresh").assertIsDisplayed()
+    }
+
+    @Test
+    fun pullToSyncIsHiddenWhenNoSyncMechanismExists() {
+        // Cloud sync off with no locally-synced folder means refresh would be a no-op, so
+        // the gesture must not be advertised.
+        setScaffold(section = MobileUnifiedLibrarySection.HOME, canPullToSync = false)
+
+        composeTestRule.onAllNodesWithTag("UnifiedLibraryPullToRefresh").assertCountEquals(0)
+    }
+
     private fun setScaffold(
         section: MobileUnifiedLibrarySection,
-        showingShelf: Boolean,
+        showingShelf: Boolean = false,
         onImport: () -> Unit = {},
+        canPullToSync: Boolean = false,
+        onRefresh: () -> Unit = {},
     ) {
         composeTestRule.setContent {
             MaterialTheme {
@@ -60,6 +79,8 @@ class SharedAndroidUnifiedScaffoldTest {
                     topBar = {},
                     bottomBar = {},
                     sectionContent = { _, _ -> },
+                    canPullToSync = canPullToSync,
+                    onRefresh = onRefresh,
                 )
             }
         }

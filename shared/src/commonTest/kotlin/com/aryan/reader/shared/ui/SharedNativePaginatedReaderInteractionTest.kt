@@ -19,6 +19,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import androidx.compose.ui.graphics.toArgb
 
 class SharedNativePaginatedReaderInteractionTest {
     @Test
@@ -184,7 +185,7 @@ class SharedNativePaginatedReaderInteractionTest {
             text = "selected passage"
         )
 
-        val highlight = sharedNativeReaderHighlightForSelection(selection, HighlightColor.YELLOW)
+        val highlight = sharedNativeReaderHighlightForSelection(selection, HighlightColor.YELLOW.color.toArgb())
 
         assertEquals("desktop:2:120:136", highlight.cfi)
         assertEquals(2, highlight.chapterIndex)
@@ -214,7 +215,7 @@ class SharedNativePaginatedReaderInteractionTest {
             endBaseCfi = "/4/2/10"
         )
 
-        val highlight = sharedNativeReaderHighlightForSelection(selection, HighlightColor.GREEN)
+        val highlight = sharedNativeReaderHighlightForSelection(selection, HighlightColor.GREEN.color.toArgb())
 
         assertEquals("/4/2/8:5|/4/2/10:20", highlight.cfi)
         assertEquals(1, highlight.chapterIndex)

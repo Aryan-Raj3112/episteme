@@ -62,4 +62,40 @@ class SharedMobileEpubNavigationPayloadTest {
         assertTrue(script.contains("setTimeout(scrollEnd, 500)"))
         assertTrue(bigChunk.length > ReaderHtmlDocumentBuilder.MaxInlineVirtualChunkChars)
     }
+
+    @Test
+    fun `restore navigation never approximates and keeps retrying the exact target`() {
+        val script = sharedMobileEpubNavigationScript(
+            locator = ReaderLocator(chapterIndex = 0, startOffset = 0),
+            fragment = null,
+            targetChunkIndex = null,
+            targetChunkHtml = null,
+            preferExact = true,
+        )
+
+        // The reopen restore must not fall back to a ratio or chapter-top
+        // scroll: against a still-settling document those land on the chapter
+        // top and overwrite the exact landing (the reported reset). It retries
+        // exact-only and reports the unresolved case instead.
+        assertTrue(script.contains("exactOnly: true"))
+        assertFalse(script.contains("source: 'ios_mobile_fallback'"))
+        assertFalse(script.contains("'content_ratio'"))
+        assertTrue(script.contains("setInterval"))
+        assertTrue(script.contains("web_navigation_exact_unresolved"))
+    }
+
+    @Test
+    fun `explicit navigation keeps approximate feedback after the exact retry budget`() {
+        val script = sharedMobileEpubNavigationScript(
+            locator = ReaderLocator(chapterIndex = 0, startOffset = 0),
+            fragment = null,
+            targetChunkIndex = null,
+            targetChunkHtml = null,
+        )
+
+        assertFalse(script.contains("exactOnly: true"))
+        assertTrue(script.contains("source: 'ios_mobile'"))
+        assertTrue(script.contains("source: 'ios_mobile_fallback'"))
+        assertTrue(script.contains("setInterval"))
+    }
 }

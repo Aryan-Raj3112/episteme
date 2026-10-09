@@ -13,7 +13,8 @@ import kotlinx.serialization.protobuf.ProtoBuf
 import kotlinx.serialization.protobuf.ProtoNumber
 
 internal const val SharedBookLoadCacheSchemaVersion = 1
-internal const val SharedBookLoadCacheProcessingVersion = 13
+// 13 -> 14: books now carry a media-overlay index, which the cached load result has to include.
+internal const val SharedBookLoadCacheProcessingVersion = 14
 
 enum class SharedBookLoadSemanticMode {
     FULL,

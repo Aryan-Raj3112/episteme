@@ -155,6 +155,7 @@ import com.aryan.reader.shared.SharedAudiobookImportMetadata
 import com.aryan.reader.shared.SharedAudiobookImportRequest
 import com.aryan.reader.shared.SharedAudiobookImportStatus
 import com.aryan.reader.shared.SharedAudiobookFormats
+import com.aryan.reader.shared.sortBooks
 import com.aryan.reader.shared.splitFilesByAudiobookDecodability
 import com.aryan.reader.shared.SharedAudiobookPlaybackRequest
 import com.aryan.reader.shared.SharedAudiobookPlaybackState
@@ -170,11 +171,25 @@ import com.aryan.reader.shared.ReaderTtsOverlaySize
 import com.aryan.reader.shared.resolveReaderTtsOverlaySize
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiFeature
+import com.aryan.reader.shared.ReaderTtsEngineOverride
+import com.aryan.reader.shared.SharedListeningArbiter
+import com.aryan.reader.shared.reader.IosSharedMediaOverlayPlayback
+import com.aryan.reader.shared.reader.SharedMediaOverlayClip
+import com.aryan.reader.shared.SharedListeningSurface
+import com.aryan.reader.shared.SharedTtsEngine
+import com.aryan.reader.shared.sharedListeningSurfaceForTag
+import com.aryan.reader.shared.SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK
+import com.aryan.reader.shared.isCloudTtsModelEnabled
 import com.aryan.reader.shared.readerAiModelById
+import com.aryan.reader.shared.hasSpendableBalance
+import com.aryan.reader.shared.parseSpendGuardSentinel
+import com.aryan.reader.shared.formatSpendGuardCountdown
+import com.aryan.reader.shared.formatMicrosUsd
 import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.AiDefinitionResult
 import com.aryan.reader.shared.RecapResult
 import com.aryan.reader.shared.ReaderExternalLookupService
+import com.aryan.reader.shared.ReaderDefaultDictionaryLookupService
 import com.aryan.reader.shared.ui.IosReaderLookupServices
 import com.aryan.reader.shared.ui.iosInstalledLookupAppSchemes
 import com.aryan.reader.shared.migrateLegacyIosReaderAutoScrollSpeed
@@ -184,8 +199,14 @@ import com.aryan.reader.shared.canOpenMobilePdfTab
 import com.aryan.reader.shared.canUseCloudSync
 import com.aryan.reader.shared.cloudSyncSetupRoute
 import com.aryan.reader.shared.cloudSnapshotHasLocalUpdates
+import com.aryan.reader.shared.booksRemovedByCloudTombstones
 import com.aryan.reader.shared.mergeCloudLibrarySnapshotWithDownloadedBooks
 import com.aryan.reader.shared.enqueueMobileFolderScan
+import com.aryan.reader.shared.LOCAL_FOLDER_SCAN_LOG_TAG
+import com.aryan.reader.shared.LocalFolderRescanPolicy
+import com.aryan.reader.shared.toSharedFolderBookMetadata
+import com.aryan.reader.shared.effectiveScanStatus
+import com.aryan.reader.shared.parseLocalFolderScanStatus
 import com.aryan.reader.shared.mobileExternalFileCloseAction
 import com.aryan.reader.shared.MobileExternalOpenAction
 import com.aryan.reader.shared.mobileExternalOpenAction
@@ -226,6 +247,7 @@ import com.aryan.reader.shared.withNewerReaderSession
 import com.aryan.reader.shared.withPdfReadingProgress
 import com.aryan.reader.shared.withReaderSessionState
 import com.aryan.reader.shared.toSharedMobileLibrarySnapshot
+import com.aryan.reader.shared.preservingSessionFrom
 import com.aryan.reader.shared.toSharedMobileReaderState
 import com.aryan.reader.shared.sharedSettingsHubModel
 import com.aryan.reader.shared.sharedLegalLinksForProfile
@@ -275,6 +297,7 @@ import com.aryan.reader.shared.ui.MobileAccountLegalDisclosure
 import com.aryan.reader.shared.ui.MobileAccountPresentation
 import com.aryan.reader.shared.ui.SharedMobileEpubReaderScreen
 import com.aryan.reader.shared.ui.SharedMobileReaderTtsSettingsSheet
+import com.aryan.reader.shared.ui.toggleSharedMobileTtsVoiceFavorite
 import com.aryan.reader.shared.ui.SharedMobilePdfReaderHost
 import com.aryan.reader.shared.ui.SharedMobilePdfReflowUiState
 import com.aryan.reader.shared.ui.SharedPdfTtsOverlaySize
@@ -307,7 +330,7 @@ import com.aryan.reader.shared.ui.SharedSettingsHub
 import com.aryan.reader.shared.ui.LocalSharedStringResolver
 import com.aryan.reader.shared.ui.SharedStringResolver
 import com.aryan.reader.shared.ui.formatSharedMobileDateTime
-import com.aryan.reader.shared.ui.SharedSupportProjectScreen
+
 import com.aryan.reader.shared.ui.mobileRecentBooks
 import com.aryan.reader.shared.ui.readerBannerMessage
 import com.aryan.reader.shared.ui.readerLiteral
@@ -315,8 +338,10 @@ import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.ui.openSharedMobileExternalUrl
 import com.aryan.reader.shared.ui.rememberSharedMobileEpubLocalTts
 import com.aryan.reader.shared.ui.SharedMobileEpubLocalTtsState
-import com.aryan.reader.shared.ui.withoutIosFolderFilter
+import com.aryan.reader.shared.ui.withoutFolderFilter
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
+import com.aryan.reader.shared.reader.epubPositionSummary
+import com.aryan.reader.shared.reader.logEpubPositionSave
 import com.aryan.reader.shared.reader.sharedEpubOpenTrace
 import com.aryan.reader.shared.reader.sharedEpubOpenTraceElapsedMs
 import com.aryan.reader.shared.reader.sharedEpubOpenTraceMark
@@ -512,6 +537,107 @@ class ReaderIosBridge internal constructor(
     internal var audiobookStopHandler: (() -> Unit)? = null
     internal var audiobookMetadataHandler: ((String, String, (String, String?, String?, Long) -> Unit) -> Unit)? = null
     private var audiobookPositionPersistenceHandler: ((SharedAudiobookPlaybackState) -> Unit)? = null
+
+    // --- EPUB media overlay (publisher narration) -----------------------------------------------
+    //
+    // Kotlin owns the sequencing and Swift owns the AVPlayer, mirroring the audiobook split. The
+    // audio itself never crosses this boundary as bytes: the resource loader asks Kotlin for a byte
+    // range of a zip entry (`mediaOverlayReadEntryRangeHandler`), because the archive is Kotlin's
+    // and a whole recording crossing the bridge per request would be absurd.
+
+    internal var mediaOverlayPlayHandler: ((SharedIosMediaOverlayPlaybackSetup) -> Unit)? = null
+    internal var mediaOverlayPauseHandler: (() -> Unit)? = null
+    internal var mediaOverlayResumeHandler: (() -> Unit)? = null
+    internal var mediaOverlayStopHandler: (() -> Unit)? = null
+    internal var mediaOverlaySpeedHandler: ((Float) -> Unit)? = null
+    internal var mediaOverlayRestartClipHandler: (() -> Unit)? = null
+    internal var mediaOverlaySeekToClipHandler: ((Int, Int) -> Unit)? = null
+    internal var mediaOverlayReadEntryRangeHandler: ((String, Long, Long) -> NSData?)? = null
+    internal var mediaOverlayEntryLengthHandler: ((String) -> Long)? = null
+
+    /**
+     * A native playback transition, as Swift reports it.
+     *
+     * Deliberately *not* a `SharedMediaOverlayPlaybackState`: the clip bounds are not sent, because
+     * the engine that owns the plan is the only thing that can answer them, and a bounds value
+     * crossing the bridge would be a second copy of the plan that could disagree with it. The engine
+     * fills them in from the clips it was handed.
+     */
+    data class SharedIosMediaOverlayUpdate(
+        val spineItemIndex: Int,
+        val clipIndex: Int,
+        val positionMs: Long,
+        val isPlaying: Boolean,
+        val isLoading: Boolean,
+        val error: String?,
+    )
+
+    /**
+     * One chapter's narration, as Swift receives it.
+     *
+     * The clip list arrives whole because `AVPlayer` is told to seek per clip rather than to play a
+     * playlist: `AVPlayerItem` has no clipping configuration, so the bound is enforced from Swift's
+     * periodic observer and the sequence is Kotlin's. Android gets the same list as one `MediaItem`
+     * per clip and lets ExoPlayer do the same job natively.
+     */
+    class SharedIosMediaOverlayPlaybackSetup(
+        val spineItemIndex: Int,
+        val bookTitle: String,
+        val narrator: String?,
+        val startClipIndex: Int,
+        val playWhenReady: Boolean,
+        val clips: List<SharedMediaOverlayClip>,
+    )
+
+    /**
+     * The app-level narration engine, so native reports have somewhere to go.
+     *
+     * Set by the app composable rather than looked up, because there is exactly one engine and it
+     * has to be the same instance the arbiter stops — a second lookup would be a second engine, and
+     * the one being stopped would not be the one making noise.
+     */
+    internal var mediaOverlayEngine: IosSharedMediaOverlayPlayback? = null
+
+    /**
+     * Publishes a native playback transition into shared state.
+     *
+     * Ignored when no engine is installed rather than throwing: Swift's callbacks outlive any single
+     * composition, so a transition can arrive after the reader that owned the engine has gone.
+     */
+    fun updateMediaOverlayPlayback(
+        spineItemIndex: Int,
+        clipIndex: Int,
+        positionMs: Double,
+        isPlaying: Boolean,
+        isLoading: Boolean,
+        error: String?,
+    ) {
+        mediaOverlayEngine?.onNativeUpdate(
+            SharedIosMediaOverlayUpdate(
+                spineItemIndex = spineItemIndex,
+                clipIndex = clipIndex,
+                positionMs = positionMs.toLong().coerceAtLeast(0L),
+                isPlaying = isPlaying,
+                isLoading = isLoading,
+                error = error,
+            )
+        )
+    }
+
+    /**
+     * The loaded chapter's clips played out.
+     *
+     * Reported rather than acted on: whether that means "the next narrated chapter" or "the book is
+     * done" is `SharedMediaOverlaySession`'s decision, and it is the same one Android makes.
+     */
+    fun notifyMediaOverlayChapterFinished(spineItemIndex: Int) {
+        mediaOverlayEngine?.onNativeChapterFinished(spineItemIndex)
+    }
+
+    /** The native player tore itself down; the state must not keep claiming a book is loaded. */
+    fun notifyMediaOverlaySessionEnded() {
+        mediaOverlayEngine?.onNativeSessionEnded()
+    }
 
     /**
      * Native capture of the process unified log for diagnostics export. Swift owns
@@ -733,6 +859,8 @@ class ReaderIosBridge internal constructor(
         fileSizes: List<String> = emptyList(),
         lastModifiedTimestamps: List<String> = emptyList(),
         scanSucceeded: Boolean = true,
+        scanStatusRaw: String = "COMPLETE",
+        scanDetail: String = "",
     ) {
         val imported = fileNames.mapIndexed { index, fileName ->
             IosImportedFile(
@@ -762,13 +890,21 @@ class ReaderIosBridge internal constructor(
                 lastModified = file.lastModifiedTimestamp,
             )
         }
+        val reportedStatus = parseLocalFolderScanStatus(scanStatusRaw)
         pendingFolderScans = enqueueMobileFolderScan(
             pendingFolderScans,
             SharedMobileFolderScanResult(
                 folderName = folderName,
                 files = scannedFiles,
                 succeeded = scanSucceeded,
+                scanStatus = reportedStatus,
             ),
+        )
+        IosDiagnosticLogStore.record(
+            LOCAL_FOLDER_SCAN_LOG_TAG,
+            "record folder=$folderName succeeded=$scanSucceeded " +
+                "status=$reportedStatus files=${imported.size} " +
+                "detail=${scanDetail.take(300).replace('\n', ' ')}",
         )
         latestNativeEvent = if (!scanSucceeded) {
             "Could not refresh $folderName; keeping the previous scan"
@@ -815,6 +951,16 @@ class ReaderIosBridge internal constructor(
     fun recordNativeEvent(message: String) {
         latestNativeEvent = message
         IosDiagnosticLogStore.record("ReaderIosNative", message)
+    }
+
+    /**
+     * Swift-side folder-scan pipeline logs with the shared [LOCAL_FOLDER_SCAN_LOG_TAG]
+     * so the native copy/swap stages appear in the exported diagnostics next to
+     * the Kotlin record/consume lines. Single-line messages only; the caller
+     * keeps dynamic values compact.
+     */
+    fun logFolderScanDiagnostic(message: String) {
+        IosDiagnosticLogStore.record(LOCAL_FOLDER_SCAN_LOG_TAG, message.replace('\n', ' '))
     }
 
     fun externalFileBehavior(): String = loadIosLibrarySnapshot().externalFileBehavior
@@ -958,8 +1104,135 @@ class ReaderIosBridge internal constructor(
         latestNativeEvent = "Removed ${filePaths.size} file(s) from iOS library"
     }
 
+    /**
+     * Deletes every local artifact that belongs to a book that is going away.
+     *
+     * Android parity: `RecentFilesRepository.deleteFilePermanently` runs
+     * `bookImporter.deleteBookByUriString` and then
+     * `cleanupLocalBookArtifacts`, which drops the cached cover, all six PDF
+     * sidecar files, the PDF text cache and the pagination cache. iOS only
+     * dropped the library row, so the bytes under `Imports/`, the cover under
+     * `Covers/` and the `PdfSidecars/` file all survived a delete. That is not
+     * cosmetic: a later re-import of the same file resolves to the same
+     * content-hash id and silently re-adopts the orphan, so the book the user
+     * deleted on device A quietly comes back on device B.
+     *
+     * Only paths inside `Imports/` are removed. Books can still reference a file
+     * under `Documents/` (older installs, external files the user owns), and
+     * deleting those would destroy a file the app does not own. Skipped paths
+     * are reported in the log rather than silently orphaned.
+     */
+    fun purgeDeletedBookArtifacts(
+        bookIds: List<String>,
+        bookPaths: List<String>,
+        coverPaths: List<String>,
+        notifyNativeEvent: Boolean = false,
+    ): Int {
+        if (bookIds.isEmpty() && bookPaths.isEmpty() && coverPaths.isEmpty()) return 0
+        val importsRoot = iosImportsDirectoryPath()?.canonicalIosFilePath()
+        val coversRoot = iosCoversDirectoryPath()?.canonicalIosFilePath()
+        var removedFiles = 0
+        val skipped = mutableListOf<String>()
+
+        bookPaths.forEach { path ->
+            val canonicalPath = path.canonicalIosFilePath()
+            if (importsRoot != null && canonicalPath.startsWith("$importsRoot/")) {
+                if (NSFileManager.defaultManager.fileExistsAtPath(canonicalPath)) {
+                    val ok = runCatching {
+                        NSFileManager.defaultManager.removeItemAtPath(canonicalPath, error = null)
+                    }.isSuccess
+                    if (ok) removedFiles++
+                }
+            } else {
+                skipped += canonicalPath
+            }
+        }
+
+        coverPaths.forEach { path ->
+            val canonicalPath = path.canonicalIosFilePath()
+            if (coversRoot != null && canonicalPath.startsWith("$coversRoot/")) {
+                runCatching {
+                    NSFileManager.defaultManager.removeItemAtPath(canonicalPath, error = null)
+                }
+            }
+        }
+
+        bookIds.forEach { bookId ->
+            IosPdfCloudSidecarStore.delete(bookId)
+            NSUserDefaults.standardUserDefaults.removeObjectForKey(
+                IosPdfReaderSidecarTimestampDefaultsPrefix + bookId.normalizedId(),
+            )
+        }
+
+        if (bookPaths.isNotEmpty()) {
+            importedFiles = importedFiles.filterNot { it.path in bookPaths }
+            persistImportedFiles(importedFiles)
+        }
+
+        IosDiagnosticLogStore.record(
+            "CloudKitSync",
+            "delete_purge ids=${bookIds.joinToString(",")} files=$removedFiles " +
+                "covers=${coverPaths.size} sidecars=${bookIds.size}" +
+                if (skipped.isEmpty()) "" else " skippedOutsideImports=${skipped.size}",
+        )
+        if (notifyNativeEvent) {
+            latestNativeEvent = "Removed ${bookIds.size} book(s) from iOS library"
+        }
+        return removedFiles
+    }
+
     fun setFolderFileDeletionHandler(handler: (String, List<String>) -> Unit) {
         folderFileDeletionHandler = handler
+    }
+
+    /**
+     * Per-folder `lastScanTime` snapshot published by the screen so the bridge
+     * can answer the foreground-rescan question without owning `state`.
+     */
+    internal var folderScanWatermarks: Map<String, Long> = emptyMap()
+
+    /**
+     * Whether a lifecycle-triggered refresh is worth running right now.
+     *
+     * `scenePhase == .active` fires on every app switch and notification
+     * dismissal, not just on a cold start, so scanning unconditionally made a
+     * directory walk the app's dominant foreground cost. The watermark is per
+     * folder so one recently-scanned folder does not hold up the rest.
+     *
+     * The bridge does not own `state`, so the caller publishes the watermarks
+     * via [publishFolderScanWatermarks] whenever the screen state changes.
+     */
+    fun shouldRescanFoldersOnForeground(): Boolean =
+        shouldRescanFoldersOnForeground(currentTimestamp())
+
+    fun shouldRescanFoldersOnForeground(nowMillis: Long): Boolean {
+        val watermarks = folderScanWatermarks
+        if (watermarks.isEmpty()) return false
+        val due = watermarks.filter { (_, lastScanTime) ->
+            LocalFolderRescanPolicy.shouldScanOnForeground(
+                lastScanTimeMillis = lastScanTime,
+                nowMillis = nowMillis,
+            )
+        }
+        if (due.isEmpty()) {
+            val soonest = watermarks.values.minOf { lastScanTime ->
+                LocalFolderRescanPolicy.remainingCooldownMillis(lastScanTime, nowMillis)
+            }
+            IosDiagnosticLogStore.record(
+                LOCAL_FOLDER_SCAN_LOG_TAG,
+                "foreground.skipped folders=${watermarks.size} cooldownRemainingMs=$soonest",
+            )
+            return false
+        }
+        IosDiagnosticLogStore.record(
+            LOCAL_FOLDER_SCAN_LOG_TAG,
+            "foreground.scan folders=${due.size} of ${watermarks.size}",
+        )
+        return true
+    }
+
+    fun publishFolderScanWatermarks(folders: Map<String, Long>) {
+        folderScanWatermarks = folders
     }
 
     fun setFolderFileReplacementHandler(handler: (String, String) -> String?) {
@@ -968,6 +1241,19 @@ class ReaderIosBridge internal constructor(
 
     fun setFolderFileAdditionHandler(handler: (folderName: String, sourcePath: String, fileName: String) -> String?) {
         folderFileAdditionHandler = handler
+    }
+
+    /**
+     * Installs the native bookmark lookup that turns a `ios-folder-book://`
+     * ref into a real path. Swift owns the bookmarks, so it has to supply this;
+     * without it a linked-folder ref can never be resolved and every such book
+     * reads as unavailable.
+     */
+    fun setFolderBookmarkResolver(handler: ((String) -> String?)?) {
+        IosFolderBookScope.install(
+            handler?.let { resolve -> IosFolderBookmarkResolver { folderName -> resolve(folderName) } }
+                ?: IosFolderBookmarkResolver { null }
+        )
     }
 
     internal fun addFolderManagedFile(folderName: String, sourcePath: String, fileName: String): String? {
@@ -1015,6 +1301,77 @@ class ReaderIosBridge internal constructor(
     ) {
         audiobookMetadataHandler = handler
     }
+
+    // --- EPUB media overlay bridge ---------------------------------------------------------------
+
+    fun setMediaOverlayPlayHandler(handler: (SharedIosMediaOverlayPlaybackSetup) -> Unit) {
+        mediaOverlayPlayHandler = handler
+    }
+
+    fun setMediaOverlayPauseHandler(handler: () -> Unit) {
+        mediaOverlayPauseHandler = handler
+    }
+
+    fun setMediaOverlayResumeHandler(handler: () -> Unit) {
+        mediaOverlayResumeHandler = handler
+    }
+
+    fun setMediaOverlayStopHandler(handler: () -> Unit) {
+        mediaOverlayStopHandler = handler
+    }
+
+    fun setMediaOverlaySpeedHandler(handler: (speed: Float) -> Unit) {
+        mediaOverlaySpeedHandler = handler
+    }
+
+    fun setMediaOverlayRestartClipHandler(handler: () -> Unit) {
+        mediaOverlayRestartClipHandler = handler
+    }
+
+    fun setMediaOverlaySeekToClipHandler(handler: (spineItemIndex: Int, clipIndex: Int) -> Unit) {
+        mediaOverlaySeekToClipHandler = handler
+    }
+
+    /**
+     * Installs the archive byte-range service the native resource loader asks for.
+     *
+     * Called by the narration engine when a reader attaches its archive, and deliberately *not* by
+     * Swift: the reader screen owns which book is open, so the source follows the book rather than
+     * the host process. Swift reaches it back through [mediaOverlayReadEntry] and
+     * [mediaOverlayEntryLength].
+     *
+     * Reinstalled on every attach rather than registered once, because the callbacks close over the
+     * engine's current archive — there is then no handler to unregister and nothing to leak, and a
+     * detached engine answers with a null range rather than with stale bytes.
+     *
+     * Callbacks rather than a handed-over archive because the bytes are Kotlin's: an
+     * `IosZipEpubArchive` holds the zip in memory, and giving Swift the whole of it would defeat the
+     * reason the recording is never extracted to disk. One range at a time is what AVFoundation
+     * asks for, in uncompressed coordinates because a clip's `clipBegin` is an offset into decoded
+     * audio.
+     */
+    internal fun setMediaOverlayAudioSource(
+        readEntryRange: (entryPath: String, offset: Long, length: Long) -> NSData?,
+        entryLength: (entryPath: String) -> Long,
+    ) {
+        mediaOverlayReadEntryRangeHandler = readEntryRange
+        mediaOverlayEntryLengthHandler = entryLength
+    }
+
+    /**
+     * Reads a byte range of one archive entry for the native resource loader.
+     *
+     * Null when no archive is attached, which the loader reports as a missing file — the honest
+     * answer for a reader screen that has gone away mid-playback. This is also what detaching is:
+     * the engine keeps its callbacks installed and simply has nothing behind them, so there is no
+     * window in which a loader could still be answered for a book the reader no longer shows.
+     */
+    fun mediaOverlayReadEntry(entryPath: String, offset: Double, length: Long): NSData? =
+        mediaOverlayReadEntryRangeHandler?.invoke(entryPath, offset.toLong(), length)
+
+    /** An entry's uncompressed length, which AVFoundation requires before it can seek. */
+    fun mediaOverlayEntryLength(entryPath: String): Double =
+        (mediaOverlayEntryLengthHandler?.invoke(entryPath) ?: 0L).toDouble()
 
     internal fun replaceFolderManagedFile(folderName: String, managedPath: String): IosFolderReplacement? {
         val fields = folderFileReplacementHandler?.invoke(folderName, managedPath)
@@ -1469,6 +1826,11 @@ class ReaderIosBridge internal constructor(
                 inDomains = NSUserDomainMask,
             ).firstOrNull() as? NSURL
             )?.path
+        // `LocalFolders` only ever held the managed copy of a linked folder.
+        // Once books are read in place nothing is written there, so removing it
+        // is a no-op — but it is listed defensively rather than left to a
+        // future edit that could turn it into a recursive delete of a path the
+        // user owns.
         listOf("Imports", "Documents", "Covers", "Fonts", "LocalFolders", "PdfSidecars", "MetadataBackups")
             .mapNotNull { directoryName -> appSupportPath?.let { "$it/$directoryName" } }
             .forEach { path -> fileManager.removeItemAtPath(path, error = null) }
@@ -1708,6 +2070,19 @@ class ReaderIosBridge internal constructor(
     }
 
     /**
+     * Live network reachability pushed from Swift (NWPathMonitor). Android
+     * parity (`areReaderAiFeaturesEnabled` offline leg): the AI adapter
+     * hides entries while offline. Defaults true until Swift starts the
+     * monitor.
+     */
+    internal var readerAiNetworkAvailable by mutableStateOf(true)
+        private set
+
+    fun updateReaderAiNetworkAvailable(available: Boolean) {
+        readerAiNetworkAvailable = available
+    }
+
+    /**
      * Cached token for worker calls. Stale tokens (App Check default TTL is
      * 1h) are omitted, never sent — the server logs the miss in log mode.
      */
@@ -1794,7 +2169,6 @@ private enum class IosUtilityScreen {
     LANGUAGE,
     FONTS,
     FEEDBACK,
-    SUPPORT,
     ABOUT,
     FOLDER_SYNC,
 }
@@ -2059,16 +2433,91 @@ private fun persistIosSyncEnabled(enabled: Boolean) {
     NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = IosSyncEnabledDefaultsKey)
 }
 
+/**
+ * One-time migration off the managed copy.
+ *
+ * Books added before in-place reads carry an absolute path under
+ * `Application Support/LocalFolders/<folder>/`, so the same book has two
+ * possible identities: the old row keyed by that path, and the new row keyed by
+ * a provider ref. The engine matches on `sourceFolder` and stable id, so the
+ * old rows must be re-pointed rather than left to be re-added.
+ *
+ * The relative path is recovered from the managed path by locating the
+ * `LocalFolders` component and taking everything after the folder segment, which
+ * keeps this correct when the app container moves.
+ */
+internal fun SharedReaderScreenState.migratedIosFolderBooks(
+    folderName: String
+): SharedReaderScreenState {
+    val managedRootFragment = "/LocalFolders/${safeIosManagedFolderName(folderName)}/"
+    var migratedCount = 0
+    val migratedBooks = rawLibraryBooks.map { book ->
+        val path = book.path
+        if (book.sourceFolder != folderName || path == null || !SharedIosBookSourceRef.isManagedCopyPath(path)) {
+            return@map book
+        }
+        val relativePath = path.substringAfter(managedRootFragment, "")
+        if (relativePath.isBlank()) {
+            return@map book
+        }
+        migratedCount++
+        book.copy(
+            path = SharedIosBookSourceRef.encode(folderName, relativePath),
+            coverImagePath = book.coverImagePath,
+        )
+    }
+    if (migratedCount == 0) return this
+    IosDiagnosticLogStore.record(
+        LOCAL_FOLDER_SCAN_LOG_TAG,
+        "migrate folder=$folderName books=$migratedCount",
+    )
+    purgeIosManagedFolderCopy(folderName)
+    return copy(rawLibraryBooks = migratedBooks)
+}
+
+/**
+ * Deletes the managed copy of a linked folder once every book in it has been
+ * re-pointed at the provider.
+ *
+ * This is the point where the duplicate finally goes away, and the reason the
+ * whole migration exists: until now the user's books existed twice on the
+ * device. Only the folder named here is removed, and only after the rewrite
+ * above succeeded, so a failed migration never destroys the copy that is still
+ * being read from.
+ */
+private fun purgeIosManagedFolderCopy(folderName: String) {
+    val appSupport = (NSFileManager.defaultManager.URLsForDirectory(
+        directory = NSApplicationSupportDirectory,
+        inDomains = NSUserDomainMask,
+    ).firstOrNull() as? NSURL)?.path ?: return
+    val managedRoot = "$appSupport/LocalFolders/${safeIosManagedFolderName(folderName)}"
+    if (!NSFileManager.defaultManager.fileExistsAtPath(managedRoot)) return
+    val removed = NSFileManager.defaultManager.removeItemAtPath(managedRoot, error = null)
+    IosDiagnosticLogStore.record(
+        LOCAL_FOLDER_SCAN_LOG_TAG,
+        "migrate.purge folder=$folderName root=$managedRoot removed=$removed",
+    )
+}
+
+/** Mirrors Swift's `safeLocalFolderName`; keep the two in step. */
+internal fun safeIosManagedFolderName(name: String): String {
+    val cleaned = name.replace("/", "_").trim()
+    return cleaned.ifEmpty { "Imported Folder" }
+}
+
 internal fun SharedLibrarySnapshot.withResolvedIosBookPaths(): SharedLibrarySnapshot {
     val resolvedBooks = books
         .map { book ->
+            // A linked-folder ref resolves through its bookmark, so
+            // availability has to be decided by the ref-aware check rather
+            // than a bare `fileExistsAtPath` on the ref string (which is never
+            // a path and would report every linked-folder book as missing).
             val resolvedPath = book.path?.resolvedIosImportedFilePath()
             book.copy(
                 path = resolvedPath,
-                coverImagePath = book.coverImagePath?.resolvedIosCoverPath(),
+                coverImagePath = book.coverImagePath?.resolvedIosCoverPathOrNull(),
                 isAvailable = resolvedPath?.startsWith("opds-pse://") == true ||
-                    (!resolvedPath.isNullOrBlank() &&
-                        NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)),
+                    resolvedPath.isIosReadableBookPath(),
             )
         }
         .distinctBy { book -> book.path?.takeIf(String::isNotBlank)?.let { "path:$it" } ?: "id:${book.id}" }
@@ -2156,12 +2605,13 @@ private const val IosLookupSearchServiceKey = "ios_reader_lookup_search_service"
 
 private fun loadIosReaderLookupServices():
     Triple<ReaderExternalLookupService, ReaderExternalLookupService, ReaderExternalLookupService> {
-    // Android parity (PdfPreferences): the dictionary engine defaults to the
-    // in-app Smart AI (use_online_dictionary = true); translate/search fall
-    // back to in-app Safari when nothing is persisted. Only fresh installs
-    // (nothing stored) see these; explicit user picks are never migrated.
+    // Android benchmark (use_online_dictionary defaults to true): with nothing
+    // persisted the Dict action opens the in-app AI definition, so the router
+    // (readerLookupUsesAiDictionary) is true until another engine is explicitly
+    // stored. Translate/search fall back to in-app Safari when nothing is
+    // persisted. Explicit user picks are never migrated.
     return Triple(
-        loadIosLookupService(IosLookupDictionaryServiceKey, ReaderExternalLookupService.AI),
+        loadIosLookupService(IosLookupDictionaryServiceKey, ReaderDefaultDictionaryLookupService),
         loadIosLookupService(IosLookupTranslateServiceKey, ReaderExternalLookupService.SAFARI),
         loadIosLookupService(IosLookupSearchServiceKey, ReaderExternalLookupService.SAFARI),
     )
@@ -2446,8 +2896,23 @@ private fun String.resolvedIosCoverPath(): String {
         ?: this
 }
 
-private fun String.stableIosCoverPath(): String {
-    val canonicalPath = canonicalIosFilePath()
+/**
+ * The cover path only if it actually points at a file on this device.
+ *
+ * Covers sync as a portable path *reference*, not as bytes, so a device that
+ * receives a book has a cover path naming a file it does not have. Returning
+ * that unusable reference made the cover look present: the extraction queue
+ * gates on `coverImagePath.isNullOrBlank()`, so a non-blank-but-dead path
+ * permanently skipped cover generation and the grid stayed empty until the book
+ * was re-imported. Reporting "no cover" instead lets extraction run and
+ * generate a local one.
+ */
+private fun String.resolvedIosCoverPathOrNull(): String? {
+    val resolved = resolvedIosCoverPath()
+    return resolved.takeIf { NSFileManager.defaultManager.fileExistsAtPath(it) }
+}
+
+private fun String.stableIosCoverPath(): String {    val canonicalPath = canonicalIosFilePath()
     val coversPath = iosCoversDirectoryPath()?.canonicalIosFilePath() ?: return canonicalPath
     return if (canonicalPath.startsWith("$coversPath/")) {
         IosCoversRelativePrefix + canonicalPath.removePrefix("$coversPath/")
@@ -2702,13 +3167,25 @@ private fun loadPersistedIosEpubBookState(book: BookItem): BookItem {
     try {
         val encoded = NSUserDefaults.standardUserDefaults.stringForKey(book.iosEpubReaderStateKey())
         encodedChars = encoded?.length ?: 0
-        if (encoded == null) return book
-        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(encoded).books.firstOrNull() ?: return book
+        if (encoded == null) {
+            logEpubPositionSave("event=restore_empty bookId=${book.id}")
+            return book
+        }
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(encoded).books.firstOrNull()
+        if (decoded == null) {
+            logEpubPositionSave("event=restore_decode_empty bookId=${book.id} encodedChars=$encodedChars")
+            return book
+        }
         val normalized = decoded.migrateAndroidEpubFormatSettings()
         val restored = book.withNewerReaderSession(normalized)
         if (normalized != decoded) {
             persistIosEpubBookState(normalized)
         }
+        logEpubPositionSave(
+            "event=restore bookId=${book.id} keptCurrent=${restored === book} " +
+                "hasPosition=${restored.readerPosition != null} " +
+                "restored=${restored.readerPosition.epubPositionSummary()} lastPage=${restored.lastPageIndex}"
+        )
         return restored
     } finally {
         sharedEpubOpenTrace { "library persistedStateRestore bookId=${book.id} encodedChars=$encodedChars ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(restoreMark))}" }
@@ -2718,6 +3195,43 @@ private fun loadPersistedIosEpubBookState(book: BookItem): BookItem {
 private fun persistIosEpubBookState(book: BookItem) {
     val encoded = SharedLibrarySnapshotJson.encode(SharedLibrarySnapshot(books = listOf(book)))
     NSUserDefaults.standardUserDefaults.setObject(encoded, forKey = book.iosEpubReaderStateKey())
+    persistIosFolderSidecar(book)
+}
+
+/**
+ * Writes a folder book's sidecar so its reading state travels with the file.
+ *
+ * Android parity: `RecentFilesRepository.syncLocalMetadataToFolder` on reader
+ * close, and on a custom rename. The same "not dirty means no sidecar" gate
+ * applies, so a book that was merely opened and closed leaves no litter.
+ *
+ * Failures are logged and swallowed. The in-memory and snapshot state is
+ * already correct, and a sidecar that cannot be written must not interrupt
+ * reading — the next close will retry.
+ */
+private fun persistIosFolderSidecar(book: BookItem) {
+    val folderName = book.sourceFolder?.takeIf { it.isNotBlank() } ?: return
+    if (!SharedIosBookSourceRef.isProviderRef(book.path)) return
+    val metadata = book.toSharedFolderBookMetadata() ?: return
+    val folderRoot = IosFolderBookScope.current().resolveFolderPath(folderName)
+    if (folderRoot == null) {
+        IosDiagnosticLogStore.record(
+            LOCAL_FOLDER_SCAN_LOG_TAG,
+            "sidecar.skip folder=$folderName id=${book.id} reason=unresolved",
+        )
+        return
+    }
+    if (IosFolderSidecarStore.writeMetadata(folderRoot, metadata)) {
+        IosDiagnosticLogStore.record(
+            LOCAL_FOLDER_SCAN_LOG_TAG,
+            "sidecar.written folder=$folderName id=${book.id}",
+        )
+    } else {
+        IosDiagnosticLogStore.record(
+            LOCAL_FOLDER_SCAN_LOG_TAG,
+            "sidecar.write_failed folder=$folderName id=${book.id}",
+        )
+    }
 }
 
 private fun BookItem.iosEpubReaderStateKey(): String {
@@ -2879,6 +3393,31 @@ private fun ReaderIosApp(
         serverBackedReaderAiFeatures = bridge.accountState.uid != null,
         serverBackedCloudTts = bridge.accountState.uid != null,
     ).sanitized()
+    // Android parity (AiVoicesTab catalog): the reader TTS sheet lists the
+    // same Fish catalog as AI settings, so the fetch lives at top scope and
+    // both surfaces share one cached list, favorites, and language filter.
+    var iosReaderFishVoices by remember { mutableStateOf(emptyList<com.aryan.reader.shared.ReaderFishVoice>()) }
+    var iosReaderFishVoicesLoading by remember { mutableStateOf(false) }
+    var iosFavoriteCloudVoices by remember { mutableStateOf(iosLoadTtsFavoriteVoices()) }
+    var iosCloudVoiceLanguage by remember { mutableStateOf(iosLoadFishLanguageFilter()) }
+    LaunchedEffect(
+        effectiveReaderAiSettings.fishKey,
+        bridge.accountState.uid,
+        bridge.accountState.authToken,
+    ) {
+        iosReaderFishVoicesLoading = true
+        iosReaderFishVoices = iosFetchFishVoices(
+            fishKey = effectiveReaderAiSettings.fishKey,
+            workerBaseUrl = IOS_TTS_WORKER_URL,
+            authToken = bridge.accountState.authToken,
+        )
+        iosReaderFishVoicesLoading = false
+    }
+    // Android parity (AiVoicesTab source rule): Gemini BYOK backends keep the
+    // static prebuilt list; every other backend shows the Fish catalog.
+    val iosExpectFishVoices: Boolean = with(effectiveReaderAiSettings) {
+        isFishByokTtsAvailable || (!isGeminiRestByokTtsAvailable && !isByokCloudTtsAvailable)
+    }
     val readerAiAdapter = remember(
         bridge,
         effectiveReaderAiSettings,
@@ -2886,6 +3425,7 @@ private fun ReaderIosApp(
         bridge.accountState.authToken,
         state.isProUser,
         state.credits,
+        bridge.readerAiNetworkAvailable,
     ) {
         // Attestation rides the bridge-cached token Swift pushes on each
         // auth (re)publish (top-level provider in IosReaderAiAdapters.kt).
@@ -2902,11 +3442,12 @@ private fun ReaderIosApp(
                 )
             },
             authTokenProvider = { bridge.accountState.authToken },
-            onUsageReported = { usage ->
-                usage.freeRemaining?.let { remaining ->
-                    state = state.copy(credits = remaining.coerceAtLeast(0))
-                }
-            },
+            networkAccess = { bridge.readerAiNetworkAvailable },
+            // Android parity (EpubReaderAi usage): per-result cost /
+            // free-remaining feeds the result badge only. The global balance
+            // is owned by entitlements (StoreKit push + foreground refresh),
+            // never overwritten by a single result's free-remaining count.
+            onUsageReported = { },
         )
     }
     val readerCloudTts = remember { IosSharedMobileCloudTts() }
@@ -2914,8 +3455,15 @@ private fun ReaderIosApp(
         onDispose { readerCloudTts.release() }
     }
     fun updateCloudTtsMode(enabled: Boolean) {
+        // Toggling cloud on must not clobber the backend choice: keep the
+        // current model when it already names a cloud backend (e.g. Fish),
+        // otherwise fall back to Gemini.
+        val currentModel = effectiveReaderAiSettings.ttsModel
         val updated = readerAiSettings.copy(
-            ttsModel = if (enabled) com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID else "",
+            ttsModel = if (enabled) {
+                if (isCloudTtsModelEnabled(currentModel)) currentModel
+                else com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID
+            } else "",
         ).sanitized()
         readerAiSettings = updated
         readerAiSettingsStore.save(updated)
@@ -3023,14 +3571,87 @@ private fun ReaderIosApp(
             bridge.setAudiobookPositionPersistenceHandler(null)
         }
     }
-    val ttsListenController = remember { IosBookTtsListeningController() }
+    // One shared engine for both the in-book reader and audiobook Listen, exactly as
+    // Android's BookTtsSessionCoordinator shares the reader's TtsPlaybackManager.
+    val readerTtsEngine = rememberSharedMobileEpubLocalTts()
+    val ttsListenController = remember {
+        IosBookTtsListeningController(
+            localEngine = readerTtsEngine,
+            cloudTts = if (IosFeatureGating.SHOW_CLOUD_TTS) readerCloudTts else null,
+            initialCloudVoiceIdentifier = effectiveReaderAiSettings.ttsSpeakerId,
+            // Tri-state: absent key follows the reader, any stored pick is pinned.
+            // Android benchmark: `loadListenTtsMode`.
+            initialCloudModeEnabled = ReaderTtsEngineOverride.resolveEngineMode(
+                isOverrideStored = NSUserDefaults.standardUserDefaults
+                    .objectForKey(IOS_LISTEN_TTS_ENGINE_MODE_KEY) != null,
+                storedOverride = NSUserDefaults.standardUserDefaults
+                    .stringForKey(IOS_LISTEN_TTS_ENGINE_MODE_KEY),
+                readerCloudModeEnabled = isCloudTtsModelEnabled(effectiveReaderAiSettings.ttsModel),
+                cloudAvailable = IosFeatureGating.SHOW_CLOUD_TTS,
+            ) == ReaderTtsEngineOverride.CLOUD,
+            onCloudModeChanged = { cloudEnabled ->
+                NSUserDefaults.standardUserDefaults.setObject(
+                    ReaderTtsEngineOverride.encodeEngineMode(cloudEnabled),
+                    forKey = IOS_LISTEN_TTS_ENGINE_MODE_KEY,
+                )
+            },
+        )
+    }
+    // The shared cloud sheet owns the cloud voice; the controller applies it to each new session
+    // rather than overriding it, matching Android's split between a native Listen voice and the
+    // shared cloud speaker.
+    LaunchedEffect(effectiveReaderAiSettings.ttsSpeakerId) {
+        ttsListenController.setCloudVoiceIdentifier(effectiveReaderAiSettings.ttsSpeakerId)
+    }
+
     DisposableEffect(ttsListenController) { onDispose(ttsListenController::release) }
-    // Android parity (sharedListeningHandoff): cloud read-aloud wins the audio
-    // output — stop competing playback when it starts producing audio.
-    LaunchedEffect(readerCloudTts.state.isPlaying) {
+
+    // EPUB media overlay narration. App-level, not reader-level, for the same reason the audiobook
+    // player is: the arbiter below has to be able to stop narration from a surface that is not the
+    // reader, and an engine the reader owned could not be stopped from elsewhere.
+    val mediaOverlayEngine = remember { IosSharedMediaOverlayPlayback(bridge) }
+    DisposableEffect(mediaOverlayEngine) {
+        // Native reports are delivered through the bridge, and the bridge has to reach *this* engine
+        // — the one the arbiter stops. A lookup instead of a registration would be a second engine.
+        bridge.mediaOverlayEngine = mediaOverlayEngine
+        onDispose {
+            bridge.mediaOverlayEngine = null
+            mediaOverlayEngine.release()
+        }
+    }
+
+    // Single arbiter for every "one surface claimed the audio output" decision. Callers below
+    // state intent and never name an engine to stop; the decision itself is
+    // `sharedListeningYield`, which cannot express stopping a surface's own new session.
+    val listeningArbiter = remember(
+        ttsListenController,
+        audiobookPlayer,
+        readerTtsEngine,
+        readerCloudTts,
+        mediaOverlayEngine
+    ) {
+        SharedListeningArbiter(
+            listenEngine = { ttsListenController.sessionEngine },
+            stopAudiobook = { audiobookPlayer.stop() },
+            stopListen = { ttsListenController.stop() },
+            releaseListen = { ttsListenController.releaseForHandoff() },
+            stopReaderLocal = { readerTtsEngine.stop() },
+            stopReaderCloud = { readerCloudTts.stop() },
+            stopMediaOverlay = { mediaOverlayEngine.stop() },
+        )
+    }
+    // Android parity (sharedListeningHandoff): cloud read-aloud wins the audio output — stop
+    // competing playback when it starts producing audio. The arbiter skips Listen when Listen's
+    // own cloud session is what started playing, which is the case that used to cancel itself.
+    LaunchedEffect(readerCloudTts.state.isPlaying, readerCloudTts.playbackSource) {
         if (readerCloudTts.state.isPlaying) {
-            audiobookPlayer.stop()
-            ttsListenController.stop()
+            // The owner comes from the engine's surface tag, not from "the cloud engine is
+            // playing": Listen drives this same engine, so a Listen cloud session would otherwise
+            // look like a handoff and release itself.
+            listeningArbiter.onTtsSessionActivated(
+                owner = sharedListeningSurfaceForTag(readerCloudTts.playbackSource),
+                engine = SharedTtsEngine.CLOUD,
+            )
         }
     }
     val audiobookPlaybackSnapshot = bridge.audiobookPlaybackSnapshot
@@ -3165,13 +3786,8 @@ private fun ReaderIosApp(
             )
         }
     }
-    var selectedPage by remember {
-        mutableStateOf(
-            SharedMobileMainDestination.entries.getOrElse(state.mainScreenStartPage) {
-                SharedMobileMainDestination.HOME
-            }
-        )
-    }
+    // Library Beta is the only main destination; the bottom navigation bar was removed.
+    var selectedPage by remember { mutableStateOf(SharedMobileMainDestination.current) }
     var selectedLibraryTab by remember {
         mutableStateOf(
             SharedMobileLibraryTab.entries.getOrElse(state.libraryScreenStartPage) {
@@ -3224,14 +3840,24 @@ private fun ReaderIosApp(
     var showDeleteAccountConfirmation by remember { mutableStateOf(false) }
     var showDeleteAccountFinalConfirmation by remember { mutableStateOf(false) }
     var showTtsSettings by remember { mutableStateOf(false) }
+    // Android benchmark (AudiobooksUi): the audiobook player sheet exposes "TTS Voice Settings",
+    // which opens the same voice settings as the reader but with Listen's own voice choice.
+    var showListenTtsVoiceSettings by remember { mutableStateOf(false) }
     var showIosTtsBookPicker by remember { mutableStateOf(false) }
     val settingsTts = rememberSharedMobileEpubLocalTts()
+    val listenTtsAdapter = remember(ttsListenController) { IosListenLocalTtsAdapter(ttsListenController) }
     var showDictionarySettingsSheet by remember { mutableStateOf(false) }
     // Android parity (PdfViewerScreen.showDictionaryUpsellDialog /
     // EpubReaderScreen.showDictionaryUpsellDialog): multi-word smart
     // dictionary is Pro-only, so the upsell popup appears instead of the
     // AI result sheet when a phrase is defined without Pro.
     var showDictionaryUpsellDialog by remember { mutableStateOf(false) }
+    // Android parity (showInsufficientCreditsDialog + aiSpendNotice): spend
+    // routing for AI errors — empty wallet opens the out-of-balance dialog,
+    // the daily fraud cap opens the cap dialog with balance + countdown.
+    var showOutOfBalanceDialog by remember { mutableStateOf(false) }
+    var showSpendCapDialog by remember { mutableStateOf(false) }
+    var spendCapRetrySeconds by remember { mutableStateOf(0) }
     val initialLookupServices = remember {
         loadIosReaderLookupServices().also { (dictionary, translate, search) ->
             IosReaderLookupServices.dictionary = dictionary
@@ -3250,7 +3876,6 @@ private fun ReaderIosApp(
     // App-level read-aloud engine + mini-bar state (Android `MainViewModel.ttsController`
     // + `ReaderTtsMiniBar` parity). Hoisted above the reader branch so speech
     // continues when the user leaves the reader; the global bar reopens the book.
-    val readerTtsEngine = rememberSharedMobileEpubLocalTts()
     var readerTtsMiniBarState by remember { mutableStateOf<SharedReaderTtsMiniBarState?>(null) }
     var pdfSplitPickerTarget by remember { mutableStateOf<IosPdfSplitPickerTarget?>(null) }
     LaunchedEffect(state.rawLibraryBooks, pendingPdfSplitWorkspaceRestore) {
@@ -3333,9 +3958,13 @@ private fun ReaderIosApp(
         }
     }
 
+    /**
+     * Retained so the retired Home and Library screens keep compiling. Library Beta is the
+     * only destination, so switching pages is a no-op.
+     */
     fun selectMainPage(page: SharedMobileMainDestination) {
-        selectedPage = page
-        state = state.copy(mainScreenStartPage = page.ordinal)
+        selectedPage = SharedMobileMainDestination.current
+        state = state.copy(mainScreenStartPage = SharedMobileMainDestination.current.ordinal)
     }
 
     fun selectLibraryTab(tab: SharedMobileLibraryTab) {
@@ -3372,6 +4001,55 @@ private fun ReaderIosApp(
         )
     }
 
+    // Android parity (PdfViewerScreen.onDictionaryLookup /
+    // EpubReaderScreen.onDictionaryLookup): BYOK bypasses the worker gate
+    // exactly like Android. Shared by runReaderAiAction + runReaderRecap.
+    fun hasReaderAiByokFor(feature: ReaderAiFeature): Boolean {
+        val sanitizedSettings = effectiveReaderAiSettings.sanitized()
+        val byokModelId = sanitizedSettings.modelIdFor(feature)
+        return readerAiModelById(byokModelId)?.let {
+            sanitizedSettings.apiKeyFor(it.provider).isNotBlank()
+        } == true
+    }
+
+    // Android parity (handleAiRequestError): route spend tokens to
+    // notices/dialogs instead of inline prose. INSUFFICIENT_CREDITS opens
+    // the out-of-balance dialog, RATE_LIMITED posts a retry banner,
+    // DAILY_SPEND_LIMIT opens the cap dialog with balance + countdown.
+    // Anything else stays inline in the result sheet.
+    fun applyReaderAiResult(
+        textResult: String,
+        error: String?,
+        cost: Double?,
+        freeRemaining: Int?,
+    ) {
+        val guard = parseSpendGuardSentinel(error)
+        when {
+            error == "INSUFFICIENT_CREDITS" -> showOutOfBalanceDialog = true
+            guard != null && guard.first == "RATE_LIMITED" -> showMessage(
+                stringResolver.string(
+                    "snackbar_rate_limited_retry",
+                    "Slowing down to protect the service — retrying in %1\$s…",
+                    formatSpendGuardCountdown(guard.second),
+                )
+            )
+            guard != null -> {
+                spendCapRetrySeconds = guard.second
+                showSpendCapDialog = true
+            }
+        }
+        readerExtrasState = readerExtrasState.copy(
+            aiResult = readerExtrasState.aiResult.copy(
+                text = if (readerExtrasState.aiResult.text.isNotBlank()) readerExtrasState.aiResult.text else textResult,
+                isLoading = false,
+                errorMessage = if (error == "INSUFFICIENT_CREDITS" || guard != null) null else error,
+                cost = cost,
+                freeRemaining = freeRemaining,
+                progressMessage = null,
+            )
+        )
+    }
+
     fun runReaderAiAction(feature: ReaderAiFeature, text: String) {
         readerAiJob?.cancel()
         readerAiJob = null
@@ -3385,20 +4063,31 @@ private fun ReaderIosApp(
             )
             return
         }
+        // Android parity (areReaderAiFeaturesEnabled + hidden entry): a
+        // hidden or offline AI surface never fetches — the toolbar entry is
+        // already filtered out, so reaching here means a stale caller.
+        if (!readerAiAvailable) return
         // Android parity (PdfViewerScreen.onDictionaryLookup /
         // EpubReaderScreen.onDictionaryLookup): smart dictionary without Pro
         // shows the upsell popup instead of fetching. BYOK bypasses the
         // worker gate exactly like Android.
         if (feature == ReaderAiFeature.DEFINE && !state.isProUser) {
-            val sanitizedSettings = effectiveReaderAiSettings.sanitized()
-            val byokModelId = sanitizedSettings.modelIdFor(ReaderAiFeature.DEFINE)
-            val hasByokDefine = readerAiModelById(byokModelId)?.let {
-                sanitizedSettings.apiKeyFor(it.provider).isNotBlank()
-            } == true
-            if (!hasByokDefine) {
+            if (!hasReaderAiByokFor(ReaderAiFeature.DEFINE)) {
                 showDictionaryUpsellDialog = true
                 return
             }
+        }
+        // Android parity (EpubReaderScreen handleGenerateSummary): summaries
+        // and recaps without Pro, spendable balance, or BYOK show the
+        // out-of-balance dialog instead of fetching. Pro users pass via the
+        // free tier even with an empty wallet.
+        if ((feature == ReaderAiFeature.SUMMARIZE || feature == ReaderAiFeature.RECAP) &&
+            !state.isProUser &&
+            !hasSpendableBalance(state.credits, state.walletMicros) &&
+            !hasReaderAiByokFor(feature)
+        ) {
+            showOutOfBalanceDialog = true
+            return
         }
         readerExtrasState = readerExtrasState.copy(
             aiResult = com.aryan.reader.shared.ReaderAiResultState(
@@ -3420,9 +4109,9 @@ private fun ReaderIosApp(
                 }
                 ReaderAiFeature.SUMMARIZE -> readerAiAdapter.summarizeStreaming(
                     input,
-                    onUsageReceived = { _, freeRemaining ->
-                        freeRemaining?.let { state = state.copy(credits = it.coerceAtLeast(0)) }
-                    },
+                    // Badge data lands on aiResult below; the global balance
+                    // stays entitlement-owned (see onUsageReported above).
+                    onUsageReceived = { _, _ -> },
                     onUpdate = { chunk ->
                         readerExtrasState = readerExtrasState.copy(
                             aiResult = readerExtrasState.aiResult.copy(text = readerExtrasState.aiResult.text + chunk)
@@ -3455,15 +4144,76 @@ private fun ReaderIosApp(
                 is RecapResult -> result.freeRemaining
                 else -> null
             }
+            applyReaderAiResult(textResult, error, cost, freeRemaining)
+        }
+    }
+
+    // Android parity (executeRecapLogic progress): the adapter emits
+    // stable tokens; the host resolves them so recap progress localizes
+    // like every other reader string.
+    fun localizeRecapProgress(token: String): String {
+        val copy = recapProgressCopy(token)
+        return if (copy.chapterNumber != null) {
+            stringResolver.string(copy.key, copy.fallback, copy.chapterNumber)
+        } else {
+            stringResolver.string(copy.key, copy.fallback)
+        }
+    }
+
+    // Android parity (executeRecapLogic): chained story recap — past sections
+    // resolve through the summary cache (misses summarize on the fly and
+    // backfill it), the final recap streams, and staged progress shows while
+    // loading. Gates mirror runReaderAiAction (hidden/offline entry,
+    // out-of-balance pre-gate, spend-token routing).
+    fun runReaderRecap(request: com.aryan.reader.shared.ReaderRecapRequest) {
+        readerAiJob?.cancel()
+        readerAiJob = null
+        if (!readerAiAvailable) return
+        if (request.currentText.trim().isBlank() && request.pastSections.all { it.text.isBlank() }) {
             readerExtrasState = readerExtrasState.copy(
-                aiResult = readerExtrasState.aiResult.copy(
-                    text = if (readerExtrasState.aiResult.text.isNotBlank()) readerExtrasState.aiResult.text else textResult,
-                    isLoading = false,
-                    errorMessage = error,
-                    cost = cost,
-                    freeRemaining = freeRemaining,
+                aiResult = com.aryan.reader.shared.ReaderAiResultState(
+                    title = ReaderAiFeature.RECAP.displayName,
+                    errorMessage = "There is no reading context for this action.",
                 )
             )
+            return
+        }
+        if (!state.isProUser &&
+            !hasSpendableBalance(state.credits, state.walletMicros) &&
+            !hasReaderAiByokFor(ReaderAiFeature.RECAP)
+        ) {
+            showOutOfBalanceDialog = true
+            return
+        }
+        readerExtrasState = readerExtrasState.copy(
+            aiResult = com.aryan.reader.shared.ReaderAiResultState(
+                title = ReaderAiFeature.RECAP.displayName,
+                isLoading = true,
+                progressMessage = localizeRecapProgress("CHECKING_PAST"),
+            )
+        )
+        readerAiJob = scope.launch {
+            val result = readerAiAdapter.recapChained(
+                request,
+                onProgress = { token ->
+                    readerExtrasState = readerExtrasState.copy(
+                        aiResult = readerExtrasState.aiResult.copy(progressMessage = localizeRecapProgress(token))
+                    )
+                },
+                onUpdate = { chunk ->
+                    // Android parity (first chunk clears loading): streamed
+                    // text replaces the progress state mid-flight.
+                    val current = readerExtrasState.aiResult
+                    readerExtrasState = readerExtrasState.copy(
+                        aiResult = current.copy(
+                            text = current.text + chunk,
+                            isLoading = false,
+                            progressMessage = null,
+                        )
+                    )
+                },
+            )
+            applyReaderAiResult(result.recap.orEmpty(), result.error, result.cost, result.freeRemaining)
         }
     }
 
@@ -3531,9 +4281,14 @@ private fun ReaderIosApp(
         val openMark = sharedEpubOpenTraceMark()
         sharedEpubOpenTrace { "library openBook start bookId=${book.id} type=${book.type} temporary=$temporary" }
         val canDownload = cloudSyncEligible()
+        // A linked-folder ref only resolves while its scope is held, and this
+        // runs outside any held scope. Treat "cannot prove it is gone" as
+        // present, because the preflight removes a folder book from the library
+        // when this is false.
         val localFileExists = book.path?.let { path ->
             path.startsWith("opds-pse://") ||
-                NSFileManager.defaultManager.fileExistsAtPath(path)
+                SharedIosBookSourceRef.isProviderRef(path) ||
+                path.isIosReadableBookPath()
         } == true
         when (
             mobileBookOpenPreflightAction(
@@ -3581,7 +4336,12 @@ private fun ReaderIosApp(
         }
         if (book.type !in IOS_NATIVE_READER_FILE_TYPES) {
             if (temporary) {
-                book.path?.let { NSFileManager.defaultManager.removeItemAtPath(it, error = null) }
+                // Only ever a staging file the app owns. A linked-folder ref is
+                // not a path and must never be handed to a filesystem delete,
+                // or this would remove the user's own file.
+                book.path
+                    ?.takeUnless { SharedIosBookSourceRef.isProviderRef(it) }
+                    ?.let { NSFileManager.defaultManager.removeItemAtPath(it, error = null) }
             }
             state = state.copy(
                 bannerMessage = BannerMessage("${book.type.name} is not supported by the iOS reader yet")
@@ -4150,6 +4910,16 @@ private fun ReaderIosApp(
         )
     }
 
+    // Publish the per-folder scan watermarks so `bridge` can decide whether a
+    // foreground transition is worth a directory walk. Kept next to the other
+    // syncedFolders-driven effects so the two cannot drift apart.
+    LaunchedEffect(state.syncedFolders) {
+        bridge.publishFolderScanWatermarks(
+            state.syncedFolders
+                .filter { it.localSyncEnabled }
+                .associate { it.name to it.lastScanTime }
+        )
+    }
     // Register every local folder as a logical root + LOCAL_MIRROR binding
     // (Android `registerLocalCloudFolders` parity). Registration is not
     // selection: unselected roots stay inert until the user opts in.
@@ -4256,7 +5026,6 @@ private fun ReaderIosApp(
             onSettingsClick = { runAction { utilityScreen = IosUtilityScreen.SETTINGS } },
             onAppThemeClick = { runAction { showAppThemePanel = true } },
             onAboutClick = { runAction { utilityScreen = IosUtilityScreen.ABOUT } },
-            onSupportProjectClick = { runAction { utilityScreen = IosUtilityScreen.SUPPORT } },
             onFeedbackClick = { runAction { utilityScreen = IosUtilityScreen.FEEDBACK } },
             onPrivacyPolicyClick = {
                 runAction { openSharedMobileExternalUrl(IosLegalLinks.privacyPolicyUrl) }
@@ -4279,6 +5048,7 @@ private fun ReaderIosApp(
             state = state.copy(isRefreshing = false)
         }
     }
+
 
     fun removeManagedExternalBook(book: BookItem) {
         book.path?.let { bridge.removeImportedFiles(listOf(it)) }
@@ -4466,6 +5236,25 @@ private fun ReaderIosApp(
                 ).copy(bookmarks = bookmarks),
             )
         }
+        // A remote tombstone that wins the LWW race must take the local bytes
+        // with it. Android does that: a remote `isDeleted` doc newer than local
+        // runs `bookStore.deleteFilePermanently(bookId)`, which deletes the file
+        // and every local artifact (cover, PDF sidecars, caches). iOS used to
+        // rebuild the snapshot only, so the row disappeared while the file,
+        // cover and sidecar stayed on disk. Because import identity is the file
+        // content hash, re-importing the same book then matched the orphaned
+        // file and the "deleted" book silently came back.
+        val booksRemovedByTombstone = booksRemovedByCloudTombstones(
+            local = localSnapshot,
+            merged = mergedSnapshot,
+        )
+        if (booksRemovedByTombstone.isNotEmpty()) {
+            bridge.purgeDeletedBookArtifacts(
+                bookIds = booksRemovedByTombstone.map { it.id },
+                bookPaths = booksRemovedByTombstone.mapNotNull { it.path },
+                coverPaths = booksRemovedByTombstone.mapNotNull { it.coverImagePath },
+            )
+        }
         val mergedPdfSidecars = mergedSnapshot.pdfSidecars
         if (mergedPdfSidecars.isNotEmpty()) {
             scope.launch(Dispatchers.Default) {
@@ -4474,10 +5263,16 @@ private fun ReaderIosApp(
                 }
             }
         }
+        // The snapshot owns the library and preferences, not the account
+        // session. Rebuilding state from it used to reset currentUser to null
+        // and Pro/wallet/sync-toggle to their defaults, so every completed sync
+        // looked like a sign-out even though Firebase was still authenticated.
+        val previousState = state
         state = mergedSnapshot
             .withResolvedIosBookPaths()
             .withResolvedIosAudiobookPaths()
             .toSharedMobileReaderState()
+            .preservingSessionFrom(previousState)
         pendingUnavailableBookId?.let { bookId ->
             val downloaded = state.rawLibraryBooks.firstOrNull { it.id == bookId && it.isAvailable }
             pendingUnavailableBookId = null
@@ -4592,7 +5387,21 @@ private fun ReaderIosApp(
                         uriString = null,
                         localPath = file.path,
                         size = file.fileSize,
-                        id = file.contentId.takeIf(String::isNotBlank),
+                        // Identity order mirrors Android (`addFileToRecent` uses the
+                        // SHA-256 content hash, which is also the CloudKit record
+                        // name): a catalog-supplied content id, then the file's own
+                        // content hash, and only then a path-derived fallback.
+                        //
+                        // Never leave this null. SharedImportPlanner.stableImportId
+                        // falls back to localPath, and a device-local absolute path
+                        // becomes the CloudKit record name: it contains '/', it embeds
+                        // this device's UDID and app-container GUID, and it differs
+                        // between a device that imported the book and one that
+                        // downloaded it. That is what made one book sync as two
+                        // records and materialize as two files.
+                        id = file.contentId.takeIf { it.isNotBlank() }
+                            ?: iosFileContentSha256Hex(file.path)
+                            ?: "ios_import_${file.path.stableIosImportedFilePath().normalizedId()}",
                     )
                 },
                 existingBookIds = state.rawLibraryBooks.mapTo(mutableSetOf()) { it.id },
@@ -4632,6 +5441,12 @@ private fun ReaderIosApp(
         }
 
         bridge.pendingFolderScans.firstOrNull()?.let { scan ->
+            val effectiveStatus = scan.effectiveScanStatus
+            IosDiagnosticLogStore.record(
+                LOCAL_FOLDER_SCAN_LOG_TAG,
+                "consume folder=${scan.folderName} succeeded=${scan.succeeded} " +
+                    "status=$effectiveStatus files=${scan.files.size}",
+            )
             if (!scan.succeeded) {
                 showMessage("Could not refresh ${scan.folderName}; keeping the previous scan")
                 bridge.consumeFolderScan()
@@ -4645,6 +5460,15 @@ private fun ReaderIosApp(
                 state = state.copy(isRefreshing = bridge.pendingFolderScans.isNotEmpty())
                 return@LaunchedEffect
             }
+            // Books indexed before in-place reads still point at the managed
+            // copy. Re-point them at a provider ref so the next reconciliation
+            // does not see every book as a new file and re-add it. Without
+            // this, the old rows would linger alongside the ref-backed ones.
+            val migratedState = state.migratedIosFolderBooks(scan.folderName)
+            if (migratedState !== state) {
+                state = migratedState
+                persistIosLibrarySnapshot(state)
+            }
             val folderForScan = configuredFolder
                 ?: SyncedFolder(
                     uriString = "ios-local-folder://${scan.folderName.normalizedId()}",
@@ -4652,13 +5476,51 @@ private fun ReaderIosApp(
                     lastScanTime = 0L,
                     cloudRootId = newIosCloudRootId(),
                 )
+            // Sidecars carry reading position, highlights and edited metadata
+            // for folder books, so they survive a rescan, a device change and a
+            // reinstall. Android reads them here too; iOS previously hardcoded
+            // an empty map, which is why a folder book's state was lost.
+            val folderRoot = IosFolderBookScope.current().resolveFolderPath(scan.folderName)
+            val remoteMetadata = folderRoot
+                ?.let { root -> IosFolderSidecarStore.readAllMetadata(root) }
+                .orEmpty()
+            if (remoteMetadata.isNotEmpty()) {
+                IosDiagnosticLogStore.record(
+                    LOCAL_FOLDER_SCAN_LOG_TAG,
+                    "sidecars.read folder=${scan.folderName} count=${remoteMetadata.size}",
+                )
+            }
             val syncResult = LocalFolderSyncEngine.syncFolder(
                 state = state,
                 folder = folderForScan.copy(uriString = scan.folderName),
                 files = scan.files,
-                remoteMetadata = emptyMap(),
+                remoteMetadata = remoteMetadata,
                 nowMillis = now,
+                scanStatus = effectiveStatus,
             )
+            IosDiagnosticLogStore.record(
+                LOCAL_FOLDER_SCAN_LOG_TAG,
+                "applied folder=${scan.folderName} status=$effectiveStatus " +
+                    "new=${syncResult.stats.newBooks} updated=${syncResult.stats.updatedBooks} " +
+                    "removed=${syncResult.stats.removedBooks} migrated=${syncResult.stats.migratedBooks}",
+            )
+            // A no-change foreground must report updated=0. When it does not, the
+            // scanned size/mtime for the drifted book is logged so the offending
+            // field can be identified without a device repro.
+            if (syncResult.stats.updatedBooks > 0 && syncResult.stats.newBooks == 0) {
+                syncResult.state.rawLibraryBooks
+                    .filter { it.sourceFolder == scan.folderName }
+                    .forEach { book ->
+                        val scanned = scan.files.firstOrNull { it.stableBookId == book.id }
+                        IosDiagnosticLogStore.record(
+                            LOCAL_FOLDER_SCAN_LOG_TAG,
+                            "applied.drift folder=${scan.folderName} id=${book.id} " +
+                                "scannedSize=${scanned?.size} scannedMtime=${scanned?.lastModified} " +
+                                "bookSize=${book.fileSize} bookMtime=${book.fileContentModifiedTimestamp} " +
+                                "scannedPath=${scanned?.path} bookPath=${book.path}",
+                        )
+                    }
+            }
             val syncedFolder = folderForScan.copy(lastScanTime = now)
             state = syncResult.state.copy(
                 syncedFolders = (
@@ -4746,13 +5608,19 @@ private fun ReaderIosApp(
                 )
         }
         .map { it.id }
-    // Key on emptiness so a mid-loop state update (which shrinks the list)
-    // does not cancel the coroutine; the loop re-reads the pending set each
-    // iteration, so newly downloaded books get picked up too. Books whose
-    // extraction yields nothing usable are tracked in `attempted` so they
-    // cannot re-match and spin forever.
-    LaunchedEffect(pendingPresentationIds.isNotEmpty()) {
-        val attempted = mutableSetOf<String>()
+    // Key on the pending id set, not on its emptiness. Keying on a boolean meant
+    // the effect only ran on the empty -> non-empty edge, so a book that arrived
+    // from a CloudKit pull while other books were still pending never started
+    // extraction: covers showed up only after opening the book. The `attempted`
+    // set is hoisted so a relaunch resumes with the work already done instead of
+    // re-extracting it, which is what previously made a mid-loop state update
+    // (which shrinks the list) cancel the coroutine.
+    // Plain remembered set, not snapshot state: it is only read and written
+    // inside the effect, and mutating a `mutableStateOf` collection in place
+    // is not safe to read from a coroutine.
+    val presentationAttempted = remember { mutableSetOf<String>() }
+    LaunchedEffect(pendingPresentationIds) {
+        val attempted = presentationAttempted
         while (true) {
             val book = state.rawLibraryBooks.firstOrNull { candidate ->
                 candidate.id !in attempted &&
@@ -4766,6 +5634,16 @@ private fun ReaderIosApp(
                     )
             } ?: break
             attempted += book.id
+            // A folder book and an imported book reach this loop by different
+            // routes (folder scan vs. picker import), and a cover that silently
+            // fails to appear is indistinguishable from one that was never
+            // attempted. Log the resolved path so a failure is attributable.
+            IosDiagnosticLogStore.record(
+                LOCAL_FOLDER_SCAN_LOG_TAG,
+                "presentation.start id=${book.id} type=${book.type} " +
+                    "sourceFolder=${book.sourceFolder} path=${book.path} " +
+                    "resolved=${book.path.resolveIosEpubSourcePath()}",
+            )
             // PDF cover/metadata extraction rasterizes a page through PDFium; keep it off the
             // UI thread and serialized with the shared reader pipeline (Android parity).
             val presentation = withContext(Dispatchers.Default) {
@@ -4778,6 +5656,11 @@ private fun ReaderIosApp(
             val coverPath = presentation.coverBytes
                 ?.takeIf { it.isNotEmpty() }
                 ?.let { bytes -> persistIosGeneratedCover(book, bytes) }
+            IosDiagnosticLogStore.record(
+                LOCAL_FOLDER_SCAN_LOG_TAG,
+                "presentation.done id=${book.id} coverBytes=${presentation.coverBytes?.size} " +
+                    "coverPath=$coverPath title=${presentation.title} series=${presentation.seriesName}",
+            )
             if (
                 presentation.title != null ||
                 presentation.author != null ||
@@ -4842,12 +5725,29 @@ private fun ReaderIosApp(
             readerAiAvailable = readerAiAvailable,
             readerExtrasState = readerExtrasState.copy(cloudTts = readerCloudTts.state),
             cloudTts = if (IosFeatureGating.SHOW_CLOUD_TTS) readerCloudTts else null,
-            cloudTtsModeEnabled = effectiveReaderAiSettings.ttsModel == com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID,
+            cloudTtsModeEnabled = isCloudTtsModelEnabled(effectiveReaderAiSettings.ttsModel),
             onCloudTtsModeChange = ::updateCloudTtsMode,
             cloudTtsVoiceId = effectiveReaderAiSettings.ttsSpeakerId,
             onCloudTtsVoiceChange = ::updateCloudTtsVoice,
             onClearCloudTtsCache = readerCloudTts::clearCache,
+            cloudFishVoices = iosReaderFishVoices,
+            expectCloudFishVoices = iosExpectFishVoices,
+            cloudFishVoicesLoading = iosReaderFishVoicesLoading,
+            favoriteCloudVoiceIds = iosFavoriteCloudVoices,
+            onToggleFavoriteCloudVoice = { referenceId ->
+                iosFavoriteCloudVoices =
+                    toggleSharedMobileTtsVoiceFavorite(iosFavoriteCloudVoices, referenceId).also {
+                        iosSaveTtsFavoriteVoices(it)
+                    }
+            },
+            cloudVoiceLanguage = iosCloudVoiceLanguage,
+            onCloudVoiceLanguageChange = { language ->
+                iosCloudVoiceLanguage = language
+                iosSaveFishLanguageFilter(language)
+            },
+            onClearCloudVoiceSamples = readerCloudTts::clearVoiceSamples,
             onAiAction = ::runReaderAiAction,
+            onAiRecapAction = ::runReaderRecap,
             onAiResultDismiss = {
                 dismissReaderAiResult()
             },
@@ -5219,12 +6119,49 @@ private fun ReaderIosApp(
                     onDismiss = { showTtsSettings = false },
                 )
             }
+            if (showListenTtsVoiceSettings) {
+                SharedMobileReaderTtsSettingsSheet(
+                    tts = listenTtsAdapter,
+                    onDismiss = { showListenTtsVoiceSettings = false },
+                    // Android benchmark (`AudiobooksUi`): the audiobook player sheet's TTS voice
+                    // settings opens the same voice settings as the reader, so Listen gets the
+                    // engine switcher and the Cloud tabs it never had. Null still yields the
+                    // device-only branch, matching Android when the build serves no cloud TTS.
+                    cloudTts = if (IosFeatureGating.SHOW_CLOUD_TTS) readerCloudTts else null,
+                    // Listen's pinned mode, not the reader's: they can differ.
+                    cloudTtsModeEnabled = ttsListenController.cloudModeEnabled,
+                    onCloudTtsModeChange = ttsListenController::setCloudModeEnabled,
+                    cloudTtsVoiceId = effectiveReaderAiSettings.ttsSpeakerId,
+                    onCloudTtsVoiceChange = ::updateCloudTtsVoice,
+                    onClearCloudTtsCache = readerCloudTts::clearCache,
+                    fishVoices = iosReaderFishVoices,
+                    expectFishVoices = iosExpectFishVoices,
+                    fishVoicesLoading = iosReaderFishVoicesLoading,
+                    favoriteCloudVoiceIds = iosFavoriteCloudVoices,
+                    onToggleFavoriteCloudVoice = { referenceId ->
+                        iosFavoriteCloudVoices =
+                            toggleSharedMobileTtsVoiceFavorite(iosFavoriteCloudVoices, referenceId).also {
+                                iosSaveTtsFavoriteVoices(it)
+                            }
+                    },
+                    cloudVoiceLanguage = iosCloudVoiceLanguage,
+                    onCloudVoiceLanguageChange = { language ->
+                        iosCloudVoiceLanguage = language
+                        iosSaveFishLanguageFilter(language)
+                    },
+                    onClearCloudVoiceSamples = readerCloudTts::clearVoiceSamples,
+                    // Streams into the same device log as the Listen controller so the TTS
+                    // settings can be diagnosed with a single tag. `ttsSettings.` prefixed
+                    // lines come from the shared panels.
+                    trace = { iosTtsListenLog("ttsSettings. $it") },
+                )
+            }
             if (showIosTtsBookPicker) {
                 SharedMobileTtsBookPickerSheet(
                     books = state.rawLibraryBooks,
                     onBookSelected = { book ->
                         showIosTtsBookPicker = false
-                        audiobookPlayer.stop()
+                        listeningArbiter.onListenSessionStarting()
                         ttsListenController.start(
                             book = book,
                             policy = SharedTtsListenStartPolicy.RESUME,
@@ -5246,6 +6183,15 @@ private fun ReaderIosApp(
                 )
             }
             activeReaderBook?.let { book ->
+                // Touch-deadness correlation (auto-open after app restart vs
+                // manual open): launchedWith is the book the app restored at
+                // launch (null = no restore). Filter device logs for
+                // ReaderIosSession alongside ReaderTtsStart.
+                LaunchedEffect(book.id) {
+                    val message = "epub opened id=${book.id} launchedWith=${initialReaderBook?.id}"
+                    IosDiagnosticLogStore.record("ReaderIosSession", message)
+                    println("[ReaderIosSession] $message")
+                }
                 when (book.type) {
                     FileType.PDF -> {
                         if (pdfSplitWorkspace.isOpen) {
@@ -5375,9 +6321,18 @@ private fun ReaderIosApp(
                                 )
                                 val updatedBook = currentBook.withReaderSessionState(sessionBook)
                                 if (updatedBook !== currentBook) {
+                                    logEpubPositionSave(
+                                        "event=persist bookId=${book.id} page=${snapshot.pageIndex}/${snapshot.pageCount} " +
+                                            "progress=${snapshot.progressPercent} locator=${snapshot.locator.epubPositionSummary()}"
+                                    )
                                     persistIosEpubBookState(updatedBook)
                                     activeReaderBook = updatedBook
                                     state = state.withUpdatedIosBook(updatedBook)
+                                } else {
+                                    logEpubPositionSave(
+                                        "event=persist_skip reason=unchanged bookId=${book.id} " +
+                                            "page=${snapshot.pageIndex} locator=${snapshot.locator.epubPositionSummary()}"
+                                    )
                                 }
                             },
                             onMetadataLoaded = { title, author ->
@@ -5438,32 +6393,57 @@ private fun ReaderIosApp(
                             onOpenDictionarySettings = { showDictionarySettingsSheet = true },
                             readerAiAvailable = readerAiAvailable,
                             readerExtrasState = readerExtrasState.copy(cloudTts = readerCloudTts.state),
-                            cloudTts = if (IosFeatureGating.SHOW_CLOUD_TTS) readerCloudTts else null,
-                            cloudTtsModeEnabled = effectiveReaderAiSettings.ttsModel == com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID,
-                            onCloudTtsModeChange = ::updateCloudTtsMode,
-                            cloudTtsVoiceId = effectiveReaderAiSettings.ttsSpeakerId,
-                            onCloudTtsVoiceChange = ::updateCloudTtsVoice,
-                            onClearCloudTtsCache = readerCloudTts::clearCache,
-                            initialTtsOverlaySize = loadIosReaderTtsOverlaySize(),
-                            onTtsOverlaySizePreferenceChange = ::persistIosReaderTtsOverlaySize,
-                            onAiAction = ::runReaderAiAction,
-                            onAiResultDismiss = {
-                                dismissReaderAiResult()
-                            },
-                            onOpenAiHub = {},
+            cloudTts = if (IosFeatureGating.SHOW_CLOUD_TTS) readerCloudTts else null,
+            cloudTtsModeEnabled = isCloudTtsModelEnabled(effectiveReaderAiSettings.ttsModel),
+            onCloudTtsModeChange = ::updateCloudTtsMode,
+            cloudTtsVoiceId = effectiveReaderAiSettings.ttsSpeakerId,
+            onCloudTtsVoiceChange = ::updateCloudTtsVoice,
+            onClearCloudTtsCache = readerCloudTts::clearCache,
+            cloudFishVoices = iosReaderFishVoices,
+            expectCloudFishVoices = iosExpectFishVoices,
+            cloudFishVoicesLoading = iosReaderFishVoicesLoading,
+            favoriteCloudVoiceIds = iosFavoriteCloudVoices,
+            onToggleFavoriteCloudVoice = { referenceId ->
+                iosFavoriteCloudVoices =
+                    toggleSharedMobileTtsVoiceFavorite(iosFavoriteCloudVoices, referenceId).also {
+                        iosSaveTtsFavoriteVoices(it)
+                    }
+            },
+            cloudVoiceLanguage = iosCloudVoiceLanguage,
+            onCloudVoiceLanguageChange = { language ->
+                iosCloudVoiceLanguage = language
+                iosSaveFishLanguageFilter(language)
+            },
+            onClearCloudVoiceSamples = readerCloudTts::clearVoiceSamples,
+            initialTtsOverlaySize = loadIosReaderTtsOverlaySize(),
+            onTtsOverlaySizePreferenceChange = ::persistIosReaderTtsOverlaySize,
+            onAiAction = ::runReaderAiAction,
+            onAiRecapAction = ::runReaderRecap,
+            onAiResultDismiss = {
+                dismissReaderAiResult()
+            },
+            onOpenAiHub = {},
                             summaryCache = remember { SharedSummaryCache() },
                             aiCredits = if (IosFeatureGating.SHOW_WALLET_TOPUP) state.credits else null,
                             walletMicros = state.walletMicros,
                             walletMigrated = state.walletMigrated,
                             externalLocalTts = readerTtsEngine,
-                            onReaderTtsSessionChange = {
+                            mediaOverlayEngine = mediaOverlayEngine,
+            // Arbitration is the host's decision: it owns the audiobook and both TTS engines, and the
+            // reader screen only states the intent that narration is about to claim the output.
+            onMediaOverlayStarting = { listeningArbiter.onMediaOverlayStarting() },
+            onMediaOverlayStopped = { mediaOverlayEngine.stop() },
+            onReaderTtsSessionChange = {
                                 readerTtsMiniBarState = it
-                                // Android parity (sharedListeningHandoff): reader
-                                // read-aloud wins the audio output — stop any
-                                // competing playback when its session activates.
+                                // Android parity (sharedListeningHandoff): reader read-aloud
+                                // wins the audio output. Releasing Listen rather than stopping
+                                // it matters: they share the local engine, so stopping would
+                                // silence the session that just started.
                                 if (it != null) {
-                                    audiobookPlayer.stop()
-                                    ttsListenController.stop()
+                                    listeningArbiter.onTtsSessionActivated(
+                                        owner = SharedListeningSurface.READER_TTS,
+                                        engine = SharedTtsEngine.LOCAL,
+                                    )
                                 }
                             },
                             readerBrightness = readerBrightness,
@@ -5509,6 +6489,9 @@ private fun ReaderIosApp(
                                 persistIosReaderOrientation(mode)
                             },
                             onApplyReaderScreenOrientation = bridge::applyReaderOrientation,
+                            onExportAnnotations = { exportBook ->
+                                annotationExportBook = exportBook
+                            },
                             modifier = Modifier.fillMaxSize()
                         )
                     }
@@ -5559,6 +6542,51 @@ private fun ReaderIosApp(
                             utilityScreen = IosUtilityScreen.PRO
                         },
                         onDismiss = { showDictionaryUpsellDialog = false },
+                    )
+                }
+                // Android parity (dialog_out_of_credits): empty wallet for a
+                // paid AI action. Get Pro / Top Up opens the Pro screen.
+                if (showOutOfBalanceDialog) {
+                    SharedMobileInfoConfirmationDialog(
+                        title = readerString(
+                            "dialog_out_of_credits_title",
+                            "Out of Balance",
+                        ),
+                        body = readerString(
+                            "dialog_out_of_credits_desc",
+                            "You don't have enough balance. Get Episteme Pro for 10 free Summaries per day, or top up your wallet to use Summaries, Cloud TTS and Story Recap.",
+                        ),
+                        confirmLabel = readerString("action_get_pro_or_add_credits", "Get Pro / Top Up"),
+                        dismissLabel = readerString("action_not_now", "Not now"),
+                        icon = { Icon(Icons.Default.Ai, contentDescription = null) },
+                        onConfirm = {
+                            showOutOfBalanceDialog = false
+                            utilityScreen = IosUtilityScreen.PRO
+                        },
+                        onDismiss = { showOutOfBalanceDialog = false },
+                    )
+                }
+                // Android parity (dialog_daily_spend_limit): fraud cap hit.
+                if (showSpendCapDialog) {
+                    SharedMobileInfoConfirmationDialog(
+                        title = readerString(
+                            "dialog_daily_spend_limit_title",
+                            "Daily spending cap reached",
+                        ),
+                        body = readerString(
+                            "dialog_daily_spend_limit_desc",
+                            "This safety cap protects your wallet from runaway or fraudulent spend. Balance: %1\$s. Resets in %2\$s.",
+                            formatMicrosUsd(state.walletMicros),
+                            formatSpendGuardCountdown(spendCapRetrySeconds),
+                        ),
+                        confirmLabel = readerString("action_get_pro_or_add_credits", "Get Pro / Top Up"),
+                        dismissLabel = readerString("action_not_now", "Not now"),
+                        icon = { Icon(Icons.Default.Ai, contentDescription = null) },
+                        onConfirm = {
+                            showSpendCapDialog = false
+                            utilityScreen = IosUtilityScreen.PRO
+                        },
+                        onDismiss = { showSpendCapDialog = false },
                     )
                 }
                 pdfSplitPickerTarget?.let { target ->
@@ -5666,8 +6694,14 @@ private fun ReaderIosApp(
                                 // use their own backend flags.
                                 includeAccountDeletion = true,
                                 includeDiagnosticLogExport = true,
+                                includeFpsOverlayToggle = bridge.isDebugBuild,
+                                fpsOverlayEnabled = fpsOverlayEnabled,
                                 includeHideReaderAi = true,
-                                supportProjectAvailable = true,
+                                // App Review 3.1.1: the Support project screen linked out to
+                                // GitHub Sponsors and Patreon for donations. Apple permits
+                                // external tip links, but this surface is withdrawn to keep
+                                // review unambiguous. Set to true to restore it.
+                                supportProjectAvailable = false,
                                 isTabsEnabled = state.isTabsEnabled,
                                 isSyncEnabled = state.isSyncEnabled,
                                 isFolderSyncEnabled = state.isFolderSyncEnabled,
@@ -5812,7 +6846,7 @@ private fun ReaderIosApp(
                                         }
                                     }
                                     SharedSettingsAction.HELP_FEEDBACK -> utilityScreen = IosUtilityScreen.FEEDBACK
-                                    SharedSettingsAction.SUPPORT -> utilityScreen = IosUtilityScreen.SUPPORT
+                                    SharedSettingsAction.SUPPORT -> Unit // Removed for App Review 3.1.1; donations must use IAP.
                                     SharedSettingsAction.ABOUT -> utilityScreen = IosUtilityScreen.ABOUT
                                     SharedSettingsAction.AI_SETTINGS -> utilityScreen = IosUtilityScreen.AI_SETTINGS
                                     SharedSettingsAction.DEVICE_MANAGEMENT -> utilityScreen = IosUtilityScreen.DEVICES
@@ -5847,12 +6881,16 @@ private fun ReaderIosApp(
                                     // DEBUG_ONLY per IosSettingsParity.kt: hidden unless debug Android,
                                     // so unreachable on iOS — no error toast.
                                     SharedSettingsAction.TEST_PANEL_DETECTION,
-                                    SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
-                                    SharedSettingsAction.DEBUG_ACTIONS -> Unit
+                                    SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION -> Unit
                                     SharedSettingsAction.EXPORT_LOGS -> {
                                         if (!bridge.exportDiagnosticLogs()) {
                                             showMessage("Unable to export diagnostic logs")
                                         }
+                                    }
+                                    SharedSettingsAction.FPS_OVERLAY -> {
+                                        val next = !fpsOverlayEnabled
+                                        fpsOverlayEnabled = next
+                                        IosDebugFpsStore.setEnabled(next)
                                     }
                                 }
                             },
@@ -5949,23 +6987,6 @@ private fun ReaderIosApp(
                         )
                     }
                     IosUtilityScreen.AI_SETTINGS -> {
-                        var iosFishVoices by remember { mutableStateOf(emptyList<com.aryan.reader.shared.ReaderFishVoice>()) }
-                        var iosFishVoicesLoading by remember { mutableStateOf(false) }
-                        var iosFavoriteFishVoices by remember { mutableStateOf(iosLoadTtsFavoriteVoices()) }
-                        var iosFishLanguageFilter by remember { mutableStateOf(iosLoadFishLanguageFilter()) }
-                        LaunchedEffect(
-                            effectiveReaderAiSettings.fishKey,
-                            bridge.accountState.uid,
-                            bridge.accountState.authToken,
-                        ) {
-                            iosFishVoicesLoading = true
-                            iosFishVoices = iosFetchFishVoices(
-                                fishKey = effectiveReaderAiSettings.fishKey,
-                                workerBaseUrl = IOS_TTS_WORKER_URL,
-                                authToken = bridge.accountState.authToken,
-                            )
-                            iosFishVoicesLoading = false
-                        }
                         SharedAiSettingsScreen(
                         settings = effectiveReaderAiSettings,
                         maskedKeys = readerAiSettingsStore.maskedKeys(),
@@ -6043,11 +7064,24 @@ private fun ReaderIosApp(
                             },
                             addFavoriteDescription = readerString("tts_add_favorite", "Add to favorites"),
                             removeFavoriteDescription = readerString("tts_remove_favorite", "Remove from favorites"),
+                            voicesSectionTitle = readerString("ai_settings_voices_title", "Read aloud voice"),
+                            voicesSectionDescription = readerString(
+                                "ai_settings_voices_desc",
+                                "Pick the voice used for read aloud. The model above decides which engine speaks.",
+                            ),
+                            keySavedMessage = readerString("ai_settings_key_saved", "key saved."),
+                            backendStatusSignedIn = bridge.accountState.uid != null,
+                            backendStatusHasToken = !bridge.accountState.authToken.isNullOrBlank(),
+                            backendStatusHasWorkerUrl = IOS_READER_AI_WORKER_URL.isNotBlank(),
                         ),
                         onBackClick = { utilityScreen = null },
                         onSaveKey = { provider, key ->
-                            readerAiSettingsStore.saveKey(provider, key)
-                            readerAiSettings = readerAiSettingsStore.load()
+                            // Report the real outcome: a keychain write that is
+                            // rejected used to look identical to a successful
+                            // save that then did not stick.
+                            val result = readerAiSettingsStore.saveKey(provider, key)
+                            if (result.isSaved) readerAiSettings = readerAiSettingsStore.load()
+                            result
                         },
                         onDeleteKey = { provider ->
                             readerAiSettingsStore.deleteKey(provider)
@@ -6060,21 +7094,21 @@ private fun ReaderIosApp(
                         cloudCacheSummary = readerCloudTts.state.cacheSummary,
                         onClearCloudTtsCache = readerCloudTts::clearCache,
                         showCloudTts = IosFeatureGating.SHOW_CLOUD_TTS,
-                        fishVoices = iosFishVoices,
-                        fishVoicesLoading = iosFishVoicesLoading,
-                        favoriteFishVoiceIds = iosFavoriteFishVoices,
+                        fishVoices = iosReaderFishVoices,
+                        fishVoicesLoading = iosReaderFishVoicesLoading,
+                        favoriteFishVoiceIds = iosFavoriteCloudVoices,
                         onToggleFavoriteFishVoice = { referenceId ->
-                            iosFavoriteFishVoices =
-                                if (referenceId in iosFavoriteFishVoices) {
-                                    iosFavoriteFishVoices - referenceId
+                            iosFavoriteCloudVoices =
+                                if (referenceId in iosFavoriteCloudVoices) {
+                                    iosFavoriteCloudVoices - referenceId
                                 } else {
-                                    iosFavoriteFishVoices + referenceId
+                                    iosFavoriteCloudVoices + referenceId
                                 }
-                            iosSaveTtsFavoriteVoices(iosFavoriteFishVoices)
+                            iosSaveTtsFavoriteVoices(iosFavoriteCloudVoices)
                         },
-                        fishLanguageSelection = iosFishLanguageFilter,
+                        fishLanguageSelection = iosCloudVoiceLanguage,
                         onFishLanguageSelectionChange = { selection ->
-                            iosFishLanguageFilter = selection
+                            iosCloudVoiceLanguage = selection
                             iosSaveFishLanguageFilter(selection)
                         },
                         modifier = Modifier.fillMaxSize().statusBarsPadding(),
@@ -6100,17 +7134,6 @@ private fun ReaderIosApp(
                             },
                             onEmailSupport = {
                                 openSharedMobileExternalUrl("mailto:epistemereader@gmail.com?subject=Episteme%20iOS%20feedback")
-                            },
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
-                    IosUtilityScreen.SUPPORT -> IosUtilityPage(title = readerString("support_project", "Support the project"), onBack = { utilityScreen = null }) {
-                        SharedSupportProjectScreen(
-                            onOpenGitHubSponsors = {
-                                openSharedMobileExternalUrl("https://github.com/sponsors/Aryan-Raj3112")
-                            },
-                            onOpenPatreon = {
-                                openSharedMobileExternalUrl("https://www.patreon.com/c/epistemereader")
                             },
                             modifier = Modifier.fillMaxSize(),
                         )
@@ -6173,23 +7196,12 @@ private fun ReaderIosApp(
                 return@Surface
             }
 
-            // Intentional temporary iOS scope: AI keys and models stay hidden
-            // for now (logic kept for later). Android remains the benchmark.
-            val appDrawerCapabilities = MobileAppDrawerCapabilities.GLOBAL.copy(
-                showAiSettings = false,
-            )
+            // Android benchmark parity: Home drawer exposes AI keys and models.
+            val appDrawerCapabilities = iosGlobalDrawerCapabilities
 
             @Composable
             fun MainScaffoldContent() {
-                SharedMobileMainScaffold(
-                    selectedDestination = selectedPage,
-                    onDestinationSelected = { page ->
-                        if (selectedPage != page) {
-                            state = state.copy(selectedBookIds = emptySet())
-                        }
-                        selectMainPage(page)
-                    },
-                ) { innerPadding ->
+                SharedMobileMainScaffold { innerPadding ->
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -6492,20 +7504,40 @@ private fun ReaderIosApp(
                                         .mapTo(mutableSetOf()) { it.id }
                                     state = state.copy(
                                         syncedFolders = state.syncedFolders.filterNot { it.uriString == folder.uriString },
-                                        libraryFilters = state.libraryFilters.withoutIosFolderFilter(folder),
+                                        libraryFilters = state.libraryFilters.withoutFolderFilter(folder),
                                     ).removeIosBooks(folderBookIds)
                                 },
                                 onDeleteBooks = { bookIds ->
                                     val removedBooks = state.rawLibraryBooks.filter { it.id in bookIds }
-                                    removedBooks.filter { it.sourceFolder == null }
-                                        .mapNotNull { it.path }
-                                        .let(bridge::removeImportedFiles)
+                                    val cloudRemoved = removedBooks.filter { it.sourceFolder == null }
+                                    // Purges the file, the cached cover and the PDF
+                                    // sidecar together, matching Android's
+                                    // cleanupLocalBookArtifacts instead of leaving
+                                    // the cover and sidecar behind.
+                                    bridge.purgeDeletedBookArtifacts(
+                                        bookIds = cloudRemoved.map { it.id },
+                                        bookPaths = cloudRemoved.mapNotNull { it.path },
+                                        coverPaths = cloudRemoved.mapNotNull { it.coverImagePath },
+                                        notifyNativeEvent = true,
+                                    )
                                     removedBooks.filter { it.sourceFolder != null }
                                         .groupBy { it.sourceFolder.orEmpty() }
                                         .forEach { (folder, books) ->
                                             bridge.removeFolderManagedFiles(folder, books.mapNotNull { it.path })
                                         }
-                                    state = state.removeIosBooks(bookIds, recordCloudDeletion = true)
+                                    val next = state.removeIosBooks(bookIds, recordCloudDeletion = true)
+                                    state = next
+                                    // Android writes the delete intent durably
+                                    // *before* the local delete
+                                    // (MainViewModel:8909) and lets
+                                    // CloudBookDeleteWorker publish the tombstone.
+                                    // Persisting here closes the 500 ms debounce
+                                    // window where a kill would lose the
+                                    // tombstone, and requesting a sync means the
+                                    // delete reaches the other device now instead
+                                    // of waiting for an unrelated trigger.
+                                    persistIosLibrarySnapshot(next)
+                                    requestCloudSyncIfEligible()
                                 },
                                 onDeleteShelves = { shelfIds ->
                                     SharedLibraryEditor.deleteShelvesInState(state, shelfIds)
@@ -6662,7 +7694,7 @@ private fun ReaderIosApp(
                                         drawerContent = {
                                             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                                                 IosAppDrawerContent(
-                                                    capabilities = MobileAppDrawerCapabilities.UNIFIED_LIBRARY_ACCOUNT,
+                                                    capabilities = iosUnifiedAccountDrawerCapabilities,
                                                     closeDrawer = { scope.launch { accountDrawerState.close() } },
                                                 )
                                             }
@@ -6676,6 +7708,14 @@ private fun ReaderIosApp(
                                 onTogglePinned = { book -> state = state.toggleLibraryPinned(book.id) },
                                 onUpdateBook = { book -> updateIosBookMetadata(book) },
                                 selectionCapabilities = iosUnifiedLibrarySelectionCapabilities(),
+                                onRefreshLibrary = {
+                                    refreshFolders()
+                                    if (state.isSyncEnabled) {
+                                        requestCloudSyncIfEligible()
+                                    } else {
+                                        showMessage("Refreshing local folders")
+                                    }
+                                },
                                 selectionActions = object : SharedMobileUnifiedLibraryActions {
                                     override fun clearSelection() {
                                         state = state.copy(selectedBookIds = emptySet())
@@ -6747,15 +7787,22 @@ private fun ReaderIosApp(
 
                                     override fun deleteBooks(bookIds: Set<String>) {
                                         val removedBooks = state.rawLibraryBooks.filter { it.id in bookIds }
-                                        removedBooks.filter { it.sourceFolder == null }
-                                            .mapNotNull { it.path }
-                                            .let(bridge::removeImportedFiles)
+                                        val cloudRemoved = removedBooks.filter { it.sourceFolder == null }
+                                        bridge.purgeDeletedBookArtifacts(
+                                            bookIds = cloudRemoved.map { it.id },
+                                            bookPaths = cloudRemoved.mapNotNull { it.path },
+                                            coverPaths = cloudRemoved.mapNotNull { it.coverImagePath },
+                                            notifyNativeEvent = true,
+                                        )
                                         removedBooks.filter { it.sourceFolder != null }
                                             .groupBy { it.sourceFolder.orEmpty() }
                                             .forEach { (folder, books) ->
                                                 bridge.removeFolderManagedFiles(folder, books.mapNotNull { it.path })
                                             }
-                                        state = state.removeIosBooks(bookIds, recordCloudDeletion = true)
+                                        val next = state.removeIosBooks(bookIds, recordCloudDeletion = true)
+                                        state = next
+                                        persistIosLibrarySnapshot(next)
+                                        requestCloudSyncIfEligible()
                                     }
                                 },
                                 onCreateShelf = { name -> state = state.createIosShelf(name, emptySet()) },
@@ -6790,12 +7837,13 @@ private fun ReaderIosApp(
                                         .mapTo(mutableSetOf()) { it.id }
                                     state = state.copy(
                                         syncedFolders = state.syncedFolders.filterNot { it.uriString == folder.uriString },
-                                        libraryFilters = state.libraryFilters.withoutIosFolderFilter(folder),
+                                        libraryFilters = state.libraryFilters.withoutFolderFilter(folder),
                                     ).removeIosBooks(folderBookIds)
                                 },
                                 onOpenSettings = { utilityScreen = IosUtilityScreen.SETTINGS },
                                 onOpenAppTheme = { showAppThemePanel = true },
                                 onOpenFonts = { utilityScreen = IosUtilityScreen.FONTS },
+                                onOpenAiSettings = { utilityScreen = IosUtilityScreen.AI_SETTINGS },
                                 onOpenAccountDrawer = { scope.launch { accountDrawerState.open() } },
                                 accountAvatar = {
                                     IosAccountAvatar(state.currentUser, Modifier.size(32.dp))
@@ -6808,7 +7856,7 @@ private fun ReaderIosApp(
                                 },
                                 drawerCapabilities = MobileUnifiedLibraryDrawerCapabilities(
                                     catalogsAvailable = true,
-                                    aiSettingsAvailable = false,
+                                    aiSettingsAvailable = true,
                                 ),
                                 catalogContent = { catalogModifier ->
                                     SharedOpdsScreen(
@@ -6938,9 +7986,7 @@ private fun ReaderIosApp(
                                 audiobooks = state.audiobooks,
                                 audiobookPlayback = audiobookPlaybackSnapshot,
                                 onPlayAudiobook = { audiobook ->
-                                    ttsListenController.stop()
-                                    readerTtsEngine.stop()
-                                    readerCloudTts.stop()
+                                    listeningArbiter.onAudiobookStarting()
                                     audiobookPlayer.connect(
                                         SharedAudiobookPlaybackRequest(
                                             bookId = audiobook.bookId,
@@ -6957,9 +8003,7 @@ private fun ReaderIosApp(
                                     )
                                 },
                                 onToggleAudiobookPlayback = {
-                                    readerTtsEngine.stop()
-                                    readerCloudTts.stop()
-                                    ttsListenController.stop()
+                                    listeningArbiter.onAudiobookStarting()
                                     audiobookPlayer.togglePlayPause()
                                 },
                                 onSeekAudiobook = audiobookPlayer::seekTo,
@@ -6982,9 +8026,7 @@ private fun ReaderIosApp(
                                             "type=${book.type} policy=$policy chapterIndex=$chapterIndex " +
                                             "path=${book.path ?: "<null>"}"
                                     )
-                                    audiobookPlayer.stop()
-                                    readerTtsEngine.stop()
-                                    readerCloudTts.stop()
+                                    listeningArbiter.onListenSessionStarting()
                                     ttsListenController.start(
                                         book,
                                         policy,
@@ -7006,6 +8048,7 @@ private fun ReaderIosApp(
                                     }
                                 },
                                 onStopTtsPlayback = ttsListenController::stop,
+                                onOpenTtsVoiceSettings = { showListenTtsVoiceSettings = true },
                                 modifier = Modifier.fillMaxSize(),
                             )
                                         }
@@ -7017,22 +8060,17 @@ private fun ReaderIosApp(
                 }
             }
 
-            if (selectedPage == SharedMobileMainDestination.LIBRARY) {
-                // Android's Library screen has no navigation drawer; its tab
-                // pager owns horizontal gestures so edge swipes page the tabs.
-                MainScaffoldContent()
-            } else {
-                ModalNavigationDrawer(
-                    drawerState = drawerState,
-                    drawerContent = {
-                        IosAppDrawerContent(
-                            capabilities = appDrawerCapabilities,
-                            closeDrawer = { scope.launch { drawerState.close() } },
-                        )
-                    }
-                ) {
-                    MainScaffoldContent()
+            // Library Beta is the only destination, so the app drawer always wraps it.
+            ModalNavigationDrawer(
+                drawerState = drawerState,
+                drawerContent = {
+                    IosAppDrawerContent(
+                        capabilities = appDrawerCapabilities,
+                        closeDrawer = { scope.launch { drawerState.close() } },
+                    )
                 }
+            ) {
+                MainScaffoldContent()
             }
         }
         // Global read-aloud mini bar (Android `AppNavigation` overlay parity).
@@ -7044,10 +8082,7 @@ private fun ReaderIosApp(
         )
         if (showReaderTtsMiniBar && readerTtsMiniBarState != null) {
             val miniBarState = readerTtsMiniBarState!!
-            val isOnMainRoute = activeReaderBook == null &&
-                (selectedPage == SharedMobileMainDestination.HOME ||
-                    selectedPage == SharedMobileMainDestination.LIBRARY ||
-                    selectedPage == SharedMobileMainDestination.UNIFIED_LIBRARY)
+            val isOnMainRoute = activeReaderBook == null
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.BottomCenter
@@ -8610,7 +9645,7 @@ private fun SharedReaderScreenState.withIosImportsFolder(importedBooks: List<Boo
     }
     val folderIds = sourceNames.associateWith { name -> "ios_folder_${name.normalizedId()}" }
     val folders = sourceNames.map { sourceName ->
-        val books = rawLibraryBooks.filter { it.sourceFolder == sourceName }
+        val books = sortBooks(rawLibraryBooks.filter { it.sourceFolder == sourceName }, sortOrder)
         Shelf(
             id = folderIds.getValue(sourceName),
             name = sourceName,
@@ -8649,13 +9684,15 @@ private fun SharedReaderScreenState.createIosShelf(
     val id = "ios_shelf_${currentTimestamp()}"
     val books = rawLibraryBooks.filter { it.id in bookIds }
     val addedAt = currentTimestamp()
+    // New shelves are built straight into state, so they must already carry the active sort order.
+    val sortedBooks = sortBooks(books, sortOrder)
     return copy(
         shelves = shelves + Shelf(
             id = id,
             name = trimmedName,
             type = ShelfType.MANUAL,
-            books = books,
-            directBooks = books,
+            books = sortedBooks,
+            directBooks = sortedBooks,
             directBookAddedAt = books.associate { it.id to addedAt },
         ),
         selectedBookIds = emptySet(),
@@ -8748,6 +9785,18 @@ private fun SharedReaderScreenState.withUpdatedIosMetadata(edited: BookItem): Sh
 private fun persistIosEpubMetadataEdit(current: BookItem, edited: BookItem): Result<BookItem> = runCatching {
     val updated = current.withUserEditedMetadata(edited)
     if (current.type != FileType.EPUB || updated === current) return@runCatching updated
+    // A linked-folder book is the user's own file, not an app-owned import.
+    // Rewriting the EPUB in place would modify a file the user may sync through
+    // another app, and the sidecar in `EpistemeSyncData/` is the supported way
+    // to carry a title/author edit for a folder book. Refuse rather than
+    // silently touching their data; the in-memory edit still applies.
+    if (SharedIosBookSourceRef.isProviderRef(current.path)) {
+        IosDiagnosticLogStore.record(
+            LOCAL_FOLDER_SCAN_LOG_TAG,
+            "epubMetadata.skipped id=${current.id} reason=linked_folder_book path=${current.path}",
+        )
+        return@runCatching updated
+    }
     val sourcePath = current.path?.takeIf(String::isNotBlank)
         ?: error("Book file is not available.")
     require(NSFileManager.defaultManager.fileExistsAtPath(sourcePath)) {
@@ -9119,7 +10168,11 @@ private fun List<IosImportedFile>.toImportedBooks(existingBooks: List<BookItem>)
                 localPath = file.path,
                 size = 0L,
                 sourceFolder = file.sourceFolder.takeIf { it.isNotBlank() },
+                // Content hash before the path fallback, for the same reason as the
+                // other import site: the id is the CloudKit record name and must be
+                // identical on every device for the same bytes.
                 id = file.contentId.takeIf { it.isNotBlank() }
+                    ?: iosFileContentSha256Hex(file.path)
                     ?: "ios_import_${file.path.stableIosImportedFilePath().normalizedId()}",
             )
         },

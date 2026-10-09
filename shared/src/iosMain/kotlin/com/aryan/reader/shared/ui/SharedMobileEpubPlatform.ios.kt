@@ -24,6 +24,7 @@ import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderExternalLookupService
+import com.aryan.reader.shared.ReaderDefaultDictionaryLookupService
 import com.aryan.reader.shared.isReaderExternalHref
 import com.aryan.reader.shared.normalizeReaderHref
 import com.aryan.reader.shared.LocalTtsInterruptionAction
@@ -37,6 +38,7 @@ import com.aryan.reader.shared.ios.IosEpubResourceStore
 import com.aryan.reader.shared.ios.IosTtsAudioInterruption
 import com.aryan.reader.shared.ios.IosTtsAudioInterruptionMonitor
 import com.aryan.reader.shared.ios.IosTtsAudioSessionTeardown
+import com.aryan.reader.shared.ios.iosTtsStartLog
 import com.aryan.reader.shared.opds.SharedOpdsStreamRequest
 import com.aryan.reader.shared.reader.SharedEpubResourceScheme
 import com.aryan.reader.shared.reader.parseSharedEpubResourceUrl
@@ -44,6 +46,7 @@ import com.aryan.reader.shared.reader.sharedEpubResourceMimeType
 import com.aryan.reader.shared.reader.sharedEpubOpenTrace
 import com.aryan.reader.shared.reader.sharedEpubOpenTraceElapsedMs
 import com.aryan.reader.shared.reader.sharedEpubOpenTraceMark
+import com.aryan.reader.shared.reader.logEpubPositionSave
 import com.aryan.reader.shared.reader.sharedEpubOpenTraceMs
 import com.aryan.reader.shared.reduce
 import kotlinx.coroutines.Dispatchers
@@ -55,6 +58,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.TimeSource
+import kotlin.time.TimeMark
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
@@ -113,9 +117,6 @@ import platform.AVFAudio.AVSpeechSynthesisVoice
 import platform.AVFAudio.AVSpeechSynthesisVoiceQualityEnhanced
 import platform.AVFAudio.AVSpeechSynthesisVoiceQualityPremium
 import platform.AVFAudio.AVSpeechUtterance
-import platform.AVFAudio.AVAudioSession
-import platform.AVFAudio.AVAudioSessionCategoryPlayback
-import platform.AVFAudio.setActive
 import platform.MediaPlayer.MPMediaItemPropertyArtist
 import platform.MediaPlayer.MPMediaItemPropertyAlbumTitle
 import platform.MediaPlayer.MPMediaItemPropertyTitle
@@ -130,6 +131,18 @@ import platform.posix.fclose
 import platform.posix.fopen
 import platform.posix.fwrite
 import platform.posix.memcpy
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import com.aryan.reader.shared.ReaderPageInfoCornerClearance
+import com.aryan.reader.shared.readerPageInfoCornerClearance
 
 @Composable
 internal actual fun rememberSharedMobileEpubLoadState(book: BookItem): SharedMobileEpubLoadState {
@@ -165,6 +178,7 @@ internal actual fun SharedMobileEpubWebView(
     navigationScript: String?,
     navigationRequestId: Long,
     highlightsApplyScript: String,
+    playbackBandScript: String?,
     onBridgeMessage: (method: String, payload: String) -> Unit,
     positionController: SharedMobileEpubWebViewController?,
     streamPageLoader: SharedMobileEpubStreamPageLoader?,
@@ -199,6 +213,7 @@ internal actual fun SharedMobileEpubWebView(
                 navigationScript = navigationScript,
                 navigationRequestId = navigationRequestId,
                 highlightsApplyScript = highlightsApplyScript,
+                playbackBandScript = playbackBandScript,
                 contentBackgroundArgb = contentBackgroundArgb
             )
         },
@@ -218,10 +233,36 @@ internal actual fun openSharedMobileEpubExternalLink(url: String): Boolean {
     return openSharedMobileExternalUrl(url)
 }
 
-// iPhone corner radii (~13-16pt) curve into the benchmark 16.dp side padding,
-// so the edge-pinned clock/percentage gain room that safeDrawing cannot
-// provide (it reports 0 horizontally in portrait).
-internal actual val sharedMobileEpubPageInfoCornerClearance: Dp = 8.dp
+/** iPhone corner radius floor; see [sharedMobileEpubPageInfoCornerClearance]. */
+private val IOS_PAGE_INFO_CORNER_RADIUS_FLOOR = 8.dp
+
+/**
+ * iPhone corner radii (~13-16pt) curve into the benchmark 16.dp side padding, so
+ * the edge-pinned clock/percentage need room that safeDrawing cannot provide (it
+ * reports 0 horizontally in portrait).
+ *
+ * Compose Multiplatform exposes no rounded-corner radii to read, unlike Android's
+ * `WindowInsets.getRoundedCorner`, so the radius term is a floor sized for the
+ * tightest supported iPhone rather than a measurement. Everything else follows
+ * Android exactly: the horizontal insets are subtracted per side, so landscape
+ * safe-area insets reduce the floor instead of stacking with it.
+ */
+@Composable
+actual fun sharedMobileEpubPageInfoCornerClearance(): ReaderPageInfoCornerClearance {
+    val layoutDirection = LocalLayoutDirection.current
+    val safeInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+    // Directional, matching the padding this clearance is added to.
+    val safePadding = safeInsets.asPaddingValues()
+    return readerPageInfoCornerClearance(
+        startTopRadius = IOS_PAGE_INFO_CORNER_RADIUS_FLOOR,
+        startBottomRadius = IOS_PAGE_INFO_CORNER_RADIUS_FLOOR,
+        endTopRadius = IOS_PAGE_INFO_CORNER_RADIUS_FLOOR,
+        endBottomRadius = IOS_PAGE_INFO_CORNER_RADIUS_FLOOR,
+        startInset = safePadding.calculateStartPadding(layoutDirection),
+        endInset = safePadding.calculateEndPadding(layoutDirection),
+        barSidePadding = SharedReaderPageInfoBarSidePadding
+    )
+}
 
 // With menus hidden the bar would sit flush at the bottom edge, inside the
 // corner curve. Always lifting it above the home-indicator zone keeps the
@@ -236,10 +277,11 @@ internal actual val sharedMobileEpubPageInfoMatchesReaderBackground: Boolean = t
 
 internal object IosReaderLookupServices {
     // Startup defaults; the host overrides these from NSUserDefaults in
-    // loadIosReaderLookupServices. Android parity: dictionary defaults to the
-    // in-app Smart AI; translate/search default to in-app Safari, which always
-    // works, instead of the app chooser / an external browser.
-    var dictionary: ReaderExternalLookupService = ReaderExternalLookupService.AI
+    // loadIosReaderLookupServices. Android benchmark (Smart AI default):
+    // dictionary starts on the in-app AI definition until another engine is
+    // explicitly picked; translate/search default to in-app Safari, which
+    // always works.
+    var dictionary: ReaderExternalLookupService = ReaderDefaultDictionaryLookupService
     var translate: ReaderExternalLookupService = ReaderExternalLookupService.SAFARI
     var search: ReaderExternalLookupService = ReaderExternalLookupService.SAFARI
 }
@@ -459,7 +501,7 @@ private fun NSUserDefaults.readerTtsFloat(key: String, fallback: Float): Float {
  * Android benchmark parity: the shared sheet groups by localized display
  * name (e.g. "English (United States)"), not the raw BCP-47 tag ("en-US").
  */
-private fun iosTtsLanguageDisplayName(languageTag: String): String {
+internal fun iosTtsLanguageDisplayName(languageTag: String): String {
     val trimmed = languageTag.trim()
     if (trimmed.isBlank()) return ""
     val localeIdentifier = trimmed.replace('-', '_')
@@ -482,7 +524,7 @@ private fun iosTtsFavoriteVoices(preferences: NSUserDefaults): Set<String> =
         .filter { it.isNotBlank() }
         .toSet()
 
-private fun iosTtsVoiceQuality(voice: AVSpeechSynthesisVoice): SharedMobileEpubVoiceQuality {
+internal fun iosTtsVoiceQuality(voice: AVSpeechSynthesisVoice): SharedMobileEpubVoiceQuality {
     val quality = runCatching { voice.quality }.getOrNull()
     if (quality == AVSpeechSynthesisVoiceQualityPremium) return SharedMobileEpubVoiceQuality.PREMIUM
     if (quality == AVSpeechSynthesisVoiceQualityEnhanced) return SharedMobileEpubVoiceQuality.ENHANCED
@@ -557,9 +599,19 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     private var activeUtterance: AVSpeechUtterance? = null
     private var activeSpokenOffset = 0
     private var activeUtteranceBaseOffset = 0
+    // Session identity, so a surface sharing this engine can tell its own session
+    // apart from another surface's. Android benchmark: `TtsState.playbackSource`.
+    // Observable because audiobook Listen projects its whole UI state out of these:
+    // if they were plain, a projection reading them would go stale.
+    private var activePlaybackSource by mutableStateOf<String?>(null)
+    private var activeBookId by mutableStateOf<String?>(null)
+    private var activeTotalChapters by mutableStateOf(0)
     private var wantsPlayback = true
     private var audioSessionActive = false
     private var audioSessionGeneration = 0
+    // Start-session stopwatch for ReaderTtsStart diagnostics: set at start(),
+    // consumed at the first delegate audio callback, cleared at stop().
+    private var ttsStartMark: TimeMark? = null
     private var interruptionState = LocalTtsInterruptionState()
     private val interruptionMonitor = IosTtsAudioInterruptionMonitor(::handleAudioInterruption)
 
@@ -574,7 +626,13 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         installRemoteCommands()
     }
 
+    override val playbackSource: String? get() = activePlaybackSource
+    override val sessionBookId: String? get() = activeBookId
+    override val sessionTotalChapters: Int get() = activeTotalChapters
+    override val currentSpokenOffset: Int get() = activeSpokenOffset
+
     override fun prepare() {
+        iosTtsStartLog("local.prepare")
         if (!audioSessionActive) {
             configureAudioSession(active = true)
             audioSessionActive = true
@@ -587,15 +645,33 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         bookTitle: String,
         bookId: String?,
         startChunkIndex: Int,
-        playWhenReady: Boolean
+        playWhenReady: Boolean,
+        playbackSource: String?,
+        totalChapters: Int,
+        continueSession: Boolean,
+        authToken: String?,
     ) {
+        // The local engine never spends credits, so continueSession/authToken are accepted
+        // only to keep one signature across engines.
         val readableChunks = chunks.filter { it.spokenText.isNotBlank() }
-        if (readableChunks.isEmpty()) return
+        if (readableChunks.isEmpty()) {
+            iosTtsStartLog("local.start empty", "chunks=${chunks.size}")
+            return
+        }
+        ttsStartMark = TimeSource.Monotonic.markNow()
+        iosTtsStartLog(
+            "local.start",
+            "chunks=${readableChunks.size} startIndex=$startChunkIndex playWhenReady=$playWhenReady " +
+                "voice=${selectedVoiceIdentifier ?: "<system>"} rate=$speechRate pitch=$speechPitch"
+        )
         errorMessage = null
         invalidateActiveUtterance()
         synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         this.chunks = readableChunks
         this.bookTitle = bookTitle
+        activePlaybackSource = playbackSource
+        activeBookId = bookId
+        activeTotalChapters = totalChapters
         currentChunkIndex = startChunkIndex.coerceIn(0, readableChunks.lastIndex) - 1
         sessionId += 1
         wantsPlayback = playWhenReady
@@ -609,6 +685,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     }
 
     private fun pauseInternal() {
+        iosTtsStartLog("local.pause", "chunkIndex=$currentChunkIndex")
         wantsPlayback = false
         synthesizer.pauseSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         if (activeUtterance != null) state = SharedMobileEpubLocalTtsState.PAUSED
@@ -616,6 +693,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     }
 
     override fun resume() {
+        iosTtsStartLog("local.resume", "chunkIndex=$currentChunkIndex")
         interruptionState = LocalTtsInterruptionState()
         wantsPlayback = true
         synthesizer.continueSpeaking()
@@ -659,6 +737,10 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         restartCurrentUtterance()
     }
 
+    override fun stopVoicePreview() {
+        previewSynthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+    }
+
     override fun previewVoice(identifier: String?) {
         previewSynthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         val utterance = AVSpeechUtterance(
@@ -674,6 +756,8 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     }
 
     override fun stop() {
+        iosTtsStartLog("local.stop")
+        ttsStartMark = null
         interruptionState = LocalTtsInterruptionState()
         sessionId += 1
         errorMessage = null
@@ -683,6 +767,10 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         currentChunkIndex = -1
         wantsPlayback = false
         isSessionActive = false
+        // Clearing the session tag is what lets another surface claim the engine next.
+        activePlaybackSource = null
+        activeBookId = null
+        activeTotalChapters = 0
         progress = ReaderTtsProgress()
         state = SharedMobileEpubLocalTtsState.IDLE
         clearNowPlaying()
@@ -704,6 +792,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         }
         val transition = interruptionState.reduce(event)
         interruptionState = transition.state
+        iosTtsStartLog("local.interruption", "event=$event action=${transition.action}")
         when (transition.action) {
             LocalTtsInterruptionAction.NONE -> Unit
             LocalTtsInterruptionAction.PAUSE -> pauseInternal()
@@ -766,6 +855,9 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
                 ?.let { voice = it }
         }
         activeUtterance = utterance
+        ttsStartMark?.let { mark ->
+            iosTtsStartLog("local.speak", "chunkIndex=$currentChunkIndex chars=${chunk.spokenText.length}", mark)
+        }
         synthesizer.speakUtterance(utterance)
     }
 
@@ -791,6 +883,10 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
 
     private fun utteranceStarted(utterance: AVSpeechUtterance) {
         if (!isActive(utterance)) return
+        ttsStartMark?.let { mark ->
+            iosTtsStartLog("local.firstAudio", "chunkIndex=$currentChunkIndex", mark)
+            ttsStartMark = null
+        }
         if (wantsPlayback) {
             state = SharedMobileEpubLocalTtsState.SPEAKING
         } else {
@@ -808,12 +904,14 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
 
     private fun utterancePaused(utterance: AVSpeechUtterance) {
         if (!isActive(utterance)) return
+        iosTtsStartLog("local.delegatePaused", "chunkIndex=$currentChunkIndex")
         state = SharedMobileEpubLocalTtsState.PAUSED
         updateNowPlaying()
     }
 
     private fun utteranceContinued(utterance: AVSpeechUtterance) {
         if (!isActive(utterance)) return
+        iosTtsStartLog("local.delegateContinued", "chunkIndex=$currentChunkIndex")
         state = SharedMobileEpubLocalTtsState.SPEAKING
         updateNowPlaying()
     }
@@ -830,6 +928,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
 
     private fun utteranceCancelled(utterance: AVSpeechUtterance) {
         if (!isActive(utterance)) return
+        iosTtsStartLog("local.delegateCancelled", "chunkIndex=$currentChunkIndex wantsPlayback=$wantsPlayback chunks=${chunks.size}")
         activeUtterance = null
         if (wantsPlayback && chunks.isNotEmpty()) {
             errorMessage = "Text-to-speech was interrupted."
@@ -844,12 +943,12 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     }
 
     private fun configureAudioSession(active: Boolean) {
-        val audioSession = AVAudioSession.sharedInstance()
-        if (active) {
-            audioSessionGeneration += 1
-            audioSession.setCategory(AVAudioSessionCategoryPlayback, error = null)
-        }
-        audioSession.setActive(active = active, error = null)
+        // Activation-only (deactivation goes through the guarded
+        // IosTtsAudioSessionTeardown.deactivateIfStillOwner): both directions
+        // block on route negotiation, so they must stay off the main thread.
+        if (!active) return
+        audioSessionGeneration += 1
+        IosTtsAudioSessionTeardown.activate()
     }
 
     /**
@@ -1013,12 +1112,14 @@ private class IosEpubWebViewCoordinator(
     private var lastHtml: String? = null
     private var appliedAppearanceHash: Int? = null
     private var appliedHighlightsHash: Int? = null
+    private var appliedPlaybackBandHash: Int? = null
     private var appliedNavigationRequestId: Long = Long.MIN_VALUE
     private var appliedBackgroundArgb: Long? = null
     private var latestAppearanceScript: String = ""
     private var latestNavigationScript: String? = null
     private var latestNavigationRequestId: Long = Long.MIN_VALUE
     private var latestHighlightsApplyScript: String = ""
+    private var latestPlaybackBandScript: String? = null
     private var htmlLoadStartMark: TimeSource.Monotonic.ValueTimeMark? = null
     private var reportedFirstPosition: Boolean = false
 
@@ -1083,6 +1184,7 @@ private class IosEpubWebViewCoordinator(
         navigationScript: String?,
         navigationRequestId: Long,
         highlightsApplyScript: String,
+        playbackBandScript: String?,
         contentBackgroundArgb: Long
     ) {
         activeWebView = webView
@@ -1098,6 +1200,7 @@ private class IosEpubWebViewCoordinator(
         latestNavigationScript = navigationScript
         latestNavigationRequestId = navigationRequestId
         latestHighlightsApplyScript = highlightsApplyScript
+        latestPlaybackBandScript = playbackBandScript
         val htmlHash = html.hashCode()
         if (loadedHtmlHash != htmlHash || loadedHtmlLength != html.length) {
             // Android parity: highlight changes never reach here — the document
@@ -1114,6 +1217,10 @@ private class IosEpubWebViewCoordinator(
             htmlLoadStartMark = sharedEpubOpenTraceMark()
             reportedFirstPosition = false
             sharedEpubOpenTrace { "webview loadHTML start chars=${html.length} chunks=${contentChunks.size}" }
+            // A second loadHTMLString after a restore landing resets scrollY
+            // to 0 with no JS scroll trace, so it is indistinguishable from a
+            // scroll bug. Make every native reload visible in the position log.
+            logEpubPositionSave("event=webview_reload chars=${html.length} chunks=${contentChunks.size}")
             webView.loadHTMLString(html, baseURL = null)
             return
         }
@@ -1135,6 +1242,13 @@ private class IosEpubWebViewCoordinator(
             appliedNavigationRequestId = navigationRequestId
             evaluateReaderScript(webView, navigationScript, "navigation")
         }
+        // Last, and after navigation: a band resolved against a landing position that has not been
+        // established yet lands on the previous one and needs a second pass to correct.
+        val bandHash = playbackBandScript?.hashCode()
+        if (playbackBandScript != null && bandHash != null && appliedPlaybackBandHash != bandHash) {
+            appliedPlaybackBandHash = bandHash
+            evaluateReaderScript(webView, playbackBandScript, "playbackBand")
+        }
     }
 
     private fun evaluateReaderScript(webView: WKWebView, script: String, kind: String) {
@@ -1154,14 +1268,31 @@ private class IosEpubWebViewCoordinator(
         val appearance = latestAppearanceScript.takeIf { it.isNotBlank() }
         val highlights = latestHighlightsApplyScript.takeIf { it.isNotBlank() }
         val navigation = latestNavigationScript
+        val band = latestPlaybackBandScript
+        // The band goes last of all three. Navigation is what establishes where the document is,
+        // so a band resolved before it lands on the previous position and needs a second pass.
+        fun applyBand() {
+            val script = band ?: return
+            webView.evaluateJavaScript(script) { _, error ->
+                if (error != null) {
+                    sharedEpubOpenTrace { "webview evaluateFailed kind=playbackBand chars=${script.length} error=${error.localizedDescription}" }
+                } else {
+                    appliedPlaybackBandHash = script.hashCode()
+                }
+            }
+        }
         fun applyNavigation() {
-            if (navigation == null) return
+            if (navigation == null) {
+                applyBand()
+                return
+            }
             webView.evaluateJavaScript(navigation) { _, error ->
                 if (error != null) {
                     sharedEpubOpenTrace { "webview evaluateFailed kind=navigation chars=${navigation.length} error=${error.localizedDescription}" }
                 } else {
                     appliedNavigationRequestId = latestNavigationRequestId
                 }
+                applyBand()
             }
         }
         fun applyHighlights() {
@@ -1208,6 +1339,7 @@ private class IosEpubWebViewCoordinator(
         loadedHtmlLength = -1
         appliedAppearanceHash = null
         appliedHighlightsHash = null
+        appliedPlaybackBandHash = null
         appliedNavigationRequestId = Long.MIN_VALUE
         val html = lastHtml
         if (html != null && webView == activeWebView) {
@@ -1291,8 +1423,10 @@ private class IosEpubWebViewCoordinator(
         loadedHtmlLength = -1
         lastHtml = null
         appliedHighlightsHash = null
+        appliedPlaybackBandHash = null
         appliedBackgroundArgb = null
         latestHighlightsApplyScript = ""
+        latestPlaybackBandScript = null
         htmlLoadStartMark = null
         reportedFirstPosition = false
     }

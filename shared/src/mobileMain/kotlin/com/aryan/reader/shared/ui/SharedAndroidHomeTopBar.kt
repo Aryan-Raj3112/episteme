@@ -9,7 +9,6 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -174,7 +173,7 @@ fun SharedAndroidHomeTopBar(
             IconButton(onClick = onAppTheme) { appThemeIcon() }
             Box {
                 IconButton(onClick = { limitsExpanded = true }) { Icon(Icons.Default.FormatListNumbered, strings.recentLimit) }
-                DropdownMenu(expanded = limitsExpanded, onDismissRequest = { limitsExpanded = false }) {
+                SharedDropdownMenu(expanded = limitsExpanded, onDismissRequest = { limitsExpanded = false }) {
                     listOf(0, 10, 20, 50, 100).forEach { limit ->
                         DropdownMenuItem(
                             text = { Text(if (limit == 0) strings.noLimit else strings.limitLabels.getValue(limit)) },
@@ -186,7 +185,7 @@ fun SharedAndroidHomeTopBar(
             }
             Box {
                 IconButton(onClick = { optionsExpanded = true }) { Icon(Icons.Default.MoreVert, strings.moreOptions) }
-                DropdownMenu(expanded = optionsExpanded, onDismissRequest = { optionsExpanded = false }) {
+                SharedDropdownMenu(expanded = optionsExpanded, onDismissRequest = { optionsExpanded = false }) {
                     overflowItems.forEachIndexed { index, overflowItem ->
                         if (index > 0 && overflowItems[index - 1].section != overflowItem.section) {
                             HorizontalDivider()

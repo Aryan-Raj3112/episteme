@@ -68,6 +68,7 @@ import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.readerLookupUsesAiDictionary
 
 import com.aryan.reader.shared.UserHighlight
+import com.aryan.reader.shared.epubHighlightColorTag
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.isTwoPageSpreadEnabled
@@ -75,7 +76,6 @@ import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 internal enum class SharedPaginatedTapAction {
@@ -505,7 +505,7 @@ fun SharedNativePaginatedReader(
                 )
             }
             if (!selectionGestureActive && !selectionHandleDragging) {
-                val highlightPalette = renderPlan.highlightPalette.sanitized().colors
+                val highlightPalette = renderPlan.highlightPalette
                 SharedNativeSelectionMenu(
                     selection = selection,
                     highlightPalette = highlightPalette,
@@ -520,11 +520,11 @@ fun SharedNativePaginatedReader(
                         onSelectionAction(action, selection.text, selection.toReaderLocator())
                         updateActiveSelection(null)
                     },
-                    onHighlight = { color, style ->
-                        val highlight = sharedNativeReaderHighlightForSelection(selection, color, style)
+                    onHighlight = { colorArgb, style ->
+                        val highlight = sharedNativeReaderHighlightForSelection(selection, colorArgb, style)
                         logSharedReaderDiagnostic(DesktopHighlightMapLogTag) {
                             "native_highlight_create_click id=\"${highlight.id.sharedNativeLogPreview(64)}\" " +
-                                "color=${color.id} style=${style.id} chapter=${highlight.chapterIndex} page=${highlight.locator.pageIndex} " +
+                                "color=${epubHighlightColorTag(highlight.effectiveArgb)} style=${style.id} chapter=${highlight.chapterIndex} page=${highlight.locator.pageIndex} " +
                                 "offsets=${highlight.locator.startOffset}..${highlight.locator.endOffset} " +
                                 "block=${highlight.locator.blockIndex} char=${highlight.locator.charOffset} " +
                                 "cfi=\"${highlight.cfi.sharedNativeLogPreview(160)}\" text=\"${highlight.text.sharedNativeLogPreview(120)}\""
@@ -541,7 +541,7 @@ fun SharedNativePaginatedReader(
                                 selection = selection,
                                 readerCoordinates = readerCoordinates,
                                 density = readerDensity,
-                                highlightPaletteSize = highlightPalette.size,
+                                highlightPaletteSize = highlightPalette.colors.size,
                                 actionCount = enabledSelectionActions.size + 2
                             )
                         }
@@ -662,7 +662,6 @@ internal fun SharedNativePaginatedPagesContent(
                 spreadMode = renderPlan.settings.pageSpreadMode.name
             )
         }
-        val paperIsDark = sharedReaderPaperIsDark(renderPlan.background)
         val isSpreadMode = renderPlan.settings.isTwoPageSpreadEnabled()
         val gutterWidthPx = with(readerDensity) { pageGap.toPx() }
         // Spread mode curls the whole Row (both pages + gutter) as one leaf hinged
@@ -742,7 +741,6 @@ internal fun SharedNativePaginatedPagesContent(
                                     pageOffsetProvider = { turnSpec.offsetForSlot(turnSlot) },
                                     touchYProvider = { turnSpec.touchY },
                                     paperColor = renderPlan.background,
-                                    isDarkPaper = paperIsDark,
                                     rightToLeftPagination = turnSpec.rightToLeft
                                 )
                             }
@@ -891,11 +889,20 @@ fun SharedNativeVerticalReader(
     val listState = rememberLazyListState()
     DisposableEffect(verticalScrollController, listState, flowItems) {
         verticalScrollController?.attach(listState) {
+            // Android parity (EpubReaderScreen.currentNativeVerticalLocator →
+            // locatorForPersistence): the anchor is the FIRST visible text
+            // item — the line at the top of the viewport — never the item at
+            // viewport center. Chapter gaps are skipped so a boundary scroll
+            // anchors to the upcoming chapter's first block instead of the
+            // previous chapter's tail.
             val info = listState.layoutInfo
-            val center = (info.viewportStartOffset + info.viewportEndOffset) / 2
-            val itemIndex = info.visibleItemsInfo.minByOrNull { visible ->
-                abs((visible.offset + visible.size / 2) - center)
-            }?.index ?: listState.firstVisibleItemIndex
+            val itemIndex = info.visibleItemsInfo
+                .sortedBy { it.offset }
+                .firstOrNull { visible ->
+                    flowItems.getOrNull(visible.index)?.kind != SharedNativeVerticalFlowItemKind.CHAPTER_GAP
+                }
+                ?.index
+                ?: listState.firstVisibleItemIndex
             flowItems.getOrNull(itemIndex)?.toNativeVerticalLocator()
         }
         onDispose { verticalScrollController?.detach() }
@@ -1097,7 +1104,10 @@ fun SharedNativeVerticalReader(
 
                         SharedNativeVerticalFlowItemKind.TEXT_PAGE -> {
                             val page = item.page
-                            val visibleHighlights = renderPlan.highlights.visibleInPage(page)
+                            val visibleHighlights = renderPlan.highlights.visibleInPage(
+                                page = page,
+                                chapterTextIndex = renderPlan.chapterTextIndexes[page.chapterIndex]
+                            )
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1150,7 +1160,10 @@ fun SharedNativeVerticalReader(
                             val page = item.page
                             val block = item.block
                             if (block != null) {
-                                val visibleHighlights = renderPlan.highlights.visibleInPage(page)
+                                val visibleHighlights = renderPlan.highlights.visibleInPage(
+                                    page = page,
+                                    chapterTextIndex = renderPlan.chapterTextIndexes[page.chapterIndex]
+                                )
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -1236,7 +1249,7 @@ fun SharedNativeVerticalReader(
                 )
             }
             if (!selectionGestureActive && !selectionHandleDragging) {
-                val highlightPalette = renderPlan.highlightPalette.sanitized().colors
+                val highlightPalette = renderPlan.highlightPalette
                 SharedNativeSelectionMenu(
                     selection = selection,
                     highlightPalette = highlightPalette,
@@ -1251,8 +1264,8 @@ fun SharedNativeVerticalReader(
                         onSelectionAction(action, selection.text, selection.toReaderLocator())
                         updateActiveSelection(null)
                     },
-                    onHighlight = { color, style ->
-                        onHighlightCreated(sharedNativeReaderHighlightForSelection(selection, color, style))
+                    onHighlight = { colorArgb, style ->
+                        onHighlightCreated(sharedNativeReaderHighlightForSelection(selection, colorArgb, style))
                         updateActiveSelection(null)
                     },
                     onOpenHighlightPaletteManager = onOpenHighlightPaletteManager,
@@ -1264,7 +1277,7 @@ fun SharedNativeVerticalReader(
                                 selection = selection,
                                 readerCoordinates = readerCoordinates,
                                 density = density,
-                                highlightPaletteSize = highlightPalette.size,
+                                highlightPaletteSize = highlightPalette.colors.size,
                                 actionCount = enabledSelectionActions.size + 2
                             )
                         }
