@@ -44,9 +44,17 @@ internal fun readerHtmlSelectionScript(): String = """
               document.addEventListener('click', function (event) {
                 var target = event.target;
                 if (!target || !target.closest) return;
+                // `menu` is resolved once at script start. A document that has not built the in-page
+                // selection toolbar yet leaves it null, and `menu.contains(...)` then throws — which
+                // aborts this listener before the registry branch below ever runs, so a tap on a
+                // registry-painted highlight silently did nothing. Guarded rather than assumed.
+                var inMenu = function (node) { return !!(menu && node && menu.contains(node)); };
                 var highlight = target.closest('.reader-user-highlight[data-reader-highlight-id], span[class*="user-highlight-"][data-reader-highlight-id]');
-                if (highlight && !menu.contains(highlight)) {
+                if (highlight && !inMenu(highlight)) {
                   var highlightId = highlight.getAttribute('data-reader-highlight-id') || '';
+                  try {
+                    if (window.readerHighlightShiftLog) readerHighlightShiftLog('tap_marker', 'id=' + highlightId);
+                  } catch (ignored) {}
                   if (highlightId && sendReaderHighlightClick(highlightId)) {
                     event.preventDefault();
                     event.stopPropagation();
@@ -57,11 +65,11 @@ internal fun readerHtmlSelectionScript(): String = """
                 // the tap point to a painted range instead (same bridge event).
                 try {
                   if (typeof userHighlightRegistryUsable === 'function' && userHighlightRegistryUsable() &&
-                    typeof userHighlightIdFromPoint === 'function' && !menu.contains(target)) {
+                    typeof userHighlightIdFromPoint === 'function' && !inMenu(target)) {
                     var registryHitId = userHighlightIdFromPoint(event.clientX, event.clientY);
                     if (registryHitId) {
                       try {
-                        if (window.readerHighlightShiftLog) readerHighlightShiftLog('registry_hit', 'id=' + registryHitId);
+                        if (window.readerHighlightShiftLog) readerHighlightShiftLog('tap_registry', 'id=' + registryHitId);
                       } catch (ignored) {}
                       if (sendReaderHighlightClick(registryHitId)) {
                         event.preventDefault();
@@ -72,7 +80,7 @@ internal fun readerHtmlSelectionScript(): String = """
                   }
                 } catch (error) {}
                 var anchor = target.closest('a[href]');
-                if (!anchor || menu.contains(anchor)) return;
+                if (!anchor || inMenu(anchor)) return;
                 var href = anchor.getAttribute('href') || '';
                 if (!href) return;
                 var readerHost = nearestReaderHost(anchor);

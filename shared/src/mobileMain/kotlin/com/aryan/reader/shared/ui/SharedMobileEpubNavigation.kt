@@ -58,6 +58,7 @@ import com.aryan.reader.shared.ReaderSearchFocusDelayMillis
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.UserHighlight
+import com.aryan.reader.shared.fillCssColor
 import com.aryan.reader.shared.readerWordStartMatchOffsets
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import com.aryan.reader.shared.reader.ReaderPage
@@ -441,6 +442,12 @@ internal fun sharedMobileEpubHighlightsApplyScript(highlights: List<UserHighligh
             append(",\"colorId\":").append(JsonPrimitive(highlight.color.id))
             append(",\"style\":").append(JsonPrimitive(highlight.style.id))
             highlight.colorArgb?.let { append(",\"colorArgb\":").append(it.toLong()) }
+            // The tone every other surface fills with, alpha included, and sent for every highlight
+            // whether or not it carries an ARGB. Without it the WebView derives the colour from
+            // colorArgb and emits `#RRGGBB`, which has no alpha: a highlight created from the
+            // stylesheet looked tinted, and the same highlight turned opaque the moment it was
+            // recoloured. readerUserHighlightPaintColor prefers this value when it is present.
+            append(",\"fillCss\":").append(JsonPrimitive(highlight.fillCssColor()))
             append(",\"chapterIndex\":").append(highlight.chapterIndex)
             append(",\"locator\":{")
             val locator = highlight.locator

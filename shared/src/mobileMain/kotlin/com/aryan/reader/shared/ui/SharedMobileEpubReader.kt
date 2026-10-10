@@ -3039,7 +3039,15 @@ fun SharedMobileEpubReaderScreen(
                                         writeSharedReaderDiagnostic(SharedMobileEpubSelectionShiftTag, message)
                                     }
                                     "readerHighlightClicked" -> payload.sharedMobileEpubHighlightIdOrNull()?.let { id ->
-                                        editingHighlight = highlights.firstOrNull { it.id == id }
+                                        // An id that matches nothing clears the sheet silently, which
+                                        // is indistinguishable from the tap never arriving. Report both
+                                        // the id and whether it resolved.
+                                        val matched = highlights.firstOrNull { it.id == id }
+                                        writeSharedReaderDiagnostic(
+                                            SharedMobileEpubHighlightShiftTag,
+                                            "tap_resolve id=$id matched=${matched != null} known=${highlights.size}"
+                                        )
+                                        editingHighlight = matched
                                     }
                                     "readerSelectionAction" -> payload.sharedMobileEpubSelectionActionOrNull()?.let { selection ->
                                         val lookupAction = readerExternalLookupActionForSelectionId(selection.action)

@@ -6,6 +6,7 @@ import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.UserHighlight
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -94,6 +95,45 @@ class SharedMobileEpubHighlightBridgeTest {
         assertTrue(script.contains("\"startOffset\":100"))
         assertTrue(script.contains("\"endOffset\":110"))
         assertTrue(script.contains("\"cfi\":\"/4/2/2:0|/4/2/2:10\""))
+    }
+
+    @Test
+    fun `apply script sends the shared fill so a recolour keeps its tone`() {
+        // iOS never sent fillCss, so the WebView derived `#RRGGBB` from colorArgb — no alpha. A
+        // highlight read from the stylesheet looked tinted and turned opaque the moment it was
+        // recoloured, which is the same drift the Android path had already been fixed for.
+        val highlight = UserHighlight(
+            id = "h1",
+            cfi = "/4/2",
+            text = "alpha",
+            color = HighlightColor.GREEN,
+            colorArgb = 0xFF388E3C.toInt(),
+            chapterIndex = 0
+        )
+
+        val script = sharedMobileEpubHighlightsApplyScript(listOf(highlight))
+
+        assertTrue(script.contains("\"fillCss\":\"rgba(56,142,60,0.4)\""))
+        // Never the opaque hex the WebView would otherwise derive from colorArgb.
+        assertFalse(script.contains("\"fillCss\":\"#"))
+    }
+
+    @Test
+    fun `apply script sends a fill for a palette highlight that has no stored argb`() {
+        // Sent for every highlight, not only ones with an ARGB: without it the WebView falls back to
+        // the stylesheet for creation and to opaque hex after a recolour, so the tone would depend
+        // on whether the highlight had been touched.
+        val highlight = UserHighlight(
+            id = "h1",
+            cfi = "/4/2",
+            text = "alpha",
+            color = HighlightColor.YELLOW,
+            chapterIndex = 0
+        )
+
+        val script = sharedMobileEpubHighlightsApplyScript(listOf(highlight))
+
+        assertTrue(script.contains("\"fillCss\":\"rgba(251,192,45,0.4)\""))
     }
 
     @Test

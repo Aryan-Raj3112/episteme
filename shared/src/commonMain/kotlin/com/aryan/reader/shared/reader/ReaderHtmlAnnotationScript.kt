@@ -477,10 +477,13 @@ internal fun readerHtmlAnnotationScript(): String = """
                 var locator = (highlight && highlight.locator) || {};
                 if ((entry.styleId || 'background') !== (highlight.style || 'background')) return false;
                 if ((entry.colorId || 'yellow') !== (highlight.colorId || 'yellow')) return false;
-                // See markerMatchesHighlight: the id cannot distinguish two custom colours.
+                // See markerMatchesHighlight: the id cannot distinguish two custom colours. Compared
+                // strictly, missing included — an entry painted with no ARGB of its own is genuinely
+                // a different colour from one painted with one, and treating "unknown" as "matches"
+                // left a highlight created in the document never picking up a custom colour at all.
                 var incomingArgb = readerHighlightArgbValue(highlight.colorArgb);
                 var entryArgb = readerHighlightArgbValue(entry.colorArgb);
-                if (incomingArgb !== null && entryArgb !== null && incomingArgb !== entryArgb) return false;
+                if (incomingArgb !== entryArgb) return false;
                 var s = locator.startOffset;
                 var e = locator.endOffset;
                 if (s === undefined || s === null || e === undefined || e === null) return true;
@@ -540,7 +543,7 @@ internal fun readerHtmlAnnotationScript(): String = """
                       cfi: p.cfi, colorId: p.colorId, styleId: p.styleId,
                       // Recorded so paintedEntryMatches can see a recolour; see markerMatchesHighlight.
                       colorArgb: readerHighlightArgbValue(p.colorArgb),
-                      temp: !p.realId, id: p.realId || ''
+                      temp: !p.realId, id: p.id || ''
                     };
                     readerUserHighlightsPainted[p.key] = entry;
                   }
@@ -566,6 +569,11 @@ internal fun readerHtmlAnnotationScript(): String = """
                 return {
                   paintName: readerUserHighlightPaintName(highlight.colorId || 'yellow', highlight.style || 'background', highlight.colorArgb),
                   key: key, realId: !!realId,
+                  // Every caller passes the highlight's id in `realId`, but the flag above coerces it
+                  // to a boolean, so the entry was built with `id: true` and the tap resolved the
+                  // literal string "true" — which matches no highlight, and the sheet silently never
+                  // opened. Carried separately from the flag.
+                  id: realId || '',
                   chapterIndex: (chapterIndex === undefined || chapterIndex === null) ? highlight.chapterIndex : chapterIndex,
                   startOffset: segStart, endOffset: segEnd,
                   cfi: ((highlight.locator || {}).cfi || highlight.cfi || ''),
@@ -586,6 +594,20 @@ internal fun readerHtmlAnnotationScript(): String = """
                 }
                 return null;
               }
+              function findIncomingForPaintedEntryByCfi(incoming, entry) {
+                // Same identity test as findIncomingForPaintedEntry minus the mutable colour. A cfi
+                // names one highlight, and style still has to agree, so this cannot adopt an entry
+                // belonging to a different highlight. It exists only so a recolour does not strand a
+                // temp entry that is waiting to be adopted.
+                for (var i = 0; i < incoming.length; i++) {
+                  var candidate = incoming[i];
+                  if (!candidate) continue;
+                  if (String(candidate.cfi || '') !== String(entry.cfi || '')) continue;
+                  if ((candidate.style || 'background') !== (entry.styleId || 'background')) continue;
+                  return candidate;
+                }
+                return null;
+              }
               function cfiPresentInIncoming(incoming, entry) {
                 for (var i = 0; i < incoming.length; i++) {
                   if (incoming[i] && String(incoming[i].cfi || '') === String(entry.cfi || '')) return true;
@@ -600,7 +622,16 @@ internal fun readerHtmlAnnotationScript(): String = """
                   var entry = readerUserHighlightsPainted[key];
                   if (!entry) return;
                   if (entry.temp) {
-                    var match = findIncomingForPaintedEntry(list, entry);
+                    // A temp entry is one the reader just made in this document; it has a cfi but no
+                    // id yet. Which highlight it *is* is settled by the cfi. Colour cannot answer
+                    // that: a recolour changes the incoming colourId while the temp entry still
+                    // carries the old one, and matching on it left the entry orphaned under its
+                    // `local:` key — never adopted, so never tappable, with its old paint left in
+                    // the CSS highlight group underneath. So the colour match is a preference and the
+                    // cfi is the fallback; either way the entry is adopted and
+                    // paintedEntryMatches decides whether it then needs repainting.
+                    var match = findIncomingForPaintedEntry(list, entry) ||
+                                findIncomingForPaintedEntryByCfi(list, entry);
                     if (match && match.id) {
                       delete readerUserHighlightsPainted[key];
                       entry.temp = false;
@@ -609,6 +640,14 @@ internal fun readerHtmlAnnotationScript(): String = """
                       try {
                         if (window.readerHighlightShiftLog) readerHighlightShiftLog('registry_adopt', 'temp=' + key + ' id=' + match.id);
                       } catch (error) {}
+                      // Adopting only settles *which* highlight this is. It is still painted in the
+                      // colour it was created with, so when the incoming highlight no longer matches
+                      // — a recolour — the old paint has to come off and be laid down again, or the
+                      // entry stays tappable while showing the previous colour.
+                      if (!paintedEntryMatches(entry, match)) {
+                        unpaintUserHighlightByKey(match.id);
+                        applyHighlightObject(match);
+                      }
                     } else if (!cfiPresentInIncoming(list, entry)) {
                       unpaintUserHighlightByKey(key);
                     }
@@ -661,8 +700,20 @@ internal fun readerHtmlAnnotationScript(): String = """
                   if (!contents.length) {
                     contents = Array.prototype.slice.call(document.querySelectorAll('[data-reader-chapter-index] .reader-content'));
                   }
+                  // Why a tap resolved to nothing is otherwise indistinguishable from a tap that was
+                  // never delivered, and those two need different fixes. Reported once per miss:
+                  // no content hosts at all, or hosts present but no painted span covering the point.
+                  if (!contents.length) {
+                    try {
+                      if (window.readerHighlightShiftLog) {
+                        readerHighlightShiftLog('tap_miss', 'reason=no_reader_content');
+                      }
+                    } catch (ignored) {}
+                    return '';
+                  }
                   var bestId = '';
                   var bestSpan = Number.MAX_SAFE_INTEGER;
+                  var tapCandidates = [];
                   contents.forEach(function (content) {
                     var segmentRange = null;
                     try {
@@ -686,10 +737,31 @@ internal fun readerHtmlAnnotationScript(): String = """
                           }
                         });
                       });
+                      tapCandidates.push('ch=' + chapterIndex + ' at=' + offsets.start);
                     } finally {
                       if (segmentRange && segmentRange.detach) segmentRange.detach();
                     }
                   });
+                  if (!bestId) {
+                    // The registry had entries but none covered the tap. Either every entry is still
+                    // temp (never adopted, so untappable by construction) or the painted offsets do
+                    // not line up with the content the tap landed in. Both look identical from the
+                    // outside, so both are reported.
+                    try {
+                      if (window.readerHighlightShiftLog) {
+                        var paintedKeys = Object.keys(readerUserHighlightsPainted);
+                        var tappable = paintedKeys.filter(function (key) {
+                          var entry = readerUserHighlightsPainted[key];
+                          return entry && entry.id && !entry.temp;
+                        }).length;
+                        readerHighlightShiftLog('tap_miss',
+                          'reason=no_span entries=' + paintedKeys.length +
+                          ' tappable=' + tappable +
+                          ' temps=' + paintedKeys.filter(function (key) { return readerUserHighlightsPainted[key] && readerUserHighlightsPainted[key].temp; }).length +
+                          ' candidates=[' + tapCandidates.join(' ') + ']');
+                      }
+                    } catch (ignored) {}
+                  }
                   return bestId;
                 } catch (error) {
                   return '';
@@ -1056,11 +1128,12 @@ internal fun readerHtmlAnnotationScript(): String = """
                 if (readerHighlightColorIdFromMarker(marker) !== (highlight.colorId || 'yellow')) return false;
                 // The named colour alone cannot decide this. Every custom palette colour reports the
                 // same fallback id, so a recolour between two of them left the marker looking current
-                // and the repaint was skipped. Compare the ARGB the marker was painted with whenever
-                // both sides have one; neither having one keeps the old id-only behaviour.
+                // and the repaint was skipped. The ARGB the marker was painted with is compared too,
+                // strictly: a marker with no ARGB of its own is a different colour from one painted
+                // with a custom one, not an unknown that matches anything.
                 var incomingArgb = readerHighlightArgbValue(highlight.colorArgb);
                 var markerArgb = readerHighlightArgbValue(marker.getAttribute('data-reader-highlight-color-argb'));
-                if (incomingArgb !== null && markerArgb !== null && incomingArgb !== markerArgb) return false;
+                if (incomingArgb !== markerArgb) return false;
                 var start = locator.startOffset;
                 var end = locator.endOffset;
                 if (start === undefined || start === null || end === undefined || end === null) return true;
