@@ -63,10 +63,13 @@ internal fun sharedEpubHtmlToSemanticBlocks(html: String): List<SemanticBlock> {
  */
 internal fun sharedEpubHtmlToSemanticBlocks(
     html: String,
-    css: SharedSemanticCssSnapshot
+    css: SharedSemanticCssSnapshot,
+    baseFontSizeSp: Float = SharedSemanticCssBaseFontSizeSp,
+    density: Float = SharedSemanticCssDensity,
+    constraints: Constraints = SharedSemanticCssConstraints
 ): List<SemanticBlock> {
     val document = SharedSemanticHtmlDocument.parse(html) ?: return emptyList()
-    return SharedEpubSemanticBlockBuilder(document, css).build()
+    return SharedEpubSemanticBlockBuilder(document, css, baseFontSizeSp, density, constraints).build()
 }
 
 /** Pre-parsed book CSS for [sharedEpubHtmlToSemanticBlocks]. */
@@ -82,10 +85,11 @@ internal data class SharedSemanticCssSnapshot(
 /**
  * Merges the user-agent sheet with every collected book stylesheet, in
  * deterministic order (user-agent, manifest stylesheets, embedded chapter
- * styles). Mirrors the Android paginator, which parses with nominal metrics
- * at load time and resolves dp/em against the live settings later, so
- * parsing here uses the same nominal baseline as
- * `SharedJvmBookLoader.chapterFromHtml` (18sp, density 1, 980x720).
+ * styles). Metric-sensitive values (% of viewport, em of the reader size)
+ * resolve against the passed metrics, so callers choose the baseline:
+ * nominal (18sp, density 1, 980x720, like `SharedJvmBookLoader.chapterFromHtml`)
+ * for load-time blocks, or the live reader size / density / viewport for
+ * pagination (like `BookPaginator`, which re-parses per pagination config).
  */
 internal fun parseSharedSemanticCss(
     bookCss: Map<String, String>,
@@ -165,6 +169,23 @@ private fun CssStyle.hasSharedSemanticSpanEffect(): Boolean {
     if (verticalAlign != null) return true
     if (wordSpacing.isSpecified) return true
     return false
+}
+
+/**
+ * Publication `text-transform` applied at parse, mirroring the JVM parser
+ * (`HtmlParser.appendTransformedText`) so both platforms paginate, search and
+ * read the same characters. The stored transforms are length-preserving in
+ * practice, keeping source offsets and CFIs aligned with the plain text.
+ */
+private fun String.transformedSharedSemanticText(textTransform: String?): String {
+    return when (textTransform?.trim()?.lowercase()) {
+        "uppercase" -> uppercase()
+        "lowercase" -> lowercase()
+        "capitalize" -> split(' ').joinToString(" ") { word ->
+            if (word.isNotEmpty()) word.replaceFirstChar { it.titlecase() } else ""
+        }
+        else -> this
+    }
 }
 
 private val SharedSemanticCssCascadeComparator =
@@ -329,7 +350,9 @@ private fun parseSharedCssCompound(raw: String): SharedSemanticCssCompound? {
                 rest = rest.substring(end + 1)
             }
             ':' -> {
-                val match = Regex("^:([a-zA-Z-]+)(\\((.*)\\))?$", RegexOption.DOT_MATCHES_ALL).find(rest)
+                // `(?s)` rather than RegexOption.DOT_MATCHES_ALL: the option is absent from the
+                // common stdlib, so naming it breaks compileIosMainKotlinMetadata.
+                val match = Regex("(?s)^:([a-zA-Z-]+)(\\((.*)\\))?$").find(rest)
                     ?: return null
                 val name = match.groupValues[1].lowercase()
                 val args = match.groupValues[3]
@@ -1069,11 +1092,19 @@ internal fun normalizeWithSourceMapping(input: String): Pair<String, IntArray> {
 
 private class SharedEpubSemanticBlockBuilder(
     private val document: SharedSemanticHtmlTree,
-    css: SharedSemanticCssSnapshot = SharedSemanticCssSnapshot.EMPTY
+    css: SharedSemanticCssSnapshot = SharedSemanticCssSnapshot.EMPTY,
+    baseFontSizeSp: Float = SharedSemanticCssBaseFontSizeSp,
+    density: Float = SharedSemanticCssDensity,
+    constraints: Constraints = SharedSemanticCssConstraints
 ) {
     private val blocks = mutableListOf<SemanticBlock>()
     private var nextBlockIndex = 0
-    private val cssMatcher = SharedSemanticCssMatcher(css.rules)
+    private val cssMatcher = SharedSemanticCssMatcher(
+        rules = css.rules,
+        baseFontSizeSp = baseFontSizeSp,
+        density = density,
+        constraints = constraints
+    )
 
     fun build(): List<SemanticBlock> {
         buildContainer(document.root, blocks)
@@ -1575,7 +1606,7 @@ private class SharedEpubSemanticBlockBuilder(
 
         fun process(node: SharedSemanticDomNode, inheritedLinkHref: String?, inheritedStyle: CssStyle) {
             when (node) {
-                is SharedSemanticDomText -> text.append(node.text)
+                is SharedSemanticDomText -> text.append(node.text.transformedSharedSemanticText(inheritedStyle.textTransform))
                 is SharedSemanticDomElement -> when {
                     node.localName in SharedEpubNonRenderableTags -> Unit
                     node.localName == "br" -> text.append('\n')

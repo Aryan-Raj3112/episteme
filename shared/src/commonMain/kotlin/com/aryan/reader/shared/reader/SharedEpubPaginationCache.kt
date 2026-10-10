@@ -21,7 +21,13 @@ private const val SharedEpubPaginationCacheSchemaVersion = 1
 // 18 -> 19: measured pagination now honors letter-spacing/font-weight with the
 // Android benchmark line breaking, and shared semantic blocks carry the merged
 // book CSS, so pages measured under 18 must rebuild.
-private const val SharedEpubPaginationProcessingVersion = 19
+// 19 -> 20: default leading is the reader base (never size-scaled), block
+// weight/family/style follow the Android whole-text-span priority, and sub/sup
+// baseline shifts are measured; pages measured under 19 must rebuild.
+// 20 -> 21: chapters are restyled per pagination config with live reader size,
+// density and viewport (Android benchmark parity), so pages carrying nominal
+// load-time styles must rebuild.
+private const val SharedEpubPaginationProcessingVersion = 21
 private const val SharedEpubPaginationPageCacheVersion = 3
 
 data class SharedEpubPaginationCacheKey(

@@ -10,6 +10,7 @@ import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import com.aryan.reader.paginatedreader.MATH_PLACEHOLDER_CHAR
+import com.aryan.reader.shared.ui.sharedNativeBaselineShift
 import com.aryan.reader.shared.ui.sharedNativeInlineMathId
 import com.aryan.reader.shared.ui.sharedNativeInlineMathMetrics
 import androidx.compose.ui.text.TextStyle
@@ -55,6 +56,8 @@ import com.aryan.reader.paginatedreader.segmentBlocksByWritingMode
 import com.aryan.reader.paginatedreader.layoutVerticalParagraph
 import com.aryan.reader.paginatedreader.isVerticalWriting
 import com.aryan.reader.paginatedreader.lineHeightWithRubyReserve
+import com.aryan.reader.paginatedreader.resolveReaderBlockFontFamily
+import com.aryan.reader.paginatedreader.resolveReaderBlockFontWeight
 import com.aryan.reader.paginatedreader.paginateVerticalFlow
 import com.aryan.reader.paginatedreader.planPaginationStackFragmentation
 import com.aryan.reader.paginatedreader.sliceSemanticRubies
@@ -119,6 +122,7 @@ class SharedMeasuredEpubPaginator(
                 "pageWidthSetting=${settings.pageWidth} density=${density.density} fontScale=${density.fontScale}"
         }
         val baseStyle = measurementBaseStyle(settings, fontFamily)
+        val liveStyling = livePaginationStyling(book, settings, viewport, geometry, density.density)
         val pages = mutableListOf<ReaderPage>()
         book.chapters.forEachIndexed { chapterIndex, chapter ->
             currentCoroutineContext().ensureActive()
@@ -129,7 +133,8 @@ class SharedMeasuredEpubPaginator(
                 firstPageIndex = pages.size,
                 settings = settings,
                 geometry = geometry,
-                baseStyle = baseStyle
+                baseStyle = baseStyle,
+                liveStyling = liveStyling
             )
         }
         currentCoroutineContext().ensureActive()
@@ -181,7 +186,8 @@ class SharedMeasuredEpubPaginator(
             firstPageIndex = firstPageIndex,
             settings = settings,
             geometry = geometry,
-            baseStyle = baseStyle
+            baseStyle = baseStyle,
+            liveStyling = livePaginationStyling(book, settings, viewport, geometry, density.density)
         ).mapIndexed { index, page -> page.copy(pageIndex = firstPageIndex + index) }
         logEpubPagination {
             "chapter_window_complete book=\"${book.title.logPreview()}\" chapter=$chapterIndex " +
@@ -196,10 +202,12 @@ class SharedMeasuredEpubPaginator(
         firstPageIndex: Int,
         settings: ReaderSettings,
         geometry: MeasuredPageGeometry,
-        baseStyle: TextStyle
+        baseStyle: TextStyle,
+        liveStyling: LivePaginationStyling
     ): List<ReaderPage> {
         currentCoroutineContext().ensureActive()
-        val sourceBlocks = chapter.semanticBlocks.ifEmpty { chapter.plainText.toPlainSemanticBlocks() }
+        val sourceBlocks = restyleChapterBlocksForPagination(chapter, liveStyling)
+            .ifEmpty { chapter.semanticBlocks.ifEmpty { chapter.plainText.toPlainSemanticBlocks() } }
         if (sourceBlocks.isEmpty()) {
             return listOf(
                 ReaderPage(
@@ -1653,7 +1661,7 @@ private fun SemanticTextBlock.toAnnotatedString(
             val start = span.start.coerceIn(0, text.length)
             val end = span.end.coerceIn(start, text.length)
             if (start < end) {
-                addStyle(span.style.toMeasurementSpanStyle(blockFontSizeSp), start, end)
+                addStyle(span.style.toMeasurementSpanStyle(blockFontSizeSp, span.tag), start, end)
                 addMeasurementWordSpacing(
                     text = text,
                     start = start,
@@ -1696,7 +1704,7 @@ private fun CssStyle.toMeasurementHyphens(): Hyphens {
     return if (hyphens == "auto") Hyphens.Auto else Hyphens.None
 }
 
-private fun SemanticTextBlock.textStyle(baseStyle: TextStyle, settings: ReaderSettings): TextStyle {
+internal fun SemanticTextBlock.textStyle(baseStyle: TextStyle, settings: ReaderSettings): TextStyle {
     val fontSize = (style.fontSize.takeIfSpecified()
         ?: style.spanStyle.fontSize.takeIfSpecified())
         ?.resolveFontSizeSp(settings.fontSize.toFloat())
@@ -1704,13 +1712,15 @@ private fun SemanticTextBlock.textStyle(baseStyle: TextStyle, settings: ReaderSe
             is SemanticHeader -> (settings.fontSize * sharedHeadingFontScale(level)).sp
             else -> baseStyle.fontSize
         }
+    // Android benchmark parity: the default leading is the reader base leading,
+    // never the block size scaled (Android's paragraph style carries CSS
+    // line-height or the reader base; `createHeaderTextStyle`'s scaled leading
+    // is shadowed the same way). Size-scaled leading here paginated headers
+    // and sized blocks differently from Android on every book.
     val lineHeight = style.paragraphStyle.lineHeight.takeIfSpecified()
         ?.resolveLineHeightSp(fontSize.value)
-        ?: if (fontSize.isSpecified) {
-            (fontSize.value * settings.lineSpacing).sp
-        } else {
-            baseStyle.lineHeight
-        }
+        ?: baseStyle.lineHeight.takeIf { it.isSpecified }
+        ?: (settings.fontSize * settings.lineSpacing).sp
     // Vertical furigana consumes real column pitch beside its base; reserve
     // it in measurement exactly as the renderer does so pages never mismatch.
     // Horizontal ruby overhangs into the leading like browsers, with no
@@ -1724,11 +1734,23 @@ private fun SemanticTextBlock.textStyle(baseStyle: TextStyle, settings: ReaderSe
     return baseStyle.copy(
         fontSize = fontSize,
         lineHeight = rubyAwareLineHeight,
-        fontFamily = style.spanStyle.fontFamily ?: baseStyle.fontFamily,
-        // Render priority (renderedTextStyle): explicit user weight first, then
-        // header bold. The base style already carries the user weight, so a
-        // header only falls back to Bold when no user weight is set.
-        fontWeight = baseStyle.fontWeight ?: if (this is SemanticHeader) FontWeight.Bold else null,
+        // Android benchmark parity (`resolveReaderBlockFontFamily`): a picked
+        // reader typeface wins over publication families (monospace excepted);
+        // with the default reader font the publication family applies.
+        fontFamily = resolveReaderBlockFontFamily(
+            style.spanStyle.fontFamily,
+            baseStyle.fontFamily
+        ) ?: baseStyle.fontFamily,
+        // Android benchmark parity (`resolveReaderBlockFontWeight`): publication
+        // weight wins, the user weight fills silence, headers ignore the user
+        // weight and fall back to Bold. Font style rides the same whole-text
+        // span on Android, so italic blocks measure italic here too.
+        fontWeight = resolveReaderBlockFontWeight(
+            cssWeight = style.spanStyle.fontWeight,
+            userWeight = baseStyle.fontWeight,
+            isHeader = this is SemanticHeader
+        ),
+        fontStyle = style.spanStyle.fontStyle,
         textAlign = resolveSharedReaderTextAlign(
             cssTextAlign = style.paragraphStyle.textAlign,
             fallbackTextAlign = baseStyle.textAlign
@@ -1767,6 +1789,66 @@ internal fun measurementBaseStyle(settings: ReaderSettings, fontFamily: FontFami
     ).withAndroidPaginationTextMetrics()
 }
 
+/**
+ * Book CSS resolved against the live pagination config (Android benchmark
+ * parity: `BookPaginator` re-parses chapter HTML per pagination with the live
+ * reader size, density and viewport constraints, instead of reusing
+ * load-time styles baked with nominal metrics).
+ */
+internal data class LivePaginationStyling(
+    val css: SharedSemanticCssSnapshot,
+    val baseFontSizeSp: Float,
+    val density: Float,
+    val constraints: Constraints
+)
+
+internal fun livePaginationStyling(
+    book: SharedEpubBook,
+    settings: ReaderSettings,
+    viewport: ReaderViewportSpec,
+    geometry: MeasuredPageGeometry,
+    density: Float
+): LivePaginationStyling {
+    val baseFontSizeSp = settings.fontSize.toFloat()
+    val constraints = Constraints(
+        maxWidth = geometry.pageWidthPx.coerceAtLeast(1),
+        maxHeight = geometry.pageHeightPx.coerceAtLeast(1)
+    )
+    return LivePaginationStyling(
+        css = parseSharedSemanticCss(
+            bookCss = book.css,
+            baseFontSizeSp = baseFontSizeSp,
+            density = density,
+            constraints = constraints
+        ),
+        baseFontSizeSp = baseFontSizeSp,
+        density = density,
+        constraints = constraints
+    )
+}
+
+/**
+ * Rebuilds a chapter's semantic blocks from its stored HTML with the live
+ * pagination styling. Text, CFIs, source offsets and block order are
+ * structurally identical to the load-time blocks (same builder, same HTML),
+ * so search, highlights and locators keep working; only metric-sensitive
+ * values (% of viewport, em of the reader size) resolve live, exactly like
+ * the Android paginator's per-config re-parse.
+ */
+internal fun restyleChapterBlocksForPagination(
+    chapter: SharedEpubChapter,
+    styling: LivePaginationStyling
+): List<SemanticBlock> {
+    if (chapter.htmlContent.isBlank()) return chapter.semanticBlocks
+    return sharedEpubHtmlToSemanticBlocks(
+        html = chapter.htmlContent,
+        css = styling.css,
+        baseFontSizeSp = styling.baseFontSizeSp,
+        density = styling.density,
+        constraints = styling.constraints
+    )
+}
+
 private fun TextUnit.takeIfSpecified(): TextUnit? = if (isSpecified) this else null
 
 private fun TextUnit.resolveFontSizeSp(baseFontSizeSp: Float): TextUnit {
@@ -1783,7 +1865,7 @@ private fun TextUnit.resolveLineHeightSp(fontSizeSp: Float): TextUnit {
     }
 }
 
-private fun CssStyle.toMeasurementSpanStyle(parentFontSizeSp: Float): SpanStyle {
+internal fun CssStyle.toMeasurementSpanStyle(parentFontSizeSp: Float, tag: String? = null): SpanStyle {
     val resolvedFontSize = (spanStyle.fontSize.takeIfSpecified() ?: fontSize.takeIfSpecified())
         ?.resolveFontSizeSp(parentFontSizeSp)
     return spanStyle.copy(
@@ -1791,7 +1873,12 @@ private fun CssStyle.toMeasurementSpanStyle(parentFontSizeSp: Float): SpanStyle 
         fontFeatureSettings = resolveSharedReaderFontFeatureSettings(
             existingSettings = spanStyle.fontFeatureSettings,
             fontVariantNumeric = fontVariantNumeric
-        )
+        ),
+        // Android benchmark parity: the same annotated string is measured and
+        // drawn on Android, so sub/sup shift applies to both. The renderer
+        // already shifts; measurement must shift identically or shifted runs
+        // paginate differently from how they draw.
+        baselineShift = spanStyle.baselineShift ?: sharedNativeBaselineShift(tag, verticalAlign)
     )
 }
 

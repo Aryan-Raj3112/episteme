@@ -56,6 +56,10 @@ import com.aryan.reader.paginatedreader.BorderStyle
 import com.aryan.reader.paginatedreader.CssParser
 import com.aryan.reader.paginatedreader.SemanticHeader
 import com.aryan.reader.paginatedreader.SemanticTextBlock
+import com.aryan.reader.paginatedreader.isVerticalWriting
+import com.aryan.reader.paginatedreader.lineHeightWithRubyReserve
+import com.aryan.reader.paginatedreader.resolveReaderBlockFontFamily
+import com.aryan.reader.paginatedreader.resolveReaderBlockFontWeight
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -182,7 +186,20 @@ internal fun SemanticTextBlock.renderedTextStyle(
         }
     val lineHeight = style.paragraphStyle.lineHeight.takeIfSpecified()
         ?.resolveLineHeightSp(fontSize.value)
-        ?: (fontSize.value * settings.lineSpacing).sp
+        // Android benchmark parity: the default leading is the reader base
+        // leading, never the block size scaled (Android's paragraph style
+        // carries CSS line-height or the reader base). Size-scaled leading
+        // drew headers and sized blocks roomier than Android on every book.
+        ?: (settings.fontSize * settings.lineSpacing).sp
+    // Same vertical-ruby reserve as measurement: furigana consumes real column
+    // pitch in vertical writing, so the drawn leading must reserve it exactly
+    // like the measured leading or pages mismatch.
+    val rubyAwareLineHeight = lineHeightWithRubyReserve(
+        lineHeight,
+        fontSize,
+        rubies.isNotEmpty(),
+        style.isVerticalWriting()
+    )
     return MaterialTheme.typography.bodyLarge.copy(
         color = style.spanStyle.color.sharedNativeThemeColor(
             isDarkTheme = settings.darkMode,
@@ -191,11 +208,22 @@ internal fun SemanticTextBlock.renderedTextStyle(
             foreground = foreground
         ).takeIf { it.isSpecified } ?: foreground,
         fontSize = fontSize,
-        lineHeight = lineHeight,
-        fontFamily = style.spanStyle.fontFamily ?: fallbackFontFamily,
-        fontWeight = settings.fontWeight.takeIf { it > 0 }?.let(::FontWeight)
-            ?: fontWeight
-            ?: style.spanStyle.fontWeight
+        lineHeight = rubyAwareLineHeight,
+        // Android benchmark parity (`resolveReaderBlockFontFamily`): a picked
+        // reader typeface wins over publication families (monospace excepted).
+        fontFamily = resolveReaderBlockFontFamily(
+            style.spanStyle.fontFamily,
+            fallbackFontFamily
+        ) ?: fallbackFontFamily,
+        // Android benchmark parity (`resolveReaderBlockFontWeight`): publication
+        // weight wins, the user weight fills silence, headers ignore the user
+        // weight and fall back to Bold (the call-site Bold param below only
+        // survives when CSS is silent on headers).
+        fontWeight = resolveReaderBlockFontWeight(
+            cssWeight = style.spanStyle.fontWeight,
+            userWeight = settings.fontWeight.takeIf { it > 0 }?.let(::FontWeight),
+            isHeader = this is SemanticHeader
+        ) ?: fontWeight
             ?: if (this is SemanticHeader) FontWeight.Bold else MaterialTheme.typography.bodyLarge.fontWeight,
         fontStyle = style.spanStyle.fontStyle ?: MaterialTheme.typography.bodyLarge.fontStyle,
         textDecoration = style.spanStyle.textDecoration ?: MaterialTheme.typography.bodyLarge.textDecoration,
@@ -344,7 +372,10 @@ internal fun SemanticTextBlock.sharedNativeParagraphStyle(fallbackTextAlign: Tex
             fallbackTextAlign = fallbackTextAlign
         ),
         textIndent = style.paragraphStyle.textIndent,
-        lineBreak = LineBreak.Paragraph,
+        // Android benchmark parity (`resolveReaderParagraphStyle`): Simple.
+        // Paragraph breaking wraps CJK/hyphenated text differently from the
+        // measured layout, so pages mismatched what was drawn.
+        lineBreak = LineBreak.Simple,
         hyphens = style.sharedNativeHyphens()
     )
 }

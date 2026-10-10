@@ -8,6 +8,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.text.style.LineBreak
@@ -59,6 +60,27 @@ fun resolveReaderBlockFontFamily(
     resolvedCssFamily == FontFamily.Monospace -> FontFamily.Monospace
     baseFontFamily != null && baseFontFamily != FontFamily.Default -> baseFontFamily
     else -> resolvedCssFamily ?: baseFontFamily
+}
+
+/**
+ * Block-level font-weight priority for measured pagination and rendering.
+ *
+ * Android benchmark parity (`SharedContentStyler.buildAnnotatedString` merges
+ * the block CSS over the reader base as a whole-text span, and
+ * `createHeaderTextStyle` forces Bold over the user setting): publication
+ * weight wins wherever it speaks; the reader's user weight applies only where
+ * CSS is silent; headers ignore the user weight entirely and fall back to
+ * Bold. Callers keep their own final fallback (theme weight at render, null
+ * at measurement) after this returns null.
+ */
+fun resolveReaderBlockFontWeight(
+    cssWeight: FontWeight?,
+    userWeight: FontWeight?,
+    isHeader: Boolean
+): FontWeight? = when {
+    cssWeight != null -> cssWeight
+    isHeader -> FontWeight.Bold
+    else -> userWeight
 }
 
 fun resolveReaderSpanFontFamily(

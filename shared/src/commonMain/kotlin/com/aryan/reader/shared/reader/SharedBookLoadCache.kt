@@ -16,7 +16,9 @@ internal const val SharedBookLoadCacheSchemaVersion = 1
 // 13 -> 14: books now carry a media-overlay index, which the cached load result has to include.
 // 14 -> 15: shared semantic blocks are styled with the merged book CSS (Android benchmark
 // parity), so cached chapters without CSS-styled blocks must rebuild.
-internal const val SharedBookLoadCacheProcessingVersion = 15
+// 15 -> 16: publication text-transform (uppercase/lowercase/capitalize) applies at parse
+// (Android benchmark parity), so cached block text must rebuild.
+internal const val SharedBookLoadCacheProcessingVersion = 16
 
 enum class SharedBookLoadSemanticMode {
     FULL,
