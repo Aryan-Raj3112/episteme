@@ -1,9 +1,7 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,21 +22,17 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -46,14 +40,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -74,13 +66,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontStyle
@@ -88,9 +75,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import com.aryan.reader.shared.ReaderExternalLookupAction
-import com.aryan.reader.shared.HighlightStyle
-import com.aryan.reader.shared.CUSTOM_HIGHLIGHT_COLOR_ID_PREFIX
 import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.ReaderHighlightListAction
 import com.aryan.reader.shared.UserHighlight
@@ -586,7 +570,7 @@ fun SharedMobileEpubHighlights(
                                 ) {
                                     SharedMobileEpubHighlightColorRow(
                                         palette = palette,
-                                        selectedHighlight = highlight,
+                                        selectedColorArgb = highlight.effectiveArgb,
                                         onOpenPaletteManager = if (onOpenPaletteManager != null) {
                                             {
                                                 onOpenPaletteManager()
@@ -635,253 +619,12 @@ fun SharedMobileEpubHighlights(
         }
     }
     deleteHighlight?.let { highlight ->
-        AlertDialog(
-            onDismissRequest = { deleteHighlight = null },
-            title = { Text(readerString("dialog_delete_highlight", "Delete Highlight?")) },
-            text = { Text(readerString("dialog_delete_highlight_desc", "Are you sure you want to permanently delete this highlight?")) },
-            confirmButton = {
-                TextButton(onClick = {
-                    onDeleteHighlight(highlight)
-                    deleteHighlight = null
-                }) {
-                    Text(readerString("action_delete", "Delete"))
-                }
+        SharedMobileEpubHighlightDeleteDialog(
+            onConfirm = {
+                onDeleteHighlight(highlight)
+                deleteHighlight = null
             },
-            dismissButton = {
-                TextButton(onClick = { deleteHighlight = null }) {
-                    Text(readerString("action_cancel", "Cancel"))
-                }
-            }
-        )
-    }
-}
-
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SharedMobileEpubHighlightColorRow(
-    palette: ReaderHighlightPalette,
-    selectedHighlight: UserHighlight,
-    onOpenPaletteManager: (() -> Unit)?,
-    onColorSelect: (Int) -> Unit,
-) {
-    val sanitizedPalette = palette.sanitized()
-    Row(
-        modifier = Modifier
-            .padding(vertical = 8.dp, horizontal = 10.dp)
-            .fillMaxWidth(),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        sanitizedPalette.colors.indices.forEach { slot ->
-            val slotArgb = sanitizedPalette.argbAt(slot)
-            val selected = selectedHighlight.effectiveArgb == slotArgb
-            // Swatches are pure colour, so they were unlabelled: TalkBack announced
-            // an unlabelled button and tests had no stable handle to select one by.
-            // Resolved here because the semantics lambda is not @Composable.
-            val colorId = sanitizedPalette.colorIdAt(slot)
-            val colorLabel = readerString(
-                "color_$colorId",
-                if (colorId.startsWith(CUSTOM_HIGHLIGHT_COLOR_ID_PREFIX)) {
-                    "#${colorId.removePrefix(CUSTOM_HIGHLIGHT_COLOR_ID_PREFIX).uppercase()}"
-                } else {
-                    colorId.replaceFirstChar { it.uppercase() }
-                }
-            )
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .padding(horizontal = 4.dp)
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(Color(slotArgb))
-                    .border(
-                        width = if (selected) 3.dp else 1.dp,
-                        color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                        shape = CircleShape,
-                    )
-                    // Swatches are pure colour, so they were unlabelled: TalkBack
-                    // announced an unlabelled button and tests had no stable handle
-                    // to select one by.
-                    .semantics { contentDescription = colorLabel }
-                    .testTag("HighlightColor_$colorId")
-                    .clickable { onColorSelect(slotArgb) },
-            ) {
-                if (selected) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = readerString("content_desc_selected_color", "Selected color"),
-                        tint = if (Color(slotArgb).luminance() > 0.5f) Color.Black else Color.White,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-            }
-        }
-        onOpenPaletteManager?.let { openPaletteManager ->
-            Spacer(Modifier.width(6.dp))
-            SharedReaderHighlightPaletteSpectrumButton(
-                onClick = {
-                    openPaletteManager()
-                },
-                size = 28.dp,
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-internal fun SharedMobileEpubHighlightSheet(
-    highlight: UserHighlight,
-    palette: ReaderHighlightPalette,
-    onUpdate: (UserHighlight) -> Unit,
-    onDelete: () -> Unit,
-    onSpeak: () -> Unit,
-    onLookup: (ReaderExternalLookupAction) -> Unit,
-    onClipboardError: ((String) -> Unit)? = null,
-    onDismiss: () -> Unit
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val copiedTextLabel = readerString("clip_label_copied_text", "Copied Text")
-    val clipboardErrorMessage = readerString("error_copy_to_clipboard", "Could not copy to clipboard")
-    var note by remember(highlight.id, highlight.note) { mutableStateOf(highlight.note.orEmpty()) }
-    var confirmDelete by remember(highlight.id) { mutableStateOf(false) }
-    val sanitizedPalette = palette.sanitized()
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Text(
-                readerString("desktop_annotation", "Annotation"),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-            )
-            Surface(
-                color = highlight.effectiveColor.copy(alpha = 0.14f),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text(
-                    text = highlight.text.ifBlank { readerString("desktop_highlight", "Highlight") },
-                    modifier = Modifier.padding(14.dp),
-                    maxLines = 5,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                TextButton(onClick = {
-                    val result = writeSharedClipboard(copiedTextLabel, highlight.text)
-                    if (!result.success) onClipboardError?.invoke(clipboardErrorMessage)
-                }) { Text(readerString("action_copy", "Copy")) }
-                TextButton(onClick = onSpeak) { Text(readerString("label_speak", "Speak")) }
-                TextButton(onClick = { onLookup(ReaderExternalLookupAction.DICTIONARY) }) {
-                    Text(readerString("tooltip_dictionary", "Dictionary"))
-                }
-                TextButton(onClick = { onLookup(ReaderExternalLookupAction.TRANSLATE) }) {
-                    Text(readerString("dict_translate", "Translate"))
-                }
-                TextButton(onClick = { onLookup(ReaderExternalLookupAction.SEARCH) }) {
-                    Text(readerString("action_search", "Search"))
-                }
-            }
-            Text(readerString("desktop_color", "Color"), style = MaterialTheme.typography.titleSmall)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                sanitizedPalette.colors.indices.forEach { slot ->
-                    val slotArgb = sanitizedPalette.argbAt(slot)
-                    val isSelected = highlight.effectiveArgb == slotArgb
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(CircleShape)
-                            .background(Color(slotArgb))
-                            .border(
-                                width = if (isSelected) 3.dp else 1.dp,
-                                color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                                shape = CircleShape
-                            )
-                            // recoloredTo, not copy(colorArgb): the named colour has to move too, or the WebView's
-                            // reconcile treats the old marker as current and skips the repaint.
-                            .clickable { onUpdate(highlight.recoloredTo(slotArgb)) }
-                    )
-                }
-            }
-            Text(
-                readerString("desktop_label_style", "Style"),
-                style = MaterialTheme.typography.titleSmall,
-            )
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                HighlightStyle.entries.forEach { style ->
-                    val label = when (style) {
-                        HighlightStyle.BACKGROUND -> readerString("desktop_style_background", "Background")
-                        HighlightStyle.UNDERLINE -> readerString("desktop_style_underline", "Underline")
-                        HighlightStyle.WAVY_UNDERLINE -> readerString("desktop_style_wavy", "Wavy")
-                        HighlightStyle.STRIKETHROUGH -> readerString("desktop_style_strike", "Strike")
-                    }
-                    FilterChip(
-                        selected = highlight.style == style,
-                        onClick = { onUpdate(highlight.copy(style = style)) },
-                        label = { Text(label) }
-                    )
-                }
-            }
-            OutlinedTextField(
-                value = note,
-                onValueChange = { note = it },
-                label = { Text(readerString("desktop_label_comment", "Comment")) },
-                minLines = 3,
-                maxLines = 6,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(onClick = { confirmDelete = true }) {
-                    Text(readerString("action_delete", "Delete"), color = MaterialTheme.colorScheme.error)
-                }
-                TextButton(onClick = {
-                    onUpdate(highlight.copy(note = note.trim().takeIf { it.isNotBlank() }))
-                    onDismiss()
-                }) { Text(readerString("desktop_save_comment", "Save comment")) }
-            }
-        }
-    }
-    if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text(readerString("desktop_delete_annotation_title", "Delete annotation?")) },
-            text = {
-                Text(
-                    readerString(
-                        "desktop_delete_annotation_message",
-                        "This removes the highlight and its comment.",
-                    )
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = onDelete) {
-                    Text(readerString("action_delete", "Delete"), color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) {
-                    Text(readerString("action_cancel", "Cancel"))
-                }
-            }
+            onDismiss = { deleteHighlight = null }
         )
     }
 }

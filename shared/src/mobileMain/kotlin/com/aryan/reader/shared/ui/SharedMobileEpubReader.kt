@@ -596,6 +596,9 @@ fun SharedMobileEpubReaderScreen(
     var highlights by remember(book.id) { mutableStateOf(book.readerHighlights) }
     var jumpHistory by remember(book.id) { mutableStateOf(ReaderJumpHistory()) }
     var editingHighlight by remember(book.id) { mutableStateOf<UserHighlight?>(null) }
+    // Host-owned, because delete confirmation is host policy: Android deletes from the sheet
+    // immediately, this host asks first. The sheet calls onDelete and nothing more.
+    var confirmDeleteHighlight by remember(book.id) { mutableStateOf<UserHighlight?>(null) }
     var showHighlightPaletteManager by remember(book.id) { mutableStateOf(false) }
     // Match Android's distraction-free reader entry; a reader tap reveals chrome.
     var showChrome by remember(book.id) { mutableStateOf(false) }
@@ -4121,25 +4124,47 @@ fun SharedMobileEpubReaderScreen(
         )
     }
     editingHighlight?.let { highlight ->
-        SharedMobileEpubHighlightSheet(
+        fun update(updated: UserHighlight) {
+            highlights = highlights.map { current ->
+                if (current.id == updated.id) updated else current
+            }
+            editingHighlight = updated
+        }
+        val onLookup: (ReaderExternalLookupAction) -> Unit = { action ->
+            openSharedMobileEpubLookup(action, highlight.text)
+        }
+        // Android benchmark layout (EpubReaderAnnotations.kt AnnotationBottomSheet): style row,
+        // palette row, quoted snippet with its accent bar, tool row, note field, delete/save. The
+        // reader theme supplies the sheet's colours, as Android's `effectiveBg`/`effectiveText` do.
+        SharedMobileEpubAnnotationSheet(
             highlight = highlight,
             palette = readerHighlightPalette,
-            onUpdate = { updated ->
-                highlights = highlights.map { current ->
-                    if (current.id == updated.id) updated else current
-                }
-                editingHighlight = updated
-            },
-            onDelete = {
-                highlights = highlights.filterNot { it.id == highlight.id }
+            effectiveBg = settings.readerBackgroundColor(),
+            effectiveText = settings.readerTextColor(),
+            onColorChange = { argb -> update(highlight.recoloredTo(argb)) },
+            onStyleChange = { style -> update(highlight.copy(style = style)) },
+            onCopy = { copyToClipboard(highlight.text) },
+            onSpeak = { speakSelectedText(highlight.text, highlight.locator) },
+            onDictionary = { onLookup(ReaderExternalLookupAction.DICTIONARY) },
+            onTranslate = { onLookup(ReaderExternalLookupAction.TRANSLATE) },
+            onSearch = { onLookup(ReaderExternalLookupAction.SEARCH) },
+            onOpenPaletteManager = { showHighlightPaletteManager = true },
+            onDismiss = { editingHighlight = null },
+            onSave = { note ->
+                update(highlight.copy(note = note.trim().takeIf { it.isNotBlank() }))
                 editingHighlight = null
             },
-            onSpeak = { speakSelectedText(highlight.text, highlight.locator) },
-            onLookup = { action ->
-                openSharedMobileEpubLookup(action, highlight.text)
+            onDelete = { confirmDeleteHighlight = highlight }
+        )
+    }
+    confirmDeleteHighlight?.let { target ->
+        SharedMobileEpubHighlightDeleteDialog(
+            onConfirm = {
+                highlights = highlights.filterNot { it.id == target.id }
+                confirmDeleteHighlight = null
+                editingHighlight = null
             },
-            onClipboardError = onClipboardError,
-            onDismiss = { editingHighlight = null }
+            onDismiss = { confirmDeleteHighlight = null }
         )
     }
 }
