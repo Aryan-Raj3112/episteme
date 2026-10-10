@@ -67,6 +67,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -83,8 +84,7 @@ import com.aryan.reader.shared.readerHighlightListActions
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.SharedEpubDrawerImage
 import com.aryan.reader.shared.reader.isSharedEpubSvgSource
-import com.aryan.reader.shared.reader.ReaderSettings
-import com.aryan.reader.shared.reader.ReaderSpreadLayout
+import com.aryan.reader.shared.reader.ReaderSpreadMath
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubTocEntry
 import com.aryan.reader.shared.reader.effectiveReaderTocEntries
@@ -104,32 +104,41 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.ui.text.style.TextAlign
 import kotlinx.coroutines.delay
 
+/**
+ * EPUB page scrubber: prev/next steppers around a minimal slider, plus the
+ * step-position callback that drives the host's "Page X of Y" bubble.
+ *
+ * Public and settings-free because Android's `EpubReaderPageSlider` delegates here. It takes the
+ * two spread inputs as plain values ([isTwoPageSpread] and the three chrome colours) rather than a
+ * `ReaderSettings`, so the Android benchmark — which keeps its reader settings as flat
+ * `SharedPreferences` and computes its chrome separately — does not have to fabricate a
+ * `ReaderSettings` just to render a slider. The spread arithmetic is [ReaderSpreadMath], the same
+ * source `ReaderSpreadLayout` delegates to.
+ *
+ * [pageIndex] and the two callbacks are 0-based *book page* indices; the widget converts to and
+ * from slider steps internally.
+ */
 @Composable
-internal fun SharedMobileEpubSlider(
+fun SharedMobileEpubSlider(
     pageIndex: Int,
     pageCount: Int,
-    settings: ReaderSettings,
+    isTwoPageSpread: Boolean,
+    activeColor: Color,
+    inactiveColor: Color,
+    contentColor: Color,
     onPageSelected: (Int) -> Unit,
     modifier: Modifier = Modifier,
     onScrubPositionChange: (Int?) -> Unit = {},
 ) {
-    val sliderStepCount = ReaderSpreadLayout.sliderStepCount(pageCount, settings)
+    val sliderStepCount = ReaderSpreadMath.sliderStepCount(pageCount, isTwoPageSpread)
     val lastSliderPosition = (sliderStepCount - 1).coerceAtLeast(0)
-    var sliderValue by remember(pageIndex, pageCount, settings) {
+    var sliderValue by remember(pageIndex, pageCount, isTwoPageSpread) {
         mutableStateOf(
-            (ReaderSpreadLayout.sliderPositionForPage(pageIndex, pageCount, settings) - 1)
+            (ReaderSpreadMath.sliderPositionForPage(pageIndex, pageCount, isTwoPageSpread) - 1)
                 .coerceIn(0, lastSliderPosition)
                 .toFloat()
         )
     }
-    val sliderChrome = sharedReaderSliderChromeColors(
-        pageBackground = settings.readerBackgroundColor(),
-        pageText = settings.readerTextColor(),
-        themePrimary = MaterialTheme.colorScheme.primary,
-    )
-    val activeColor = sliderChrome.activeTrackColor
-    val inactiveColor = sliderChrome.inactiveTrackColor
-    val contentColor = sliderChrome.contentColor
     // Android parity (EpubReaderPageSlider): bare bottom-chrome bar with
     // prev/next steppers flanking a ReaderMinimalSlider — no card surface,
     // no page-count labels. Outer stacking padding stays caller-owned so the
@@ -168,20 +177,20 @@ internal fun SharedMobileEpubSlider(
                 onValueChange = {
                     sliderValue = it
                     onScrubPositionChange(
-                        ReaderSpreadLayout.pageNumberForSliderPosition(
+                        ReaderSpreadMath.pageNumberForSliderPosition(
                             it.roundToInt().coerceIn(0, lastSliderPosition) + 1,
                             pageCount,
-                            settings
+                            isTwoPageSpread
                         ) - 1
                     )
                 },
                 onValueChangeFinished = {
                     onScrubPositionChange(null)
                     onPageSelected(
-                        ReaderSpreadLayout.pageNumberForSliderPosition(
+                        ReaderSpreadMath.pageNumberForSliderPosition(
                             sliderValue.roundToInt().coerceIn(0, lastSliderPosition) + 1,
                             pageCount,
-                            settings
+                            isTwoPageSpread
                         ) - 1
                     )
                 },
@@ -211,8 +220,12 @@ internal fun SharedMobileEpubSlider(
 
 // Android parity (PageScrubbingAnimation): centered "Page X of Y" readout
 // while fast-scrubbing the page slider.
+//
+// Public because Android's `PageScrubbingAnimation` delegates here: the shared
+// bubble owns the surface/icon/type-scale, the host owns the label and the
+// positioning (Android keeps its full-screen touch-swallowing Box).
 @Composable
-internal fun SharedMobileEpubScrubBubble(
+fun SharedMobileEpubScrubBubble(
     label: String,
     modifier: Modifier = Modifier
 ) {

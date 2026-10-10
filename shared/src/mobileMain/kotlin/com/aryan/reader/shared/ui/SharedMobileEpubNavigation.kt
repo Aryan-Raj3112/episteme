@@ -227,8 +227,17 @@ internal fun SharedMobileEpubSearchNavigation(current: Int, total: Int, onPrevio
     }
 }
 
+/**
+ * EPUB/PDF-style jump history bar (back / clear / forward).
+ *
+ * Public because Android's `EpubJumpHistoryBar` delegates here; the host keeps the visibility
+ * animation (`AnimatedVisibility` + its own motion policy) and passes its labels in. The
+ * accessibility labels are Android's (`content_desc_jump_back`/`content_desc_jump_forward` for the
+ * arrows, `action_clear` for the clear icon) rather than the older `reader_jump_*`/
+ * `desktop_clear_jump_history` pair, per the standing rule that Android is the benchmark.
+ */
 @Composable
-internal fun SharedMobileEpubJumpHistoryBar(
+fun SharedMobileEpubJumpHistoryBar(
     backLabel: String?,
     forwardLabel: String?,
     onBack: () -> Unit,
@@ -248,7 +257,7 @@ internal fun SharedMobileEpubJumpHistoryBar(
             TextButton(onClick = onBack, enabled = backLabel != null, modifier = Modifier.weight(1f)) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = readerString("reader_jump_back", "Jump back"),
+                    contentDescription = readerString("content_desc_jump_back", "Jump Back"),
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.width(4.dp))
@@ -257,10 +266,7 @@ internal fun SharedMobileEpubJumpHistoryBar(
             TextButton(onClick = onClear, modifier = Modifier.weight(1f)) {
                 Icon(
                     Icons.Default.Close,
-                    contentDescription = readerString(
-                        "desktop_clear_jump_history",
-                        "Clear jump history",
-                    ),
+                    contentDescription = readerString("action_clear", "Clear"),
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.width(4.dp))
@@ -271,7 +277,7 @@ internal fun SharedMobileEpubJumpHistoryBar(
                 Spacer(Modifier.width(4.dp))
                 Icon(
                         Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = readerString("reader_jump_forward", "Jump forward"),
+                        contentDescription = readerString("content_desc_jump_forward", "Jump Forward"),
                         modifier = Modifier.size(16.dp),
                     )
             }

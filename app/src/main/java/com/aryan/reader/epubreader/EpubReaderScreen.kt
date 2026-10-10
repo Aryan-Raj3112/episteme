@@ -6391,6 +6391,8 @@ fun EpubReaderHost(
                         currentRenderMode == RenderMode.VERTICAL_SCROLL -> totalPagesInCurrentChapter
                         else -> paginatedPagerState.pageCount
                     },
+                    isTwoPageSpread = isTwoPageSpread,
+                    totalBookPageCount = totalBookPageCount(),
                     isNativeVerticalMode = isNativeVerticalMode,
                     currentRenderMode = currentRenderMode,
                     nativeVerticalTotalPages = nativeVerticalTotalPages,

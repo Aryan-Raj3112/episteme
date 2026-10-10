@@ -28,6 +28,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -258,6 +262,8 @@ internal fun EpubReaderPageSliderLayer(
     scope: CoroutineScope,
     isVisible: Boolean,
     totalPages: Int,
+    isTwoPageSpread: Boolean,
+    totalBookPageCount: Int,
     isNativeVerticalMode: Boolean,
     currentRenderMode: RenderMode,
     nativeVerticalTotalPages: Int,
@@ -279,13 +285,19 @@ internal fun EpubReaderPageSliderLayer(
     paginatedJumpLocatorForPage: (Int) -> Locator?,
     jumpPaginatedToPage: suspend (Int, Locator?) -> Unit
 ) {
+    // The shared slider owns its own thumb, so this is the *scrub* position only: `sliderCurrentPage`
+    // stays the committed step (written by `onJumpToPage` and the host's page-change effect) and is
+    // what feeds the widget's `pageIndex`. Writing the live scrub value back into `pageIndex` would
+    // re-key the widget's internal value every frame and make the thumb stutter.
+    var scrubStep by remember { mutableStateOf<Int?>(null) }
     EpubReaderPageSlider(
         isVisible = isVisible,
         totalPages = totalPages,
         sliderCurrentPage = navigation.sliderCurrentPage,
-        sliderStartPage = navigation.sliderStartPage,
+        isTwoPageSpread = isTwoPageSpread,
+        totalBookPageCount = totalBookPageCount,
         onScrub = { newValue ->
-            navigation.sliderCurrentPage = newValue
+            scrubStep = newValue.roundToInt()
             navigation.isFastScrubbing = true
             val scrubOrigin = navigation.pendingSliderJumpOrigin ?: currentJumpLocator().also {
                 navigation.pendingSliderJumpOrigin = it
@@ -351,6 +363,10 @@ internal fun EpubReaderPageSliderLayer(
                 }
             }
         },
+        onScrubFinished = {
+            scrubStep = null
+            navigation.isFastScrubbing = false
+        },
         modifier = modifier
             .padding(
                 bottom = bottomPadding + 45.dp +
@@ -368,6 +384,9 @@ internal fun EpubReaderPageSliderLayer(
     )
 
     if (isVisible && navigation.isFastScrubbing) {
-        PageScrubbingAnimation(currentPage = navigation.sliderCurrentPage.roundToInt(), totalPages = totalPages)
+        PageScrubbingAnimation(
+            currentPage = scrubStep ?: navigation.sliderCurrentPage.roundToInt(),
+            totalPages = totalPages
+        )
     }
 }

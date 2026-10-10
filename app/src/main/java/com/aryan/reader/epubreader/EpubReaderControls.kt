@@ -1,8 +1,6 @@
 package com.aryan.reader.epubreader
 
 import com.aryan.reader.shared.readerTtsChunkLabel
-import android.os.Build
-import androidx.annotation.RequiresApi
 import androidx.annotation.StringRes
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.animation.AnimatedContent
@@ -120,10 +118,12 @@ import com.aryan.reader.SearchTopBar
 import com.aryan.reader.TooltipIconButton
 import com.aryan.reader.areReaderAiFeaturesEnabled
 import com.aryan.reader.loadNativeVoice
-import com.aryan.reader.readerSliderStepPage
-import com.aryan.reader.shared.ui.ReaderMinimalSlider
+import com.aryan.reader.paginatedreader.EpubPageSpread
 import com.aryan.reader.shared.ui.SharedMobileAutoScrollControls
 import com.aryan.reader.shared.ui.SharedMobileAutoScrollLabels
+import com.aryan.reader.shared.ui.SharedMobileEpubJumpHistoryBar
+import com.aryan.reader.shared.ui.SharedMobileEpubScrubBubble
+import com.aryan.reader.shared.ui.SharedMobileEpubSlider
 import com.aryan.reader.tts.GEMINI_TTS_SPEAKERS
 import com.aryan.reader.tts.isFishReferenceId
 import com.aryan.reader.tts.loadTtsSpeaker
@@ -824,6 +824,13 @@ fun EpubReaderTopBar(
     }
 }
 
+/**
+ * Android adapter over the shared jump-history bar.
+ *
+ * Layout, sizes and icons live once in [SharedMobileEpubJumpHistoryBar]; Android keeps only the
+ * host-owned visibility animation (`AnimatedVisibility` + [ReaderMotionPolicy]). Both hosts now
+ * share Android's accessibility labels, so nothing Android renders changes.
+ */
 @Composable
 fun EpubJumpHistoryBar(
     modifier: Modifier = Modifier,
@@ -850,69 +857,13 @@ fun EpubJumpHistoryBar(
         },
         modifier = modifier
     ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            tonalElevation = 3.dp
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(40.dp)
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                TextButton(
-                    onClick = onBack,
-                    enabled = backLabel != null,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = stringResource(R.string.content_desc_jump_back),
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = backLabel.orEmpty(),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                TextButton(
-                    onClick = onClear,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        Icons.Default.Close,
-                        contentDescription = stringResource(R.string.action_clear),
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(stringResource(R.string.action_clear), maxLines = 1)
-                }
-
-                TextButton(
-                    onClick = onForward,
-                    enabled = forwardLabel != null,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        text = forwardLabel.orEmpty(),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = stringResource(R.string.content_desc_jump_forward),
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-        }
+        SharedMobileEpubJumpHistoryBar(
+            backLabel = backLabel,
+            forwardLabel = forwardLabel,
+            onBack = onBack,
+            onForward = onForward,
+            onClear = onClear
+        )
     }
 }
 
@@ -1071,38 +1022,48 @@ fun EpubReaderBottomBar(
     }
 }
 
-@RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
+/**
+ * Android adapter over the shared page slider.
+ *
+ * The bar, steppers, insets, slider geometry and accessibility labels (`desktop_previous_page` /
+ * `desktop_next_page`) live once in [SharedMobileEpubSlider]; Android keeps only the host-owned
+ * visibility animation (`AnimatedVisibility` + [ReaderMotionPolicy]) and translates between its own
+ * 1-based spread-step space and the shared widget's 0-based book-page space.
+ *
+ * The conversion is identity unless a two-page spread is in play. That matters beyond paginated
+ * mode: native vertical reading and per-chapter scroll each carry their own page total in
+ * [totalPages], and the shared `EpubPageSpread.spreadToBookPage` helper *clamps* to the book
+ * paginator's count, so feeding it the wrong total there would pin the thumb to page 0.
+ *
+ * [sliderCurrentPage] is the committed step, never the live scrub position: the wrapper feeds scrub
+ * updates out through [onScrub] only, so the shared widget keeps its own thumb state and the two
+ * cannot fight (see the caller's `scrubStep`).
+ */
 @Composable
 fun EpubReaderPageSlider(
     isVisible: Boolean,
     totalPages: Int,
     sliderCurrentPage: Float,
-    sliderStartPage: Int,
+    isTwoPageSpread: Boolean,
+    totalBookPageCount: Int,
     onScrub: (Float) -> Unit,
     onJumpToPage: (Int) -> Unit,
+    onScrubFinished: () -> Unit,
     modifier: Modifier = Modifier,
     activeColor: Color = Color.Unspecified,
     inactiveColor: Color = Color.Unspecified,
     contentColor: Color = Color.Unspecified,
     readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
-    val effectiveActiveColor = if (activeColor == Color.Unspecified) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        activeColor
+    val current = epubSliderBookPage(
+        totalPages = totalPages,
+        sliderCurrentPage = sliderCurrentPage,
+        isTwoPageSpread = isTwoPageSpread,
+        totalBookPageCount = totalBookPageCount,
+    )
+    val stepForBookPage = { bookPage: Int ->
+        epubSliderStepForBookPage(bookPage, isTwoPageSpread, totalBookPageCount)
     }
-    val effectiveInactiveColor = if (inactiveColor == Color.Unspecified) {
-        MaterialTheme.colorScheme.surfaceVariant
-    } else {
-        inactiveColor
-    }
-    val effectiveContentColor = if (contentColor == Color.Unspecified) {
-        MaterialTheme.colorScheme.onSurface
-    } else {
-        contentColor
-    }
-    val maxPage = totalPages.coerceAtLeast(1)
-    val currentPage = sliderCurrentPage.roundToInt().coerceIn(1, maxPage)
 
     AnimatedVisibility(
         visible = isVisible,
@@ -1118,80 +1079,48 @@ fun EpubReaderPageSlider(
         },
         modifier = modifier
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {},
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                IconButton(
-                    onClick = {
-                        onJumpToPage(
-                            readerSliderStepPage(
-                                currentPage = currentPage,
-                                delta = -1,
-                                minPage = 1,
-                                maxPage = maxPage
-                            )
-                        )
-                    },
-                    enabled = currentPage > 1,
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.NavigateBefore,
-                        contentDescription = stringResource(R.string.desktop_previous_page),
-                        tint = effectiveContentColor.copy(alpha = if (currentPage > 1) 0.9f else 0.32f)
-                    )
+        SharedMobileEpubSlider(
+            pageIndex = current.pageIndex,
+            pageCount = current.pageCount,
+            isTwoPageSpread = isTwoPageSpread,
+            activeColor = if (activeColor == Color.Unspecified) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                activeColor
+            },
+            inactiveColor = if (inactiveColor == Color.Unspecified) {
+                MaterialTheme.colorScheme.surfaceVariant
+            } else {
+                inactiveColor
+            },
+            contentColor = if (contentColor == Color.Unspecified) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                contentColor
+            },
+            onPageSelected = { bookPage -> onJumpToPage(stepForBookPage(bookPage)) },
+            onScrubPositionChange = { bookPage ->
+                if (bookPage == null) {
+                    onScrubFinished()
+                } else {
+                    onScrub(stepForBookPage(bookPage).toFloat())
                 }
-
-                ReaderMinimalSlider(
-                    value = sliderCurrentPage.coerceIn(1f, maxPage.toFloat()),
-                    onValueChange = onScrub,
-                    valueRange = 1f..maxPage.toFloat(),
-                    enabled = maxPage > 1,
-                    activeColor = effectiveActiveColor,
-                    inactiveColor = effectiveInactiveColor,
-                    thumbColor = effectiveActiveColor,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(32.dp)
-                )
-
-                IconButton(
-                    onClick = {
-                        onJumpToPage(
-                            readerSliderStepPage(
-                                currentPage = currentPage,
-                                delta = 1,
-                                minPage = 1,
-                                maxPage = maxPage
-                            )
-                        )
-                    },
-                    enabled = currentPage < maxPage,
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.NavigateNext,
-                        contentDescription = stringResource(R.string.desktop_next_page),
-                        tint = effectiveContentColor.copy(alpha = if (currentPage < maxPage) 0.9f else 0.32f)
-                    )
-                }
-            }
-        }
+            },
+        )
     }
 }
 
 // --- Helpers moved from Screen ---
 
+/**
+ * Android adapter over the shared scrub readout.
+ *
+ * The bubble's surface, icon and type scale live once in
+ * [SharedMobileEpubScrubBubble]; only the localized `page_of_format` label stays
+ * here. The full-screen, touch-swallowing Box stays Android-side because the
+ * shared bubble is deliberately unpositioned, and the shared
+ * `SharedReaderIcons.Slider` is byte-identical to `R.drawable.slider`.
+ */
 @Composable
 fun PageScrubbingAnimation(currentPage: Int, totalPages: Int) {
     Box(
@@ -1200,28 +1129,9 @@ fun PageScrubbingAnimation(currentPage: Int, totalPages: Int) {
             .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {},
         contentAlignment = Alignment.Center
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier
-                .background(
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
-                    shape = RoundedCornerShape(16.dp)
-                )
-                .padding(horizontal = 24.dp, vertical = 16.dp)
-        ) {
-            Icon(
-                painter = painterResource(id = R.drawable.slider),
-                contentDescription = null,
-                modifier = Modifier.size(48.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                text = stringResource(R.string.page_of_format, currentPage, totalPages),
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-        }
+        SharedMobileEpubScrubBubble(
+            label = stringResource(R.string.page_of_format, currentPage, totalPages)
+        )
     }
 }
 

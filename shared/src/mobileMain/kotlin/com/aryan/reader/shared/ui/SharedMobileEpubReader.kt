@@ -3786,10 +3786,18 @@ fun SharedMobileEpubReaderScreen(
                     modifier = Modifier.align(Alignment.BottomCenter)
                 ) {
                     if (showChrome && showSlider && !showSearch && pages.isNotEmpty()) {
+                        val sliderChrome = sharedReaderSliderChromeColors(
+                            pageBackground = settings.readerBackgroundColor(),
+                            pageText = settings.readerTextColor(),
+                            themePrimary = MaterialTheme.colorScheme.primary,
+                        )
                         SharedMobileEpubSlider(
                             pageIndex = currentPageIndex,
                             pageCount = pageCount,
-                            settings = settings,
+                            isTwoPageSpread = settings.isTwoPageSpreadEnabled(),
+                            activeColor = sliderChrome.activeTrackColor,
+                            inactiveColor = sliderChrome.inactiveTrackColor,
+                            contentColor = sliderChrome.contentColor,
                             onPageSelected = { index ->
                                 sliderScrubPage = null
                                 pages.getOrNull(index)?.let {
