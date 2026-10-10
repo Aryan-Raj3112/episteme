@@ -29,6 +29,7 @@ local.properties
 Secrets.xcconfig
 *.secrets.xcconfig
 gradle.properties
+gradle/gradle-daemon-jvm.properties
 google-services.json
 .kotlin/
 .idea/
