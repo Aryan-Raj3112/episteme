@@ -3500,6 +3500,7 @@ fun SharedMobileEpubReaderScreen(
                         .padding(horizontal = SharedMobileAutoScrollHorizontalPadding)
                 ) {
                     SharedMobileAutoScrollControls(
+                        readerMotionPolicy = motionPolicy,
                         isPlaying = autoScroll,
                         isTempPaused = autoScrollTemporarilyPaused,
                         speed = autoScrollProfile.speed,

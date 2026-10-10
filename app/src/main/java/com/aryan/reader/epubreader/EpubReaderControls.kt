@@ -52,10 +52,7 @@ import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ChevronLeft
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.GraphicEq
@@ -66,8 +63,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
@@ -76,14 +71,11 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -95,7 +87,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -109,8 +100,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -133,6 +122,8 @@ import com.aryan.reader.areReaderAiFeaturesEnabled
 import com.aryan.reader.loadNativeVoice
 import com.aryan.reader.readerSliderStepPage
 import com.aryan.reader.shared.ui.ReaderMinimalSlider
+import com.aryan.reader.shared.ui.SharedMobileAutoScrollControls
+import com.aryan.reader.shared.ui.SharedMobileAutoScrollLabels
 import com.aryan.reader.tts.GEMINI_TTS_SPEAKERS
 import com.aryan.reader.tts.isFishReferenceId
 import com.aryan.reader.tts.loadTtsSpeaker
@@ -1234,38 +1225,17 @@ fun PageScrubbingAnimation(currentPage: Int, totalPages: Int) {
     }
 }
 
-@Composable
-fun SpeedDropdown(
-    label: String,
-    currentValue: Float,
-    options: List<Float>,
-    onValueChange: (Float) -> Unit
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        Text(
-            text = "$label: ${currentValue}x",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier
-                .clickable { expanded = true }
-                .padding(4.dp)
-        )
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            options.forEach { opt ->
-                DropdownMenuItem(
-                    text = { Text("${opt}x") },
-                    onClick = {
-                        onValueChange(opt)
-                        expanded = false
-                    }
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Android adapter over the shared auto-scroll surface.
+ *
+ * Layout, sizes, icons, colours and animation live once in
+ * [SharedMobileAutoScrollControls]; only the localized labels stay here. The
+ * Android reader composes without a `LocalSharedStringResolver`, so a shared
+ * `readerString` lookup would render English inside an otherwise translated
+ * reader — hence the explicit [SharedMobileAutoScrollLabels] table, and hence
+ * the Android-shaped callback names (`onPlayPauseToggle`, `onLocalModeToggle`)
+ * this wrapper keeps for its two call sites (EpubReaderScreen, PdfViewerScreen).
+ */
 @Composable
 fun AutoScrollControls(
     isPlaying: Boolean,
@@ -1290,354 +1260,49 @@ fun AutoScrollControls(
     onScrollToTop: (() -> Unit)? = null,
     readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
-    val backgroundAlpha = 0.6f
-
-    Surface(
-        shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = backgroundAlpha),
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)),
+    SharedMobileAutoScrollControls(
+        labels = SharedMobileAutoScrollLabels(
+            expand = stringResource(R.string.content_desc_expand),
+            collapse = stringResource(R.string.content_desc_collapse),
+            pause = stringResource(R.string.tooltip_tts_pause),
+            play = stringResource(R.string.content_desc_start_playback),
+            globalSpeed = stringResource(R.string.auto_scroll_global_speed),
+            localSpeed = stringResource(R.string.auto_scroll_local_speed),
+            selectMode = stringResource(R.string.content_desc_select_mode),
+            appliesToAllFiles = stringResource(R.string.auto_scroll_applies_all_files),
+            savedForThisFile = stringResource(R.string.auto_scroll_saved_for_file),
+            scrollToTop = stringResource(R.string.action_scroll_to_top),
+            enableMusicianMode = stringResource(R.string.content_desc_enable_musician_mode),
+            disableMusicianMode = stringResource(R.string.content_desc_disable_musician_mode),
+            swapControls = stringResource(R.string.content_desc_swap_controls),
+            close = stringResource(R.string.action_close),
+            min = stringResource(R.string.label_min),
+            max = stringResource(R.string.label_max),
+            slower = stringResource(R.string.content_desc_slower),
+            faster = stringResource(R.string.content_desc_faster)
+        ),
+        readerMotionPolicy = readerMotionPolicy,
+        isPlaying = isPlaying,
+        isTempPaused = isTempPaused,
+        speed = speed,
+        minSpeed = minSpeed,
+        maxSpeed = maxSpeed,
+        isLocalMode = isLocalMode,
+        isMusicianMode = isMusicianMode,
+        useSlider = useSlider,
+        isCollapsed = isCollapsed,
+        onPlayPause = onPlayPauseToggle,
+        onSpeedChange = onSpeedChange,
+        onMinSpeedChange = onMinSpeedChange,
+        onMaxSpeedChange = onMaxSpeedChange,
+        onScrollToTop = onScrollToTop,
+        onMusicianModeToggle = onMusicianModeToggle,
+        onInputModeToggle = onInputModeToggle,
+        onCollapseChange = onCollapseChange,
+        onLocalModeChange = onLocalModeToggle,
+        onClose = onClose,
         modifier = modifier
-            .widthIn(max = 400.dp)
-            .then(if (readerMotionPolicy.reduceMotion) Modifier else Modifier.animateContentSize())
-    ) {
-        AnimatedContent(
-            targetState = isCollapsed,
-            transitionSpec = {
-                if (readerMotionPolicy.reduceMotion) {
-                    androidx.compose.animation.EnterTransition.None togetherWith
-                        androidx.compose.animation.ExitTransition.None
-                } else {
-                    fadeIn(tween(200)) togetherWith fadeOut(tween(200))
-                }
-            },
-            label = "AutoScrollUnified"
-        ) { collapsed ->
-            if (collapsed) {
-                Row(
-                    modifier = Modifier
-                        .padding(horizontal = 6.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    IconButton(
-                        onClick = { onCollapseChange(false) },
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ChevronLeft,
-                            contentDescription = stringResource(R.string.content_desc_expand),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    Box(modifier = Modifier.size(36.dp), contentAlignment = Alignment.Center) {
-                        FilledIconButton(
-                            onClick = onPlayPauseToggle,
-                            modifier = Modifier.size(36.dp),
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
-                                contentColor = MaterialTheme.colorScheme.primary
-                            )
-                        ) {
-                            Icon(
-                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (isPlaying) stringResource(R.string.tooltip_tts_pause) else stringResource(R.string.content_desc_start_playback),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                        if (isTempPaused && isPlaying) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(36.dp),
-                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
-                                strokeWidth = 2.dp
-                            )
-                        }
-                    }
-                }
-            } else {
-                Column(
-                    modifier = Modifier.padding(16.dp)
-                ) {
-                    // Top Row: Label & Tools
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box {
-                            var showModeMenu by remember { mutableStateOf(false) }
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable { showModeMenu = true }
-                                    .padding(4.dp)
-                            ) {
-                                Text(
-                                    text = if (isLocalMode) stringResource(R.string.auto_scroll_local_speed) else stringResource(R.string.auto_scroll_global_speed),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.ArrowDropDown,
-                                    contentDescription = stringResource(R.string.content_desc_select_mode),
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-
-                            DropdownMenu(
-                                expanded = showModeMenu,
-                                onDismissRequest = { showModeMenu = false }
-                            ) {
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(stringResource(R.string.auto_scroll_global_speed), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                                            Text(stringResource(R.string.auto_scroll_applies_all_files), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
-                                    onClick = {
-                                        onLocalModeToggle(false)
-                                        showModeMenu = false
-                                    },
-                                    trailingIcon = {
-                                        if (!isLocalMode) Icon(Icons.Default.Check, contentDescription = null)
-                                    }
-                                )
-                                HorizontalDivider()
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(stringResource(R.string.auto_scroll_local_speed), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                                            Text(stringResource(R.string.auto_scroll_saved_for_file), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
-                                    onClick = {
-                                        onLocalModeToggle(true)
-                                        showModeMenu = false
-                                    },
-                                    trailingIcon = {
-                                        if (isLocalMode) Icon(Icons.Default.Check, contentDescription = null)
-                                    }
-                                )
-                            }
-                        }
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            if (onScrollToTop != null) {
-                                IconButton(
-                                    onClick = onScrollToTop,
-                                    modifier = Modifier.size(48.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.ArrowUpward,
-                                        contentDescription = stringResource(R.string.action_scroll_to_top),
-                                        modifier = Modifier.size(18.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            IconButton(
-                                onClick = onMusicianModeToggle,
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.music_note),
-                                    contentDescription = if (isMusicianMode) stringResource(R.string.content_desc_disable_musician_mode) else stringResource(R.string.content_desc_enable_musician_mode),
-                                    modifier = Modifier.size(18.dp),
-                                    tint = if (isMusicianMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(
-                                onClick = onInputModeToggle,
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.SwapHoriz,
-                                    contentDescription = stringResource(R.string.content_desc_swap_controls),
-                                    modifier = Modifier.size(18.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(
-                                onClick = { onCollapseChange(true) },
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ChevronRight,
-                                    contentDescription = stringResource(R.string.content_desc_collapse),
-                                    modifier = Modifier.size(18.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(
-                                onClick = onClose,
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = stringResource(R.string.action_close),
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(Modifier.height(16.dp))
-
-                    // Bottom Row: Controls
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        // Play/Pause
-                        Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                            FilledIconButton(
-                                onClick = onPlayPauseToggle,
-                                modifier = Modifier.size(48.dp),
-                                colors = IconButtonDefaults.filledIconButtonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
-                                    contentColor = MaterialTheme.colorScheme.primary
-                                )
-                            ) {
-                                Icon(
-                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                    contentDescription = if (isPlaying) stringResource(R.string.tooltip_tts_pause) else stringResource(R.string.content_desc_start_playback),
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
-                            if (isTempPaused && isPlaying) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(48.dp),
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                                    strokeWidth = 3.dp
-                                )
-                            }
-                        }
-
-                        // Speed Controls
-                        Box(
-                            modifier = Modifier.weight(1f),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                val speedOptions = listOf(0.1f, 0.5f, 1f, 1.5f, 2f, 3f, 4f, 5f, 6f, 7f, 8f, 9f, 10f)
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    SpeedDropdown(
-                                        label = stringResource(R.string.label_min),
-                                        currentValue = minSpeed,
-                                        options = speedOptions,
-                                        onValueChange = onMinSpeedChange
-                                    )
-                                    SpeedDropdown(
-                                        label = stringResource(R.string.label_max),
-                                        currentValue = maxSpeed,
-                                        options = speedOptions,
-                                        onValueChange = onMaxSpeedChange
-                                    )
-                                }
-                                Spacer(Modifier.height(4.dp))
-
-                                val safeMax = maxSpeed.coerceAtLeast(minSpeed + 0.1f)
-
-                                if (useSlider) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        Text(
-                                            text = "%.1fx".format(speed),
-                                            style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
-                                            modifier = Modifier.width(45.dp),
-                                            textAlign = TextAlign.End
-                                        )
-                                        val steps = ((safeMax - minSpeed) / 0.1f).roundToInt() - 1
-
-                                        Slider(
-                                            value = speed,
-                                            onValueChange = { onSpeedChange((it * 10f).roundToInt() / 10f) },
-                                            valueRange = minSpeed..safeMax,
-                                            steps = if (steps > 0) steps else 0,
-                                            modifier = Modifier.weight(1f),
-                                            thumb = {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(20.dp)
-                                                        .background(MaterialTheme.colorScheme.primary, CircleShape)
-                                                )
-                                            },
-                                            track = { sliderState ->
-                                                val fraction = (sliderState.value - sliderState.valueRange.start) /
-                                                        (sliderState.valueRange.endInclusive - sliderState.valueRange.start)
-                                                Box(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(4.dp)
-                                                        .background(
-                                                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f),
-                                                            RoundedCornerShape(2.dp)
-                                                        ),
-                                                    contentAlignment = Alignment.CenterStart
-                                                ) {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth(fraction)
-                                                            .height(4.dp)
-                                                            .background(
-                                                                MaterialTheme.colorScheme.primary,
-                                                                RoundedCornerShape(2.dp)
-                                                            )
-                                                    )
-                                                }
-                                            }
-                                        )
-                                    }
-                                } else {
-                                    Surface(
-                                        shape = RoundedCornerShape(50),
-                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                        modifier = Modifier.height(48.dp).fillMaxWidth()
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxSize(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            IconButton(
-                                                onClick = { onSpeedChange((speed - 0.1f).coerceAtLeast(minSpeed)) },
-                                                modifier = Modifier.size(48.dp)
-                                            ) {
-                                                Icon(Icons.Default.Remove, stringResource(R.string.content_desc_slower))
-                                            }
-                                            Text(
-                                                text = "%.1fx".format(speed),
-                                                style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
-                                                textAlign = TextAlign.Center
-                                            )
-                                            IconButton(
-                                                onClick = { onSpeedChange((speed + 0.1f).coerceAtMost(safeMax)) },
-                                                modifier = Modifier.size(48.dp)
-                                            ) {
-                                                Icon(Icons.Default.Add, stringResource(R.string.content_desc_faster))
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
