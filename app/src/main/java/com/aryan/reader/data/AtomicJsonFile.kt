@@ -3,9 +3,12 @@ package com.aryan.reader.data
 import java.io.File
 import java.io.IOException
 import java.io.OutputStream
+import java.util.concurrent.locks.ReentrantLock
 import timber.log.Timber
 
-/** Writes UTF-8 JSON with Android's backup/restore atomic-file protocol. */
+/**
+ * Writes UTF-8 JSON with Android's backup/restore atomic-file protocol.
+ */
 fun File.writeJsonAtomically(json: String) {
     writeJsonAtomically(json, ::moveByRename)
 }
@@ -16,8 +19,10 @@ fun File.writeJsonAtomically(json: String) {
  * [moveByRename].
  */
 internal fun File.writeJsonAtomically(json: String, move: (src: File, dst: File) -> Boolean) {
-    stageJson { output -> output.write(json.toByteArray(Charsets.UTF_8)) }
-    promoteStagedJson(move)
+    withSidecarWriteLock {
+        stageJson { output -> output.write(json.toByteArray(Charsets.UTF_8)) }
+        promoteStagedJson(move)
+    }
 }
 
 /**
@@ -31,17 +36,55 @@ internal fun File.writeJsonAtomically(json: String, move: (src: File, dst: File)
  * Staging happens before the destination is rotated into the backup, so a
  * failing [write] leaves the last good payload in place untouched.
  */
-fun File.writeJsonAtomicallyIfChanged(write: (OutputStream) -> Unit): Boolean {
-    val staged = stageJson(write)
-    if (exists() && staged.hasSameUtf8ContentAs(this)) {
-        // Unchanged: drop the staging copy and leave mtime (which drives
-        // cloud-sync change detection) alone.
-        staged.delete()
-        return false
+fun File.writeJsonAtomicallyIfChanged(write: (OutputStream) -> Unit): Boolean =
+    withSidecarWriteLock {
+        val staged = stageJson(write)
+        if (exists() && staged.hasSameUtf8ContentAs(this)) {
+            // Unchanged: drop the staging copy and leave mtime (which drives
+            // cloud-sync change detection) alone.
+            staged.delete()
+            return@withSidecarWriteLock false
+        }
+        promoteStagedJson(::moveByRename)
+        true
     }
-    promoteStagedJson(::moveByRename)
-    return true
+
+/**
+ * Serializes the whole stage-then-promote sequence for one sidecar path.
+ *
+ * The staging and backup names are derived from the destination (`$name.new` /
+ * `$name.bak`), so two writers to the same sidecar share them. Without this an
+ * interleaved pair loses a payload and then throws: writer A promotes and
+ * renames `$name.new` onto the destination, which deletes the staging file
+ * writer B had just written; B then rotates the destination into `.bak` and
+ * tries to move a `$name.new` that no longer exists. `moveByRename` correctly
+ * refuses to claim success for that (source gone, destination gone), so the
+ * copy fallback threw `NoSuchFileException` and the save crashed
+ * (crashlytics-triage #69).
+ *
+ * The callers' own mutexes cannot prevent this: the reader's `saveMutex` is per
+ * `PdfReaderPersistence` instance, while the same sidecar is also written by
+ * cloud-sync imports and by `importAnnotationBundle`, which share no lock with
+ * it. Serializing inside the one function that owns this protocol fixes every
+ * caller at once.
+ *
+ * Striped rather than one lock per path: a fixed stripe count bounds memory for
+ * a large library, and incidental contention between two different sidecars that
+ * hash alike is harmless because the critical section is a short local-FS rename.
+ */
+private inline fun <T> File.withSidecarWriteLock(block: () -> T): T {
+    val lock = SIDEAR_WRITE_LOCKS[(absolutePath.hashCode() and Int.MAX_VALUE) % SIDEAR_WRITE_LOCKS.size]
+    lock.lock()
+    try {
+        return block()
+    } finally {
+        lock.unlock()
+    }
 }
+
+private val SIDEAR_WRITE_LOCKS = Array(SIDEAR_WRITE_LOCK_STRIPES) { ReentrantLock() }
+
+private const val SIDEAR_WRITE_LOCK_STRIPES = 64
 
 /** Writes [write]'s payload into the `$name.new` staging file and returns it. */
 private fun File.stageJson(write: (OutputStream) -> Unit): File {
@@ -90,6 +133,18 @@ private fun File.promoteStagedJson(move: (src: File, dst: File) -> Boolean) {
 
     try {
         if (!move(newName, this)) {
+            if (!newName.exists()) {
+                // Lost the race: another writer consumed the shared staging
+                // file while this one was promoting it. There is nothing left to
+                // install, and copying a missing file would throw
+                // NoSuchFileException -- the reported crash. This is not a
+                // failure of the filesystem, so do not report one: fall through
+                // to the recovery path, which restores the backup taken above.
+                // The in-memory payload is not lost; the next save rewrites it.
+                Timber.w("Staging file vanished during promote of $absolutePath; treating as a lost race.")
+                restoreBackupIfDestinationMissing(backupName)
+                return
+            }
             // File.renameTo is unreliable on some devices/firmwares: it
             // returns false without a reason (no overwrite semantics, stale
             // FDs, transient FS errors). A copy achieves the same durable
@@ -109,17 +164,7 @@ private fun File.promoteStagedJson(move: (src: File, dst: File) -> Boolean) {
         // copy failed before replacing it, it still holds the last good
         // payload. Only restore the backup when the destination is actually
         // missing (it was rotated to .bak above).
-        if (!exists() && backupName.exists()) {
-            // Best-effort restore: never let it mask the original failure.
-            runCatching {
-                if (!backupName.renameTo(this)) {
-                    backupName.copyTo(this, overwrite = true)
-                }
-                if (exists()) backupName.delete()
-            }.onFailure { restoreError ->
-                Timber.w(restoreError, "Failed to restore backup of $absolutePath.")
-            }
-        }
+        restoreBackupIfDestinationMissing(backupName)
         // Clean the staging file only once the destination is safe; if the
         // destination is still missing, the .new file may hold the only copy.
         if (exists()) newName.delete()
@@ -134,6 +179,27 @@ private fun File.promoteStagedJson(move: (src: File, dst: File) -> Boolean) {
 }
 
 private fun File.backupFile(): File = File(parentFile, "$name.bak")
+
+/**
+ * Puts [backupName] back at the destination, but only when the destination is
+ * actually missing -- a destination that still holds a valid payload must never
+ * be overwritten or deleted here.
+ *
+ * Shared by the lost-staging-race path and the genuine-failure path so both
+ * recover identically. Best effort by design: it must never mask the failure
+ * that triggered it.
+ */
+private fun File.restoreBackupIfDestinationMissing(backupName: File) {
+    if (exists() || !backupName.exists()) return
+    runCatching {
+        if (!backupName.renameTo(this)) {
+            backupName.copyTo(this, overwrite = true)
+        }
+        if (exists()) backupName.delete()
+    }.onFailure { restoreError ->
+        Timber.w(restoreError, "Failed to restore backup of $absolutePath.")
+    }
+}
 
 /**
  * Legacy rename with delete-and-retry for firmwares where rename does not
