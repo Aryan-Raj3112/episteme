@@ -61,6 +61,7 @@ import cnames.structs.archive_entry
 import com.aryan.reader.shared.reader.SharedBookLoadCache
 import com.aryan.reader.shared.reader.SharedBookLoadCacheKey
 import com.aryan.reader.shared.reader.SharedEpubArchive
+import com.aryan.reader.shared.reader.defaultSharedEpubPageCacheStorage
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
 import com.aryan.reader.shared.reader.SharedEpubPackageLoader
@@ -501,6 +502,24 @@ private fun iosBookLoadMemoryPut(cacheId: String, book: SharedEpubBook) {
     } finally {
         iosBookLoadLock.unlock()
     }
+}
+
+/**
+ * Wipes every generated book cache on iOS (Android `clearBookCache` parity):
+ * the EPUB load memory + disk caches and the paginated pagination disk cache
+ * (all books, all configs). Per-screen in-memory pagination caches die with
+ * their reader; reopening a book reprocesses it from the source file.
+ */
+internal fun clearIosBookCaches() {
+    iosBookLoadLock.lock()
+    try {
+        iosBookLoadMemoryCache.clear()
+    } finally {
+        iosBookLoadLock.unlock()
+    }
+    runCatching { iosBookLoadDiskCache.clear() }
+    runCatching { defaultSharedEpubPageCacheStorage().deleteAll() }
+    iosEpubLoadLog { "Book caches cleared (load memory+disk, pagination disk)" }
 }
 
 private val IOS_ZIP_DOCUMENT_READER_TYPES = setOf(

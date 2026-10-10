@@ -30,13 +30,13 @@ class IosSettingsParityTest {
         assertTrue(gaps.isEmpty())
         // Pinned as a set rather than merely "non-empty" so that *adding* a difference is a conscious
         // decision: this assertion is the ratchet, and an ratchet that accepts anything new is not
-        // one. Each entry needs its own reason in `IosSettingsParity.kt`, and the three do not share
-        // one — screen capture protection is a platform capability, clearing the book cache is a
-        // storage-layout consequence, and Support is withheld by App Review 3.1.1.
+        // one. Each entry needs its own reason in `IosSettingsParity.kt`, and the two do not share
+        // one — screen capture protection is a platform capability, and Support is withheld by
+        // App Review 3.1.1. Clearing the book cache used to be a storage-layout consequence, but the
+        // iOS EPUB load + pagination caches are now wiped by the same settings action.
         assertEquals(
             setOf(
                 SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
-                SharedSettingsAction.CLEAR_BOOK_CACHE,
                 SharedSettingsAction.SUPPORT,
             ),
             SharedSettingsAction.entries

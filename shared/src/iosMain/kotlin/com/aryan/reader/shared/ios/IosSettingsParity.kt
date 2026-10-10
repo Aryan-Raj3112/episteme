@@ -45,12 +45,12 @@ internal fun SharedSettingsAction.iosDisposition(): IosSettingsActionDisposition
     SharedSettingsAction.TTS_SETTINGS,
     SharedSettingsAction.HIDE_READER_AI,
     SharedSettingsAction.CLEAR_REFLOW_CACHE,
+    SharedSettingsAction.CLEAR_BOOK_CACHE,
     SharedSettingsAction.EXPORT_LOGS,
     SharedSettingsAction.HELP_FEEDBACK,
     SharedSettingsAction.ABOUT -> IosSettingsActionDisposition.IMPLEMENTED_ON_IOS
 
-    SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
-    SharedSettingsAction.CLEAR_BOOK_CACHE -> IosSettingsActionDisposition.INTENTIONAL_PLATFORM_DIFFERENCE
+    SharedSettingsAction.SCREEN_CAPTURE_PROTECTION -> IosSettingsActionDisposition.INTENTIONAL_PLATFORM_DIFFERENCE
 
     // App Review 3.1.1: donations may not link out to an external payment mechanism.
     // The Support project surface is withheld on iOS; Android keeps it.

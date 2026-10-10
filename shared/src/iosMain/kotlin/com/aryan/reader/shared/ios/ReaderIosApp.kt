@@ -3850,6 +3850,7 @@ private fun ReaderIosApp(
     var showExternalFileBehaviorDialog by remember { mutableStateOf(false) }
     var showStrictFilterConfirmation by remember { mutableStateOf(false) }
     var showClearReflowCacheConfirmation by remember { mutableStateOf(false) }
+    var showClearBookCacheConfirmation by remember { mutableStateOf(false) }
     var showClearCloudLocalDataConfirmation by remember { mutableStateOf(false) }
     var showSignOutConfirmation by remember { mutableStateOf(false) }
     var showDeleteAccountConfirmation by remember { mutableStateOf(false) }
@@ -6731,7 +6732,7 @@ private fun ReaderIosApp(
                                 folderSyncAvailable = IosFeatureGating.SHOW_DRIVE_FOLDER_SYNC,
                                 aiSettingsAvailable = true,
                                 ttsSettingsAvailable = true,
-                                bookCacheMaintenanceAvailable = false,
+                                bookCacheMaintenanceAvailable = true,
                                 reflowCacheMaintenanceAvailable = true,
                                 includeLanguage = true,
                                 includeScreenCaptureProtection = false,
@@ -6911,6 +6912,9 @@ private fun ReaderIosApp(
                                     SharedSettingsAction.CLEAR_REFLOW_CACHE -> {
                                         showClearReflowCacheConfirmation = true
                                     }
+                                    SharedSettingsAction.CLEAR_BOOK_CACHE -> {
+                                        showClearBookCacheConfirmation = true
+                                    }
                                     SharedSettingsAction.TEXT_READER_DEFAULTS,
                                     SharedSettingsAction.PDF_READER_DEFAULTS,
                                     SharedSettingsAction.READER_TOOLBAR,
@@ -6922,10 +6926,9 @@ private fun ReaderIosApp(
                                     SharedSettingsAction.HIDE_READER_AI -> Unit
                                     SharedSettingsAction.FOLDER_SYNC -> openIosFolderSync()
                                     // Intentional platform differences (IosSettingsParity.kt): hidden by the
-                                    // shared settings model (includeScreenCaptureProtection=false,
-                                    // bookCacheMaintenanceAvailable=false), so unreachable — no error toast.
-                                    SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
-                                    SharedSettingsAction.CLEAR_BOOK_CACHE -> Unit
+                                    // shared settings model (includeScreenCaptureProtection=false), so
+                                    // unreachable — no error toast.
+                                    SharedSettingsAction.SCREEN_CAPTURE_PROTECTION -> Unit
                                     SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA -> {
                                         showClearCloudLocalDataConfirmation = true
                                     }
@@ -8258,6 +8261,24 @@ private fun ReaderIosApp(
                 showClearReflowCacheConfirmation = false
             },
             onDismiss = { showClearReflowCacheConfirmation = false },
+        )
+    }
+    if (showClearBookCacheConfirmation) {
+        // Resolved outside `onConfirm`: `readerString` is @Composable, and the callback is not.
+        val bookCacheClearedMessage = readerString("banner_book_cache_cleared", "Book cache cleared")
+        IosConfirmationDialog(
+            title = readerString("dialog_clear_book_cache", "Clear Book Cache"),
+            message = readerString(
+                "dialog_clear_book_cache_desc",
+                "This will clear all processed pages in pagination mode. This helps fix layout issues but will require books to be re-processed next time you open them.",
+            ),
+            confirmLabel = readerString("action_clear", "Clear"),
+            onConfirm = {
+                clearIosBookCaches()
+                showMessage(bookCacheClearedMessage)
+                showClearBookCacheConfirmation = false
+            },
+            onDismiss = { showClearBookCacheConfirmation = false },
         )
     }
     if (showSignOutConfirmation) {
