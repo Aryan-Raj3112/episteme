@@ -51,6 +51,19 @@ fun shouldRequestCloudSyncAfterFolderSyncChange(
  */
 const val LOCAL_FOLDER_SCAN_LOG_TAG = "LocalFolderScan"
 
+/**
+ * Common diagnostics tag for the cover pipeline, end to end: pending-extraction
+ * queue -> extraction result -> cover file write -> path resolution -> library
+ * render lookup. A cover that is missing on screen is indistinguishable from one
+ * that was never generated unless every hand-off is logged, and the stages live
+ * in different files, so they share this one tag.
+ *
+ * Ungated, like [LOCAL_FOLDER_SCAN_LOG_TAG]: an active cover bug should not also
+ * require flipping a hidden diagnostics preference. Volume is per book and per
+ * render lookup, which is bounded by what the library can show.
+ */
+const val LIBRARY_COVER_LOG_TAG = "LibraryCover"
+
 data class SharedMobileFolderScanResult(
     val folderName: String,
     val files: List<SharedFolderScannedFile>,

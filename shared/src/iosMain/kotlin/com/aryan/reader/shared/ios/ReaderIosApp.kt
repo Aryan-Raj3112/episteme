@@ -203,6 +203,7 @@ import com.aryan.reader.shared.booksRemovedByCloudTombstones
 import com.aryan.reader.shared.mergeCloudLibrarySnapshotWithDownloadedBooks
 import com.aryan.reader.shared.enqueueMobileFolderScan
 import com.aryan.reader.shared.LOCAL_FOLDER_SCAN_LOG_TAG
+import com.aryan.reader.shared.LIBRARY_COVER_LOG_TAG
 import com.aryan.reader.shared.LocalFolderRescanPolicy
 import com.aryan.reader.shared.toSharedFolderBookMetadata
 import com.aryan.reader.shared.effectiveScanStatus
@@ -319,6 +320,7 @@ import com.aryan.reader.shared.ui.SharedMobileUnifiedLibraryScreen
 import com.aryan.reader.shared.ui.SharedMobileUnifiedLibraryActions
 import com.aryan.reader.shared.ui.SharedMobileTtsBookPickerSheet
 import com.aryan.reader.shared.ui.SharedMobileBookCover
+import com.aryan.reader.shared.ui.BookCoverImageCache
 import com.aryan.reader.shared.ui.MobileAppDrawerCapabilities
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerCapabilities
 import com.aryan.reader.shared.ui.SharedOpdsScreen
@@ -2306,6 +2308,9 @@ private const val IosImportedFilesDefaultsKey = "reader_ios_imported_files_v1"
 private const val IosImportsRelativePrefix = "Imports/"
 private const val IosDocumentsRelativePrefix = "Documents/"
 private const val IosCoversRelativePrefix = "Covers/"
+
+/** Bounds the per-snapshot `queue.snapshot` line so a large library cannot flood the buffer. */
+private const val MaxCoverQueueLogEntries = 20
 private const val IosPdfReaderStateDefaultsPrefix = "reader_ios_pdf_state_v2_"
 private const val IosPdfLegacyReaderStateDefaultsPrefix = "reader_ios_pdf_state_v1_"
 private const val IosPdfReaderSidecarTimestampDefaultsPrefix = "reader_ios_pdf_sidecar_timestamp_v1_"
@@ -2909,7 +2914,17 @@ private fun String.resolvedIosCoverPath(): String {
  */
 private fun String.resolvedIosCoverPathOrNull(): String? {
     val resolved = resolvedIosCoverPath()
-    return resolved.takeIf { NSFileManager.defaultManager.fileExistsAtPath(it) }
+    val exists = NSFileManager.defaultManager.fileExistsAtPath(resolved)
+    // A cover dropped here is invisible downstream: the book simply renders with
+    // no image and no error. Log the raw reference too, because a synced relative
+    // "Covers/x.png" that resolves to the wrong container is the likely culprit.
+    if (!exists) {
+        IosDiagnosticLogStore.record(
+            LIBRARY_COVER_LOG_TAG,
+                "resolve.drop raw=$this resolved=$resolved exists=false",
+        )
+    }
+    return resolved.takeIf { exists }
 }
 
 private fun String.stableIosCoverPath(): String {    val canonicalPath = canonicalIosFilePath()
@@ -5597,17 +5612,29 @@ private fun ReaderIosApp(
     // books, so grids populate without opening a book (Android parity:
     // `BookImporter` extracts on import/download).
     val pendingPresentationIds = state.rawLibraryBooks
-        .filter { book ->
-            book.path != null &&
-                book.type in IosPresentationMetadataTypes &&
-                (
-                    book.coverImagePath.isNullOrBlank() ||
-                        book.title.isNullOrBlank() ||
-                        book.title == book.displayName.substringBeforeLast('.', book.displayName) ||
-                        book.seriesName.isNullOrBlank()
-                )
-        }
+        .filter(::needsIosPresentationExtraction)
         .map { it.id }
+    // A book filtered out above never reaches extraction, so it silently never
+    // gets a cover. Log which books the gate excluded, not just the ones that got
+    // in: "no extract.start line for this book" is otherwise uninterpretable.
+    LaunchedEffect(pendingPresentationIds, state.rawLibraryBooks.size) {
+        val skipped = state.rawLibraryBooks.filter { book ->
+            book.id !in pendingPresentationIds &&
+                book.coverImagePath.isNullOrBlank() &&
+                book.type in IosPresentationMetadataTypes
+        }
+        IosDiagnosticLogStore.record(
+            LIBRARY_COVER_LOG_TAG,
+            "queue.snapshot library=${state.rawLibraryBooks.size} " +
+                "pending=${pendingPresentationIds.size} skipped=${skipped.size}" +
+                if (skipped.isEmpty()) {
+                    ""
+                } else {
+                    " skippedIds=" +
+                        skipped.take(MaxCoverQueueLogEntries).joinToString { it.id }
+                },
+        )
+    }
     // Key on the pending id set, not on its emptiness. Keying on a boolean meant
     // the effect only ran on the empty -> non-empty edge, so a book that arrived
     // from a CloudKit pull while other books were still pending never started
@@ -5618,29 +5645,31 @@ private fun ReaderIosApp(
     // Plain remembered set, not snapshot state: it is only read and written
     // inside the effect, and mutating a `mutableStateOf` collection in place
     // is not safe to read from a coroutine.
-    val presentationAttempted = remember { mutableSetOf<String>() }
+    val presentationAttempted = remember { mutableSetOf<PresentationAttemptKey>() }
     LaunchedEffect(pendingPresentationIds) {
         val attempted = presentationAttempted
+        // Book ids are content hashes, so a book that is deleted and re-imported —
+        // or restored from a snapshot — comes back under the *same* id with no
+        // cover, because covers sync as a path reference rather than as bytes.
+        // Keying "already done" on the bare id therefore suppressed extraction for
+        // the rest of the session, and the cover only appeared after a relaunch
+        // reset this set. Key on id *and* path, and drop entries whose book has
+        // left the library, so a returning book is picked up again.
+        attempted.retainAll(state.rawLibraryBooks.mapTo(mutableSetOf(), PresentationAttemptKey::of))
         while (true) {
             val book = state.rawLibraryBooks.firstOrNull { candidate ->
-                candidate.id !in attempted &&
-                    candidate.path != null &&
-                    candidate.type in IosPresentationMetadataTypes &&
-                    (
-                        candidate.coverImagePath.isNullOrBlank() ||
-                            candidate.title.isNullOrBlank() ||
-                            candidate.title == candidate.displayName.substringBeforeLast('.', candidate.displayName) ||
-                            candidate.seriesName.isNullOrBlank()
-                    )
+                PresentationAttemptKey.of(candidate) !in attempted &&
+                    needsIosPresentationExtraction(candidate)
             } ?: break
-            attempted += book.id
+            attempted += PresentationAttemptKey.of(book)
             // A folder book and an imported book reach this loop by different
             // routes (folder scan vs. picker import), and a cover that silently
             // fails to appear is indistinguishable from one that was never
             // attempted. Log the resolved path so a failure is attributable.
             IosDiagnosticLogStore.record(
-                LOCAL_FOLDER_SCAN_LOG_TAG,
-                "presentation.start id=${book.id} type=${book.type} " +
+                LIBRARY_COVER_LOG_TAG,
+                "extract.start id=${book.id} type=${book.type} " +
+                    "existingCover=${book.coverImagePath} " +
                     "sourceFolder=${book.sourceFolder} path=${book.path} " +
                     "resolved=${book.path.resolveIosEpubSourcePath()}",
             )
@@ -5657,8 +5686,8 @@ private fun ReaderIosApp(
                 ?.takeIf { it.isNotEmpty() }
                 ?.let { bytes -> persistIosGeneratedCover(book, bytes) }
             IosDiagnosticLogStore.record(
-                LOCAL_FOLDER_SCAN_LOG_TAG,
-                "presentation.done id=${book.id} coverBytes=${presentation.coverBytes?.size} " +
+                LIBRARY_COVER_LOG_TAG,
+                "extract.done id=${book.id} coverBytes=${presentation.coverBytes?.size} " +
                     "coverPath=$coverPath title=${presentation.title} series=${presentation.seriesName}",
             )
             if (
@@ -5679,7 +5708,29 @@ private fun ReaderIosApp(
                     ),
                 )
             }
+            // Written back into `state.rawLibraryBooks`, which is what the library
+            // grid reads. If this lands and the grid still shows no cover, the break
+            // is downstream of extraction and the render.result lines will say so.
+            val stored = state.rawLibraryBooks.firstOrNull { it.id == book.id }?.coverImagePath
+            IosDiagnosticLogStore.record(
+                LIBRARY_COVER_LOG_TAG,
+                "extract.state id=${book.id} coverImagePath=$stored",
+            )
         }
+        IosDiagnosticLogStore.record(
+            LIBRARY_COVER_LOG_TAG,
+            "extract.queue-drained attempted=${attempted.size} " +
+                // Books still pending but already attempted this session are the
+                // signature of the stale-key bug, so name them rather than only
+                // counting them.
+                "remainingPending=${pendingPresentationIds.size} " +
+                "blockedIds=" + state.rawLibraryBooks
+                    .filter { it.id in pendingPresentationIds }
+                    .filter { PresentationAttemptKey.of(it) in attempted }
+                    .take(MaxCoverQueueLogEntries)
+                    .joinToString { it.id }
+                    .ifBlank { "none" },
+        )
     }
 
     @Composable
@@ -10144,7 +10195,14 @@ private fun persistIosGeneratedCover(book: BookItem, bytes: ByteArray): String? 
         else -> "img"
     }
     val outputPath = "$directoryPath/${book.id.normalizedId()}.$extension"
-    val file = fopen(outputPath, "wb") ?: return null
+    val file = fopen(outputPath, "wb")
+    if (file == null) {
+        IosDiagnosticLogStore.record(
+            LIBRARY_COVER_LOG_TAG,
+            "persist.open-failed id=${book.id} path=$outputPath bytes=${bytes.size}",
+        )
+        return null
+    }
     val written = try {
         bytes.usePinned { pinned ->
             fwrite(pinned.addressOf(0), 1u, bytes.size.toULong(), file)
@@ -10152,7 +10210,21 @@ private fun persistIosGeneratedCover(book: BookItem, bytes: ByteArray): String? 
     } finally {
         fclose(file)
     }
-    return outputPath.takeIf { written == bytes.size.toULong() }
+    val succeeded = outputPath.takeIf { written == bytes.size.toULong() }
+    // The whole point of logging the resolved path: the renderer is later handed
+    // whatever this returns, and a mismatch between the two is invisible otherwise.
+    IosDiagnosticLogStore.record(
+        LIBRARY_COVER_LOG_TAG,
+        "persist.done id=${book.id} path=$outputPath expected=${bytes.size} written=$written " +
+            "exists=${NSFileManager.defaultManager.fileExistsAtPath(outputPath)} ok=${succeeded != null}",
+    )
+    // Covers are rewritten in place at a stable path, so any decoded bitmap still
+    // held for it is stale. Dropping it here is what lets a replaced or newly
+    // generated cover show up without waiting for a relaunch.
+    if (succeeded != null) {
+        BookCoverImageCache.invalidate(succeeded)
+    }
+    return succeeded
 }
 
 private fun List<IosImportedFile>.toImportedBooks(existingBooks: List<BookItem>): List<BookItem> {
