@@ -218,7 +218,6 @@ internal fun SharedMobileEpubTopBar(
     title: String,
     isBookmarked: Boolean,
     topTools: List<ReaderTool>,
-    overflowTools: List<ReaderTool>,
     showMore: Boolean,
     onShowMoreChange: (Boolean) -> Unit,
     onBack: () -> Unit,
@@ -240,6 +239,20 @@ internal fun SharedMobileEpubTopBar(
     onOpenAiHub: () -> Unit = {},
     aiAvailable: Boolean = false,
     onExportAnnotations: (() -> Unit)? = null,
+    /**
+     * The reflow pair, present only for a reading opened from a PDF's extracted text view. They also
+     * gate the two reflow sections, so a reader that cannot reflow never sees those rows.
+     */
+    onToggleReflow: (() -> Unit)? = null,
+    onDeleteReflow: (() -> Unit)? = null,
+    /**
+     * Volume-key paging. Null where the platform cannot read the hardware keys at all (iOS), which is
+     * also what drops the volume section — the same capability gate as [onToggleReflow].
+     */
+    onToggleVolumeScroll: ((Boolean) -> Unit)? = null,
+    volumeScrollEnabled: Boolean = false,
+    /** One row of the hidden-tools list; defaults to the tool's own title. */
+    hiddenToolItem: (@Composable (ReaderTool) -> Unit)? = null,
     readingMode: ReaderReadingMode,
     rightToLeftPagination: Boolean,
     useNativeVerticalRenderer: Boolean,
@@ -275,9 +288,17 @@ internal fun SharedMobileEpubTopBar(
     onToggleMediaOverlay: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    var showReadingModeExpanded by remember { mutableStateOf(false) }
-    var showHiddenToolsExpanded by remember { mutableStateOf(false) }
-    var showTtsSettingsExpanded by remember { mutableStateOf(false) }
+    // The overflow sections dismiss themselves through this shared state, so the host's `showMore`
+    // flag stays the source of truth for the popup and the two are mirrored instead of duplicated.
+    val menuState = rememberSharedReaderOverflowMenuState()
+    LaunchedEffect(showMore) {
+        // Android parity: opening the menu collapses whatever nested section was left expanded, so a
+        // reopen never resumes mid-list.
+        if (showMore) menuState.open() else menuState.menuExpanded.value = false
+    }
+    LaunchedEffect(menuState.menuExpanded.value) {
+        if (showMore && !menuState.menuExpanded.value) onShowMoreChange(false)
+    }
     val formatContentDescription = readerString("tooltip_format", "Text formatting")
     // `Modifier.semantics { }` is not a composable scope, so the accessibility
     // labels are resolved here and reused inside the semantics blocks.
@@ -320,6 +341,78 @@ internal fun SharedMobileEpubTopBar(
     }
     // Android benchmark (EpubReaderScreen.kt:279): cap the chrome title at 40 chars.
     val chromeTitle = if (title.length > 40) title.take(40) + "..." else title
+    val defaultHiddenToolItem: @Composable (ReaderTool) -> Unit = { tool ->
+        DropdownMenuItem(
+            text = { Text(tool.title) },
+            onClick = {
+                when (tool) {
+                    ReaderTool.THEME -> onTheme()
+                    ReaderTool.TOC -> onOpenToc()
+                    ReaderTool.FORMAT -> onFormat()
+                    ReaderTool.SEARCH -> onSearch()
+                    ReaderTool.SLIDER -> onOpenSlider()
+                    ReaderTool.TTS_CONTROLS -> if (readAloudActive) onReadAloudStop() else onLocalTtsToggle()
+                    ReaderTool.BRIGHTNESS -> onBrightness()
+                    ReaderTool.SCREEN_ORIENTATION -> onScreenOrientation()
+                    ReaderTool.DICTIONARY -> onOpenDictionarySettings()
+                    ReaderTool.AI_FEATURES -> onOpenAiHub()
+                    else -> Unit
+                }
+                menuState.hiddenToolsExpanded.value = false
+                onShowMoreChange(false)
+            }
+        )
+    }
+    val sanitizedToolbarPreferences = toolbarPreferences.sanitized()
+    // Android benchmark: only bar tools can be hidden into the menu; an overflow-category tool that
+    // is hidden simply drops out of its own section.
+    val hiddenToolbarTools = sharedEpubHiddenToolbarTools(
+        toolOrder = sanitizedToolbarPreferences.toolOrder,
+        hiddenToolNamesOrIds = sanitizedToolbarPreferences.hiddenToolIds,
+    ).filter { tool -> tool != ReaderTool.AI_FEATURES || aiAvailable }
+    val overflowSections = sharedEpubOverflowMenuSections(
+        hiddenToolNamesOrIds = sanitizedToolbarPreferences.hiddenToolIds,
+        hasHiddenToolbarTools = hiddenToolbarTools.isNotEmpty(),
+        hasToggleReflow = onToggleReflow != null,
+        hasDeleteReflow = onDeleteReflow != null,
+        hasExportAnnotations = onExportAnnotations != null,
+        supportsVolumeScroll = onToggleVolumeScroll != null,
+    )
+    val overflowState = SharedReaderEpubOverflowState(
+        isBookmarked = isBookmarked,
+        isTtsActive = ttsBusy,
+        readingMode = readingMode,
+        useNativeVerticalRenderer = useNativeVerticalRenderer,
+        rightToLeftPagination = rightToLeftPagination,
+        tapToNavigateEnabled = tapToNavigateEnabled,
+        volumeScrollEnabled = volumeScrollEnabled,
+        pageTurnAnimationEnabled = pageTurnAnimationEnabled,
+        keepScreenOn = keepScreenOn,
+        hiddenToolNamesOrIds = sanitizedToolbarPreferences.hiddenToolIds,
+        toolOrder = sanitizedToolbarPreferences.toolOrder,
+    )
+    val overflowLabels = sharedReaderEpubOverflowLabels()
+    val overflowCallbacks = SharedReaderEpubOverflowCallbacks(
+        onCustomizeTools = onCustomizeTools,
+        onReadingModeChange = onReadingModeChange,
+        onUseNativeVerticalRendererChange = onUseNativeVerticalRendererChange,
+        onRightToLeftPaginationChange = onRightToLeftPaginationChange,
+        onToggleBookmark = onBookmark,
+        onToggleTapToNavigate = onTapToNavigateChange,
+        onToggleVolumeScroll = onToggleVolumeScroll,
+        onTogglePageTurnAnimation = onPageTurnAnimationChange,
+        onToggleKeepScreenOn = onKeepScreenOnChange,
+        onOpenVisualOptions = onVisualOptions,
+        onAutoScrollChange = onAutoScrollChange,
+        onOpenBookReplacements = onBookReplacements,
+        onOpenTtsSettings = onTtsSettings,
+        onOpenTtsReplacements = onTtsReplacements,
+        onExportAnnotations = onExportAnnotations,
+        onOpenFileInfo = onFileInfo,
+        onToggleReflow = onToggleReflow,
+        onDeleteReflow = onDeleteReflow,
+        hiddenToolItem = hiddenToolItem ?: defaultHiddenToolItem,
+    )
     Surface(modifier = modifier.testTag(SharedMobileEpubAxTags.TOP_BAR), tonalElevation = 4.dp) {
         Row(
             Modifier
@@ -451,240 +544,16 @@ internal fun SharedMobileEpubTopBar(
                     modifier = Modifier.testTag(SharedMobileEpubAxTags.MORE).semantics { contentDescription = moreOptionsContentDescription }
                 ) { Icon(Icons.Default.MoreVert, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
                 SharedDropdownMenu(expanded = showMore, onDismissRequest = { onShowMoreChange(false) }) {
-                    DropdownMenuItem(
-                        text = { Text(readerString("title_customize_toolbar", "Customize Toolbar")) },
-                        onClick = { onShowMoreChange(false); onCustomizeTools() },
-                        leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) }
-                    )
-                    val hiddenToolbarTools = toolbarPreferences.sanitized().toolOrder.filter { tool ->
-                        tool in SharedMobileEpubToolbarTools && !toolbarPreferences.isVisible(tool) &&
-                            (tool != ReaderTool.AI_FEATURES || aiAvailable)
-                    }
-                    if (hiddenToolbarTools.isNotEmpty()) {
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = { Text(readerString("toolbar_hidden_tools_menu", "Hidden tools")) },
-                            onClick = { showHiddenToolsExpanded = !showHiddenToolsExpanded },
-                            trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) }
-                        )
-                        if (showHiddenToolsExpanded) {
-                            hiddenToolbarTools.forEach { tool ->
-                                DropdownMenuItem(
-                                    text = { Text(tool.title) },
-                                    onClick = {
-                                        when (tool) {
-                                            ReaderTool.THEME -> onTheme()
-                                            ReaderTool.TOC -> onOpenToc()
-                                            ReaderTool.FORMAT -> onFormat()
-                                            ReaderTool.SEARCH -> onSearch()
-                                            ReaderTool.SLIDER -> onOpenSlider()
-                                            ReaderTool.TTS_CONTROLS -> if (readAloudActive) onReadAloudStop() else onLocalTtsToggle()
-                                            ReaderTool.BRIGHTNESS -> onBrightness()
-                                            ReaderTool.SCREEN_ORIENTATION -> onScreenOrientation()
-                                            ReaderTool.DICTIONARY -> onOpenDictionarySettings()
-                                            ReaderTool.AI_FEATURES -> onOpenAiHub()
-                                            else -> Unit
-                                        }
-                                        showHiddenToolsExpanded = false
-                                        onShowMoreChange(false)
-                                    }
-                                )
-                            }
-                        }
-                    }
-                    HorizontalDivider()
-                    overflowTools.forEach { tool ->
-                        when (tool) {
-                            ReaderTool.READING_MODE -> {
-                                DropdownMenuItem(
-                                    text = { Text(readerString("menu_change_reading_mode", "Change Reading Mode")) },
-                                    onClick = { showReadingModeExpanded = !showReadingModeExpanded },
-                                    trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) }
-                                )
-                                if (showReadingModeExpanded) {
-                                    DropdownMenuItem(
-                                        text = { Text(readerString("menu_reading_mode_vertical_webview", "Vertical (WebView)")) },
-                                        enabled = !ttsBusy,
-                                        onClick = {
-                                            onUseNativeVerticalRendererChange(false)
-                                            onReadingModeChange(ReaderReadingMode.VERTICAL)
-                                            showReadingModeExpanded = false
-                                            onShowMoreChange(false)
-                                        },
-                                        trailingIcon = {
-                                            if (readingMode == ReaderReadingMode.VERTICAL && !useNativeVerticalRenderer) Text("✓")
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(readerString("menu_reading_mode_vertical_native", "Vertical (Native Beta)")) },
-                                        enabled = !ttsBusy,
-                                        onClick = {
-                                            onUseNativeVerticalRendererChange(true)
-                                            onReadingModeChange(ReaderReadingMode.VERTICAL)
-                                            showReadingModeExpanded = false
-                                            onShowMoreChange(false)
-                                        },
-                                        trailingIcon = {
-                                            if (readingMode == ReaderReadingMode.VERTICAL && useNativeVerticalRenderer) Text("✓")
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(readerString("menu_reading_mode_paginated", "Paginated (left-to-right)")) },
-                                        enabled = !ttsBusy,
-                                        onClick = {
-                                            onRightToLeftPaginationChange(false)
-                                            onReadingModeChange(ReaderReadingMode.PAGINATED)
-                                            showReadingModeExpanded = false
-                                            onShowMoreChange(false)
-                                        },
-                                        trailingIcon = { if (readingMode == ReaderReadingMode.PAGINATED && !rightToLeftPagination) Text("✓") }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(readerString("menu_right_to_left_pagination", "Paginated (right-to-left)")) },
-                                        enabled = !ttsBusy,
-                                        onClick = {
-                                            onRightToLeftPaginationChange(true)
-                                            onReadingModeChange(ReaderReadingMode.PAGINATED)
-                                            showReadingModeExpanded = false
-                                            onShowMoreChange(false)
-                                        },
-                                        trailingIcon = { if (readingMode == ReaderReadingMode.PAGINATED && rightToLeftPagination) Text("✓") }
-                                    )
-                                }
-                            }
-                            ReaderTool.TAP_TO_TURN -> SharedMobileEpubSwitchMenuItem(
-                                readerString("menu_tap_to_turn_pages", "Tap to Turn Pages"),
-                                tapToNavigateEnabled,
-                                onTapToNavigateChange,
-                                enabled = readingMode == ReaderReadingMode.PAGINATED
-                            )
-                            ReaderTool.PAGE_TURN_ANIM -> SharedMobileEpubSwitchMenuItem(
-                                readerString("menu_realistic_page_turns", "Realistic Page Turns"),
-                                pageTurnAnimationEnabled,
-                                onPageTurnAnimationChange,
-                                enabled = readingMode == ReaderReadingMode.PAGINATED
-                            )
-                            ReaderTool.BOOKMARK -> DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        readerString(
-                                            if (isBookmarked) "menu_remove_bookmark" else "menu_bookmark_this_page",
-                                            if (isBookmarked) "Remove bookmark" else "Bookmark this page"
-                                        )
-                                    )
-                                },
-                                onClick = { onBookmark(); onShowMoreChange(false) },
-                                leadingIcon = { Icon(if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, contentDescription = null) }
-                            )
-                            ReaderTool.VISUAL_OPTIONS -> DropdownMenuItem(
-                                text = { Text(readerString("menu_visual_options", "Visual Options")) }, onClick = { onVisualOptions(); onShowMoreChange(false) },
-                                leadingIcon = { Icon(Icons.Default.Visibility, contentDescription = null) }
-                            )
-                            ReaderTool.TOC -> DropdownMenuItem(
-                                text = { Text(readerString("menu_contents", "Contents")) }, onClick = { onOpenToc(); onShowMoreChange(false) },
-                                leadingIcon = { Icon(Icons.Default.Menu, contentDescription = null) }
-                            )
-                            ReaderTool.FORMAT -> DropdownMenuItem(
-                                text = { Text(readerString("content_desc_text_formatting", "Text formatting")) }, onClick = { onFormat(); onShowMoreChange(false) }
-                            )
-                            ReaderTool.SEARCH -> DropdownMenuItem(
-                                text = { Text(readerString("action_search", "Search")) }, onClick = { onSearch(); onShowMoreChange(false) },
-                                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) }
-                            )
-                            ReaderTool.SLIDER -> DropdownMenuItem(
-                                text = { Text(readerString("tool_navigation_slider", "Navigation slider")) }, onClick = { onShowMoreChange(false); onOpenSlider() },
-                                leadingIcon = { Icon(SharedReaderIcons.Slider, contentDescription = null) }
-                            )
-                            ReaderTool.TTS_CONTROLS -> DropdownMenuItem(
-                                text = { Text(readAloudLabel) }, onClick = { onReadAloudToggle(); onShowMoreChange(false) }
-                            )
-                            ReaderTool.TTS_REPLACEMENTS -> {
-                                // Covered by the TTS_SETTINGS expander when both are present.
-                                if (ReaderTool.TTS_SETTINGS !in overflowTools) {
-                                    DropdownMenuItem(
-                                        text = { Text(readerString("menu_tts_word_replacements", "TTS Word Replacements")) },
-                                        onClick = { onShowMoreChange(false); onTtsReplacements() },
-                                        leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) }
-                                    )
-                                } else Unit
-                            }
-                            ReaderTool.TTS_SETTINGS -> {
-                                if (ReaderTool.TTS_REPLACEMENTS in overflowTools) {
-                                    DropdownMenuItem(
-                                        text = { Text(readerString("menu_tts_settings", "TTS Settings")) },
-                                        onClick = { showTtsSettingsExpanded = !showTtsSettingsExpanded },
-                                        leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) },
-                                        trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) }
-                                    )
-                                    if (showTtsSettingsExpanded) {
-                                        DropdownMenuItem(
-                                            text = { Text(readerString("menu_tts_voice_settings", "TTS Voice Settings")) },
-                                            enabled = !ttsBusy,
-                                            onClick = { onShowMoreChange(false); onTtsSettings() },
-                                            leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) }
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text(readerString("menu_tts_word_replacements", "TTS Word Replacements")) },
-                                            onClick = { onShowMoreChange(false); onTtsReplacements() },
-                                            leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) }
-                                        )
-                                    }
-                                } else {
-                                    DropdownMenuItem(
-                                        text = { Text(readerString("menu_tts_voice_settings", "TTS Voice Settings")) },
-                                        enabled = !ttsBusy,
-                                        onClick = { onShowMoreChange(false); onTtsSettings() },
-                                        leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) }
-                                    )
-                                }
-                            }
-                            ReaderTool.BOOK_REPLACEMENTS -> DropdownMenuItem(
-                                text = { Text(readerString("menu_book_word_replacements", "Book Word Replacements")) },
-                                onClick = { onShowMoreChange(false); onBookReplacements() },
-                                leadingIcon = { Icon(Icons.Default.TextFields, contentDescription = null) }
-                            )
-                            ReaderTool.KEEP_SCREEN_ON -> SharedMobileEpubSwitchMenuItem("Keep Screen On", keepScreenOn, onKeepScreenOnChange)
-                            ReaderTool.AUTO_SCROLL -> DropdownMenuItem(
-                                // Android parity (EpubReaderControls
-                                // EpubOverflowMenuSection.AUTO_SCROLL): the item
-                                // always reads "Auto Scroll" and is only enabled
-                                // for vertical reading while TTS is idle.
-                                text = { Text(readerString("menu_auto_scroll", "Auto Scroll")) },
-                                enabled = readingMode == ReaderReadingMode.VERTICAL &&
-                                    !ttsBusy,
-                                onClick = { onAutoScrollChange(!autoScroll); onShowMoreChange(false) }
-                            )
-                            ReaderTool.BRIGHTNESS -> DropdownMenuItem(
-                                text = { Text(readerString("tool_brightness", "Brightness")) }, onClick = { onBrightness(); onShowMoreChange(false) }
-                            )
-                            ReaderTool.SCREEN_ORIENTATION -> DropdownMenuItem(
-                                text = { Text(readerString("visual_options_screen_orientation", "Screen Orientation")) }, onClick = { onScreenOrientation(); onShowMoreChange(false) },
-                                leadingIcon = { Icon(SharedReaderIcons.ScreenRotation, contentDescription = null) }
-                            )
-                            ReaderTool.AI_FEATURES -> if (aiAvailable) DropdownMenuItem(
-                                text = { Text(readerString("tooltip_ai", "AI features")) },
-                                onClick = { onOpenAiHub(); onShowMoreChange(false) },
-                                leadingIcon = { Icon(Icons.Default.Ai, contentDescription = null) }
-                            )
-                            ReaderTool.FILE_INFO -> DropdownMenuItem(
-                                text = { Text(readerString("file_information", "File Information")) }, onClick = { onFileInfo(); onShowMoreChange(false) },
-                                leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) }
-                            )
-                            ReaderTool.THEME -> Unit
-                            else -> Unit
-                        }
-                    }
-                    if (onExportAnnotations != null) {
-                        DropdownMenuItem(
-                            text = { Text(readerString("action_export_annotations", "Export annotations")) },
-                            onClick = { onExportAnnotations(); onShowMoreChange(false) },
-                            leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) }
-                        )
-                    }
-                    if (ReaderTool.TTS_CONTROLS in overflowTools && ttsBusy) {
-                        DropdownMenuItem(
-                            text = { Text(readerString("menu_stop_reading", "Stop reading")) },
-                            onClick = { onReadAloudStop(); onShowMoreChange(false) }
+                    // Every row below is rendered by the shared section renderer. Both hosts call it with
+                    // their own labels and state, so the menu's structure, gating and order can only
+                    // change in one place (see SharedReaderEpubOverflowSections.kt).
+                    SharedReaderOverflowSectionList(overflowSections) { section ->
+                        SharedReaderEpubOverflowSection(
+                            section = section,
+                            menuState = menuState,
+                            state = overflowState,
+                            labels = overflowLabels,
+                            callbacks = overflowCallbacks,
                         )
                     }
                 }

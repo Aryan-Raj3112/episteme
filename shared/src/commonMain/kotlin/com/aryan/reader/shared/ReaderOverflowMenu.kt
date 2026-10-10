@@ -19,6 +19,13 @@ enum class EpubOverflowMenuSection {
     FILE_INFO
 }
 
+/**
+ * EPUB overflow sections in Android's benchmark order.
+ *
+ * `hiddenTools` accepts tool names or ids, since hosts disagree on the shape they persist (Android
+ * stores names, [ReaderToolbarPreferences.hiddenToolIds] stores ids); [ReaderTool.fromId] normalises
+ * both before any section is gated.
+ */
 fun epubOverflowMenuSections(
     hiddenTools: Set<String>,
     hasHiddenToolbarTools: Boolean,
@@ -27,24 +34,25 @@ fun epubOverflowMenuSections(
     hasFileInfo: Boolean = true,
     hasExportAnnotations: Boolean = false,
 ): List<EpubOverflowMenuSection> = buildList {
+    val hiddenIds = hiddenTools.mapNotNullTo(mutableSetOf()) { ReaderTool.fromId(it)?.id }
     add(EpubOverflowMenuSection.CUSTOMIZE_TOOLBAR)
     if (hasHiddenToolbarTools) add(EpubOverflowMenuSection.HIDDEN_TOOLS)
     if (hasToggleReflow) add(EpubOverflowMenuSection.VIEW_ORIGINAL_PDF)
     if (hasDeleteReflow) add(EpubOverflowMenuSection.DELETE_TEXT_VIEW)
-    if (ReaderTool.READING_MODE.name !in hiddenTools) add(EpubOverflowMenuSection.READING_MODE)
-    if (ReaderTool.BOOKMARK.name !in hiddenTools) add(EpubOverflowMenuSection.BOOKMARK)
-    if (ReaderTool.TAP_TO_TURN.name !in hiddenTools) add(EpubOverflowMenuSection.TAP_TO_TURN)
-    if (ReaderTool.VOLUME_SCROLL.name !in hiddenTools) add(EpubOverflowMenuSection.VOLUME_SCROLL)
-    if (ReaderTool.PAGE_TURN_ANIM.name !in hiddenTools) add(EpubOverflowMenuSection.PAGE_TURN_ANIM)
-    if (ReaderTool.KEEP_SCREEN_ON.name !in hiddenTools) add(EpubOverflowMenuSection.KEEP_SCREEN_ON)
-    if (ReaderTool.VISUAL_OPTIONS.name !in hiddenTools) add(EpubOverflowMenuSection.VISUAL_OPTIONS)
-    if (ReaderTool.AUTO_SCROLL.name !in hiddenTools) add(EpubOverflowMenuSection.AUTO_SCROLL)
-    if (ReaderTool.BOOK_REPLACEMENTS.name !in hiddenTools) add(EpubOverflowMenuSection.BOOK_REPLACEMENTS)
-    if (ReaderTool.TTS_SETTINGS.name !in hiddenTools || ReaderTool.TTS_REPLACEMENTS.name !in hiddenTools) {
+    if (ReaderTool.READING_MODE.id !in hiddenIds) add(EpubOverflowMenuSection.READING_MODE)
+    if (ReaderTool.BOOKMARK.id !in hiddenIds) add(EpubOverflowMenuSection.BOOKMARK)
+    if (ReaderTool.TAP_TO_TURN.id !in hiddenIds) add(EpubOverflowMenuSection.TAP_TO_TURN)
+    if (ReaderTool.VOLUME_SCROLL.id !in hiddenIds) add(EpubOverflowMenuSection.VOLUME_SCROLL)
+    if (ReaderTool.PAGE_TURN_ANIM.id !in hiddenIds) add(EpubOverflowMenuSection.PAGE_TURN_ANIM)
+    if (ReaderTool.KEEP_SCREEN_ON.id !in hiddenIds) add(EpubOverflowMenuSection.KEEP_SCREEN_ON)
+    if (ReaderTool.VISUAL_OPTIONS.id !in hiddenIds) add(EpubOverflowMenuSection.VISUAL_OPTIONS)
+    if (ReaderTool.AUTO_SCROLL.id !in hiddenIds) add(EpubOverflowMenuSection.AUTO_SCROLL)
+    if (ReaderTool.BOOK_REPLACEMENTS.id !in hiddenIds) add(EpubOverflowMenuSection.BOOK_REPLACEMENTS)
+    if (ReaderTool.TTS_SETTINGS.id !in hiddenIds || ReaderTool.TTS_REPLACEMENTS.id !in hiddenIds) {
         add(EpubOverflowMenuSection.TTS_SETTINGS)
     }
     if (hasExportAnnotations) add(EpubOverflowMenuSection.EXPORT_ANNOTATIONS)
-    if (hasFileInfo && ReaderTool.FILE_INFO.name !in hiddenTools) add(EpubOverflowMenuSection.FILE_INFO)
+    if (hasFileInfo && ReaderTool.FILE_INFO.id !in hiddenIds) add(EpubOverflowMenuSection.FILE_INFO)
 }
 
 enum class PdfOverflowMenuSection {

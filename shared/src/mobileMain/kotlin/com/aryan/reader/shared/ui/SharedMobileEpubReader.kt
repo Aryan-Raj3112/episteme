@@ -727,7 +727,6 @@ fun SharedMobileEpubReaderScreen(
     val topToolbarTools = visibleToolbarTools.filter { tool ->
         tool in SharedMobileEpubToolbarTools && tool.id !in mobileBottomToolIds
     }
-    val overflowMenuTools = visibleToolbarTools.filterNot { it in SharedMobileEpubToolbarTools }
     val systemBarsVisibility = mobileEpubSystemBarsVisibility(settings.systemUiMode, showChrome)
     val systemUiHidden = !systemBarsVisibility.statusBarsVisible
     val navigationUiHidden = !systemBarsVisibility.navigationBarsVisible
@@ -3150,7 +3149,6 @@ fun SharedMobileEpubReaderScreen(
                         title = loadedBook?.title ?: book.displayName,
                         isBookmarked = isBookmarked,
                         topTools = topToolbarTools,
-                        overflowTools = overflowMenuTools,
                         showMore = showMore,
                         onShowMoreChange = { showMore = it },
                         onBack = ::closeReader,
