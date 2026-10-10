@@ -1,11 +1,22 @@
 package com.aryan.reader.shared.reader
 
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.ParagraphStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.TextUnitType
+import androidx.compose.ui.unit.isSpecified
+import androidx.compose.ui.unit.sp
+import com.aryan.reader.paginatedreader.CssParser
+import com.aryan.reader.paginatedreader.CssRule
 import com.aryan.reader.paginatedreader.CssStyle
+import com.aryan.reader.paginatedreader.FontFaceInfo
+import com.aryan.reader.paginatedreader.FontFamilyMapper
+import com.aryan.reader.paginatedreader.OptimizedCssRules
 import com.aryan.reader.paginatedreader.SemanticBlock
 import com.aryan.reader.paginatedreader.isEbookmakerImageMarkerId
 import com.aryan.reader.paginatedreader.readerMissingFigureText
@@ -22,6 +33,7 @@ import com.aryan.reader.paginatedreader.SemanticSpan
 import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTableCell
 import com.aryan.reader.paginatedreader.SemanticTextBlock
+import com.aryan.reader.paginatedreader.UserAgentStylesheet
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
@@ -34,8 +46,610 @@ import kotlin.io.encoding.ExperimentalEncodingApi
  * text-range locators consistent with [SharedEpubChapter.plainText].
  */
 internal fun sharedEpubHtmlToSemanticBlocks(html: String): List<SemanticBlock> {
+    return sharedEpubHtmlToSemanticBlocks(html, SharedSemanticCssSnapshot.EMPTY)
+}
+
+/**
+ * Book CSS applied to the shared semantic model (Android benchmark parity).
+ *
+ * The Android paginated reader styles every chapter with the merged book CSS
+ * (`PaginatedReader` merges the user-agent sheet + all book stylesheets, then
+ * `SharedContentStyler`/`htmlToSemanticBlocks` resolve each element). The
+ * shared loader used to skip CSS entirely, so publisher typography (heading
+ * sizes, margins, alignment, floats, table styling) never reached iOS
+ * pagination or rendering. Rules are matched here against the lightweight
+ * shared DOM; text, CFIs and source offsets are untouched, so locators,
+ * search and TTS stay aligned.
+ */
+internal fun sharedEpubHtmlToSemanticBlocks(
+    html: String,
+    css: SharedSemanticCssSnapshot
+): List<SemanticBlock> {
     val document = SharedSemanticHtmlDocument.parse(html) ?: return emptyList()
-    return SharedEpubSemanticBlockBuilder(document).build()
+    return SharedEpubSemanticBlockBuilder(document, css).build()
+}
+
+/** Pre-parsed book CSS for [sharedEpubHtmlToSemanticBlocks]. */
+internal data class SharedSemanticCssSnapshot(
+    val rules: OptimizedCssRules,
+    val fontFaces: List<FontFaceInfo>
+) {
+    companion object {
+        val EMPTY = SharedSemanticCssSnapshot(OptimizedCssRules(), emptyList())
+    }
+}
+
+/**
+ * Merges the user-agent sheet with every collected book stylesheet, in
+ * deterministic order (user-agent, manifest stylesheets, embedded chapter
+ * styles). Mirrors the Android paginator, which parses with nominal metrics
+ * at load time and resolves dp/em against the live settings later, so
+ * parsing here uses the same nominal baseline as
+ * `SharedJvmBookLoader.chapterFromHtml` (18sp, density 1, 980x720).
+ */
+internal fun parseSharedSemanticCss(
+    bookCss: Map<String, String>,
+    baseFontSizeSp: Float = 18f,
+    density: Float = 1f,
+    constraints: Constraints = Constraints(maxWidth = 980, maxHeight = 720)
+): SharedSemanticCssSnapshot {
+    var rules = OptimizedCssRules()
+    val fontFaces = mutableListOf<FontFaceInfo>()
+    // Each CssParser.parse call restarts block source orders at zero, so ties
+    // across stylesheets would interleave UA rules with author rules. Re-stamp
+    // orders globally (user-agent, then stylesheets in order) so the cascade
+    // resolves cross-file ties by stylesheet order, author over user-agent.
+    var orderBase = 0
+    fun rebase(parsed: OptimizedCssRules): OptimizedCssRules {
+        fun List<CssRule>.rebased(): List<CssRule> =
+            map { rule -> rule.copy(sourceOrder = rule.sourceOrder + orderBase) }
+        val rebased = OptimizedCssRules(
+            byTag = parsed.byTag.mapValues { (_, bucket) -> bucket.rebased() },
+            byClass = parsed.byClass.mapValues { (_, bucket) -> bucket.rebased() },
+            byId = parsed.byId.mapValues { (_, bucket) -> bucket.rebased() },
+            otherComplex = parsed.otherComplex.rebased(),
+            allRules = parsed.allRules.rebased()
+        )
+        orderBase += (parsed.allRules.maxOfOrNull { it.sourceOrder } ?: -1) + 1
+        return rebased
+    }
+    fun accumulate(cssContent: String, cssPath: String?) {
+        if (cssContent.isBlank()) return
+        runCatching {
+            val parsed = CssParser.parse(
+                cssContent = cssContent,
+                cssPath = cssPath,
+                baseFontSizeSp = baseFontSizeSp,
+                density = density,
+                constraints = constraints,
+                isDarkTheme = false,
+                adaptThemeColors = false
+            )
+            rules = rules.merge(rebase(parsed.rules))
+            fontFaces += parsed.fontFaces
+        }
+    }
+    accumulate(UserAgentStylesheet.default, cssPath = null)
+    bookCss.forEach { (path, content) ->
+        accumulate(content, path.substringBeforeLast('#').takeIf { it.isNotBlank() })
+    }
+    return SharedSemanticCssSnapshot(rules, fontFaces)
+}
+
+// Nominal styling baseline, mirroring `SharedJvmBookLoader.chapterFromHtml`
+// (18sp, density 1, 980x720). dp/em values resolve against the live reader
+// settings at paginate/render time, so load-time parsing stays viewport
+// independent; only px-absolute and container-% values bake the nominal
+// baseline, exactly like the JVM loader.
+private const val SharedSemanticCssBaseFontSizeSp = 18f
+private const val SharedSemanticCssDensity = 1f
+private val SharedSemanticCssConstraints = Constraints(maxWidth = 980, maxHeight = 720)
+
+private val SharedSemanticCssClassSplitRegex = Regex("\\s+")
+private val SharedSemanticCssPreWhiteSpace = setOf("pre", "pre-wrap", "pre-line", "break-spaces")
+
+internal fun SharedSemanticCssWhiteSpacePreserves(raw: String?): Boolean {
+    return raw?.trim()?.lowercase() in SharedSemanticCssPreWhiteSpace
+}
+
+/**
+ * True when a computed inline style carries anything the span pipeline
+ * consumes (typeface, size, color, decoration, spacing). Block-only
+ * properties (margins, padding, alignment) must not force span creation.
+ */
+private fun CssStyle.hasSharedSemanticSpanEffect(): Boolean {
+    if (spanStyle != SpanStyle()) return true
+    if (fontSize.isSpecified) return true
+    if (fontFamilies.isNotEmpty()) return true
+    if (fontVariantNumeric != null) return true
+    if (verticalAlign != null) return true
+    if (wordSpacing.isSpecified) return true
+    return false
+}
+
+private val SharedSemanticCssCascadeComparator =
+    compareBy<CssRule> { it.selector.specificity }.thenBy { it.sourceOrder }
+
+private fun mergeSharedSemanticCssRuleBuckets(lists: List<List<CssRule>>): List<CssRule> {
+    if (lists.isEmpty()) return emptyList()
+    if (lists.size == 1) return lists.single()
+    // Buckets arrive pre-sorted; a flat distinct + cascade sort keeps one
+    // total order (specificity, then source order) like the JVM merge.
+    return lists.flatten().distinct().sortedWith(SharedSemanticCssCascadeComparator)
+}
+
+private data class SharedSemanticCssAttributeCondition(
+    val name: String,
+    val op: String?,
+    val value: String?
+)
+
+private sealed interface SharedSemanticCssPseudoClass {
+    data object FirstChild : SharedSemanticCssPseudoClass
+    data object LastChild : SharedSemanticCssPseudoClass
+    data class NthChild(val step: Int, val offset: Int, val fromEnd: Boolean) : SharedSemanticCssPseudoClass
+    data class Not(val inner: SharedSemanticCssCompound) : SharedSemanticCssPseudoClass
+}
+
+private data class SharedSemanticCssCompound(
+    val tag: String?,
+    val id: String? = null,
+    val classes: List<String> = emptyList(),
+    val attributes: List<SharedSemanticCssAttributeCondition> = emptyList(),
+    val pseudoClasses: List<SharedSemanticCssPseudoClass> = emptyList()
+)
+
+private data class SharedSemanticCssSelectorPart(
+    val compound: SharedSemanticCssCompound,
+    /** Combinator linking this part to the previous one; null for the leftmost. */
+    val combinatorToPrevious: Char?
+)
+
+private data class SharedSemanticCssSelectorChain(
+    val parts: List<SharedSemanticCssSelectorPart>
+)
+
+private fun SharedSemanticDomElement.sharedCssClassNames(): List<String> {
+    return attribute("class")?.split(SharedSemanticCssClassSplitRegex)
+        ?.filter { it.isNotEmpty() }.orEmpty()
+}
+
+private fun SharedSemanticDomElement.sharedCssElementSiblings(): List<SharedSemanticDomElement> {
+    return parent?.children?.filterIsInstance<SharedSemanticDomElement>().orEmpty()
+}
+
+private fun splitSharedCssSelectorSegments(selector: String): List<String>? {
+    val segments = mutableListOf<String>()
+    val current = StringBuilder()
+    var combinatorPending: Char? = null
+    var index = 0
+    fun flushSegment() {
+        val segment = current.toString().trim()
+        if (segment.isNotEmpty()) {
+            if (segments.isNotEmpty() || combinatorPending != null) {
+                segments += (combinatorPending?.toString() ?: " ") + segment
+            } else {
+                segments += segment
+            }
+            current.clear()
+            combinatorPending = null
+        } else {
+            current.clear()
+            // An explicit combinator survives whitespace: "div > p" must keep
+            // the child combinator across the spaces around ">".
+        }
+    }
+    while (index < selector.length) {
+        val char = selector[index]
+        when {
+            char == '[' -> {
+                val end = selector.indexOf(']', index + 1)
+                if (end < 0) return null
+                current.append(selector, index, end + 1)
+                index = end + 1
+            }
+            char == '(' -> {
+                var depth = 1
+                var cursor = index + 1
+                var inQuote: Char? = null
+                while (cursor < selector.length && depth > 0) {
+                    val next = selector[cursor]
+                    if (inQuote != null) {
+                        if (next == inQuote) inQuote = null
+                    } else when (next) {
+                        '\'', '"' -> inQuote = next
+                        '(' -> depth++
+                        ')' -> depth--
+                    }
+                    cursor++
+                }
+                if (depth != 0) return null
+                current.append(selector, index, cursor)
+                index = cursor
+            }
+            char == '\'' || char == '"' -> {
+                val end = selector.indexOf(char, index + 1)
+                if (end < 0) return null
+                current.append(selector, index, end + 1)
+                index = end + 1
+            }
+            char == '>' || char == '+' || char == '~' -> {
+                flushSegment()
+                combinatorPending = char
+                index++
+            }
+            char.isWhitespace() -> {
+                flushSegment()
+                if (combinatorPending == null && segments.isNotEmpty()) combinatorPending = ' '
+                index++
+            }
+            else -> {
+                current.append(char)
+                index++
+            }
+        }
+    }
+    flushSegment()
+    return segments.takeIf { it.isNotEmpty() }
+}
+
+private fun parseSharedCssCompound(raw: String): SharedSemanticCssCompound? {
+    var rest = raw.trim()
+    if (rest.isEmpty()) return null
+    var tag: String? = null
+    if (rest == "*") return SharedSemanticCssCompound(tag = null)
+    val typeEnd = rest.indexOfFirst { it == '#' || it == '.' || it == '[' || it == ':' }
+    val typePart = if (typeEnd < 0) rest.also { rest = "" } else rest.substring(0, typeEnd).also { rest = rest.substring(typeEnd) }
+    if (typePart.isNotEmpty() && typePart != "*") {
+        if (!typePart.all { it.isLetterOrDigit() || it == '-' || it == '_' || it == '|' }) return null
+        tag = typePart.substringAfterLast('|').lowercase().takeIf { it.isNotEmpty() } ?: return null
+    }
+    var id: String? = null
+    val classes = mutableListOf<String>()
+    val attributes = mutableListOf<SharedSemanticCssAttributeCondition>()
+    val pseudoClasses = mutableListOf<SharedSemanticCssPseudoClass>()
+    while (rest.isNotEmpty()) {
+        when (rest[0]) {
+            '#' -> {
+                val match = Regex("^#([A-Za-z0-9_-]+)").find(rest) ?: return null
+                if (id != null) return null
+                id = match.groupValues[1]
+                rest = rest.substring(match.value.length)
+            }
+            '.' -> {
+                val match = Regex("^\\.([A-Za-z0-9_-]+)").find(rest) ?: return null
+                classes += match.groupValues[1]
+                rest = rest.substring(match.value.length)
+            }
+            '[' -> {
+                val end = rest.indexOf(']') 
+                if (end < 0) return null
+                val condition = parseSharedCssAttributeCondition(rest.substring(1, end)) ?: return null
+                attributes += condition
+                rest = rest.substring(end + 1)
+            }
+            ':' -> {
+                val match = Regex("^:([a-zA-Z-]+)(\\((.*)\\))?$", RegexOption.DOT_MATCHES_ALL).find(rest)
+                    ?: return null
+                val name = match.groupValues[1].lowercase()
+                val args = match.groupValues[3]
+                when (name) {
+                    "first-child" -> pseudoClasses += SharedSemanticCssPseudoClass.FirstChild
+                    "last-child" -> pseudoClasses += SharedSemanticCssPseudoClass.LastChild
+                    "nth-child" -> pseudoClasses += parseSharedCssNth(args, fromEnd = false) ?: return null
+                    "nth-last-child" -> pseudoClasses += parseSharedCssNth(args, fromEnd = true) ?: return null
+                    "not" -> {
+                        val inner = parseSharedCssCompound(args.trim()) ?: return null
+                        pseudoClasses += SharedSemanticCssPseudoClass.Not(inner)
+                    }
+                    "root" -> if (tag == null) tag = "html" else return null
+                    else -> return null
+                }
+                rest = ""
+            }
+            else -> return null
+        }
+    }
+    return SharedSemanticCssCompound(tag = tag, id = id, classes = classes, attributes = attributes, pseudoClasses = pseudoClasses)
+}
+
+private fun parseSharedCssAttributeCondition(raw: String): SharedSemanticCssAttributeCondition? {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return null
+    val operators = listOf("~=", "|=", "^=", "$=", "*=", "=")
+    for (op in operators) {
+        val at = trimmed.indexOf(op)
+        if (at > 0) {
+            val name = trimmed.substring(0, at).trim().lowercase().takeIf { it.isNotEmpty() } ?: return null
+            var value = trimmed.substring(at + op.length).trim()
+            if ((value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
+                (value.startsWith('\'') && value.endsWith('\'') && value.length >= 2)
+            ) {
+                value = value.substring(1, value.length - 1)
+            }
+            return SharedSemanticCssAttributeCondition(name, if (op == "=") "=" else op, value)
+        }
+    }
+    if (trimmed.any { it.isWhitespace() || it == '\'' || it == '"' }) return null
+    return SharedSemanticCssAttributeCondition(trimmed.lowercase(), null, null)
+}
+
+private fun parseSharedCssNth(args: String, fromEnd: Boolean): SharedSemanticCssPseudoClass.NthChild? {
+    val normalized = args.trim().lowercase().replace("\\s+".toRegex(), "")
+    if (normalized.isEmpty()) return null
+    if (normalized == "odd") return SharedSemanticCssPseudoClass.NthChild(2, 1, fromEnd)
+    if (normalized == "even") return SharedSemanticCssPseudoClass.NthChild(2, 0, fromEnd)
+    normalized.toIntOrNull()?.let { return SharedSemanticCssPseudoClass.NthChild(0, it, fromEnd) }
+    val nAt = normalized.indexOf('n')
+    if (nAt < 0) return null
+    val stepText = normalized.substring(0, nAt)
+    val step = when (stepText) {
+        "", "+" -> 1
+        "-" -> -1
+        else -> stepText.toIntOrNull() ?: return null
+    }
+    val offsetText = normalized.substring(nAt + 1)
+    val offset = when {
+        offsetText.isEmpty() -> 0
+        else -> offsetText.toIntOrNull() ?: return null
+    }
+    return SharedSemanticCssPseudoClass.NthChild(step, offset, fromEnd)
+}
+
+private fun parseSharedCssSelectorChain(selector: String): SharedSemanticCssSelectorChain? {
+    val segments = splitSharedCssSelectorSegments(selector) ?: return null
+    val parts = segments.map { segment ->
+        var text = segment.trim()
+        var combinator: Char? = null
+        if (text.startsWith('>') || text.startsWith('+') || text.startsWith('~')) {
+            combinator = text[0]
+            text = text.substring(1).trim()
+        } else if (text.startsWith(' ')) {
+            combinator = ' '
+            text = text.trim()
+        }
+        val compound = parseSharedCssCompound(text) ?: return null
+        SharedSemanticCssSelectorPart(compound, combinator)
+    }
+    if (parts.isEmpty()) return null
+    // First part must not carry a combinator; subsequent parts default to descendant.
+    val normalized = parts.mapIndexed { index, part ->
+        when {
+            index == 0 && part.combinatorToPrevious != null -> return null
+            index > 0 && part.combinatorToPrevious == null ->
+                part.copy(combinatorToPrevious = ' ')
+            else -> part
+        }
+    }
+    return SharedSemanticCssSelectorChain(normalized)
+}
+
+private fun SharedSemanticDomElement.matchesSharedCssAttribute(
+    condition: SharedSemanticCssAttributeCondition
+): Boolean {
+    val actual = attribute(condition.name) ?: return false
+    val op = condition.op ?: return true
+    val expected = condition.value.orEmpty()
+    return when (op) {
+        "=" -> actual == expected
+        "~=" -> actual.split(SharedSemanticCssClassSplitRegex).any { it == expected }
+        "|=" -> actual == expected || actual.startsWith("$expected-")
+        "^=" -> actual.startsWith(expected)
+        "$=" -> actual.endsWith(expected)
+        "*=" -> actual.contains(expected)
+        else -> false
+    }
+}
+
+private fun SharedSemanticDomElement.matchesSharedCssPseudo(
+    pseudo: SharedSemanticCssPseudoClass
+): Boolean {
+    val siblings = sharedCssElementSiblings()
+    val index = siblings.indexOfFirst { it === this }
+    if (index < 0) return false
+    return when (pseudo) {
+        SharedSemanticCssPseudoClass.FirstChild -> index == 0
+        SharedSemanticCssPseudoClass.LastChild -> index == siblings.lastIndex
+        is SharedSemanticCssPseudoClass.NthChild -> {
+            val position = if (pseudo.fromEnd) siblings.size - index else index + 1
+            if (pseudo.step == 0) {
+                position == pseudo.offset
+            } else if (pseudo.step > 0) {
+                position >= pseudo.offset && (position - pseudo.offset) % pseudo.step == 0
+            } else {
+                position <= pseudo.offset && (pseudo.offset - position) % (-pseudo.step) == 0
+            }
+        }
+        is SharedSemanticCssPseudoClass.Not -> !matchesSharedCssCompound(pseudo.inner)
+    }
+}
+
+private fun SharedSemanticDomElement.matchesSharedCssCompound(compound: SharedSemanticCssCompound): Boolean {
+    compound.tag?.let { if (localName != it) return false }
+    compound.id?.let { if (elementId() != it) return false }
+    if (!compound.classes.all { it in sharedCssClassNames() }) return false
+    if (!compound.attributes.all { matchesSharedCssAttribute(it) }) return false
+    if (!compound.pseudoClasses.all { matchesSharedCssPseudo(it) }) return false
+    return true
+}
+
+private fun previousSharedCssElementSibling(element: SharedSemanticDomElement): SharedSemanticDomElement? {
+    val siblings = element.sharedCssElementSiblings()
+    val index = siblings.indexOfFirst { it === element }
+    return if (index > 0) siblings[index - 1] else null
+}
+
+private fun matchesSharedSemanticCssChain(
+    element: SharedSemanticDomElement,
+    chain: SharedSemanticCssSelectorChain
+): Boolean {
+    val parts = chain.parts
+    var current: SharedSemanticDomElement? = element
+    if (current == null || !current.matchesSharedCssCompound(parts.last().compound)) return false
+    var index = parts.lastIndex
+    while (index > 0) {
+        val combinator = parts[index].combinatorToPrevious ?: return false
+        val previous = parts[index - 1].compound
+        current = when (combinator) {
+            '>' -> current!!.parent?.takeIf { it.matchesSharedCssCompound(previous) }
+            '+' -> previousSharedCssElementSibling(current!!)?.takeIf { it.matchesSharedCssCompound(previous) }
+            '~' -> {
+                val siblings = current!!.sharedCssElementSiblings()
+                val at = siblings.indexOfFirst { it === current }
+                if (at <= 0) null
+                else siblings.subList(0, at).lastOrNull { it.matchesSharedCssCompound(previous) }
+            }
+            else -> generateSequence(current!!.parent) { it.parent }
+                .firstOrNull { it.matchesSharedCssCompound(previous) }
+        } ?: return false
+        index--
+    }
+    return true
+}
+
+/**
+ * Matches book CSS rules against the shared DOM, mirroring the JVM parser's
+ * bucket lookup + Jsoup-selector matching (`rulesForElement`). Complex
+ * selectors beyond type/class/id/descendant/child/sibling/attribute and the
+ * structural pseudo-classes above never match here; the JVM engine may apply
+ * a few exotic ones (`:empty`, `:contains`), which is a documented gap.
+ */
+private class SharedSemanticCssMatcher(
+    rules: OptimizedCssRules,
+    private val baseFontSizeSp: Float = SharedSemanticCssBaseFontSizeSp,
+    private val density: Float = SharedSemanticCssDensity,
+    private val constraints: Constraints = SharedSemanticCssConstraints
+) {
+    private val tagRules: Map<String, List<CssRule>> = rules.byTag.entries
+        .groupBy({ it.key.lowercase() }, { it.value })
+        .mapValues { (_, grouped) -> grouped.flatten().sortedWith(SharedSemanticCssCascadeComparator) }
+    private val classRules: Map<String, List<CssRule>> =
+        rules.byClass.mapValues { (_, bucket) -> bucket.sortedWith(SharedSemanticCssCascadeComparator) }
+    private val idRules: Map<String, List<CssRule>> =
+        rules.byId.mapValues { (_, bucket) -> bucket.sortedWith(SharedSemanticCssCascadeComparator) }
+    private val complexRules: List<CssRule> =
+        rules.otherComplex.sortedWith(SharedSemanticCssCascadeComparator)
+    private val chainCache = HashMap<String, SharedSemanticCssSelectorChain?>()
+    private val elementRulesCache = HashMap<SharedSemanticDomElement, List<CssRule>>()
+
+    private fun compiledChain(selector: String): SharedSemanticCssSelectorChain? {
+        return chainCache.getOrPut(selector) {
+            runCatching { parseSharedCssSelectorChain(selector) }.getOrNull()
+        }
+    }
+
+    fun rulesForElement(element: SharedSemanticDomElement): List<CssRule> {
+        return elementRulesCache.getOrPut(element) {
+            val candidates = ArrayList<List<CssRule>>(4)
+            tagRules[element.localName]?.let { candidates += it }
+            element.sharedCssClassNames().forEach { classRules[it]?.let { bucket -> candidates += bucket } }
+            element.elementId()?.let { idRules[it]?.let { bucket -> candidates += bucket } }
+            if (complexRules.isNotEmpty()) candidates += complexRules
+            mergeSharedSemanticCssRuleBuckets(candidates).filter { rule ->
+                rule.pseudoElement == null &&
+                    (compiledChain(rule.selector.selector)?.let { chain ->
+                        runCatching { matchesSharedSemanticCssChain(element, chain) }.getOrDefault(false)
+                    } == true)
+            }
+        }
+    }
+
+    /** Author + UA rules plus the inline `style` attribute and legacy `align`. */
+    fun elementOwnStyle(
+        element: SharedSemanticDomElement,
+        inheritedCustomProperties: Map<String, String>
+    ): CssStyle {
+        var style = rulesForElement(element).fold(
+            CssStyle(customProperties = inheritedCustomProperties)
+        ) { acc, rule -> acc.merge(rule.style) }
+        element.attribute("style")?.takeIf { it.isNotBlank() }?.let { inline ->
+            style = style.merge(
+                CssParser.parseProperties(
+                    properties = inline,
+                    baseFontSizeSp = baseFontSizeSp,
+                    density = density,
+                    constraints = constraints,
+                    onlyImportant = false,
+                    isDarkTheme = false,
+                    adaptThemeColors = false,
+                    inheritedCustomProperties = style.customProperties
+                )
+            )
+            style = style.merge(
+                CssParser.parseProperties(
+                    properties = inline,
+                    baseFontSizeSp = baseFontSizeSp,
+                    density = density,
+                    constraints = constraints,
+                    onlyImportant = true,
+                    isDarkTheme = false,
+                    adaptThemeColors = false,
+                    inheritedCustomProperties = style.customProperties
+                )
+            )
+        }
+        element.attribute("align")?.trim()?.takeIf { it.isNotEmpty() }?.let { align ->
+            val textAlign = when (align.lowercase()) {
+                "center" -> TextAlign.Center
+                "right" -> TextAlign.End
+                "justify" -> TextAlign.Justify
+                "left" -> TextAlign.Start
+                else -> null
+            }
+            if (textAlign != null) {
+                style = style.merge(CssStyle(paragraphStyle = ParagraphStyle(textAlign = textAlign)))
+            }
+        }
+        return style
+    }
+
+    /**
+     * Merges an element's own style over its inherited style, mirroring the
+     * JVM parser's inherited propagation (span/paragraph merge, block list
+     * and visibility inheritance, em font-size resolution). Embedded
+     * `@font-face` families stay as names here (load-time has no font files);
+     * only generic families resolve, exactly like the JVM loader's empty
+     * font map.
+     */
+    fun finalizeElementStyle(own: CssStyle, inherited: CssStyle): CssStyle {
+        val blockStyle = own.blockStyle.copy(
+            listStyleType = own.blockStyle.listStyleType ?: inherited.blockStyle.listStyleType,
+            listStyleImage = own.blockStyle.listStyleImage ?: inherited.blockStyle.listStyleImage,
+            visibility = own.blockStyle.visibility ?: inherited.blockStyle.visibility
+        )
+        return own.copy(
+            spanStyle = inherited.spanStyle.merge(own.spanStyle),
+            paragraphStyle = inherited.paragraphStyle.merge(own.paragraphStyle),
+            blockStyle = blockStyle,
+            fontFamilies = own.fontFamilies.ifEmpty { inherited.fontFamilies },
+            fontSize = own.fontSize,
+            textTransform = own.textTransform ?: inherited.textTransform,
+            hyphens = own.hyphens ?: inherited.hyphens,
+            fontVariantNumeric = own.fontVariantNumeric ?: inherited.fontVariantNumeric,
+            textEmphasis = own.textEmphasis ?: inherited.textEmphasis,
+            whiteSpace = own.whiteSpace ?: inherited.whiteSpace,
+            writingMode = own.writingMode ?: inherited.writingMode,
+            wordBreak = own.wordBreak ?: inherited.wordBreak,
+            wordSpacing = own.wordSpacing,
+            customProperties = inherited.customProperties + own.customProperties
+        ).resolveSharedSemanticFontSizeAgainst(inherited).withSharedSemanticFontFamily()
+    }
+
+    private fun CssStyle.resolveSharedSemanticFontSizeAgainst(parent: CssStyle): CssStyle {
+        if (!fontSize.isSpecified) return copy(fontSize = parent.fontSize)
+        if (fontSize.type != TextUnitType.Em) return this
+        val parentSize = parent.fontSize
+            .takeIf { it.isSpecified && it.type != TextUnitType.Em }
+            ?: baseFontSizeSp.sp
+        return copy(fontSize = (parentSize.value * fontSize.value).sp)
+    }
+
+    private fun CssStyle.withSharedSemanticFontFamily(): CssStyle {
+        if (spanStyle.fontFamily != null) return this
+        val resolved = fontFamilies.firstNotNullOfOrNull(FontFamilyMapper::nameToFontFamily)
+            ?: return this
+        return copy(spanStyle = spanStyle.copy(fontFamily = resolved))
+    }
 }
 
 private val SharedEpubBlockCloseTags = setOf(
@@ -454,20 +1068,40 @@ internal fun normalizeWithSourceMapping(input: String): Pair<String, IntArray> {
 }
 
 private class SharedEpubSemanticBlockBuilder(
-    private val document: SharedSemanticHtmlTree
+    private val document: SharedSemanticHtmlTree,
+    css: SharedSemanticCssSnapshot = SharedSemanticCssSnapshot.EMPTY
 ) {
     private val blocks = mutableListOf<SemanticBlock>()
     private var nextBlockIndex = 0
+    private val cssMatcher = SharedSemanticCssMatcher(css.rules)
 
     fun build(): List<SemanticBlock> {
         buildContainer(document.root, blocks)
         return blocks
     }
 
-    private fun buildContainer(element: SharedSemanticDomElement, target: MutableList<SemanticBlock>) {
+    /**
+     * Author/UA/inline style for [element], merged over the inherited ancestor
+     * style. Text, CFIs and offsets are unaffected; only styling changes.
+     */
+    private fun elementFinalStyle(
+        element: SharedSemanticDomElement,
+        inherited: CssStyle
+    ): CssStyle {
+        val own = cssMatcher.elementOwnStyle(element, inherited.customProperties)
+        return cssMatcher.finalizeElementStyle(own, inherited)
+    }
+
+    private fun buildContainer(
+        element: SharedSemanticDomElement,
+        target: MutableList<SemanticBlock>,
+        inherited: CssStyle = CssStyle()
+    ) {
+        val finalStyle = elementFinalStyle(element, inherited)
+        if (finalStyle.display == "none") return
         if (element.isMissingFigureContainer()) {
             val temp = mutableListOf<SemanticBlock>()
-            buildContainerChildren(element, temp)
+            buildContainerChildren(element, temp, finalStyle)
             foldMissingFigureChildren(element, temp)?.let { placeholder ->
                 target += placeholder
                 return
@@ -475,7 +1109,7 @@ private class SharedEpubSemanticBlockBuilder(
             target += temp
             return
         }
-        buildContainerChildren(element, target)
+        buildContainerChildren(element, target, finalStyle)
     }
 
     /**
@@ -506,20 +1140,25 @@ private class SharedEpubSemanticBlockBuilder(
         )
     }
 
-    private fun buildContainerChildren(element: SharedSemanticDomElement, target: MutableList<SemanticBlock>) {
+    private fun buildContainerChildren(
+        element: SharedSemanticDomElement,
+        target: MutableList<SemanticBlock>,
+        inherited: CssStyle
+    ) {
         val buffer = mutableListOf<SharedSemanticDomNode>()
         var chunkOrdinal = 0
+        val preserveInlineWhitespace = SharedSemanticCssWhiteSpacePreserves(inherited.whiteSpace)
 
         fun flush() {
             if (buffer.isEmpty()) return
             val nodes = buffer.toList()
             buffer.clear()
-            val local = buildLocalText(nodes)
+            val local = buildLocalText(nodes, inherited, preserveInlineWhitespace)
             if (local.text.isBlank()) return
             target += SemanticParagraph(
                 text = local.text,
                 spans = local.spans,
-                style = CssStyle(),
+                style = inherited,
                 elementId = element.elementId().takeIf { chunkOrdinal == 0 },
                 cfi = element.cfiPath() ?: if (element === document.root) "/4" else null,
                 startCharOffsetInSource = local.startCharOffsetInSource,
@@ -540,30 +1179,30 @@ private class SharedEpubSemanticBlockBuilder(
                     // dissolve into the text buffer and vanish.
                     child.localName == "svg" || child.localName == "picture" -> {
                         flush()
-                        buildSpecific(child, target)
+                        buildSpecific(child, target, inherited)
                     }
                     child.localName in SharedEpubNonRenderableTags -> Unit
                     child.localName == "br" || child.localName == "hr" || child.localName == "img" ||
                         child.localName == "math" || child.localName == "table" ||
                         child.localName == "ul" || child.localName == "ol" -> {
                         flush()
-                        buildSpecific(child, target)
+                        buildSpecific(child, target, inherited)
                     }
                     child.localName in SharedEpubHeaderLevels -> {
                         flush()
-                        buildHeader(child, target)
+                        buildHeader(child, target, inherited)
                     }
                     child.localName == "pre" -> {
                         flush()
-                        buildPreTextBlock(child, target)
+                        buildPreTextBlock(child, target, inherited)
                     }
                     child.localName in SharedEpubContainerTags || child.hasBlockDescendant() -> {
                         flush()
-                        buildContainer(child, target)
+                        buildContainer(child, target, inherited)
                     }
                     child.localName in SharedEpubBlockTags -> {
                         flush()
-                        buildTextBlock(child, target)
+                        buildTextBlock(child, target, inherited)
                     }
                     else -> buffer += child
                 }
@@ -572,26 +1211,32 @@ private class SharedEpubSemanticBlockBuilder(
         flush()
     }
 
-    private fun buildSpecific(element: SharedSemanticDomElement, target: MutableList<SemanticBlock>) {
+    private fun buildSpecific(
+        element: SharedSemanticDomElement,
+        target: MutableList<SemanticBlock>,
+        inherited: CssStyle
+    ) {
+        val finalStyle = elementFinalStyle(element, inherited)
+        if (finalStyle.display == "none") return
         when (element.localName) {
             "br" -> target += SemanticSpacer(
-                style = CssStyle(),
+                style = finalStyle,
                 elementId = element.elementId(),
                 cfi = element.cfiPath(),
                 isExplicitLineBreak = true,
                 blockIndex = nextBlockIndex++
             )
             "hr" -> target += SemanticSpacer(
-                style = CssStyle(),
+                style = finalStyle,
                 elementId = element.elementId(),
                 cfi = element.cfiPath(),
                 blockIndex = nextBlockIndex++
             )
-            "img" -> buildImage(element)?.let { target += it }
-            "svg" -> buildSvgImage(element)?.let { target += it }
-            "picture" -> buildPictureImage(element)?.let { target += it }
+            "img" -> buildImage(element, finalStyle)?.let { target += it }
+            "svg" -> buildSvgImage(element, finalStyle)?.let { target += it }
+            "picture" -> buildPictureImage(element, finalStyle)?.let { target += it }
             "math" -> {
-                val text = buildLocalText(listOf(element)).text.trim()
+                val text = buildLocalText(listOf(element), finalStyle).text.trim()
                 target += SemanticMath(
                     svgContent = null,
                     altText = text.ifBlank { "Equation" },
@@ -599,18 +1244,18 @@ private class SharedEpubSemanticBlockBuilder(
                     svgHeight = null,
                     svgViewBox = null,
                     isFromMathJax = false,
-                    style = CssStyle(),
+                    style = finalStyle,
                     elementId = element.elementId(),
                     cfi = element.cfiPath(),
                     blockIndex = nextBlockIndex++
                 )
             }
-            "table" -> buildTable(element)?.let { target += it }
-            "ul", "ol" -> buildList(element)?.let { target += it }
+            "table" -> buildTable(element, finalStyle)?.let { target += it }
+            "ul", "ol" -> buildList(element, finalStyle)?.let { target += it }
         }
     }
 
-    private fun buildImage(element: SharedSemanticDomElement): SemanticImage? {
+    private fun buildImage(element: SharedSemanticDomElement, style: CssStyle): SemanticImage? {
         // Lazy-loaded markup often carries no src (data-src/srcset only);
         // Android resolves data-src the same way. Without a fallback the
         // image silently drops out of pagination while the WebView still
@@ -624,7 +1269,7 @@ private class SharedEpubSemanticBlockBuilder(
             altText = element.attribute("alt"),
             intrinsicWidth = element.attribute("width").sharedSemanticCssPixelSize(),
             intrinsicHeight = element.attribute("height").sharedSemanticCssPixelSize(),
-            style = CssStyle(),
+            style = style,
             elementId = element.elementId(),
             cfi = element.cfiPath(),
             blockIndex = nextBlockIndex++
@@ -637,7 +1282,7 @@ private class SharedEpubSemanticBlockBuilder(
      * the WebView rendered it. Serializes the element into a data-URI image
      * with viewBox-derived intrinsics so measure == render can contain-fit it.
      */
-    private fun buildSvgImage(element: SharedSemanticDomElement): SemanticImage? {
+    private fun buildSvgImage(element: SharedSemanticDomElement, style: CssStyle): SemanticImage? {
         val markup = element.toStandaloneSvgMarkup().takeIf { it.isNotBlank() } ?: return null
         // Attribute keys are lowercased by the parser (viewBox -> viewbox).
         val viewBoxSize = element.attribute("viewbox").sharedSemanticViewBoxSize()
@@ -648,15 +1293,15 @@ private class SharedEpubSemanticBlockBuilder(
                 ?: viewBoxSize?.first,
             intrinsicHeight = element.attribute("height").sharedSemanticCssPixelSize()
                 ?: viewBoxSize?.second,
-            style = CssStyle(),
+            style = style,
             elementId = element.elementId(),
             cfi = element.cfiPath(),
             blockIndex = nextBlockIndex++
         )
     }
 
-    private fun buildPictureImage(element: SharedSemanticDomElement): SemanticImage? {
-        element.findFirstElementNamed("img")?.let { return buildImage(it) }
+    private fun buildPictureImage(element: SharedSemanticDomElement, style: CssStyle): SemanticImage? {
+        element.findFirstElementNamed("img")?.let { return buildImage(it, style) }
         val sourceUrl = element.findFirstElementNamed("source")
             ?.attribute("srcset").firstSrcSetUrl()
             ?: return null
@@ -665,7 +1310,7 @@ private class SharedEpubSemanticBlockBuilder(
             altText = null,
             intrinsicWidth = null,
             intrinsicHeight = null,
-            style = CssStyle(),
+            style = style,
             elementId = element.elementId(),
             cfi = element.cfiPath(),
             blockIndex = nextBlockIndex++
@@ -720,14 +1365,20 @@ private class SharedEpubSemanticBlockBuilder(
         return "data:${sharedEpubResourceMimeType(entryPath)};base64,${bytes.toSharedSemanticBase64()}"
     }
 
-    private fun buildHeader(element: SharedSemanticDomElement, target: MutableList<SemanticBlock>) {
-        val local = buildLocalText(listOf(element))
+    private fun buildHeader(
+        element: SharedSemanticDomElement,
+        target: MutableList<SemanticBlock>,
+        inherited: CssStyle
+    ) {
+        val finalStyle = elementFinalStyle(element, inherited)
+        if (finalStyle.display == "none") return
+        val local = buildLocalText(listOf(element), finalStyle)
         if (local.text.isBlank()) return
         target += SemanticHeader(
             level = SharedEpubHeaderLevels[element.localName] ?: 1,
             text = local.text,
             spans = local.spans,
-            style = CssStyle(),
+            style = finalStyle,
             elementId = element.elementId(),
             cfi = element.cfiPath(),
             startCharOffsetInSource = local.startCharOffsetInSource,
@@ -735,13 +1386,23 @@ private class SharedEpubSemanticBlockBuilder(
         )
     }
 
-    private fun buildTextBlock(element: SharedSemanticDomElement, target: MutableList<SemanticBlock>) {
-        val local = buildLocalText(listOf(element))
+    private fun buildTextBlock(
+        element: SharedSemanticDomElement,
+        target: MutableList<SemanticBlock>,
+        inherited: CssStyle
+    ) {
+        val finalStyle = elementFinalStyle(element, inherited)
+        if (finalStyle.display == "none") return
+        val local = buildLocalText(
+            listOf(element),
+            finalStyle,
+            SharedSemanticCssWhiteSpacePreserves(finalStyle.whiteSpace)
+        )
         if (local.text.isBlank()) return
         target += SemanticParagraph(
             text = local.text,
             spans = local.spans,
-            style = CssStyle(),
+            style = finalStyle,
             elementId = element.elementId(),
             cfi = element.cfiPath(),
             startCharOffsetInSource = local.startCharOffsetInSource,
@@ -749,13 +1410,25 @@ private class SharedEpubSemanticBlockBuilder(
         )
     }
 
-    private fun buildPreTextBlock(element: SharedSemanticDomElement, target: MutableList<SemanticBlock>) {
-        val local = buildLocalText(listOf(element), preserveWhitespace = true)
+    private fun buildPreTextBlock(
+        element: SharedSemanticDomElement,
+        target: MutableList<SemanticBlock>,
+        inherited: CssStyle
+    ) {
+        // The tag default (pre-wrap) sits underneath author CSS so
+        // `pre { white-space: normal }` still wins.
+        val finalStyle = CssStyle(whiteSpace = "pre-wrap").merge(elementFinalStyle(element, inherited))
+        if (finalStyle.display == "none") return
+        val local = buildLocalText(
+            listOf(element),
+            finalStyle,
+            SharedSemanticCssWhiteSpacePreserves(finalStyle.whiteSpace)
+        )
         if (local.text.isBlank()) return
         target += SemanticParagraph(
             text = local.text,
             spans = local.spans,
-            style = CssStyle(whiteSpace = "pre-wrap"),
+            style = finalStyle,
             elementId = element.elementId(),
             cfi = element.cfiPath(),
             startCharOffsetInSource = local.startCharOffsetInSource,
@@ -763,22 +1436,28 @@ private class SharedEpubSemanticBlockBuilder(
         )
     }
 
-    private fun buildList(element: SharedSemanticDomElement): SemanticList? {
+    private fun buildList(element: SharedSemanticDomElement, inherited: CssStyle): SemanticList? {
+        val finalStyle = elementFinalStyle(element, inherited)
+        if (finalStyle.display == "none") return null
         val ordered = element.localName == "ol"
         val list = SemanticList(
             items = emptyList(),
             isOrdered = ordered,
-            style = CssStyle(),
+            style = finalStyle,
             elementId = element.elementId(),
             cfi = element.cfiPath(),
             blockIndex = nextBlockIndex++
         )
-        val items = buildListItems(element, inheritedOrdinal = element.attribute("start")?.toIntOrNull() ?: 1)
+        val items = buildListItems(element, finalStyle, inheritedOrdinal = element.attribute("start")?.toIntOrNull() ?: 1)
         if (items.isEmpty()) return null
         return list.copy(items = items)
     }
 
-    private fun buildListItems(listElement: SharedSemanticDomElement, inheritedOrdinal: Int): List<SemanticListItem> {
+    private fun buildListItems(
+        listElement: SharedSemanticDomElement,
+        listStyle: CssStyle,
+        inheritedOrdinal: Int
+    ): List<SemanticListItem> {
         var ordinal = inheritedOrdinal
         val items = mutableListOf<SemanticListItem>()
         val ordered = listElement.localName == "ol"
@@ -788,13 +1467,24 @@ private class SharedEpubSemanticBlockBuilder(
                 .filterIsInstance<SharedSemanticDomElement>()
                 .filter { it.localName == "ul" || it.localName == "ol" }
                 .toSet()
-            val local = buildLocalText(child.children.filterNot { it in nestedLists })
+            val itemStyle = elementFinalStyle(child, listStyle)
+            if (itemStyle.display == "none") {
+                // Hidden subtrees stay hidden entirely, like browsers and the
+                // JVM parser: nested lists inside a hidden item never surface.
+                ordinal = (child.attribute("value")?.toIntOrNull() ?: ordinal) + 1
+                return@forEach
+            }
+            val local = buildLocalText(
+                child.children.filterNot { it in nestedLists },
+                itemStyle,
+                SharedSemanticCssWhiteSpacePreserves(itemStyle.whiteSpace)
+            )
             val value = child.attribute("value")?.toIntOrNull() ?: ordinal
             if (local.text.isNotBlank()) {
                 items += SemanticListItem(
                     text = local.text,
                     spans = local.spans,
-                    style = CssStyle(),
+                    style = itemStyle,
                     elementId = child.elementId(),
                     cfi = child.cfiPath(),
                     startCharOffsetInSource = local.startCharOffsetInSource,
@@ -805,39 +1495,49 @@ private class SharedEpubSemanticBlockBuilder(
             }
             ordinal = value + 1
             nestedLists.forEach { nested ->
-                items += buildListItems(nested, inheritedOrdinal = nested.attribute("start")?.toIntOrNull() ?: 1)
+                items += buildListItems(
+                    nested,
+                    elementFinalStyle(nested, itemStyle),
+                    inheritedOrdinal = nested.attribute("start")?.toIntOrNull() ?: 1
+                )
             }
         }
         return items
     }
 
-    private fun buildTable(element: SharedSemanticDomElement): SemanticTable? {
+    private fun buildTable(element: SharedSemanticDomElement, inherited: CssStyle): SemanticTable? {
+        val finalStyle = elementFinalStyle(element, inherited)
+        if (finalStyle.display == "none") return null
         val rows = mutableListOf<List<SemanticTableCell>>()
-        fun collectRows(node: SharedSemanticDomElement) {
+        fun collectRows(node: SharedSemanticDomElement, rowInherited: CssStyle) {
             if (node.localName == "tr") {
+                val rowStyle = elementFinalStyle(node, rowInherited)
+                if (rowStyle.display == "none") return
                 val cells = node.children.mapNotNull { child ->
                     if (child !is SharedSemanticDomElement || child.localName !in setOf("td", "th")) return@mapNotNull null
+                    val cellStyle = elementFinalStyle(child, rowStyle)
+                    if (cellStyle.display == "none") return@mapNotNull null
                     val cellBlocks = mutableListOf<SemanticBlock>()
-                    buildContainer(child, cellBlocks)
+                    buildContainer(child, cellBlocks, cellStyle)
                     SemanticTableCell(
                         content = cellBlocks,
                         isHeader = child.localName == "th",
                         colspan = child.attribute("colspan")?.toIntOrNull()?.coerceAtLeast(1) ?: 1,
-                        style = CssStyle()
+                        style = cellStyle
                     )
                 }
                 if (cells.isNotEmpty()) rows += cells
                 return
             }
             node.children.forEach { child ->
-                if (child is SharedSemanticDomElement) collectRows(child)
+                if (child is SharedSemanticDomElement) collectRows(child, rowInherited)
             }
         }
-        collectRows(element)
+        collectRows(element, finalStyle)
         if (rows.isEmpty()) return null
         return SemanticTable(
             rows = rows,
-            style = CssStyle(),
+            style = finalStyle,
             elementId = element.elementId(),
             cfi = element.cfiPath(),
             blockIndex = nextBlockIndex++
@@ -852,6 +1552,7 @@ private class SharedEpubSemanticBlockBuilder(
 
     private fun buildLocalText(
         nodes: List<SharedSemanticDomNode>,
+        inherited: CssStyle = CssStyle(),
         preserveWhitespace: Boolean = false
     ): LocalTextResult {
         val text = StringBuilder()
@@ -866,7 +1567,13 @@ private class SharedEpubSemanticBlockBuilder(
             else -> null
         }
 
-        fun process(node: SharedSemanticDomNode, inheritedLinkHref: String?) {
+        // Tag semantics act as the user-agent origin: author/UA/inline CSS
+        // merges over them, so `b { font-weight: normal }` still wins.
+        fun tagBaseStyle(tag: String): CssStyle {
+            return CssStyle(spanStyle = spanStyleFor(tag) ?: SpanStyle())
+        }
+
+        fun process(node: SharedSemanticDomNode, inheritedLinkHref: String?, inheritedStyle: CssStyle) {
             when (node) {
                 is SharedSemanticDomText -> text.append(node.text)
                 is SharedSemanticDomElement -> when {
@@ -874,18 +1581,24 @@ private class SharedEpubSemanticBlockBuilder(
                     node.localName == "br" -> text.append('\n')
                     node.localName == "img" -> Unit
                     else -> {
+                        val elementStyle = elementFinalStyle(node, inheritedStyle)
+                        // Hidden subtrees contribute no text, mirroring the
+                        // JVM parser's display:none pruning.
+                        if (elementStyle.display == "none") return
                         val start = text.length
                         val href = (if (node.localName == "a") node.attribute("href") else null)
                             ?: inheritedLinkHref
-                        node.children.forEach { process(it, href) }
+                        node.children.forEach { process(it, href, elementStyle) }
                         val end = text.length
-                        val style = spanStyleFor(node.localName)
+                        val style = tagBaseStyle(node.localName).merge(elementStyle)
                         val elementId = node.elementId()
-                        if (style != null || elementId != null || (href != null && node.localName == "a")) {
+                        if (style.hasSharedSemanticSpanEffect() || elementId != null ||
+                            (href != null && node.localName == "a")
+                        ) {
                             spans += SemanticSpan(
                                 start = start,
                                 end = end,
-                                style = CssStyle(spanStyle = style ?: SpanStyle()),
+                                style = style,
                                 linkHref = href,
                                 tag = node.localName,
                                 elementId = elementId
@@ -896,7 +1609,7 @@ private class SharedEpubSemanticBlockBuilder(
             }
         }
 
-        nodes.forEach { process(it, null) }
+        nodes.forEach { process(it, null, inherited) }
 
         val rawText = text.toString()
         val startOffset = nodes.firstOrNull()?.normalizedStart ?: -1

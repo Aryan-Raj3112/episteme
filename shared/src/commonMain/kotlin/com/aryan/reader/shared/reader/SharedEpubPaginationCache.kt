@@ -18,7 +18,10 @@ import kotlin.math.roundToLong
 import kotlin.time.TimeSource
 
 private const val SharedEpubPaginationCacheSchemaVersion = 1
-private const val SharedEpubPaginationProcessingVersion = 18
+// 18 -> 19: measured pagination now honors letter-spacing/font-weight with the
+// Android benchmark line breaking, and shared semantic blocks carry the merged
+// book CSS, so pages measured under 18 must rebuild.
+private const val SharedEpubPaginationProcessingVersion = 19
 private const val SharedEpubPaginationPageCacheVersion = 3
 
 data class SharedEpubPaginationCacheKey(
@@ -359,6 +362,8 @@ class SharedEpubPaginationCache(
             density.roundCacheValue(),
             fontScale.roundCacheValue(),
             settings.fontSize,
+            settings.fontWeight,
+            settings.letterSpacing.roundCacheValue(),
             settings.lineSpacing.roundCacheValue(),
             settings.resolvedHorizontalMargin,
             settings.resolvedVerticalMargin,

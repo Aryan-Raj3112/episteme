@@ -14,7 +14,9 @@ import kotlinx.serialization.protobuf.ProtoNumber
 
 internal const val SharedBookLoadCacheSchemaVersion = 1
 // 13 -> 14: books now carry a media-overlay index, which the cached load result has to include.
-internal const val SharedBookLoadCacheProcessingVersion = 14
+// 14 -> 15: shared semantic blocks are styled with the merged book CSS (Android benchmark
+// parity), so cached chapters without CSS-styled blocks must rebuild.
+internal const val SharedBookLoadCacheProcessingVersion = 15
 
 enum class SharedBookLoadSemanticMode {
     FULL,

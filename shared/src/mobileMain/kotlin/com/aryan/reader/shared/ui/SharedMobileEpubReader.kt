@@ -442,8 +442,9 @@ fun SharedMobileEpubReaderScreen(
     // Pagination and rendering share this instance so they stay identical.
     val paginatedSettings = remember(settings) { settings.withUncappedPageWidth() }
     // Measurement and rendering must share one real typeface (notably the
-    // bundled Lato/Lexend files) or pagination drifts from what is drawn.
-    val readerFontFamily = rememberSharedReaderFontFamily(settings.fontFamily)
+    // bundled Lato/Lexend files, plus imported custom fonts) or pagination
+    // drifts from what is drawn.
+    val readerFontFamily = rememberSharedReaderFontFamily(settings.fontFamily, settings.customFontPath)
     var pages by remember(book.id) { mutableStateOf<List<ReaderPage>>(emptyList()) }
     var measuredPagesApplied by remember(book.id) { mutableStateOf(false) }
     var currentLocator by remember(book.id) { mutableStateOf(book.readerPosition) }

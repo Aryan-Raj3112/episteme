@@ -208,7 +208,8 @@ internal fun SemanticTextBlock.renderedTextStyle(
 
 internal fun TextStyle.withAndroidPaginationTextMetrics(readerLetterSpacing: Float = 0f): TextStyle {
     return copy(
-        lineBreak = LineBreak.Paragraph,
+        // Android benchmark (PaginatedReader layoutTextStyle): Simple breaking.
+        lineBreak = LineBreak.Simple,
         letterSpacing = readerLetterSpacing.em,
         lineHeightStyle = LineHeightStyle(
             alignment = LineHeightStyle.Alignment.Proportional,

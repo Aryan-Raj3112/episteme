@@ -384,7 +384,7 @@ internal fun SharedMobileEpubFormatPreview(settings: ReaderSettings) {
     ) {
         Column(Modifier.padding(horizontal = 18.dp, vertical = 16.dp)) {
             val previewWeight = settings.fontWeight.takeIf { it > 0 }?.let(::FontWeight)
-            val previewFontFamily = rememberSharedReaderFontFamily(settings.fontFamily)
+            val previewFontFamily = rememberSharedReaderFontFamily(settings.fontFamily, settings.customFontPath)
             Text(
                 "The art of reading, perfected",
                 fontFamily = previewFontFamily,

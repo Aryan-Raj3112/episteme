@@ -34,16 +34,31 @@ internal fun sharedReaderBundledFontFile(fontFamilyName: String): String? = when
 internal expect suspend fun loadSharedReaderBundledFontFamily(fontFamilyName: String): FontFamily?
 
 /**
+ * Loads an imported custom font file into a reader [FontFamily], or null when
+ * the file is missing/undecodable. Android's native reader does this with
+ * `Font(File, ...)` (`getComposeFontFamily`); the shared native EPUB surfaces
+ * need the same file so measurement and rendering share the real typeface.
+ */
+internal expect suspend fun loadSharedReaderCustomFontFamily(fontPath: String): FontFamily?
+
+/**
  * Real reader typeface for the shared native EPUB surfaces (measurement and
- * rendering must share it or pagination drifts from what is drawn). Starts
- * on the system family mapping and converges to the bundled file once
- * loaded; pagination keys on the resolved family so pages re-measure.
+ * rendering must share it or pagination drifts from what is drawn). Prefers an
+ * imported custom font file when selected, then the bundled file, then the
+ * system mapping; pagination keys on the resolved family so pages re-measure.
  */
 @Composable
-internal fun rememberSharedReaderFontFamily(fontFamilyName: String): FontFamily {
-    var loaded by remember(fontFamilyName) { mutableStateOf<FontFamily?>(null) }
-    LaunchedEffect(fontFamilyName) {
-        loaded = runCatching { loadSharedReaderBundledFontFamily(fontFamilyName) }.getOrNull()
+internal fun rememberSharedReaderFontFamily(
+    fontFamilyName: String,
+    customFontPath: String? = null,
+): FontFamily {
+    var loaded by remember(fontFamilyName, customFontPath) { mutableStateOf<FontFamily?>(null) }
+    LaunchedEffect(fontFamilyName, customFontPath) {
+        loaded = runCatching {
+            val custom = customFontPath?.takeIf { it.isNotBlank() }
+                ?.let { loadSharedReaderCustomFontFamily(it) }
+            custom ?: loadSharedReaderBundledFontFamily(fontFamilyName)
+        }.getOrNull()
     }
     return loaded ?: ReaderSettings(fontFamily = fontFamilyName).toSharedReaderFontFamily()
 }

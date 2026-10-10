@@ -211,6 +211,41 @@ object SharedEpubPackageLoader {
         val spineIds = parsedPackage.spineIds
         val chapterItems = spineIds.mapNotNull(manifest::get)
 
+        // Embedded `<style>` blocks are collected up front (in spine order, so
+        // the cascade stays deterministic): the chapter loop below needs them
+        // already merged when it builds CSS-styled semantic blocks, and it
+        // re-runs the same idempotent collection for the WebView pass. Raw
+        // chapter HTML is reused from the pre-pass so the archive is read once.
+        val preloadedChapterHtml = mutableMapOf<String, String>()
+        fun cacheEmbeddedChapterCss(absPath: String) {
+            val raw = preloadedChapterHtml[absPath] ?: text(absPath)?.also { preloadedChapterHtml[absPath] = it } ?: return
+            raw.extractEpubStyleBlocks().takeIf(String::isNotBlank)?.let { embeddedCss ->
+                processedCss["$absPath#embedded-style"] = embeddedCss.sanitizeEpubCss().rewriteEpubCssUrls(absPath) { resourcePath ->
+                    if (isSharedEpubSchemeServableResource(resourcePath)) {
+                        sharedEpubResourceUrl(sourceId, resourcePath)
+                    } else {
+                        resourceBytes(resourcePath)?.toEpubDataUri(resourceMimeType(resourcePath))
+                    }
+                }
+            }
+        }
+        val embeddedCssMark = sharedEpubOpenTraceMark()
+        chapterItems.forEach { item ->
+            if (item.isHtml) cacheEmbeddedChapterCss(item.absPath)
+        }
+        sharedEpubOpenTrace { "packageLoad embeddedCssPass ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(embeddedCssMark))}" }
+
+        // Android benchmark parity: the paginated native model is styled with
+        // the merged book CSS (user-agent + all stylesheets + embedded
+        // blocks), parsed once per load with the nominal baseline. The
+        // WebView keeps using the raw CSS text untouched.
+        val semanticCssMark = sharedEpubOpenTraceMark()
+        val semanticCss = parseSharedSemanticCss(processedCss.toMap())
+        sharedEpubOpenTrace {
+            "packageLoad semanticCss ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(semanticCssMark))} " +
+                "rules=${semanticCss.rules.toFlatList().size} fontFaces=${semanticCss.fontFaces.size}"
+        }
+
         fun dataUri(path: String): String? {
             val safe = safeEpubPathOrNull(path) ?: return null
             if (isSharedEpubSchemeServableResource(safe)) {
@@ -283,17 +318,10 @@ object SharedEpubPackageLoader {
                 )))
             }
             spineHtmlCount++
-            val raw = text(item.absPath) ?: return@flatMapIndexed finishChapter(emptyList())
+            val raw = preloadedChapterHtml.remove(item.absPath) ?: text(item.absPath)
+                ?: return@flatMapIndexed finishChapter(emptyList())
             val styleMark = sharedEpubOpenTraceMark()
-            raw.extractEpubStyleBlocks().takeIf(String::isNotBlank)?.let { embeddedCss ->
-                processedCss["${item.absPath}#embedded-style"] = embeddedCss.sanitizeEpubCss().rewriteEpubCssUrls(item.absPath) { resourcePath ->
-                    if (isSharedEpubSchemeServableResource(resourcePath)) {
-                        sharedEpubResourceUrl(sourceId, resourcePath)
-                    } else {
-                        resourceBytes(resourcePath)?.toEpubDataUri(resourceMimeType(resourcePath))
-                    }
-                }
-            }
+            cacheEmbeddedChapterCss(item.absPath)
             val styleMs = sharedEpubOpenTraceElapsedMs(styleMark)
             styleBlockTotalMs += styleMs
             val sanitizeMark = sharedEpubOpenTraceMark()
@@ -320,7 +348,7 @@ object SharedEpubPackageLoader {
             val plainTextMs = sharedEpubOpenTraceElapsedMs(plainTextMark)
             plainTextTotalMs += plainTextMs
             val semanticMark = sharedEpubOpenTraceMark()
-            val semanticBlocks = sharedEpubHtmlToSemanticBlocks(body)
+            val semanticBlocks = sharedEpubHtmlToSemanticBlocks(body, semanticCss)
             val semanticMs = sharedEpubOpenTraceElapsedMs(semanticMark)
             semanticBlocksTotalMs += semanticMs
             val fallbackTitle = resolveMobileEpubSpineChapterTitle(raw.firstEpubHeading(), index)
@@ -358,7 +386,7 @@ object SharedEpubPackageLoader {
                     val sectionText = section.html.epubHtmlToText().ifBlank { fallbackTitle }
                     plainTextTotalMs += sharedEpubOpenTraceElapsedMs(sectionMark)
                     val sectionSemanticMark = sharedEpubOpenTraceMark()
-                    val sectionSemantic = sharedEpubHtmlToSemanticBlocks(section.html)
+                    val sectionSemantic = sharedEpubHtmlToSemanticBlocks(section.html, semanticCss)
                     semanticBlocksTotalMs += sharedEpubOpenTraceElapsedMs(sectionSemanticMark)
                     SharedEpubChapter(
                         id = "${item.id.ifBlank { "chapter_$index" }}#${section.fragmentId}",

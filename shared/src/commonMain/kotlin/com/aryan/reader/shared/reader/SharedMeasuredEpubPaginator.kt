@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
@@ -117,12 +118,7 @@ class SharedMeasuredEpubPaginator(
                 "margins=${settings.resolvedHorizontalMargin}x${settings.resolvedVerticalMargin} " +
                 "pageWidthSetting=${settings.pageWidth} density=${density.density} fontScale=${density.fontScale}"
         }
-        val baseStyle = TextStyle(
-            fontSize = settings.fontSize.sp,
-            lineHeight = (settings.fontSize * settings.lineSpacing).sp,
-            fontFamily = fontFamily,
-            textAlign = settings.textAlign.toComposeTextAlign()
-        ).withAndroidPaginationTextMetrics()
+        val baseStyle = measurementBaseStyle(settings, fontFamily)
         val pages = mutableListOf<ReaderPage>()
         book.chapters.forEachIndexed { chapterIndex, chapter ->
             currentCoroutineContext().ensureActive()
@@ -173,12 +169,7 @@ class SharedMeasuredEpubPaginator(
         val chapter = book.chapters.getOrNull(chapterIndex) ?: return emptyList()
         val geometryTerms = measuredPageGeometryTerms(settings, viewport, density.density)
         val geometry = geometryTerms.geometry
-        val baseStyle = TextStyle(
-            fontSize = settings.fontSize.sp,
-            lineHeight = (settings.fontSize * settings.lineSpacing).sp,
-            fontFamily = fontFamily,
-            textAlign = settings.textAlign.toComposeTextAlign()
-        ).withAndroidPaginationTextMetrics()
+        val baseStyle = measurementBaseStyle(settings, fontFamily)
         logEpubPagination {
             "chapter_window_start book=\"${book.title.logPreview()}\" chapter=$chapterIndex " +
                 "firstPage=${firstPageIndex + 1} viewport=${viewport.widthPx}x${viewport.heightPx} " +
@@ -1361,14 +1352,15 @@ class SharedMeasuredEpubPaginator(
         return with(density) { (fontSize * paragraphSpacing).sp.toPx().roundToInt() }.coerceAtLeast(0)
     }
 
-    private fun SharedReaderTextAlign.toComposeTextAlign(): TextAlign {
-        return when (this) {
-            SharedReaderTextAlign.START -> TextAlign.Start
-            SharedReaderTextAlign.LEFT -> TextAlign.Left
-            SharedReaderTextAlign.RIGHT -> TextAlign.Right
-            SharedReaderTextAlign.JUSTIFY -> TextAlign.Justify
-            SharedReaderTextAlign.CENTER -> TextAlign.Center
-        }
+}
+
+internal fun SharedReaderTextAlign.toComposeTextAlign(): TextAlign {
+    return when (this) {
+        SharedReaderTextAlign.START -> TextAlign.Start
+        SharedReaderTextAlign.LEFT -> TextAlign.Left
+        SharedReaderTextAlign.RIGHT -> TextAlign.Right
+        SharedReaderTextAlign.JUSTIFY -> TextAlign.Justify
+        SharedReaderTextAlign.CENTER -> TextAlign.Center
     }
 }
 
@@ -1680,7 +1672,8 @@ internal fun SemanticTextBlock.toMeasurementParagraphStyleForPagination(fallback
             fallbackTextAlign = fallbackTextAlign
         ),
         textIndent = style.paragraphStyle.textIndent,
-        lineBreak = LineBreak.Paragraph,
+        // Android benchmark parity (PaginatedReader layoutTextStyle): Simple.
+        lineBreak = LineBreak.Simple,
         hyphens = style.toMeasurementHyphens()
     )
 }
@@ -1732,7 +1725,10 @@ private fun SemanticTextBlock.textStyle(baseStyle: TextStyle, settings: ReaderSe
         fontSize = fontSize,
         lineHeight = rubyAwareLineHeight,
         fontFamily = style.spanStyle.fontFamily ?: baseStyle.fontFamily,
-        fontWeight = if (this is SemanticHeader) FontWeight.Bold else baseStyle.fontWeight,
+        // Render priority (renderedTextStyle): explicit user weight first, then
+        // header bold. The base style already carries the user weight, so a
+        // header only falls back to Bold when no user weight is set.
+        fontWeight = baseStyle.fontWeight ?: if (this is SemanticHeader) FontWeight.Bold else null,
         textAlign = resolveSharedReaderTextAlign(
             cssTextAlign = style.paragraphStyle.textAlign,
             fallbackTextAlign = baseStyle.textAlign
@@ -1742,13 +1738,33 @@ private fun SemanticTextBlock.textStyle(baseStyle: TextStyle, settings: ReaderSe
 
 private fun TextStyle.withAndroidPaginationTextMetrics(): TextStyle {
     return copy(
-        lineBreak = LineBreak.Paragraph,
-        letterSpacing = TextUnit.Unspecified,
+        // Android benchmark (PaginatedReader layoutTextStyle): Simple breaking.
+        // Paragraph breaking wraps CJK/hyphenated text differently and paginates
+        // the same book differently. Letter-spacing is preserved from the base
+        // style so measurement matches rendering (both carry settings value).
+        lineBreak = LineBreak.Simple,
         lineHeightStyle = LineHeightStyle(
             alignment = LineHeightStyle.Alignment.Proportional,
             trim = LineHeightStyle.Trim.None
         )
     )
+}
+
+/**
+ * Base text style for measured pagination. Mirrors the Android benchmark
+ * (`PaginatedReader.layoutTextStyle`) and the shared renderer
+ * (`renderedTextStyle`): user font size/weight/spacing flow into measurement
+ * so measured line breaks match what is drawn.
+ */
+internal fun measurementBaseStyle(settings: ReaderSettings, fontFamily: FontFamily): TextStyle {
+    return TextStyle(
+        fontSize = settings.fontSize.sp,
+        lineHeight = (settings.fontSize * settings.lineSpacing).sp,
+        fontFamily = fontFamily,
+        fontWeight = settings.fontWeight.takeIf { it > 0 }?.let(::FontWeight),
+        letterSpacing = settings.letterSpacing.em,
+        textAlign = settings.textAlign.toComposeTextAlign()
+    ).withAndroidPaginationTextMetrics()
 }
 
 private fun TextUnit.takeIfSpecified(): TextUnit? = if (isSpecified) this else null
