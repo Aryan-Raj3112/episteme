@@ -428,6 +428,9 @@ class MainViewModelTest {
         } coAnswers {
             writes += secondArg<String>()
         }
+        coEvery {
+            anyConstructed<RecentFilesRepository>().getFileByBookId("stable-book")
+        } returns null
 
         viewModel.saveBookmarks(
             bookId = "stable-book",
@@ -445,6 +448,38 @@ class MainViewModelTest {
         coVerify(exactly = 0) {
             anyConstructed<RecentFilesRepository>().getFileByUri("content://books/old-selection")
         }
+    }
+
+    @Test
+    fun `saveBookmarks skips empty snapshot over persisted bookmarks but keeps real edits`() = runTest(testDispatcher) {
+        val writes = mutableListOf<String>()
+        val persistedJson = "[{\"pageIndex\":5,\"title\":\"Page 6\",\"totalPages\":10}]"
+        coEvery {
+            anyConstructed<RecentFilesRepository>().updateBookmarks("guarded-book", any())
+        } coAnswers {
+            writes += secondArg<String>()
+        }
+        coEvery {
+            anyConstructed<RecentFilesRepository>().getFileByBookId("guarded-book")
+        } returns RecentFileItem(
+            bookId = "guarded-book",
+            uriString = "content://books/guarded",
+            type = FileType.PDF,
+            displayName = "Guarded.pdf",
+            timestamp = 1L,
+            bookmarksJson = persistedJson
+        )
+
+        // Stale tab-switch snapshot must not wipe persisted bookmarks (#556).
+        viewModel.saveBookmarks(bookId = "guarded-book", bookmarksJson = "[]")
+        advanceUntilIdle()
+        assertEquals(emptyList<String>(), writes)
+
+        // A real new bookmark still persists.
+        val addedJson = "[{\"pageIndex\":5,\"title\":\"Page 6\",\"totalPages\":10},{\"pageIndex\":7,\"title\":\"Page 8\",\"totalPages\":10}]"
+        viewModel.saveBookmarks(bookId = "guarded-book", bookmarksJson = addedJson)
+        advanceUntilIdle()
+        assertEquals(listOf(addedJson), writes)
     }
 
     @Test

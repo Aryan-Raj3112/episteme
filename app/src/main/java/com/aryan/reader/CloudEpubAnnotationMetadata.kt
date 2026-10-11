@@ -40,12 +40,5 @@ internal fun String?.hasCloudAnnotationPayload(): Boolean {
 }
 
 internal fun annotationJsonEquivalentForNoop(existing: String?, incoming: String): Boolean {
-    val existingNormalized = existing?.trim().orEmpty()
-    val incomingNormalized = incoming.trim()
-    if (existingNormalized == incomingNormalized) return true
-    return existingNormalized.isAnnotationJsonEmpty() && incomingNormalized.isAnnotationJsonEmpty()
-}
-
-private fun String.isAnnotationJsonEmpty(): Boolean {
-    return isBlank() || this == "[]"
+    return com.aryan.reader.shared.bookmarkJsonEquivalentForNoop(existing, incoming)
 }

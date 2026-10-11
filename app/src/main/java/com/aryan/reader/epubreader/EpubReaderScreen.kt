@@ -649,7 +649,9 @@ fun EpubReaderHost(
     val roundedCornerBottomPadding = rememberBottomRoundedCornerPadding(view)
     val pageInfoCornerBottomPadding = roundedCornerBottomPadding.coerceAtMost(8.dp)
 
-    val bookmarksState = remember(epubBook.title) {
+    // Keyed on the stable book id, not the title: two books can share a title,
+    // and a title-keyed remember would leak one book's bookmarks into another.
+    val bookmarksState = remember(readerCacheBookId) {
         mutableStateOf(
             loadBookmarks(context, epubBook.title, epubBook.chapters, initialBookmarksJson).also {
                 Timber.d("Initial load for '${epubBook.title}': ${it.size} bookmarks loaded -> $it")
@@ -657,10 +659,50 @@ fun EpubReaderHost(
         )
     }
     var bookmarks by bookmarksState
+    // User edits are authoritative for this session. The initial save-back below
+    // must not persist a prefs-fallback empty set over the DB before the async
+    // `initialBookmarksJson` snapshot arrives.
+    var bookmarksDirty by remember(readerCacheBookId) { mutableStateOf(false) }
+    var lastAppliedBookmarksJson by remember(readerCacheBookId) { mutableStateOf(initialBookmarksJson) }
+    fun updateBookmarks(next: Set<Bookmark>) {
+        bookmarksDirty = true
+        bookmarks = next
+    }
+
+    // Late snapshot fill: openBook loads `initialBookmarksJson` asynchronously,
+    // so the first composition may run with null. Fill once the real value
+    // arrives, but never wipe user edits (see shared shouldApplyBookmarkSnapshot).
+    LaunchedEffect(initialBookmarksJson, readerCacheBookId) {
+        if (bookmarksDirty) return@LaunchedEffect
+        val snapshotJson = initialBookmarksJson ?: return@LaunchedEffect
+        if (snapshotJson == lastAppliedBookmarksJson) return@LaunchedEffect
+        lastAppliedBookmarksJson = snapshotJson
+        val parsed = loadBookmarks(context, epubBook.title, epubBook.chapters, snapshotJson)
+        if (com.aryan.reader.shared.shouldApplyBookmarkSnapshot(
+                hasLocalEdits = false,
+                localCount = bookmarks.size,
+                snapshotJson = snapshotJson,
+                snapshotCount = parsed.size,
+            ) && bookmarks.isEmpty()
+        ) {
+            bookmarks = parsed
+        }
+    }
 
     LaunchedEffect(bookmarks) {
+        // Skip the initial save-back while the snapshot has not arrived yet:
+        // persisting the prefs-fallback empty set here is what wiped bookmarks.
+        if (initialBookmarksJson == null && !bookmarksDirty) return@LaunchedEffect
         Timber.d("Bookmarks changed, saving...")
-        onBookmarksChanged(bookmarksToJson(bookmarks))
+        val json = bookmarksToJson(bookmarks)
+        // Explicit user edits bypass the stale-snapshot wipe guard so that
+        // delete-all persists; anything else stays on the protected path.
+        val editingBookId = uiState.selectedBookId ?: stableBookId
+        if (bookmarksDirty && editingBookId != null) {
+            viewModel.saveBookmarksUserEdit(editingBookId, json, uiState.selectedEpubUri)
+        } else {
+            onBookmarksChanged(json)
+        }
     }
 
     var activeBookmarkInVerticalView by remember { mutableStateOf<Bookmark?>(null) }
@@ -4257,14 +4299,16 @@ fun EpubReaderHost(
                     }
                 },
                 onDeleteBookmark = { bookmarkToDelete ->
-                    bookmarks = bookmarks - bookmarkToDelete
+                    updateBookmarks(bookmarks - bookmarkToDelete)
                     bookmarkPageMap = bookmarkPageMap - bookmarkToDelete.cfi
                     bookmarkLocatorMap = bookmarkLocatorMap - bookmarkToDelete.cfi
                 },
                 onRenameBookmark = { bookmark, newLabel ->
-                    bookmarks = bookmarks.map {
-                        if (it.cfi == bookmark.cfi) it.copy(label = newLabel) else it
-                    }.toSet()
+                    updateBookmarks(
+                        bookmarks.map {
+                            if (it.cfi == bookmark.cfi) it.copy(label = newLabel) else it
+                        }.toSet()
+                    )
                 },
                 onDeleteHighlight = { highlightToDelete ->
                     userHighlights.remove(highlightToDelete)
@@ -4921,7 +4965,8 @@ fun EpubReaderHost(
                     onTranslateLookupFn = { p0 -> onTranslateLookup(p0) },
                     onDictionaryLookupFn = { p0 -> onDictionaryLookup(p0) },
                     onUpdateHighlightPaletteFn = { p0, p1 -> onUpdateHighlightPalette(p0, p1) },
-                    runRecapFn = { p0, p1 -> runRecap(p0, p1) }
+                    runRecapFn = { p0, p1 -> runRecap(p0, p1) },
+                    onBookmarksUserEdited = { bookmarksDirty = true }
                 )
 
                 val isBookmarked: Boolean
@@ -4967,7 +5012,7 @@ fun EpubReaderHost(
                             onBookmarkClick = {
                                 if (isBookmarked) {
                                     bookmarkedOnPage?.let { bookmarkToRemove ->
-                                        bookmarks = bookmarks - bookmarkToRemove
+                                        updateBookmarks(bookmarks - bookmarkToRemove)
                                         bookmarkPageMap = bookmarkPageMap - bookmarkToRemove.cfi
                                         bookmarkLocatorMap = bookmarkLocatorMap - bookmarkToRemove.cfi
                                         Timber.d("Native vertical click: Removing bookmark: $bookmarkToRemove")
@@ -5009,7 +5054,7 @@ fun EpubReaderHost(
                                                 totalPagesInChapter = totalPages,
                                                 chapterIndex = locator.chapterIndex
                                             )
-                                            bookmarks = bookmarks + newBookmark
+                                            updateBookmarks(bookmarks + newBookmark)
                                             bookmarkPageMap = bookmarkPageMap + (finalCfi to nativeVerticalCurrentPage)
                                             bookmarkLocatorMap = bookmarkLocatorMap + (finalCfi to locator)
                                             Timber.d("Native vertical click: Adding bookmark: $newBookmark")
@@ -5075,7 +5120,7 @@ fun EpubReaderHost(
                             if (isBookmarked) {
                                 activeBookmarkInVerticalView?.let { bookmarkToRemove ->
                                     Timber.d("Vertical click: Removing bookmark: $bookmarkToRemove")
-                                    bookmarks = bookmarks - bookmarkToRemove
+                                    updateBookmarks(bookmarks - bookmarkToRemove)
                                 }
                             } else {
                                 Timber.d("Vertical click: Adding bookmark. Requesting CFI.")
@@ -5105,7 +5150,7 @@ fun EpubReaderHost(
                         onBookmarkClick = {
                             if (isBookmarked) {
                                 bookmarkedOnPage.let { bookmarkToRemove ->
-                                    bookmarks = bookmarks - bookmarkToRemove
+                                    updateBookmarks(bookmarks - bookmarkToRemove)
                                     Timber.d("Paginated click: Removing bookmark: $bookmarkToRemove")
                                 }
                             } else {
@@ -5153,7 +5198,7 @@ fun EpubReaderHost(
                                             totalPagesInChapter = totalPages,
                                             chapterIndex = chapterIndex
                                         )
-                                        bookmarks = bookmarks + newBookmark
+                                        updateBookmarks(bookmarks + newBookmark)
                                         Timber.d("Paginated click: Adding bookmark: $newBookmark")
                                     }
                                 }

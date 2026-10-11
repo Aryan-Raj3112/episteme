@@ -8340,10 +8340,29 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun saveBookmarks(bookId: String, bookmarksJson: String, documentUri: Uri? = null) {
+        saveBookmarksInternal(bookId, bookmarksJson, documentUri, wipeProtection = true)
+    }
+
+    /**
+     * Explicit user-edit path (toggle, rename, delete, page-remap). Bypasses the
+     * stale-snapshot wipe protection: the user just authored this value, so even
+     * an empty payload (delete-all) must persist. Autosave callbacks keep using
+     * [saveBookmarks], which is wipe-protected.
+     */
+    fun saveBookmarksUserEdit(bookId: String, bookmarksJson: String, documentUri: Uri? = null) {
+        saveBookmarksInternal(bookId, bookmarksJson, documentUri, wipeProtection = false)
+    }
+
+    private fun saveBookmarksInternal(
+        bookId: String,
+        bookmarksJson: String,
+        documentUri: Uri?,
+        wipeProtection: Boolean,
+    ) {
         Timber.d("saveBookmarks called. bookId=$bookId, bookmarksJson=$bookmarksJson")
         val stableBookId = bookId.trim()
         if (stableBookId.isNotEmpty()) {
-            enqueueBookmarkSave(stableBookId, bookmarksJson, documentUri)
+            enqueueBookmarkSave(stableBookId, bookmarksJson, documentUri, wipeProtection)
             return
         }
 
@@ -8360,14 +8379,19 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             val item = bookStore.getFileByUri(stableDocumentUri)
             if (item != null) {
-                enqueueBookmarkSave(item.bookId, bookmarksJson, documentUri)
+                enqueueBookmarkSave(item.bookId, bookmarksJson, documentUri, wipeProtection)
             } else {
                 Timber.w("PdfBookmarkDebug: no book found for explicit URI=$stableDocumentUri")
             }
         }
     }
 
-    private fun enqueueBookmarkSave(bookId: String, bookmarksJson: String, documentUri: Uri?) {
+    private fun enqueueBookmarkSave(
+        bookId: String,
+        bookmarksJson: String,
+        documentUri: Uri?,
+        wipeProtection: Boolean = true,
+    ) {
         val revision = synchronized(bookmarkSaveRevisions) {
             val nextRevision = (bookmarkSaveRevisions[bookId] ?: 0L) + 1L
             bookmarkSaveRevisions[bookId] = nextRevision
@@ -8394,6 +8418,21 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             "latest=$latestRevision"
                     )
                     return@withLock
+                }
+                // Last line of defense against tab-switch wipes: a stale empty
+                // snapshot must never overwrite persisted bookmarks. Matches the
+                // highlights noop guard (shared BookmarkPersistencePolicy).
+                // Fail open: only skip on positive knowledge, so a transient read
+                // failure can never swallow a real user edit. Explicit user edits
+                // bypass this via saveBookmarksUserEdit (delete-all must persist).
+                if (wipeProtection) {
+                    val existingResult = runCatching { bookStore.getFileByBookId(bookId)?.bookmarksJson }
+                    if (existingResult.isSuccess &&
+                        com.aryan.reader.shared.shouldSkipBookmarkSave(existingResult.getOrNull(), bookmarksJson)
+                    ) {
+                        Timber.d("Skipping bookmark save bookId=$bookId")
+                        return@withLock
+                    }
                 }
                 bookStore.updateBookmarks(bookId, bookmarksJson)
             }

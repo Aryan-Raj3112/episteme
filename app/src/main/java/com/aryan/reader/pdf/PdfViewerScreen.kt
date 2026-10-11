@@ -1685,7 +1685,10 @@ private fun PdfViewerScreenContent(
                 redoStack.clear()
                 redoStack.addAll(remappedRedoStack)
                 bookmarks = loadPdfBookmarksFromJson(result.bookmarksJson)
-                onBookmarksChanged(result.bookmarksJson)
+                surfaceState.bookmarkCache[activeBookId] = bookmarks
+                surfaceState.bookmarkDirtyBookIds.add(activeBookId)
+                // Explicit user edit (page insert remapped bookmarks).
+                viewModel.saveBookmarksUserEdit(activeBookId, result.bookmarksJson, effectivePdfUri)
 
                 showBanner("Page added at ${targetIndex + 1}")
                 Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
@@ -1826,7 +1829,10 @@ private fun PdfViewerScreenContent(
                 redoStack.clear()
                 redoStack.addAll(remappedRedoStack)
                 bookmarks = loadPdfBookmarksFromJson(result.bookmarksJson)
-                onBookmarksChanged(result.bookmarksJson)
+                surfaceState.bookmarkCache[activeBookId] = bookmarks
+                surfaceState.bookmarkDirtyBookIds.add(activeBookId)
+                // Explicit user edit (page delete remapped bookmarks).
+                viewModel.saveBookmarksUserEdit(activeBookId, result.bookmarksJson, effectivePdfUri)
 
                 showBanner("Page deleted")
 
@@ -2058,7 +2064,12 @@ private fun PdfViewerScreenContent(
             virtualPages = result.layout
             allAnnotations = result.annotations
             bookmarks = loadPdfBookmarksFromJson(result.bookmarksJson)
-            onBookmarksChanged(result.bookmarksJson)
+            activeBookId?.let {
+                surfaceState.bookmarkCache[it] = bookmarks
+                surfaceState.bookmarkDirtyBookIds.add(it)
+                // Explicit user edit (auto page-expand remapped bookmarks).
+                viewModel.saveBookmarksUserEdit(it, result.bookmarksJson, effectivePdfUri)
+            } ?: onBookmarksChanged(result.bookmarksJson)
             Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
                 "ui.autoPage.expand.done bookId=$activeBookId mutation=$pageLayoutMutationVersion " +
                     "result=${virtualPages.pdfLayoutDebugSummary()}"
@@ -2104,7 +2115,12 @@ private fun PdfViewerScreenContent(
                 virtualPages = result.layout
                 allAnnotations = result.annotations
                 bookmarks = loadPdfBookmarksFromJson(result.bookmarksJson)
-                onBookmarksChanged(result.bookmarksJson)
+                activeBookId?.let {
+                    surfaceState.bookmarkCache[it] = bookmarks
+                    surfaceState.bookmarkDirtyBookIds.add(it)
+                    // Explicit user edit (auto page-prune remapped bookmarks).
+                    viewModel.saveBookmarksUserEdit(it, result.bookmarksJson, effectivePdfUri)
+                } ?: onBookmarksChanged(result.bookmarksJson)
                 Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
                     "ui.autoPage.prune.done bookId=$activeBookId mutation=$pageLayoutMutationVersion " +
                         "result=${virtualPages.pdfLayoutDebugSummary()}"
@@ -2259,7 +2275,32 @@ private fun PdfViewerScreenContent(
         }
     }
 
+    // Late snapshot fill (#556): openBook loads `initialBookmarksJson` asynchronously,
+    // so the open effect above may run with null first. Fill once the real value
+    // arrives, but never wipe user edits or non-empty local state.
+    LaunchedEffect(effectiveInitialBookmarksJson, currentBookId) {
+        val activeId = currentBookId ?: return@LaunchedEffect
+        if (activeId in surfaceState.bookmarkDirtyBookIds) return@LaunchedEffect
+        val snapshotBookmarks = loadPdfBookmarksFromJson(effectiveInitialBookmarksJson)
+        if (snapshotBookmarks.isEmpty()) return@LaunchedEffect
+        val cachedBookmarks = surfaceState.bookmarkCache[activeId]
+        if (com.aryan.reader.shared.shouldApplyBookmarkSnapshot(
+                hasLocalEdits = false,
+                localCount = cachedBookmarks?.size ?: bookmarks.size,
+                snapshotJson = effectiveInitialBookmarksJson,
+                snapshotCount = snapshotBookmarks.size,
+            ) && bookmarks.isEmpty()
+        ) {
+            bookmarks = snapshotBookmarks
+            surfaceState.bookmarkCache[activeId] = snapshotBookmarks
+        }
+    }
+
     val onToggleBookmark: (Int) -> Unit = { pageIndex ->
+        // Snapshot the book id at invocation: text extraction below is async and
+        // a tab switch mid-extraction must not attribute the edit to the new book.
+        val toggleBookId = currentBookId
+        val toggleUri = effectivePdfUri
         coroutineScope.launch {
             Timber.d("onToggleBookmark triggered for page index: $pageIndex")
 
@@ -2267,7 +2308,17 @@ private fun PdfViewerScreenContent(
                 Timber.d("Bookmark exists. Removing...")
                 val updatedBookmarks = bookmarks.filterNot { it.pageIndex == pageIndex }.toSet()
                 bookmarks = updatedBookmarks
-                onBookmarksChanged(serializePdfBookmarksToJson(updatedBookmarks))
+                toggleBookId?.let {
+                    surfaceState.bookmarkCache[it] = updatedBookmarks
+                    surfaceState.bookmarkDirtyBookIds.add(it)
+                    // Explicit user edit: bypasses the stale-snapshot wipe guard
+                    // so delete-all persists (autosave path stays protected).
+                    viewModel.saveBookmarksUserEdit(
+                        it,
+                        serializePdfBookmarksToJson(updatedBookmarks),
+                        toggleUri
+                    )
+                } ?: onBookmarksChanged(serializePdfBookmarksToJson(updatedBookmarks))
             } else {
                 Timber.d("Creating new bookmark. Attempting text extraction...")
                 var extractedText = ""
@@ -2338,7 +2389,15 @@ private fun PdfViewerScreenContent(
                     pageIndex = pageIndex, title = finalTitle, totalPages = totalPages
                 )
                 bookmarks = updatedBookmarks
-                onBookmarksChanged(serializePdfBookmarksToJson(updatedBookmarks))
+                toggleBookId?.let {
+                    surfaceState.bookmarkCache[it] = updatedBookmarks
+                    surfaceState.bookmarkDirtyBookIds.add(it)
+                    viewModel.saveBookmarksUserEdit(
+                        it,
+                        serializePdfBookmarksToJson(updatedBookmarks),
+                        toggleUri
+                    )
+                } ?: onBookmarksChanged(serializePdfBookmarksToJson(updatedBookmarks))
             }
         }
     }
@@ -3450,7 +3509,9 @@ private fun PdfViewerScreenContent(
 
         Timber.tag("PdfTabSync").d("UI: Loading State -> activeTabBookId: $activeTabBookId, isLoading: $isLoadingDocument")
 
-        bookmarks = loadPdfBookmarksFromJson(effectiveInitialBookmarksJson)
+        // Bookmarks are restored after the book id resolves below: an unconditional
+        // reset here from a stale snapshot wipes tab state that the DB has not
+        // caught up with yet (#556). See the guarded restore after openBookPlan.
 
         isLoadingDocument = true
         isDocumentReady = false
@@ -3515,6 +3576,30 @@ private fun PdfViewerScreenContent(
             erasedAnnotationsFromStroke.clear()
             drawingState.onDrawCancel()
             currentBookId = openBookPlan.bookId
+        }
+        // Guarded bookmark restore (#556): user-edited books are authoritative
+        // from the per-tab cache; fresh books fill from a non-empty snapshot; an
+        // empty snapshot never wipes non-empty local state.
+        run {
+            val activeBookmarkBookId = currentBookId!!
+            val cachedBookmarks = surfaceState.bookmarkCache[activeBookmarkBookId]
+            val hasLocalBookmarkEdits = activeBookmarkBookId in surfaceState.bookmarkDirtyBookIds
+            val snapshotBookmarks = loadPdfBookmarksFromJson(effectiveInitialBookmarksJson)
+            val restored = if (hasLocalBookmarkEdits && cachedBookmarks != null) {
+                cachedBookmarks
+            } else if (com.aryan.reader.shared.shouldApplyBookmarkSnapshot(
+                    hasLocalEdits = hasLocalBookmarkEdits,
+                    localCount = cachedBookmarks?.size ?: bookmarks.size,
+                    snapshotJson = effectiveInitialBookmarksJson,
+                    snapshotCount = snapshotBookmarks.size,
+                )
+            ) {
+                snapshotBookmarks
+            } else {
+                cachedBookmarks ?: bookmarks
+            }
+            bookmarks = restored
+            surfaceState.bookmarkCache[activeBookmarkBookId] = restored
         }
         Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
             "ui.open.activeId uri=$effectivePdfUri currentBookId=$currentBookId"
@@ -4656,12 +4741,20 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                             val updatedBookmark = bookmarkToRename.copy(title = newTitle)
                             val updatedBookmarks = (bookmarks - bookmarkToRename) + updatedBookmark
                             bookmarks = updatedBookmarks
+                            currentBookId?.let {
+                                surfaceState.bookmarkCache[it] = updatedBookmarks
+                                surfaceState.bookmarkDirtyBookIds.add(it)
+                            }
                             persistBookmarksNow(updatedBookmarks)
                         }
                     },
                     onDeleteBookmark = { bookmarkToDelete ->
                         val updatedBookmarks = bookmarks - bookmarkToDelete
                         bookmarks = updatedBookmarks
+                        currentBookId?.let {
+                            surfaceState.bookmarkCache[it] = updatedBookmarks
+                            surfaceState.bookmarkDirtyBookIds.add(it)
+                        }
                         persistBookmarksNow(updatedBookmarks)
                     },
                     onDeleteHighlight = { highlightToDelete ->
@@ -4980,6 +5073,8 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                                     coroutineScope.launch {
                                         sheetState.hide()
                                         showNewTabSheet = false
+                                        currentBookId?.let { tabStateMap[it] = currentPage }
+                                        saveAllData(true).join()
                                         viewModel.switchTab(file.bookId)
                                     }
                                 }
@@ -5755,7 +5850,12 @@ private fun PdfViewerDocumentSetup(
     val onOcrStateChange: (Boolean) -> Unit = {}
 
     var showZoomIndicator by remember { mutableStateOf(false) }
-    var bookmarks by remember(effectivePdfUri) { mutableStateOf(loadPdfBookmarksFromJson(effectiveInitialBookmarksJson)) }
+    // Restore cached bookmarks for the selected book when returning to a tab;
+    // otherwise a stale snapshot would wipe good in-memory state (#556).
+    var bookmarks by remember(effectivePdfUri) {
+        val cachedForSelected = (selectedBookIdForPane ?: paneBookId)?.let { surfaceState.bookmarkCache[it] }
+        mutableStateOf(cachedForSelected ?: loadPdfBookmarksFromJson(effectiveInitialBookmarksJson))
+    }
 
     var showPenPlayground by rememberSaveable { mutableStateOf(false) }
     var isEditMode by rememberSaveable { mutableStateOf(false) }
@@ -6554,7 +6654,17 @@ private fun PdfViewerDocumentSetup(
     surfaceState.showZoomIndicator = pdfViewerMutableValue({ showZoomIndicator }, { showZoomIndicator = it })
     surfaceState.bookmarks = pdfViewerMutableValue({ bookmarks }, { bookmarks = it })
     surfaceState.persistBookmarksNow = { updatedBookmarks ->
-        onBookmarksChanged(serializePdfBookmarksToJson(updatedBookmarks))
+        // Drawer rename/delete are explicit user edits: bypass the wipe guard.
+        val editingBookId = currentBookId
+        if (editingBookId != null) {
+            viewModel.saveBookmarksUserEdit(
+                editingBookId,
+                serializePdfBookmarksToJson(updatedBookmarks),
+                effectivePdfUri
+            )
+        } else {
+            onBookmarksChanged(serializePdfBookmarksToJson(updatedBookmarks))
+        }
     }
     surfaceState.showPenPlayground = pdfViewerMutableValue({ showPenPlayground }, { showPenPlayground = it })
     surfaceState.isEditMode = pdfViewerMutableValue({ isEditMode }, { isEditMode = it })
@@ -6852,6 +6962,14 @@ private class PdfViewerSurfaceState {
     lateinit var onNoteRequested: (String?) -> Unit
     lateinit var bookmarks: PdfViewerMutableValue<Set<PdfBookmark>>
     lateinit var persistBookmarksNow: (Set<PdfBookmark>) -> Unit
+    // Per-book bookmark cache: tab switches reuse one composition, so a stale
+    // `initialBookmarksJson` snapshot must not wipe good in-memory state (#556).
+    // User edits seed the cache and mark the book dirty; snapshot restores only
+    // fill books without local edits (see shared shouldApplyBookmarkSnapshot).
+    val bookmarkCache: androidx.compose.runtime.snapshots.SnapshotStateMap<String, Set<PdfBookmark>> =
+        androidx.compose.runtime.mutableStateMapOf()
+    val bookmarkDirtyBookIds: androidx.compose.runtime.snapshots.SnapshotStateSet<String> =
+        androidx.compose.runtime.mutableStateSetOf()
     lateinit var searchHighlightTarget: PdfViewerMutableValue<SearchResult?>
     lateinit var isOcrModelDownloading: PdfViewerMutableValue<Boolean>
     lateinit var allAnnotationsProvider: () -> Map<Int, List<PdfAnnotation>>

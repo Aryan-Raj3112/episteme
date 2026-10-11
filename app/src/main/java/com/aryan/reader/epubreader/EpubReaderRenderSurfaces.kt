@@ -398,7 +398,8 @@ internal fun EpubReaderRenderSurfaces(
     onTranslateLookupFn: (String)->Unit,
     onDictionaryLookupFn: (String)->Unit,
     onUpdateHighlightPaletteFn: (Int, Int) -> Unit,
-    runRecapFn: (Int, Int) -> Unit
+    runRecapFn: (Int, Int) -> Unit,
+    onBookmarksUserEdited: () -> Unit = {},
 ) {
     var addBookmarkRequest by addBookmarkRequestState
     var bookReplacementPreferences by bookReplacementPreferencesState
@@ -1733,6 +1734,7 @@ internal fun EpubReaderRenderSurfaces(
                                                     chapterIndex = currentChapterIndex
                                                 )
                                                 bookmarks = bookmarks + newBookmark
+                                                onBookmarksUserEdited()
                                                 Timber.d("Vertical add: Created bookmark: $newBookmark"
                                                 )
                                             },
