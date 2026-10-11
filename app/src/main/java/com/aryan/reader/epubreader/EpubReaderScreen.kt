@@ -6106,14 +6106,10 @@ fun EpubReaderHost(
                 // Animated Bottom Bar
                 EpubReaderBottomBar(
                     isVisible = showBars,
-                    currentRenderMode = currentRenderMode,
                     isTtsSessionActive = isTtsSessionActive,
-                    ttsState = ttsState,
-                    isProUser = isProUser,
                     hiddenTools = dictTools.hiddenTools,
                     toolOrder = dictTools.toolOrder,
                     bottomTools = dictTools.bottomTools,
-                    currentTtsMode = prefs.currentTtsMode,
                     isSliderActive = isPageSliderVisible,
                     onOpenAiHub = { showAiHubSheet = true },
                     onOpenDictionarySettings = { dictTools.showDictionarySettingsSheet = true },

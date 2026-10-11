@@ -100,17 +100,13 @@ class PdfAnnotationTest {
 
     /**
      * The dock's close control is rendered by shared (`SharedPdfAndroidAnnotationDock`), which
-     * supplies its own English literal, "Close edit mode". Android does not route shared strings
-     * through `R.string` outside the settings screen, so the rendered text differs from
-     * `R.string.content_desc_close_edit_mode` ("Close Edit Mode") only in casing. Match
-     * case-insensitively so these tests track the control rather than the casing; see
-     * docs/shared-parity-migration.md for the localization gap itself.
+     * asks for the Android key by name (`readerString("content_desc_close_edit_mode", …)`).
+     * `MainActivity` provides Android's resolver app-wide, so the key resolves to
+     * `R.string.content_desc_close_edit_mode` exactly; an exact match here is what proves the
+     * shared dock renders the app's copy rather than its own inline English fallback.
      */
     private fun closeEditMode() =
-        composeTestRule.onNodeWithContentDescription(
-            text(R.string.content_desc_close_edit_mode),
-            ignoreCase = true
-        )
+        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_close_edit_mode))
 
     private fun tapOutsidePopup() {
         // Taps the center of the PDF viewer to dismiss popups
@@ -303,11 +299,9 @@ class PdfAnnotationTest {
         composeTestRule.waitForIdle()
 
         // 2. Minimize (Eye icon)
-        // Same shared-literal casing as closeEditMode(): the dock renders "Toggle visibility".
-        composeTestRule.onNodeWithContentDescription(
-            text(R.string.content_desc_toggle_visibility),
-            ignoreCase = true
-        ).performClick()
+        // Resolved through the app-wide shared resolver, same as closeEditMode().
+        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_toggle_visibility))
+            .performClick()
         composeTestRule.waitForIdle()
 
         // 3. Verify Dock items are hidden

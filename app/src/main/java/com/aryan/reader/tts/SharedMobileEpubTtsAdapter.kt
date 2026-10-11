@@ -8,6 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.util.UnstableApi
+import com.aryan.reader.BuildConfig
 import com.aryan.reader.PREF_NATIVE_TTS_VOICE
 import com.aryan.reader.epubreader.loadTtsPitch
 import com.aryan.reader.epubreader.loadTtsSpeechRate
@@ -50,6 +51,7 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
     private var activeBookId: String? = null
     private var activeTotalChapters: Int = 0
     private var previewEngine: TextToSpeech? = null
+    private var enumerationEngine: TextToSpeech? = null
 
     override var state by mutableStateOf(SharedMobileEpubLocalTtsState.IDLE)
         private set
@@ -191,23 +193,41 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
         }.apply()
     }
 
+    /**
+     * Fills [availableVoices] without speaking.
+     *
+     * The shared settings sheet enumerates the device voices when it opens, but the engine itself
+     * must not: a reader or an AI dialog holding one would otherwise warm TextToSpeech for a sheet
+     * nobody opened, which is the contract this adapter's construction keeps. OFFLINE builds cannot
+     * use a network-backed voice, so those are hidden here and a saved pick that needs the network
+     * is cleared for the host to persist through its own seam — Reader and Listen store the device
+     * voice separately, so the adapter must not write the pref itself.
+     */
+    fun loadAvailableVoices(onSavedVoiceUnavailable: (String?) -> Unit = {}) {
+        if (enumerationEngine != null) return
+        enumerationEngine = TextToSpeech(appContext) { status ->
+            val engine = enumerationEngine ?: return@TextToSpeech
+            if (status != TextToSpeech.SUCCESS) return@TextToSpeech
+            availableVoices = engine.selectableVoices()
+            val saved = selectedVoiceIdentifier
+            if (BuildConfig.IS_OFFLINE && saved != null &&
+                engine.voices.orEmpty().any { it.name == saved && it.isNetworkConnectionRequired }
+            ) {
+                // An OFFLINE build must not keep offering a voice it cannot speak with. This clears
+                // the reader's key (the one this adapter owns) and reports the surviving selection
+                // so the host can persist it through the prefs its surface owns instead.
+                setVoice(null)
+                onSavedVoiceUnavailable(selectedVoiceIdentifier)
+            }
+        }
+    }
+
     override fun previewVoice(identifier: String?) {
         previewEngine?.shutdown()
         previewEngine = TextToSpeech(appContext) { status ->
             val engine = previewEngine ?: return@TextToSpeech
             if (status != TextToSpeech.SUCCESS) return@TextToSpeech
-            availableVoices = engine.voices.orEmpty().map { voice ->
-                val locale = voice.locale
-                SharedMobileEpubVoice(
-                    identifier = voice.name,
-                    name = voice.name,
-                    language = locale?.displayName?.takeIf { it.isNotBlank() }
-                        ?: runCatching { locale?.toLanguageTag() }.getOrNull()?.takeIf { it.isNotBlank() }
-                        ?: voice.name,
-                    languageTag = runCatching { locale?.toLanguageTag().orEmpty() }.getOrDefault(""),
-                    quality = sharedMobileEpubVoiceQualityForAndroidQuality(voice.quality),
-                )
-            }.sortedForTtsDisplay()
+            availableVoices = engine.selectableVoices()
             identifier?.let { id -> engine.voices?.firstOrNull { it.name == id } }?.let { engine.voice = it }
             engine.setSpeechRate(speechRate)
             engine.setPitch(speechPitch)
@@ -236,6 +256,7 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
 
     override fun release() {
         releasePreviewEngine()
+        releaseEnumerationEngine()
         controller.release()
         scope.cancel()
     }
@@ -246,10 +267,39 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
         engine?.shutdown()
     }
 
+    private fun releaseEnumerationEngine() {
+        val engine = enumerationEngine
+        enumerationEngine = null
+        engine?.shutdown()
+    }
+
     private companion object {
         const val PreviewId = "shared-reader-preview"
     }
 }
+
+/** Device voices this build can offer, in display order. OFFLINE hides network-backed ones. */
+private fun TextToSpeech.selectableVoices(): List<SharedMobileEpubVoice> =
+    voices.orEmpty()
+        .filter { !BuildConfig.IS_OFFLINE || !it.isNetworkConnectionRequired }
+        .map { voice ->
+            // Android benchmark (DeviceVoicesTab): the row headline is the locale's display name,
+            // not the engine's `voice.name` ("en-us-x-sfg#female_1-local"), and the language filter
+            // groups by display *language* ("English"). The shared row renders these as
+            // "headline / subtitle" exactly like iOS does for its human-readable voice names.
+            val locale = voice.locale
+            val displayName = locale?.displayName?.takeIf { it.isNotBlank() }
+                ?: runCatching { locale?.toLanguageTag() }.getOrNull()?.takeIf { it.isNotBlank() }
+                ?: voice.name
+            SharedMobileEpubVoice(
+                identifier = voice.name,
+                name = displayName,
+                language = locale?.displayLanguage?.takeIf { it.isNotBlank() } ?: displayName,
+                languageTag = runCatching { locale?.toLanguageTag().orEmpty() }.getOrDefault(""),
+                quality = sharedMobileEpubVoiceQualityForAndroidQuality(voice.quality),
+            )
+        }
+        .sortedForTtsDisplay()
 
 internal fun sharedMobileTtsHasActiveSession(
     isPlaying: Boolean,

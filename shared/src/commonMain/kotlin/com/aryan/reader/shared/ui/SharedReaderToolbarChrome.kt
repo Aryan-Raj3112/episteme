@@ -170,12 +170,25 @@ fun SharedEpubTopToolbarRow(content: @Composable RowScope.() -> Unit) {
     )
 }
 
+/**
+ * The EPUB bottom bar's row: Android's benchmark layout.
+ *
+ * `height` is explicit because the bar's Surface cannot fix its own height - iOS paints the bottom
+ * safe-area inset *inside* that Surface (so the tonal background reaches the screen edge), which
+ * means the Surface wraps its content and `fillMaxSize()` would collapse the row to the buttons'
+ * minimum interactive size (48dp) instead of the 45dp every host's stacking maths reserves.
+ * `SharedReaderEpubBottomBarHeight` is that 45dp and the default here has to stay equal to it.
+ */
 @Composable
-fun SharedEpubBottomToolbarRow(content: @Composable RowScope.() -> Unit) {
+fun SharedEpubBottomToolbarRow(
+    height: Dp = SharedReaderEpubBottomBarHeight,
+    content: @Composable RowScope.() -> Unit,
+) {
     Row(
         modifier = Modifier
-            .fillMaxSize()
+            .fillMaxWidth()
             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+            .height(height)
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceAround,

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -72,6 +73,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
@@ -213,8 +215,22 @@ internal fun SharedMobileEpubError(
     }
 }
 
+/**
+ * The EPUB reader's top chrome - Android's benchmark bar, and now the only implementation.
+ *
+ * The host owns visibility (wrap it in [SharedReaderBarVisibility]), its sheets and its own
+ * search UI ([searchContent]); everything inside - the back/title row, the tool buttons with
+ * Android's tooltip and accessibility labels, the narration entry and the overflow menu - lives
+ * here, so an item can only be added, gated or restyled once. Android's reader hosts it through the
+ * thin adapter `EpubReaderControls.EpubReaderTopBar`, which maps its flat preferences onto
+ * [ReaderToolbarPreferences] and installs `androidSharedStringResolver`; the shared hosts
+ * (iOS/desktop) pass their sheet callbacks and resolve through their generated catalogs.
+ *
+ * Every label is a `readerString` lookup whose fallback is Android's own English text, so a host
+ * that installs no [LocalSharedStringResolver] renders exactly the app's strings.
+ */
 @Composable
-internal fun SharedMobileEpubTopBar(
+fun SharedMobileEpubTopBar(
     title: String,
     isBookmarked: Boolean,
     topTools: List<ReaderTool>,
@@ -247,12 +263,12 @@ internal fun SharedMobileEpubTopBar(
     onDeleteReflow: (() -> Unit)? = null,
     /**
      * Volume-key paging. Null where the platform cannot read the hardware keys at all (iOS), which is
-     * also what drops the volume section — the same capability gate as [onToggleReflow].
+     * also what drops the volume section - the same capability gate as [onToggleReflow].
      */
     onToggleVolumeScroll: ((Boolean) -> Unit)? = null,
     volumeScrollEnabled: Boolean = false,
-    /** One row of the hidden-tools list; defaults to the tool's own title. */
-    hiddenToolItem: (@Composable (ReaderTool) -> Unit)? = null,
+    /** One row of the hidden-tools list; it is handed the callback that closes the menu. */
+    hiddenToolItem: (@Composable (ReaderTool, () -> Unit) -> Unit)? = null,
     readingMode: ReaderReadingMode,
     rightToLeftPagination: Boolean,
     useNativeVerticalRenderer: Boolean,
@@ -279,13 +295,21 @@ internal fun SharedMobileEpubTopBar(
      * Whether this book narrates itself, and whether it is narrating right now.
      *
      * Android benchmark (`EpubReaderControls.kt:406`): the icon renders hardcoded, after the tool
-     * loop and before the overflow button, rather than as a customizable [ReaderTool] — a book
+     * loop and before the overflow button, rather than as a customizable [ReaderTool] - a book
      * either has a publisher's narration or it does not, so there is nothing for a reader to
      * arrange. Defaults keep a caller that predates the feature compiling.
      */
     hasMediaOverlayNarration: Boolean = false,
     isMediaOverlayActive: Boolean = false,
     onToggleMediaOverlay: () -> Unit = {},
+    /** Android benchmark: the slider tool turns primary while the page slider is up. */
+    isSliderActive: Boolean = false,
+    /**
+     * Android benchmark (`SearchState` + `SearchTopBar`): while search is active the encounter's
+     * back/title/tools row is replaced wholesale by [searchContent], which the host composes.
+     */
+    isSearchActive: Boolean = false,
+    searchContent: (@Composable RowScope.() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     // The overflow sections dismiss themselves through this shared state, so the host's `showMore`
@@ -299,21 +323,34 @@ internal fun SharedMobileEpubTopBar(
     LaunchedEffect(menuState.menuExpanded.value) {
         if (showMore && !menuState.menuExpanded.value) onShowMoreChange(false)
     }
-    val formatContentDescription = readerString("tooltip_format", "Text formatting")
-    // `Modifier.semantics { }` is not a composable scope, so the accessibility
-    // labels are resolved here and reused inside the semantics blocks.
-    val backContentDescription = readerString("tooltip_back", "Back")
-    val themeContentDescription = readerString("tooltip_theme", "Theme")
-    val tocContentDescription = readerString("menu_contents", "Contents")
-    val searchContentDescription = readerString("action_search", "Search")
-    val sliderContentDescription = readerString("tool_navigation_slider", "Navigation slider")
-    val brightnessContentDescription = readerString("tool_brightness", "Brightness")
-    val orientationContentDescription =
-        readerString("visual_options_screen_orientation", "Screen orientation")
-    val dictionaryContentDescription = readerString("tooltip_dictionary", "Dictionary")
-    val aiContentDescription = readerString("tooltip_ai", "AI features")
-    val visualOptionsContentDescription = readerString("menu_visual_options", "Visual options")
-    val moreOptionsContentDescription = readerString("menu_more_options", "More options")
+    // Android benchmark (`EpubReaderControls`): every chrome button carries the same
+    // text + description tooltip pair the app shipped before the bar was shared, and announces the
+    // accessibility label the button used then. `Modifier.semantics { }` is not a composable scope,
+    // so the labels are resolved here and reused inside the semantics blocks.
+    val backText = readerString("tooltip_back", "Back")
+    val backDescription = readerString("tooltip_back_desc", "Exit the reader and return to the home screen")
+    val backContentDescription = readerString("action_back", "Back")
+    val themeText = readerString("tooltip_theme", "Theme")
+    val themeDescription = readerString("tooltip_theme_desc", "Theme Settings")
+    // Android benchmark: the theme button's *description* is its accessibility label.
+    val themeContentDescription = readerString("tooltip_theme_desc", "Theme Settings")
+    val tocText = readerString("tooltip_toc", "Table of Contents")
+    val tocDescription = readerString("tooltip_toc_desc", "Browse chapters and navigate to any section")
+    val tocContentDescription = readerString("content_desc_chapters_menu", "Chapters Menu")
+    val formatText = readerString("tooltip_format", "Text Format")
+    val formatDescription = readerString(
+        "tooltip_format_desc",
+        "Adjust font, size, line height, alignment, and custom fonts"
+    )
+    val formatContentDescription = readerString("content_desc_text_formatting", "Text Formatting")
+    val searchText = readerString("tooltip_search", "Search")
+    val searchDescription = readerString("tooltip_search_desc", "Find any word or phrase in this book")
+    val sliderText = readerString("tooltip_slider", "Page Slider")
+    val sliderDescription = readerString(
+        "tooltip_slider_desc",
+        "Drag to jump quickly to any page in the document"
+    )
+    val sliderContentDescription = readerString("content_desc_navigate_slider", "Navigate with slider")
     val ttsBusy = localTtsState != SharedMobileEpubLocalTtsState.IDLE ||
         cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
     val onReadAloudToggle = if (cloudTtsAvailable) onCloudTtsToggle else onLocalTtsToggle
@@ -326,22 +363,53 @@ internal fun SharedMobileEpubTopBar(
         localTtsState != SharedMobileEpubLocalTtsState.IDLE
     }
     val readAloudIcon = if (readAloudActive) {
-        Icons.Default.Close
+        SharedReaderIcons.Close
     } else if (cloudTtsAvailable) {
         cloudTtsState.icon()
     } else {
         localTtsState.icon()
     }
-    val readAloudLabel = if (readAloudActive) {
-        readerString("tooltip_tts_stop", "Stop reading")
-    } else if (cloudTtsAvailable) {
-        cloudTtsState.menuLabel()
+    val readAloudText = if (readAloudActive) {
+        readerString("tooltip_tts_stop", "Stop Text-to-Speech")
     } else {
-        localTtsState.menuLabel()
+        readerString("tooltip_tts_start", "Start Text-to-Speech")
     }
+    val readAloudDescription = if (readAloudActive) {
+        readerString("tooltip_tts_stop_desc", "Stop the current read-aloud session")
+    } else {
+        readerString("tooltip_tts_start_desc", "Read the book aloud using your device's voice engine")
+    }
+    val readAloudContentDescription = if (readAloudActive) {
+        readerString("content_desc_stop_tts", "Stop TTS")
+    } else {
+        readerString("content_desc_start_tts", "Start TTS")
+    }
+    val brightnessText = readerString("reader_brightness_title", "Brightness")
+    val brightnessDescription = readerString("reader_brightness_system_desc", "Follows the device brightness setting.")
+    val orientationText = readerString("menu_screen_orientation", "Screen Orientation")
+    val orientationDescription = readerString(
+        "visual_options_screen_orientation_desc",
+        "Choose whether the reader follows the system orientation or prefers portrait or landscape when Android allows it."
+    )
+    val dictionaryText = readerString("tooltip_dictionary", "Dictionary")
+    val dictionaryDescription = readerString("tooltip_dictionary_desc", "Choose your preferred app for word lookups")
+    val dictionaryContentDescription = readerString("content_desc_dictionary_settings", "Dictionary Settings")
+    val aiText = readerString("tooltip_ai", "AI Features")
+    val aiDescription = readerString("tooltip_ai_desc", "Summarize the current chapter or page using AI")
+    val aiContentDescription = readerString("ai_features_title", "AI Features")
+    val moreText = readerString("tooltip_more_options", "More Options")
+    val moreDescription = readerString(
+        "tooltip_more_options_desc",
+        "Access reading mode, bookmarks, and advanced settings"
+    )
+    val moreContentDescription = readerString("content_desc_more_options", "More Options")
     // Android benchmark (EpubReaderScreen.kt:279): cap the chrome title at 40 chars.
     val chromeTitle = if (title.length > 40) title.take(40) + "..." else title
-    val defaultHiddenToolItem: @Composable (ReaderTool) -> Unit = { tool ->
+    val dismissMenu: () -> Unit = {
+        menuState.hiddenToolsExpanded.value = false
+        onShowMoreChange(false)
+    }
+    val defaultHiddenToolItem: @Composable (ReaderTool, () -> Unit) -> Unit = { tool, dismiss ->
         DropdownMenuItem(
             text = { Text(tool.title) },
             onClick = {
@@ -358,8 +426,7 @@ internal fun SharedMobileEpubTopBar(
                     ReaderTool.AI_FEATURES -> onOpenAiHub()
                     else -> Unit
                 }
-                menuState.hiddenToolsExpanded.value = false
-                onShowMoreChange(false)
+                dismiss()
             }
         )
     }
@@ -411,150 +478,209 @@ internal fun SharedMobileEpubTopBar(
         onOpenFileInfo = onFileInfo,
         onToggleReflow = onToggleReflow,
         onDeleteReflow = onDeleteReflow,
-        hiddenToolItem = hiddenToolItem ?: defaultHiddenToolItem,
+        // The overflow contract hands a row only its tool, because the renderer cannot know how a
+        // host's menu closes. Both hosts' rows here need to close it, so the bar adapts them back to
+        // that shape with its own dismissal (which is also what keeps Android's localized
+        // HiddenEpubToolMenuItem working unchanged).
+        hiddenToolItem = if (hiddenToolItem != null) {
+            { tool: ReaderTool -> hiddenToolItem(tool, dismissMenu) }
+        } else {
+            { tool: ReaderTool -> defaultHiddenToolItem(tool, dismissMenu) }
+        },
     )
-    Surface(modifier = modifier.testTag(SharedMobileEpubAxTags.TOP_BAR), tonalElevation = 4.dp) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
-                .height(55.dp)
-                .padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier.testTag(SharedMobileEpubAxTags.BACK)
-                    .semantics { contentDescription = backContentDescription }
-            ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
-            Text(
-                chromeTitle,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f).testTag(SharedMobileEpubAxTags.TITLE)
-                    .semantics(mergeDescendants = true) { heading(); contentDescription = title }
-            )
-            topTools.forEach { tool ->
-                // Android benchmark (EpubReaderControls): inactive chrome icons use
-                // onSurface explicitly (slider/TTS active -> primary). Explicit tint
-                // keeps custom SharedReaderIcons visible on iOS even if
-                // LocalContentColor propagation differs; Menu/Search already worked
-                // because they are Material vectors, custom ones did not.
-                when (tool) {
-                    ReaderTool.THEME -> IconButton(
-                        onClick = onTheme,
-                        modifier = Modifier.testTag("EpubTopTheme").semantics { contentDescription = themeContentDescription }
-                    ) {
-                        Icon(Icons.Default.Palette, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
-                    }
-                    ReaderTool.TOC -> IconButton(
-                        onClick = onOpenToc,
-                        modifier = Modifier.testTag("EpubTopToc").semantics { contentDescription = tocContentDescription }
-                    ) {
-                        Icon(Icons.Default.Menu, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
-                    }
-                    ReaderTool.FORMAT -> IconButton(
-                        onClick = onFormat,
-                        modifier = Modifier.testTag("EpubTopFormat").semantics { contentDescription = formatContentDescription }
-                    ) {
-                        Icon(SharedReaderIcons.FormatSize, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
-                    }
-                    ReaderTool.SEARCH -> IconButton(
-                        onClick = onSearch,
-                        modifier = Modifier.testTag("EpubTopSearch").semantics { contentDescription = searchContentDescription }
-                    ) {
-                        Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
-                    }
-                    ReaderTool.SLIDER -> IconButton(
-                        onClick = onOpenSlider,
-                        modifier = Modifier.testTag("EpubTopSlider").semantics { contentDescription = sliderContentDescription }
-                    ) {
-                        Icon(SharedReaderIcons.Slider, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
-                    }
-                    ReaderTool.TTS_CONTROLS -> IconButton(
-                        onClick = { if (readAloudActive) onReadAloudStop() else onReadAloudToggle() },
-                        modifier = Modifier.testTag("EpubTopTts").semantics { contentDescription = readAloudLabel }
-                    ) {
-                        Icon(
-                            readAloudIcon,
-                            contentDescription = null,
-                            tint = if (readAloudActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                    ReaderTool.BRIGHTNESS -> IconButton(
-                        onClick = onBrightness,
-                        modifier = Modifier.testTag("EpubTopBrightness").semantics { contentDescription = brightnessContentDescription }
-                    ) {
-                        Icon(SharedReaderIcons.Contrast, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
-                    }
-                    ReaderTool.SCREEN_ORIENTATION -> IconButton(
-                        onClick = onScreenOrientation,
-                        modifier = Modifier.testTag("EpubTopOrientation").semantics { contentDescription = orientationContentDescription }
-                    ) {
-                        Icon(SharedReaderIcons.ScreenRotation, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
-                    }
-                    ReaderTool.DICTIONARY -> IconButton(
-                        onClick = onOpenDictionarySettings,
-                        modifier = Modifier.testTag("EpubTopDictionary").semantics { contentDescription = dictionaryContentDescription }
-                    ) {
-                        Icon(SharedReaderIcons.Dictionary, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
-                    }
-                    ReaderTool.AI_FEATURES -> if (aiAvailable) IconButton(
-                        onClick = onOpenAiHub,
-                        modifier = Modifier.testTag("EpubTopAi").semantics { contentDescription = aiContentDescription }
-                    ) {
-                        Icon(Icons.Default.Ai, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
-                    }
-                    else -> Unit
-                }
-            }
-            if (hasMediaOverlayNarration) {
-                // The icon's description is the *action*, following the read-aloud button above: a
-                // screen reader has to say what pressing this does, and one name for both states
-                // leaves the button reading identically whether narration is running or not. The
-                // tooltip keeps the feature name as its label.
-                val narrationActionDescription = readerString(
-                    if (isMediaOverlayActive) "content_desc_media_overlay_stop" else "content_desc_media_overlay_start",
-                    if (isMediaOverlayActive) "Stop narration" else "Start narration"
-                )
-                IconButton(
-                    onClick = onToggleMediaOverlay,
-                    modifier = Modifier
-                        .testTag(SharedMobileEpubAxTags.MEDIA_OVERLAY)
-                        .semantics { contentDescription = narrationActionDescription }
+    SharedReaderToolbarSurface(
+        height = 55.dp,
+        modifier = modifier.testTag(SharedMobileEpubAxTags.TOP_BAR)
+    ) {
+        SharedEpubTopToolbarRow {
+            if (isSearchActive && searchContent != null) {
+                searchContent()
+            } else {
+                SharedTooltipIconButton(
+                    text = backText,
+                    description = backDescription,
+                    onClick = onBack,
+                    modifier = Modifier.semantics { contentDescription = backContentDescription }
                 ) {
                     Icon(
-                        // AutoMirrored because the Android drawable this mirrors declares
-                        // `android:autoMirrored="true"` — the speaker has to face the sound in an RTL
-                        // layout, and a non-mirrored copy would point the wrong way there.
-                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                        Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = null,
-                        tint = if (isMediaOverlayActive) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        }
+                        tint = MaterialTheme.colorScheme.onSurface
                     )
                 }
-            }
-            Box {
-                IconButton(
-                    onClick = { onShowMoreChange(true) },
-                    modifier = Modifier.testTag(SharedMobileEpubAxTags.MORE).semantics { contentDescription = moreOptionsContentDescription }
-                ) { Icon(Icons.Default.MoreVert, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
-                SharedDropdownMenu(expanded = showMore, onDismissRequest = { onShowMoreChange(false) }) {
-                    // Every row below is rendered by the shared section renderer. Both hosts call it with
-                    // their own labels and state, so the menu's structure, gating and order can only
-                    // change in one place (see SharedReaderEpubOverflowSections.kt).
-                    SharedReaderOverflowSectionList(overflowSections) { section ->
-                        SharedReaderEpubOverflowSection(
-                            section = section,
-                            menuState = menuState,
-                            state = overflowState,
-                            labels = overflowLabels,
-                            callbacks = overflowCallbacks,
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    chromeTitle,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f).testTag(SharedMobileEpubAxTags.TITLE)
+                        .semantics(mergeDescendants = true) { heading(); contentDescription = title }
+                )
+                topTools.forEach { tool ->
+                    // Android benchmark (EpubReaderControls): inactive chrome icons use
+                    // onSurface explicitly (slider/TTS active -> primary). Explicit tint
+                    // keeps custom SharedReaderIcons visible on iOS even if
+                    // LocalContentColor propagation differs; Menu/Search already worked
+                    // because they are Material vectors, custom ones did not.
+                    val inactiveTint = MaterialTheme.colorScheme.onSurface
+                    when (tool) {
+                        ReaderTool.THEME -> SharedTooltipIconButton(
+                            text = themeText,
+                            description = themeDescription,
+                            onClick = onTheme,
+                            modifier = Modifier.testTag("EpubTopTheme")
+                                .semantics { contentDescription = themeContentDescription }
+                        ) {
+                            Icon(SharedReaderIcons.Palette, contentDescription = null, tint = inactiveTint)
+                        }
+                        ReaderTool.TOC -> SharedTooltipIconButton(
+                            text = tocText,
+                            description = tocDescription,
+                            onClick = onOpenToc,
+                            modifier = Modifier.testTag("EpubTopToc")
+                                .semantics { contentDescription = tocContentDescription }
+                        ) {
+                            Icon(Icons.Default.Menu, contentDescription = null, tint = inactiveTint)
+                        }
+                        ReaderTool.FORMAT -> SharedTooltipIconButton(
+                            text = formatText,
+                            description = formatDescription,
+                            onClick = onFormat,
+                            modifier = Modifier.testTag("EpubTopFormat")
+                                .semantics { contentDescription = formatContentDescription }
+                        ) {
+                            Icon(SharedReaderIcons.FormatSize, contentDescription = null, tint = inactiveTint)
+                        }
+                        ReaderTool.SEARCH -> SharedTooltipIconButton(
+                            text = searchText,
+                            description = searchDescription,
+                            onClick = onSearch,
+                            modifier = Modifier.testTag("EpubTopSearch")
+                                .semantics { contentDescription = searchText }
+                        ) {
+                            Icon(Icons.Default.Search, contentDescription = null, tint = inactiveTint)
+                        }
+                        ReaderTool.SLIDER -> SharedTooltipIconButton(
+                            text = sliderText,
+                            description = sliderDescription,
+                            onClick = onOpenSlider,
+                            modifier = Modifier.testTag("EpubTopSlider")
+                                .semantics { contentDescription = sliderContentDescription }
+                        ) {
+                            Icon(
+                                SharedReaderIcons.Slider,
+                                contentDescription = null,
+                                tint = if (isSliderActive) MaterialTheme.colorScheme.primary else inactiveTint
+                            )
+                        }
+                        ReaderTool.TTS_CONTROLS -> SharedTooltipIconButton(
+                            text = readAloudText,
+                            description = readAloudDescription,
+                            onClick = { if (readAloudActive) onReadAloudStop() else onReadAloudToggle() },
+                            modifier = Modifier.testTag("EpubTopTts")
+                                .semantics { contentDescription = readAloudContentDescription }
+                        ) {
+                            Icon(
+                                readAloudIcon,
+                                contentDescription = null,
+                                tint = if (readAloudActive) MaterialTheme.colorScheme.primary else inactiveTint
+                            )
+                        }
+                        ReaderTool.BRIGHTNESS -> SharedTooltipIconButton(
+                            text = brightnessText,
+                            description = brightnessDescription,
+                            onClick = onBrightness,
+                            modifier = Modifier.testTag("EpubTopBrightness")
+                                .semantics { contentDescription = brightnessText }
+                        ) {
+                            Icon(SharedReaderIcons.Contrast, contentDescription = null, tint = inactiveTint)
+                        }
+                        ReaderTool.SCREEN_ORIENTATION -> SharedTooltipIconButton(
+                            text = orientationText,
+                            description = orientationDescription,
+                            onClick = onScreenOrientation,
+                            modifier = Modifier.testTag("EpubTopOrientation")
+                                .semantics { contentDescription = orientationText }
+                        ) {
+                            Icon(Icons.Default.ScreenRotation, contentDescription = null, tint = inactiveTint)
+                        }
+                        ReaderTool.DICTIONARY -> SharedTooltipIconButton(
+                            text = dictionaryText,
+                            description = dictionaryDescription,
+                            onClick = onOpenDictionarySettings,
+                            modifier = Modifier.testTag("EpubTopDictionary")
+                                .semantics { contentDescription = dictionaryContentDescription }
+                        ) {
+                            Icon(SharedReaderIcons.Dictionary, contentDescription = null, tint = inactiveTint)
+                        }
+                        ReaderTool.AI_FEATURES -> if (aiAvailable) {
+                            SharedTooltipIconButton(
+                                text = aiText,
+                                description = aiDescription,
+                                onClick = onOpenAiHub,
+                                modifier = Modifier.testTag("EpubTopAi")
+                                    .semantics { contentDescription = aiContentDescription }
+                            ) {
+                                Icon(SharedReaderIcons.Ai, contentDescription = null, tint = inactiveTint)
+                            }
+                        }
+                        else -> Unit
+                    }
+                }
+                if (hasMediaOverlayNarration) {
+                    // The icon's description is the *action*, following the read-aloud button
+                    // above: a screen reader has to say what pressing this does, and one name
+                    // for both states leaves the button reading identically whether narration is
+                    // running or not. The tooltip keeps the feature name as its label.
+                    val narrationActionDescription = readerString(
+                        if (isMediaOverlayActive) "content_desc_media_overlay_stop" else "content_desc_media_overlay_start",
+                        if (isMediaOverlayActive) "Stop narration" else "Start narration"
+                    )
+                    SharedTooltipIconButton(
+                        text = readerString("media_overlay_title", "Narration"),
+                        description = narrationActionDescription,
+                        onClick = onToggleMediaOverlay,
+                        modifier = Modifier
+                            .testTag(SharedMobileEpubAxTags.MEDIA_OVERLAY)
+                            .semantics { contentDescription = narrationActionDescription }
+                    ) {
+                        Icon(
+                            // Auto-mirrored like the drawable it replaces: the speaker has to face
+                            // the sound in an RTL layout.
+                            SharedReaderIcons.VolumeUp,
+                            contentDescription = null,
+                            tint = if (isMediaOverlayActive) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            }
                         )
+                    }
+                }
+                Box {
+                    SharedTooltipIconButton(
+                        text = moreText,
+                        description = moreDescription,
+                        onClick = { onShowMoreChange(true) },
+                        modifier = Modifier.testTag(SharedMobileEpubAxTags.MORE)
+                            .semantics { contentDescription = moreContentDescription }
+                    ) {
+                        Icon(Icons.Default.MoreVert, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
+                    }
+                    SharedDropdownMenu(expanded = showMore, onDismissRequest = { onShowMoreChange(false) }) {
+                        // Every row below is rendered by the shared section renderer. Both hosts call it
+                        // with their own labels and state, so the menu's structure, gating and order can
+                        // only change in one place (see SharedReaderEpubOverflowSections.kt).
+                        SharedReaderOverflowSectionList(overflowSections) { section ->
+                            SharedReaderEpubOverflowSection(
+                                section = section,
+                                menuState = menuState,
+                                state = overflowState,
+                                labels = overflowLabels,
+                                callbacks = overflowCallbacks,
+                            )
+                        }
                     }
                 }
             }
@@ -562,7 +688,9 @@ internal fun SharedMobileEpubTopBar(
     }
 }
 
-internal val SharedMobileEpubToolbarTools = setOf(
+/** The tools both bars can host - Android benchmark `epubToolbarTools`, one definition for both
+ * hosts now that Android's own bar is an adapter. */
+val SharedMobileEpubToolbarTools = setOf(
     ReaderTool.THEME,
     ReaderTool.SLIDER,
     ReaderTool.TOC,
@@ -706,8 +834,17 @@ internal fun SharedMobileEpubSwitchMenuItem(
     )
 }
 
+/**
+ * The EPUB reader's bottom chrome - Android's benchmark bar, and now the only implementation.
+ *
+ * Same contract as [SharedMobileEpubTopBar]: the host owns visibility, this owns the tool row, its
+ * order (the host passes [tools], already filtered by `sharedEpubToolbarTools`), the Android
+ * tooltips/accessibility labels and the read-aloud entry's state. [applyBottomSafeInset] paints the
+ * system-bar inset *inside* the Surface so the tonal background reaches the screen edge; Android's
+ * reader instead pads the bar at its call site, which is why it defaults to false.
+ */
 @Composable
-internal fun SharedMobileEpubBottomBar(
+fun SharedMobileEpubBottomBar(
     tools: List<ReaderTool>,
     isBookmarked: Boolean,
     onToc: () -> Unit,
@@ -729,28 +866,49 @@ internal fun SharedMobileEpubBottomBar(
     cloudTtsAvailable: Boolean = false,
     onCloudTtsToggle: () -> Unit = {},
     onCloudTtsStop: () -> Unit = {},
-    // When true the bottom system-bars inset is consumed *inside* the Surface
-    // so the toolbar background (with its tonal elevation) paints the full
-    // toolbar rect down to the screen edge. Applying it outside the Surface
-    // leaves a transparent strip where the WebView shows through below the
-    // toolbar. Geometry is unchanged either way (45.dp row + inset).
     applyBottomSafeInset: Boolean = false,
+    /** Android benchmark: the slider tool turns primary while the page slider is up. */
+    isSliderActive: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    val formatContentDescription = readerString("tooltip_format", "Text formatting")
-    // `Modifier.semantics { }` is not a composable scope, so the accessibility
-    // labels are resolved here and reused inside the semantics blocks.
-    val themeContentDescription = readerString("tooltip_theme", "Theme")
-    val tocContentDescription = readerString("menu_contents", "Contents")
-    val searchContentDescription = readerString("action_search", "Search")
-    val sliderContentDescription = readerString("tool_navigation_slider", "Navigation slider")
-    val brightnessContentDescription = readerString("tool_brightness", "Brightness")
-    val orientationContentDescription =
-        readerString("visual_options_screen_orientation", "Screen orientation")
-    val dictionaryContentDescription = readerString("tooltip_dictionary", "Dictionary")
-    val aiContentDescription = readerString("tooltip_ai", "AI features")
-    val visualOptionsContentDescription = readerString("menu_visual_options", "Visual options")
-    val bookmarkContentDescription = if (isBookmarked) {
+    // Android benchmark (`EpubReaderControls`): the same tooltip/accessibility pairs as the top bar.
+    // `Modifier.semantics { }` is not a composable scope, so the labels are resolved up front.
+    val themeText = readerString("tooltip_theme", "Theme")
+    val themeDescription = readerString("tooltip_theme_desc", "Theme Settings")
+    // Android benchmark: the theme button's *description* is its accessibility label.
+    val themeContentDescription = readerString("tooltip_theme_desc", "Theme Settings")
+    val tocText = readerString("tooltip_toc", "Table of Contents")
+    val tocDescription = readerString("tooltip_toc_desc", "Browse chapters and navigate to any section")
+    val tocContentDescription = readerString("content_desc_chapters_menu", "Chapters Menu")
+    val formatText = readerString("tooltip_format", "Text Format")
+    val formatDescription = readerString(
+        "tooltip_format_desc",
+        "Adjust font, size, line height, alignment, and custom fonts"
+    )
+    val formatContentDescription = readerString("content_desc_text_formatting", "Text Formatting")
+    val searchText = readerString("tooltip_search", "Search")
+    val searchDescription = readerString("tooltip_search_desc", "Find any word or phrase in this book")
+    val sliderText = readerString("tooltip_slider", "Page Slider")
+    val sliderDescription = readerString(
+        "tooltip_slider_desc",
+        "Drag to jump quickly to any page in the document"
+    )
+    val sliderContentDescription = readerString("content_desc_navigate_slider", "Navigate with slider")
+    val brightnessText = readerString("reader_brightness_title", "Brightness")
+    val brightnessDescription = readerString("reader_brightness_system_desc", "Follows the device brightness setting.")
+    val orientationText = readerString("menu_screen_orientation", "Screen Orientation")
+    val orientationDescription = readerString(
+        "visual_options_screen_orientation_desc",
+        "Choose whether the reader follows the system orientation or prefers portrait or landscape when Android allows it."
+    )
+    val dictionaryText = readerString("tooltip_dictionary", "Dictionary")
+    val dictionaryDescription = readerString("tooltip_dictionary_desc", "Choose your preferred app for word lookups")
+    val dictionaryContentDescription = readerString("content_desc_dictionary_settings", "Dictionary Settings")
+    val aiText = readerString("tooltip_ai", "AI Features")
+    val aiDescription = readerString("tooltip_ai_desc", "Summarize the current chapter or page using AI")
+    val aiContentDescription = readerString("ai_features_title", "AI Features")
+    val visualOptionsText = readerString("menu_visual_options", "Visual Options")
+    val bookmarkText = if (isBookmarked) {
         readerString("menu_remove_bookmark", "Remove bookmark")
     } else {
         readerString("menu_bookmark_this_page", "Bookmark this page")
@@ -765,98 +923,156 @@ internal fun SharedMobileEpubBottomBar(
         localTtsState != SharedMobileEpubLocalTtsState.IDLE
     }
     val readAloudIcon = if (readAloudActive) {
-        Icons.Default.Close
+        SharedReaderIcons.Close
     } else if (cloudTtsAvailable) {
         cloudTtsState.icon()
     } else {
         localTtsState.icon()
     }
-    val readAloudLabel = if (readAloudActive) {
-        readerString("tooltip_tts_stop", "Stop reading")
-    } else if (cloudTtsAvailable) {
-        cloudTtsState.menuLabel()
+    val readAloudText = if (readAloudActive) {
+        readerString("tooltip_tts_stop", "Stop Text-to-Speech")
     } else {
-        localTtsState.menuLabel()
+        readerString("tooltip_tts_start", "Start Text-to-Speech")
     }
-    Surface(modifier = modifier.testTag(SharedMobileEpubAxTags.BOTTOM_BAR), tonalElevation = 4.dp) {
+    val readAloudDescription = if (readAloudActive) {
+        readerString("tooltip_tts_stop_desc", "Stop the current read-aloud session")
+    } else {
+        readerString("tooltip_tts_start_desc", "Read the book aloud using your device's voice engine")
+    }
+    val readAloudContentDescription = if (readAloudActive) {
+        readerString("content_desc_stop_tts", "Stop TTS")
+    } else {
+        readerString("content_desc_start_tts", "Start TTS")
+    }
+    // The Surface cannot fix its own height while it also paints the bottom inset (see
+    // SharedEpubBottomToolbarRow), so the fixed height applies only when there is no inset to add.
+    SharedReaderToolbarSurface(
+        height = if (applyBottomSafeInset) null else SharedReaderEpubBottomBarHeight,
+        modifier = modifier.testTag(SharedMobileEpubAxTags.BOTTOM_BAR)
+    ) {
         Column(Modifier.fillMaxWidth()) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
-                    .height(45.dp)
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            SharedEpubBottomToolbarRow {
                 tools.forEach { tool ->
-                    // Android benchmark (EpubReaderControls): inactive icons use
-                    // onSurface explicitly, active slider/TTS use primary. Explicit
-                    // tint keeps custom icons visible on iOS.
+                    val inactiveTint = MaterialTheme.colorScheme.onSurface
                     when (tool) {
-                        ReaderTool.TOC -> IconButton(
+                        ReaderTool.TOC -> SharedTooltipIconButton(
+                            text = tocText,
+                            description = tocDescription,
                             onClick = onToc,
-                            modifier = Modifier.testTag("EpubBottomToc").semantics { contentDescription = tocContentDescription }
-                        ) { Icon(Icons.Default.Menu, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
-                        ReaderTool.FORMAT -> IconButton(
-                            onClick = onFormat,
-                            modifier = Modifier.testTag("EpubBottomFormat").semantics { contentDescription = formatContentDescription }
+                            modifier = Modifier.testTag("EpubBottomToc")
+                                .semantics { contentDescription = tocContentDescription }
                         ) {
-                            Icon(SharedReaderIcons.FormatSize, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
+                            Icon(Icons.Default.Menu, contentDescription = null, tint = inactiveTint)
                         }
-                        ReaderTool.SEARCH -> IconButton(
+                        ReaderTool.FORMAT -> SharedTooltipIconButton(
+                            text = formatText,
+                            description = formatDescription,
+                            onClick = onFormat,
+                            modifier = Modifier.testTag("EpubBottomFormat")
+                                .semantics { contentDescription = formatContentDescription }
+                        ) {
+                            Icon(SharedReaderIcons.FormatSize, contentDescription = null, tint = inactiveTint)
+                        }
+                        ReaderTool.SEARCH -> SharedTooltipIconButton(
+                            text = searchText,
+                            description = searchDescription,
                             onClick = onSearch,
-                            modifier = Modifier.testTag("EpubBottomSearch").semantics { contentDescription = searchContentDescription }
-                        ) { Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
-                        ReaderTool.THEME -> IconButton(
+                            modifier = Modifier.testTag("EpubBottomSearch")
+                                .semantics { contentDescription = searchText }
+                        ) {
+                            Icon(Icons.Default.Search, contentDescription = null, tint = inactiveTint)
+                        }
+                        ReaderTool.THEME -> SharedTooltipIconButton(
+                            text = themeText,
+                            description = themeDescription,
                             onClick = onTheme,
-                            modifier = Modifier.testTag("EpubBottomTheme").semantics { contentDescription = themeContentDescription }
-                        ) { Icon(Icons.Default.Palette, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
-                        ReaderTool.BOOKMARK -> {
-                            IconButton(
-                                onClick = onBookmark,
-                                modifier = Modifier.testTag("EpubBottomBookmark")
-                                    .semantics { contentDescription = bookmarkContentDescription }
+                            modifier = Modifier.testTag("EpubBottomTheme")
+                                .semantics { contentDescription = themeContentDescription }
+                        ) {
+                            Icon(SharedReaderIcons.Palette, contentDescription = null, tint = inactiveTint)
+                        }
+                        ReaderTool.BOOKMARK -> SharedTooltipIconButton(
+                            text = bookmarkText,
+                            onClick = onBookmark,
+                            modifier = Modifier.testTag("EpubBottomBookmark")
+                                .semantics { contentDescription = bookmarkText }
+                        ) {
+                            Icon(
+                                if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                contentDescription = null,
+                                tint = inactiveTint
+                            )
+                        }
+                        ReaderTool.VISUAL_OPTIONS -> SharedTooltipIconButton(
+                            text = visualOptionsText,
+                            onClick = onVisualOptions,
+                            modifier = Modifier.testTag("EpubBottomVisual")
+                                .semantics { contentDescription = visualOptionsText }
+                        ) {
+                            Icon(Icons.Default.Visibility, contentDescription = null, tint = inactiveTint)
+                        }
+                        ReaderTool.SLIDER -> SharedTooltipIconButton(
+                            text = sliderText,
+                            description = sliderDescription,
+                            onClick = onOpenSlider,
+                            modifier = Modifier.testTag("EpubBottomSlider")
+                                .semantics { contentDescription = sliderContentDescription }
+                        ) {
+                            Icon(
+                                SharedReaderIcons.Slider,
+                                contentDescription = null,
+                                tint = if (isSliderActive) MaterialTheme.colorScheme.primary else inactiveTint
+                            )
+                        }
+                        ReaderTool.DICTIONARY -> SharedTooltipIconButton(
+                            text = dictionaryText,
+                            description = dictionaryDescription,
+                            onClick = onDictionary,
+                            modifier = Modifier.testTag("EpubBottomDictionary")
+                                .semantics { contentDescription = dictionaryContentDescription }
+                        ) {
+                            Icon(SharedReaderIcons.Dictionary, contentDescription = null, tint = inactiveTint)
+                        }
+                        ReaderTool.BRIGHTNESS -> SharedTooltipIconButton(
+                            text = brightnessText,
+                            description = brightnessDescription,
+                            onClick = onBrightness,
+                            modifier = Modifier.testTag("EpubBottomBrightness")
+                                .semantics { contentDescription = brightnessText }
+                        ) {
+                            Icon(SharedReaderIcons.Contrast, contentDescription = null, tint = inactiveTint)
+                        }
+                        ReaderTool.SCREEN_ORIENTATION -> SharedTooltipIconButton(
+                            text = orientationText,
+                            description = orientationDescription,
+                            onClick = onScreenOrientation,
+                            modifier = Modifier.testTag("EpubBottomOrientation")
+                                .semantics { contentDescription = orientationText }
+                        ) {
+                            Icon(Icons.Default.ScreenRotation, contentDescription = null, tint = inactiveTint)
+                        }
+                        ReaderTool.AI_FEATURES -> if (aiAvailable) {
+                            SharedTooltipIconButton(
+                                text = aiText,
+                                description = aiDescription,
+                                onClick = onOpenAiHub,
+                                modifier = Modifier.testTag("EpubBottomAi")
+                                    .semantics { contentDescription = aiContentDescription }
                             ) {
-                                Icon(
-                                    if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurface
-                                )
+                                Icon(SharedReaderIcons.Ai, contentDescription = null, tint = inactiveTint)
                             }
                         }
-                        ReaderTool.VISUAL_OPTIONS -> IconButton(
-                            onClick = onVisualOptions,
-                            modifier = Modifier.testTag("EpubBottomVisual").semantics { contentDescription = visualOptionsContentDescription }
-                        ) { Icon(Icons.Default.Visibility, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
-                        ReaderTool.SLIDER -> IconButton(
-                            onClick = onOpenSlider,
-                            modifier = Modifier.testTag("EpubBottomSlider").semantics { contentDescription = sliderContentDescription }
-                        ) { Icon(SharedReaderIcons.Slider, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
-                        ReaderTool.DICTIONARY -> IconButton(
-                            onClick = onDictionary,
-                            modifier = Modifier.testTag("EpubBottomDictionary").semantics { contentDescription = dictionaryContentDescription }
-                        ) { Icon(SharedReaderIcons.Dictionary, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
-                        ReaderTool.BRIGHTNESS -> IconButton(
-                            onClick = onBrightness,
-                            modifier = Modifier.testTag("EpubBottomBrightness").semantics { contentDescription = brightnessContentDescription }
-                        ) { Icon(SharedReaderIcons.Contrast, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
-                        ReaderTool.SCREEN_ORIENTATION -> IconButton(
-                            onClick = onScreenOrientation,
-                            modifier = Modifier.testTag("EpubBottomOrientation").semantics { contentDescription = orientationContentDescription }
-                        ) { Icon(SharedReaderIcons.ScreenRotation, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
-                        ReaderTool.AI_FEATURES -> if (aiAvailable) IconButton(
-                            onClick = onOpenAiHub,
-                            modifier = Modifier.testTag("EpubBottomAi").semantics { contentDescription = aiContentDescription }
-                        ) { Icon(Icons.Default.Ai, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
-                        ReaderTool.TTS_CONTROLS -> IconButton(
+                        ReaderTool.TTS_CONTROLS -> SharedTooltipIconButton(
+                            text = readAloudText,
+                            description = readAloudDescription,
                             onClick = { if (readAloudActive) onReadAloudStop() else onReadAloudToggle() },
-                            modifier = Modifier.testTag("EpubBottomTts").semantics { contentDescription = readAloudLabel }
+                            modifier = Modifier.testTag("EpubBottomTts")
+                                .semantics { contentDescription = readAloudContentDescription }
                         ) {
                             Icon(
                                 readAloudIcon,
                                 contentDescription = null,
-                                tint = if (readAloudActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                tint = if (readAloudActive) MaterialTheme.colorScheme.primary else inactiveTint
                             )
                         }
                         else -> Unit
@@ -870,25 +1086,10 @@ internal fun SharedMobileEpubBottomBar(
     }
 }
 
-@Composable
-internal fun SharedMobileEpubLocalTtsState.menuLabel(): String = when (this) {
-    SharedMobileEpubLocalTtsState.IDLE -> readerString("action_read_aloud", "Read aloud")
-    SharedMobileEpubLocalTtsState.SPEAKING -> readerString("tts_pause_reading", "Pause reading")
-    SharedMobileEpubLocalTtsState.PAUSED -> readerString("tts_resume_reading", "Resume reading")
-}
-
 internal fun SharedMobileEpubLocalTtsState.icon() = when (this) {
     SharedMobileEpubLocalTtsState.IDLE -> SharedReaderIcons.TextToSpeech
     SharedMobileEpubLocalTtsState.SPEAKING -> Icons.Default.Pause
     SharedMobileEpubLocalTtsState.PAUSED -> Icons.Default.PlayArrow
-}
-
-@Composable
-internal fun ReaderCloudTtsState.menuLabel(): String = when {
-    isLoading -> readerString("tts_preparing_cloud_reading", "Preparing cloud reading")
-    isPlaying -> readerString("tts_pause_cloud_reading", "Pause cloud reading")
-    isPaused -> readerString("tts_resume_cloud_reading", "Resume cloud reading")
-    else -> readerString("tts_read_aloud_cloud", "Read aloud with Cloud AI")
 }
 
 internal fun ReaderCloudTtsState.icon() = when {
@@ -1809,9 +2010,24 @@ private data class SharedCloudVoiceRow(
  */
 typealias SharedTtsSettingsTrace = (String) -> Unit
 
+/**
+ * Whether the TTS settings panels freeze voice selection.
+ *
+ * [hostVoiceChangeLocked] is the host's rule — the engine's `isVoiceSelectionLocked` unless a
+ * surface says otherwise (see `SharedMobileReaderTtsSettingsSheet.voiceChangeLocked`). A cloud
+ * session that is loading or playing always locks on top of it, because mid-utterance voice
+ * changes are unsafe regardless of which lock rule the surface uses.
+ */
+internal fun sharedTtsSettingsVoiceLocked(
+    hostVoiceChangeLocked: Boolean,
+    cloudState: ReaderCloudTtsState?,
+): Boolean = hostVoiceChangeLocked ||
+    cloudState?.isLoading == true ||
+    cloudState?.isPlaying == true
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun SharedMobileReaderTtsSettingsSheet(
+fun SharedMobileReaderTtsSettingsSheet(
     tts: SharedMobileEpubLocalTts,
     onDismiss: () -> Unit,
     cloudTts: SharedMobileEpubCloudTts? = null,
@@ -1832,6 +2048,25 @@ internal fun SharedMobileReaderTtsSettingsSheet(
     cloudVoiceLanguage: String? = null,
     onCloudVoiceLanguageChange: (String) -> Unit = {},
     onClearCloudVoiceSamples: () -> Unit = {},
+    /**
+     * Host-owned device-voice selection.
+     *
+     * Defaults to the engine, which is the reader's source of truth. Android's audiobook Listen
+     * keeps TTS voice prefs separate from the reader's (`loadListenNativeVoice`), so it owns the
+     * value and persists it through [onDeviceVoiceChange] — otherwise the checkmark would follow
+     * the reader's voice instead of the one Listen speaks with.
+     */
+    deviceVoiceIdentifier: String? = tts.selectedVoiceIdentifier,
+    onDeviceVoiceChange: ((String?) -> Unit)? = null,
+    /**
+     * Host-owned voice lock.
+     *
+     * Defaults to the engine's rule ([SharedMobileEpubLocalTts.isVoiceSelectionLocked]: any live
+     * session freezes settings), which is the reader's. Listen overrides it because its player
+     * sheet closes the moment playback stops, so demanding a full stop makes the voice
+     * unreachable — there, only actively speaking counts.
+     */
+    voiceChangeLocked: Boolean = tts.isVoiceSelectionLocked,
     trace: SharedTtsSettingsTrace = {},
 ) {
     // A voice sample must not keep talking once the sheet is gone. Keyed on the engine instance
@@ -1848,10 +2083,12 @@ internal fun SharedMobileReaderTtsSettingsSheet(
     }
     // Android benchmark (AndroidTtsSettings.kt:153/239/317/372/409/415): voice
     // selection and previews freeze while a session is active.
-    val ttsVoiceLocked = tts.isVoiceSelectionLocked ||
-        cloudTts?.state?.isLoading == true ||
-        cloudTts?.state?.isPlaying == true
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    val ttsVoiceLocked = sharedTtsSettingsVoiceLocked(voiceChangeLocked, cloudTts?.state)
+    val selectDeviceVoice = onDeviceVoiceChange ?: tts::setVoice
+    // Android benchmark (TtsSettingsSheet): the settings list opens fully expanded — a half-open
+    // sheet cut the voice list off on phones. Matches the Listen player sheet.
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         // Android benchmark (TtsSettingsSheet): 8dp section rhythm — the old
         // 16dp spacing pushed the voice list down and shrank it on phones.
         Column(
@@ -1897,7 +2134,9 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                 SharedTtsDeviceVoicesPanel(
                     tts = tts,
                     deviceModeActive = true,
-                    locked = tts.isVoiceSelectionLocked,
+                    locked = ttsVoiceLocked,
+                    selectedVoiceIdentifier = deviceVoiceIdentifier,
+                    onSelectVoice = selectDeviceVoice,
                     trace = trace,
                 )
             } else {
@@ -1992,6 +2231,8 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                         tts = tts,
                         deviceModeActive = !cloudTtsModeEnabled,
                         locked = ttsVoiceLocked,
+                        selectedVoiceIdentifier = deviceVoiceIdentifier,
+                        onSelectVoice = selectDeviceVoice,
                         trace = trace,
                     )
                     else -> SharedTtsCloudCachePanel(
@@ -2163,7 +2404,10 @@ private fun SharedTtsCloudCachePanel(
                         ) {
                             Text(
                                 "${chapter.chapterTitle} " + readerQuantityString(
-                                    "tts_cache_chunk_count",
+                                    // Android's own plural name: shared keys are Android resource
+                                    // names, and this is the one the reader's cache tab used, so the
+                                    // row stays translated there instead of falling back to English.
+                                    "tts_cache_chunk_count_parenthetical",
                                     chapter.chunkCount,
                                     "(%1\$d chunk)",
                                     "(%1\$d chunks)",
@@ -2524,6 +2768,8 @@ private fun SharedTtsDeviceVoicesPanel(
     tts: SharedMobileEpubLocalTts,
     deviceModeActive: Boolean,
     locked: Boolean,
+    selectedVoiceIdentifier: String?,
+    onSelectVoice: (String?) -> Unit,
     trace: SharedTtsSettingsTrace = {},
     modifier: Modifier = Modifier,
 ) {
@@ -2547,14 +2793,14 @@ private fun SharedTtsDeviceVoicesPanel(
         }
         if (showingFavorites) base.filter { it.identifier in favoriteIds } else base
     }
-    val systemDefaultSelected = deviceModeActive && tts.selectedVoiceIdentifier == null
+    val systemDefaultSelected = deviceModeActive && selectedVoiceIdentifier == null
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = if (systemDefaultSelected) MaterialTheme.colorScheme.primaryContainer
             else MaterialTheme.colorScheme.surfaceContainerHigh,
             modifier = Modifier.fillMaxWidth().clickable(enabled = !locked && deviceModeActive) {
-                tts.setVoice(null)
+                onSelectVoice(null)
             },
         ) {
             Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2694,7 +2940,7 @@ private fun SharedTtsDeviceVoicesPanel(
         ) {
             items(filteredVoices.size) { index ->
                 val voice = filteredVoices[index]
-                val isSelected = deviceModeActive && voice.identifier == tts.selectedVoiceIdentifier
+                val isSelected = deviceModeActive && voice.identifier == selectedVoiceIdentifier
                 val isFavorite = voice.identifier in favoriteIds
                 // Plain Row + Box click targets on purpose: they use the
                 // same foundation clickable as the working tab strip/pill.
@@ -2705,7 +2951,7 @@ private fun SharedTtsDeviceVoicesPanel(
                             else MaterialTheme.colorScheme.surface,
                         )
                         .clickable(enabled = !locked && deviceModeActive) {
-                            tts.setVoice(voice.identifier)
+                            onSelectVoice(voice.identifier)
                         }
                         .padding(vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,

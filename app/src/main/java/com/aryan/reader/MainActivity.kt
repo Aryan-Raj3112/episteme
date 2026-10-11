@@ -68,6 +68,7 @@ import com.aryan.reader.tts.EXTRA_TTS_START_OFFSET
 import com.aryan.reader.tts.toMobileTtsHandoffRequest
 import com.aryan.reader.shared.ExternalDocumentIntakeRequest
 import com.aryan.reader.shared.ExternalDocumentOpenMode
+import com.aryan.reader.shared.ui.LocalSharedStringResolver
 
 @UnstableApi
 open class MainActivity : AppCompatActivity() {
@@ -138,11 +139,23 @@ open class MainActivity : AppCompatActivity() {
             // with a browser fallback that copies the link instead of
             // crashing on devices with no browser installed.
             val safeUriHandler = remember { CustomTabUriHandler(this@MainActivity) }
-            MainContent(
-                windowSizeClass = windowSizeClass,
-                navController = navController,
-                safeUriHandler = safeUriHandler
-            )
+            // Shared Compose surfaces resolve their copy by Android resource name
+            // (`readerString("tooltip_format", …)`), so a surface hosted by Android renders its
+            // inline English fallback unless a resolver is installed. Installing the app's resolver
+            // once here is what makes the shared PDF chrome - the annotation dock, the tool panels,
+            // their tooltips - and every other shared surface localized, instead of only the
+            // screens that happened to install one (see AndroidSharedStrings.kt). Screens with a
+            // narrower resolver (the settings screen's literal table, the reader bars' own install)
+            // still win inside their own subtree; this is the floor, not an override.
+            CompositionLocalProvider(
+                LocalSharedStringResolver provides androidSharedStringResolver(this@MainActivity)
+            ) {
+                MainContent(
+                    windowSizeClass = windowSizeClass,
+                    navController = navController,
+                    safeUriHandler = safeUriHandler
+                )
+            }
         }
     }
 

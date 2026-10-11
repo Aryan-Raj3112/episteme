@@ -3160,6 +3160,9 @@ fun SharedMobileEpubReaderScreen(
                         onBrightness = { showBrightnessSheet = true },
                         onOpenToc = { openReaderDrawer() },
                             onOpenSlider = ::togglePageSlider,
+                            // Android benchmark: the slider tool turns primary while the page slider
+                            // is up, so the two hosts show the same active state.
+                            isSliderActive = showSlider,
                         onFileInfo = { showFileInfo = true },
                         onCustomizeTools = { showCustomizeToolsSheet = true },
                         onScreenOrientation = { showScreenOrientationSheet = true },
@@ -3293,6 +3296,7 @@ fun SharedMobileEpubReaderScreen(
                             onBookmark = ::toggleBookmark,
                             onVisualOptions = { showVisualOptionsSheet = true },
                         onOpenSlider = ::togglePageSlider,
+                            isSliderActive = showSlider,
                             onDictionary = onOpenDictionarySettings,
                             onBrightness = { showBrightnessSheet = true },
                             onScreenOrientation = { showScreenOrientationSheet = true },
