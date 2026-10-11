@@ -118,6 +118,13 @@ internal const val IOS_TTS_LISTEN_TAG = "ReaderBookTtsIOS"
 private const val IOS_LISTEN_TTS_VOICE_OVERRIDE_KEY = "reader.bookTtsListening.voiceOverride"
 private const val IOS_READER_TTS_VOICE_KEY = "reader.tts.voiceIdentifier"
 /**
+ * Listen's own cloud-voice override. Same tri-state as the device voice above, resolved by the
+ * shared [ReaderTtsVoiceOverride]: absent inherits the reader's cloud speaker until the user
+ * picks here. Android benchmark: Listen's independent cloud speaker (`loadListenTtsSpeaker`
+ * never reads the reader-synced state for a Listen session).
+ */
+private const val IOS_LISTEN_TTS_CLOUD_VOICE_OVERRIDE_KEY = "reader.bookTtsListening.cloudVoiceOverride"
+/**
  * Listen's Cloud/Device engine choice. Absent means "follow the reader", which is why presence is
  * what matters, not the value. Android benchmark: `LISTEN_TTS_MODE_KEY` in `reader_prefs`.
  */
@@ -688,7 +695,37 @@ internal class IosBookTtsListeningController(
     /** Tracks the cloud voice chosen in the shared settings sheet. */
     fun setCloudVoiceIdentifier(identifier: String?) {
         cloudVoiceIdentifier = identifier
+        listenDefaults.setObject(
+            ReaderTtsVoiceOverride.encodeVoiceOverride(identifier),
+            forKey = IOS_LISTEN_TTS_CLOUD_VOICE_OVERRIDE_KEY,
+        )
+        iosTtsListenLog("setCloudVoice voice=${identifier ?: "<inherit>"}")
     }
+
+    /** Whether Listen picked its own cloud voice instead of following the reader's speaker. */
+    fun hasOwnCloudVoice(): Boolean =
+        listenDefaults.objectForKey(IOS_LISTEN_TTS_CLOUD_VOICE_OVERRIDE_KEY) != null
+
+    /**
+     * Follows the reader's live speaker while no override is stored; never persists, so the
+     * absent-key tri-state survives the host's sync. Once Listen picks its own voice this is a
+     * no-op and reader edits stop reaching it.
+     */
+    fun inheritCloudVoiceIdentifier(identifier: String?) {
+        if (hasOwnCloudVoice() || cloudVoiceIdentifier == identifier) return
+        cloudVoiceIdentifier = identifier
+    }
+
+    /**
+     * Effective cloud voice for a new session: Listen's pick when stored, else the reader's
+     * live speaker. Android benchmark: `loadListenTtsSpeaker` with reader inheritance.
+     */
+    fun resolveListenCloudVoiceIdentifier(inheritedVoiceIdentifier: String?): String? =
+        ReaderTtsVoiceOverride.resolveVoiceIdentifier(
+            isOverrideStored = hasOwnCloudVoice(),
+            storedOverride = listenDefaults.stringForKey(IOS_LISTEN_TTS_CLOUD_VOICE_OVERRIDE_KEY),
+            inheritedVoiceIdentifier = inheritedVoiceIdentifier,
+        )
 
     /** True when this build can serve cloud speech for Listen. */
     val isCloudAvailable: Boolean get() = cloudTts != null
@@ -824,6 +861,12 @@ internal class IosBookTtsListeningController(
                 continueSession = continueSession,
                 playbackSource = SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK,
                 totalChapters = chapterCount,
+                // Surface separation (Android `startBookListeningChapter` parity): Listen speaks
+                // with its own pinned cloud decision and its own cloud voice, never the
+                // reader's settings. The engine trusts the caller and still enforces backend
+                // availability and wallet spend itself.
+                speakerId = cloudVoiceIdentifier,
+                cloudModeAsserted = true,
             )
             return
         }

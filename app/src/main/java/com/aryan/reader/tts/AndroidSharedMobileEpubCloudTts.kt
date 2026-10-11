@@ -144,6 +144,11 @@ internal class AndroidSharedMobileEpubCloudTts(
         continueSession: Boolean,
         playbackSource: String?,
         totalChapters: Int,
+        // Accepted for interface parity; Android Listen never reaches this adapter (it drives
+        // TtsPlaybackManager with its own per-call ttsMode + speakerId), and the reader path
+        // leaves both default, so both are deliberately ignored here.
+        speakerId: String?,
+        cloudModeAsserted: Boolean,
     ) {
         if (chunks.isEmpty()) return
         sessionBookTitle = bookTitle

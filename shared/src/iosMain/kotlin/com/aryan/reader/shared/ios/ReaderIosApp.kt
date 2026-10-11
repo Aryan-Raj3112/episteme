@@ -3503,7 +3503,10 @@ private fun ReaderIosApp(
             isProUser = state.isProUser,
             credits = state.credits,
             authToken = bridge.accountState.authToken,
-            workerUrl = IOS_READER_AI_WORKER_URL,
+            // TTS proxy, not the AI worker: the AI host serves /define,
+            // /summarize and /recap and 404s /v2/tts*, which is exactly the
+            // failure this line used to produce (2026-10-11 device pass).
+            workerUrl = IOS_TTS_WORKER_URL,
             walletMicros = state.walletMicros,
             walletMigrated = state.walletMigrated,
         )
@@ -3614,9 +3617,10 @@ private fun ReaderIosApp(
     }
     // The shared cloud sheet owns the cloud voice; the controller applies it to each new session
     // rather than overriding it, matching Android's split between a native Listen voice and the
-    // shared cloud speaker.
+    // shared cloud speaker. Syncs the reader's speaker only while Listen follows it — once Listen
+    // picks its own cloud voice the override wins and reader edits stop reaching it.
     LaunchedEffect(effectiveReaderAiSettings.ttsSpeakerId) {
-        ttsListenController.setCloudVoiceIdentifier(effectiveReaderAiSettings.ttsSpeakerId)
+        ttsListenController.inheritCloudVoiceIdentifier(effectiveReaderAiSettings.ttsSpeakerId)
     }
 
     DisposableEffect(ttsListenController) { onDispose(ttsListenController::release) }
@@ -6183,8 +6187,12 @@ private fun ReaderIosApp(
                     // Listen's pinned mode, not the reader's: they can differ.
                     cloudTtsModeEnabled = ttsListenController.cloudModeEnabled,
                     onCloudTtsModeChange = ttsListenController::setCloudModeEnabled,
-                    cloudTtsVoiceId = effectiveReaderAiSettings.ttsSpeakerId,
-                    onCloudTtsVoiceChange = ::updateCloudTtsVoice,
+                    // Listen's own cloud voice (own pick, else the reader's live speaker) —
+                    // reader and Listen stay separate surfaces, Android parity.
+                    cloudTtsVoiceId = ttsListenController.resolveListenCloudVoiceIdentifier(
+                        effectiveReaderAiSettings.ttsSpeakerId
+                    ) ?: effectiveReaderAiSettings.ttsSpeakerId,
+                    onCloudTtsVoiceChange = ttsListenController::setCloudVoiceIdentifier,
                     onClearCloudTtsCache = readerCloudTts::clearCache,
                     fishVoices = iosReaderFishVoices,
                     expectFishVoices = iosExpectFishVoices,

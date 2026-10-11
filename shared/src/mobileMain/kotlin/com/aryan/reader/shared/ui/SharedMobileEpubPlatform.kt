@@ -386,6 +386,13 @@ interface SharedMobileEpubCloudTts {
         // Total chapters in the book, when the caller knows it. Listen needs this for whole-book
         // progress; the reader's page-based sessions leave it 0.
         totalChapters: Int = 0,
+        // Android benchmark (`TtsPlaybackManager.handleStartTts` takes the caller's ttsMode +
+        // speakerId and trusts them): a surface with its own engine decision passes it per call
+        // instead of the engine re-reading the reader's settings. Audiobook Listen passes its
+        // pinned cloud flag and its own cloud voice; the reader leaves both default and keeps
+        // settings-based behavior. A null speaker inherits the configured voice.
+        speakerId: String? = null,
+        cloudModeAsserted: Boolean = false,
     )
 
     /**
