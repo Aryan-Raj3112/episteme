@@ -71,6 +71,18 @@ import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.paginatedreader.imagePageHeightBudgetPx
+import com.aryan.reader.paginatedreader.NATIVE_LIST_MARKER_AREA_WIDTH_DP
+import com.aryan.reader.paginatedreader.NATIVE_LIST_MARKER_END_PADDING_DP
+import com.aryan.reader.paginatedreader.nativeListMarkerImageSizeSp
+import com.aryan.reader.paginatedreader.nativeVerticalBlockKey
+import com.aryan.reader.paginatedreader.nativeVerticalEmptyKey
+import com.aryan.reader.paginatedreader.nativeVerticalGapKey
+import com.aryan.reader.paginatedreader.nativeVerticalPageKey
+import com.aryan.reader.paginatedreader.nativeVerticalSyntheticTextKey
+import com.aryan.reader.paginatedreader.nativeVerticalTextRangeFromOffsets
+import com.aryan.reader.paginatedreader.pickNativeVerticalFirstTextUnit
+import com.aryan.reader.paginatedreader.resolveNativeVerticalFlowIndexInOrder
+import com.aryan.reader.paginatedreader.shouldInsertNativeVerticalGap
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reader.ReaderPage
@@ -92,10 +104,10 @@ internal fun buildSharedNativeVerticalFlowItems(
         val chapterPages = pagesByChapter[chapterIndex].orEmpty()
         val fallbackPage = chapterPages.firstOrNull()
             ?: chapter.toSharedNativeVerticalSyntheticPage(chapterIndex, pages.size + chapterIndex)
-        val boundary = if (chapterIndex > 0) {
+        val boundary = if (shouldInsertNativeVerticalGap(chapterIndex)) {
             listOf(
                 SharedNativeVerticalFlowItem(
-                    key = "chapter-$chapterIndex-gap",
+                    key = nativeVerticalGapKey(chapterIndex),
                     kind = SharedNativeVerticalFlowItemKind.CHAPTER_GAP,
                     page = fallbackPage
                 )
@@ -111,7 +123,7 @@ internal fun buildSharedNativeVerticalFlowItems(
                     val range = block.sharedNativeVerticalTextRange()
                         ?: (0 to chapter.plainText.length)
                     SharedNativeVerticalFlowItem(
-                        key = "chapter-$chapterIndex-block-$ordinal-${block.blockIndex}",
+                        key = nativeVerticalBlockKey(chapterIndex, ordinal, block.blockIndex),
                         kind = SharedNativeVerticalFlowItemKind.BLOCK,
                         page = ReaderPage(
                             pageIndex = pageIndex,
@@ -130,7 +142,7 @@ internal fun buildSharedNativeVerticalFlowItems(
             chapterPages.isNotEmpty() -> {
                 boundary + chapterPages.map { page ->
                     SharedNativeVerticalFlowItem(
-                        key = "chapter-$chapterIndex-page-${page.pageIndex}",
+                        key = nativeVerticalPageKey(chapterIndex, page.pageIndex),
                         kind = SharedNativeVerticalFlowItemKind.TEXT_PAGE,
                         page = page
                     )
@@ -139,7 +151,7 @@ internal fun buildSharedNativeVerticalFlowItems(
 
             chapter.plainText.isNotBlank() -> {
                 boundary + SharedNativeVerticalFlowItem(
-                    key = "chapter-$chapterIndex-text",
+                    key = nativeVerticalSyntheticTextKey(chapterIndex),
                     kind = SharedNativeVerticalFlowItemKind.TEXT_PAGE,
                     page = chapter.toSharedNativeVerticalSyntheticPage(chapterIndex, fallbackPage.pageIndex)
                 )
@@ -147,7 +159,7 @@ internal fun buildSharedNativeVerticalFlowItems(
 
             else -> {
                 boundary + SharedNativeVerticalFlowItem(
-                    key = "chapter-$chapterIndex-empty",
+                    key = nativeVerticalEmptyKey(chapterIndex),
                     kind = SharedNativeVerticalFlowItemKind.EMPTY_CHAPTER,
                     page = fallbackPage
                 )
@@ -194,32 +206,29 @@ internal fun List<SharedNativeVerticalFlowItem>.sharedNativeVerticalItemIndexFor
     locator: ReaderLocator
 ): Int? {
     val chapterIndex = locator.chapterIndex
-    if (chapterIndex != null) {
+    val sameBlock = if (chapterIndex != null) {
         locator.blockIndex?.let { blockIndex ->
-            val sameBlock = indexOfFirst { item ->
+            indexOfFirst { item ->
                 item.page.chapterIndex == chapterIndex &&
                     item.page.semanticBlocks.flattenNativeSemanticBlocks().any { block -> block.blockIndex == blockIndex }
-            }
-            if (sameBlock >= 0) return sameBlock
+            }.takeIf { it >= 0 }
         }
-        val targetOffset = locator.charOffset ?: locator.startOffset
-        if (targetOffset != null) {
-            val sameOffset = indexOfFirst { item ->
-                item.page.chapterIndex == chapterIndex &&
-                    item.page.containsNativeCollapsedOffset(targetOffset)
-            }
-            if (sameOffset >= 0) return sameOffset
-        }
+    } else null
+    val targetOffset = locator.charOffset ?: locator.startOffset
+    val sameOffset = if (chapterIndex != null && targetOffset != null) {
+        indexOfFirst { item ->
+            item.page.chapterIndex == chapterIndex &&
+                item.page.containsNativeCollapsedOffset(targetOffset)
+        }.takeIf { it >= 0 }
+    } else null
+    val samePage = locator.pageIndex?.let { pageIndex ->
+        indexOfFirst { item -> item.page.pageIndex == pageIndex }.takeIf { it >= 0 }
     }
-    locator.pageIndex?.let { pageIndex ->
-        val samePage = indexOfFirst { item -> item.page.pageIndex == pageIndex }
-        if (samePage >= 0) return samePage
-    }
-    if (chapterIndex != null) {
-        val sameChapter = indexOfFirst { item -> item.page.chapterIndex == chapterIndex }
-        if (sameChapter >= 0) return sameChapter
-    }
-    return null
+    val sameChapter = if (chapterIndex != null) {
+        indexOfFirst { item -> item.page.chapterIndex == chapterIndex }.takeIf { it >= 0 }
+    } else null
+    // Same four-level cascade as the ContentBlock stack, via the shared core.
+    return resolveNativeVerticalFlowIndexInOrder(sameBlock, sameOffset, samePage, sameChapter)
 }
 
 internal fun List<SharedNativeVerticalFlowItem>.sharedNativeVerticalItemIndexForPage(pageIndex: Int): Int? {
@@ -239,10 +248,9 @@ internal fun SharedNativeVerticalFlowItem.toNativeVerticalLocator(): ReaderLocat
 
 internal fun SemanticBlock.sharedNativeVerticalTextRange(): Pair<Int, Int>? {
     val textBlocks = flattenNativeSemanticBlock().filterIsInstance<SemanticTextBlock>()
-    if (textBlocks.isEmpty()) return null
-    val start = textBlocks.minOf { it.startCharOffsetInSource }
-    val end = textBlocks.maxOf { it.startCharOffsetInSource + it.text.length }
-    return start to end.coerceAtLeast(start)
+    return nativeVerticalTextRangeFromOffsets(
+        textBlocks.map { it.startCharOffsetInSource to it.text.length }
+    )
 }
 
 internal fun SemanticBlock.sharedNativeVerticalText(): String {
@@ -254,7 +262,10 @@ internal fun SemanticBlock.sharedNativeVerticalText(): String {
 
 internal fun ReaderPage.toNativeReaderLocator(): ReaderLocator {
     val blockPosition = firstNativeLocatorBlockPosition()
-    return ReaderLocator(
+    // Field mapping lives in the shared conversion pair so pagination → canonical
+    // cannot drift between the ContentBlock and SemanticBlock stacks. Null block
+    // position is preserved so flow-item `withFallbacks` can still fill it.
+    return com.aryan.reader.paginatedreader.buildNativeReaderLocator(
         chapterIndex = chapterIndex,
         pageIndex = pageIndex,
         startOffset = startOffset,
@@ -262,7 +273,7 @@ internal fun ReaderPage.toNativeReaderLocator(): ReaderLocator {
         blockIndex = blockPosition?.blockIndex,
         charOffset = blockPosition?.charOffset,
         textQuote = text.replace(Regex("\\s+"), " ").trim().take(160),
-        cfi = blockPosition?.androidStyleCfi() ?: "desktop:$chapterIndex:$startOffset:$endOffset"
+        cfi = blockPosition?.androidStyleCfi() ?: "desktop:$chapterIndex:$startOffset:$endOffset",
     )
 }
 
@@ -283,10 +294,9 @@ internal data class SharedNativeLocatorBlockPosition(
 
 internal fun ReaderPage.firstNativeLocatorBlockPosition(): SharedNativeLocatorBlockPosition? {
     val blocks = semanticBlocks.flattenNativeSemanticBlocks()
-    val textBlock = blocks
-        .filterIsInstance<SemanticTextBlock>()
-        .firstOrNull { it.text.isNotBlank() }
-        ?: blocks.filterIsInstance<SemanticTextBlock>().firstOrNull()
+    val textBlock = pickNativeVerticalFirstTextUnit(
+        blocks.filterIsInstance<SemanticTextBlock>()
+    ) { it.text }
     if (textBlock != null) {
         return SharedNativeLocatorBlockPosition(
             blockIndex = textBlock.blockIndex,
@@ -567,10 +577,15 @@ internal fun SharedSemanticBlockView(
                             verticalAlignment = Alignment.Top
                         ) {
                             val markerModifier = Modifier
-                                .width(SharedNativeListItemMarkerAreaWidthDp.dp)
-                                .padding(end = SharedNativeListItemMarkerEndPaddingDp.dp)
+                                .width(NATIVE_LIST_MARKER_AREA_WIDTH_DP.dp)
+                                .padding(end = NATIVE_LIST_MARKER_END_PADDING_DP.dp)
                             if (markerImage != null && imageContent != null) {
-                                val markerSize = with(LocalDensity.current) { (settings.sharedNativeFontSizeSp() * 0.85f).sp.toDp() }
+                                // Android benchmark: marker images render at 0.8x (see
+                                // NativeListMarkerGeometry); the base stays the native
+                                // base, matching the header-scale split.
+                                val markerSize = with(LocalDensity.current) {
+                                    nativeListMarkerImageSizeSp(settings.sharedNativeFontSizeSp()).sp.toDp()
+                                }
                                 Box(
                                     modifier = markerModifier,
                                     contentAlignment = Alignment.CenterEnd

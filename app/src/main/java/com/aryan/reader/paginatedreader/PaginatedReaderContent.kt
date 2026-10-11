@@ -1201,8 +1201,8 @@ internal fun PaginatedReaderContent(
                                                 verticalAlignment = Alignment.Top
                                             ) {
                                                 val markerAreaModifier =
-                                                    Modifier.width(32.dp)
-                                                        .padding(end = 8.dp)
+                                                    Modifier.width(NATIVE_LIST_MARKER_AREA_WIDTH_DP.dp)
+                                                        .padding(end = NATIVE_LIST_MARKER_END_PADDING_DP.dp)
                                                 val itemMarkerImage = block.itemMarkerImage
                                                 val itemMarker = block.itemMarker
 
@@ -1214,7 +1214,7 @@ internal fun PaginatedReaderContent(
                                                             )
                                                         ).crossfade(true).build()
                                                     val imageSize = with(density) {
-                                                        (textStyle.fontSize.value * 0.8f).sp.toDp()
+                                                        nativeListMarkerImageSizeSp(textStyle.fontSize.value).sp.toDp()
                                                     }
 
                                                     AsyncImage(
@@ -2792,8 +2792,8 @@ internal fun RenderFlexChildBlock(
         is ListItemBlock -> {
             Row(modifier = Modifier, verticalAlignment = Alignment.Top) {
                 val markerAreaModifier = Modifier
-                    .width(32.dp)
-                    .padding(end = 8.dp)
+                    .width(NATIVE_LIST_MARKER_AREA_WIDTH_DP.dp)
+                    .padding(end = NATIVE_LIST_MARKER_END_PADDING_DP.dp)
                 val itemMarkerImage = childBlock.itemMarkerImage
                 val itemMarker = childBlock.itemMarker
 
@@ -2801,7 +2801,7 @@ internal fun RenderFlexChildBlock(
                     val imageRequest =
                         Builder(LocalContext.current).data(nativeVerticalImageModelData(itemMarkerImage))
                             .crossfade(true).build()
-                    val imageSize = with(density) { (textStyle.fontSize.value * 0.8f).sp.toDp() }
+                    val imageSize = with(density) { nativeListMarkerImageSizeSp(textStyle.fontSize.value).sp.toDp() }
 
                     AsyncImage(
                         model = imageRequest,

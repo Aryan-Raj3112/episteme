@@ -1378,6 +1378,4 @@ internal const val DesktopHighlightMapLogTag = "EpistemeDesktopHighlightMap"
 internal const val EpubPageFitLogTag = "EpistemeEpubPageFit"
 internal const val EpubCutoffLogTag = SharedEpubCutoffDiagnosticsTag
 internal const val EpubPageFitTailBlockCount = 4
-internal const val SharedNativeListItemMarkerAreaWidthDp = 32
-internal const val SharedNativeListItemMarkerEndPaddingDp = 8
 internal val SharedNativeCssUrlRegex = Regex("""url\(\s*(['"]?)(.*?)\1\s*\)""", RegexOption.IGNORE_CASE)
