@@ -16,6 +16,7 @@ import com.aryan.reader.paginatedreader.SemanticParagraph
 import com.aryan.reader.paginatedreader.lineHeightWithRubyReserve
 import com.aryan.reader.paginatedreader.resolveReaderBlockFontFamily
 import com.aryan.reader.paginatedreader.resolveReaderBlockFontWeight
+import com.aryan.reader.shared.sharedPaginationLineHeightMultiplier
 import com.aryan.reader.shared.ui.sharedNativeParagraphStyle
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -126,16 +127,19 @@ class SharedReaderStyleParityTest {
         val base = baseStyle(s)
 
         // h1 with UA 2em size (36sp at the nominal baseline): the font stays
-        // large but the leading is the 20sp-reader base (30sp), like Android.
+        // large but the leading is the 20sp-reader base (20 * 1.5/1.45), like
+        // Android's Compose pagination, which measures the slider value rather
+        // than the stored CSS line spacing.
+        val readerBaseLeading = 20f * sharedPaginationLineHeightMultiplier(1.5f)
         val h1 = header(CssStyle(fontSize = 36.sp))
         val h1Style = h1.textStyle(base, s)
         assertEquals(36.sp, h1Style.fontSize)
-        assertEquals(30.sp, h1Style.lineHeight)
+        assertEquals(readerBaseLeading, h1Style.lineHeight.value, 0.0001f)
 
         val bigBody = paragraph(CssStyle(fontSize = 36.sp))
         val bigStyle = bigBody.textStyle(base, s)
         assertEquals(36.sp, bigStyle.fontSize)
-        assertEquals(30.sp, bigStyle.lineHeight)
+        assertEquals(readerBaseLeading, bigStyle.lineHeight.value, 0.0001f)
     }
 
     @Test

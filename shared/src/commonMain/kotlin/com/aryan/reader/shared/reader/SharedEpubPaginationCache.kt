@@ -27,7 +27,11 @@ private const val SharedEpubPaginationCacheSchemaVersion = 1
 // 20 -> 21: chapters are restyled per pagination config with live reader size,
 // density and viewport (Android benchmark parity), so pages carrying nominal
 // load-time styles must rebuild.
-private const val SharedEpubPaginationProcessingVersion = 21
+// 21 -> 22: measured pagination commits a chapter's trailing partial page (the
+// Android benchmark already does), and native pagination leading converts the
+// stored CSS line spacing to the Compose multiplier Android uses, so pages
+// measured under 21 are both short of their chapter tail and too loosely led.
+private const val SharedEpubPaginationProcessingVersion = 22
 private const val SharedEpubPaginationPageCacheVersion = 3
 
 data class SharedEpubPaginationCacheKey(

@@ -76,6 +76,47 @@ class ReaderFormatSliderModelsTest {
     }
 
     @Test
+    fun nativePaginationLeadingConvertsTheStoredCssLineSpacing() {
+        // Android benchmark (`paginationLineHeightMultiplierForWebViewSetting`): the
+        // untouched slider position (stored as the 1.45 CSS line height) renders at 1.2x,
+        // and every other position renders as its own value.
+        assertEquals(
+            SharedNativePaginationNormalLineHeightMultiplier,
+            sharedPaginationLineHeightMultiplier(AndroidEpubFormatBenchmark.baseLineSpacing)
+        )
+        listOf(0.7f, 1f, 1.1f, 1.2f, 1.5f, 2f, 3f).forEach { slider ->
+            val expected = if (slider == 1f) {
+                SharedNativePaginationNormalLineHeightMultiplier
+            } else {
+                slider
+            }
+            assertEquals(
+                expected,
+                sharedPaginationLineHeightMultiplier(
+                    AndroidEpubFormatBenchmark.baseLineSpacing * slider
+                ),
+                0.0001f,
+                "slider $slider"
+            )
+        }
+    }
+
+    @Test
+    fun sharedPaginationBaseLeadingIsTheConvertedReaderBase() {
+        assertEquals(
+            20f * 1.2f,
+            ReaderSettings(fontSize = 20).sharedPaginationBaseLineHeightSp(),
+            0.0001f
+        )
+        val doubled = ReaderSettings(fontSize = 20).copy(lineSpacing = 2.9f)
+        assertEquals(
+            20f * sharedPaginationLineHeightMultiplier(2.9f),
+            doubled.sharedPaginationBaseLineHeightSp(),
+            0.0001f
+        )
+    }
+
+    @Test
     fun spreadGapSliderUsesAbsoluteDpSteps() {
         assertEquals(0f, AndroidEpubFormatSliders.spreadGap.minimum)
         assertEquals(48f, AndroidEpubFormatSliders.spreadGap.maximum)

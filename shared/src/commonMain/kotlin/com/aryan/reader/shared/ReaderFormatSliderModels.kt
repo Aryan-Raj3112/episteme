@@ -2,6 +2,7 @@ package com.aryan.reader.shared
 
 import com.aryan.reader.shared.reader.DefaultReaderPageSpreadGutterDp
 import com.aryan.reader.shared.reader.ReaderSettings
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -24,6 +25,48 @@ object AndroidEpubFormatBenchmark {
     const val baseLineSpacing: Float = 1.45f
     const val baseMarginPx: Float = 16f
 }
+
+/**
+ * The multiplier a native (Compose) pagination surface applies to the font size when the reader's
+ * line-height setting sits at its 1.0x position.
+ *
+ * Mirrors `WEB_VIEW_NORMAL_LINE_HEIGHT_MULTIPLIER` in Android's `PaginatedReaderSelection`.
+ */
+const val SharedNativePaginationNormalLineHeightMultiplier: Float = 1.2f
+
+/**
+ * The line-height multiplier a native (Compose) pagination surface must use for a stored line
+ * spacing, in shared settings units.
+ *
+ * [ReaderSettings.lineSpacing] is a CSS `line-height`: a 1.0x slider position is
+ * [AndroidEpubFormatBenchmark.baseLineSpacing] (1.45), the value Android renders directly in its
+ * WebView surfaces. Compose adds no browser leading, so Android's native pagination renders that
+ * same setting at [SharedNativePaginationNormalLineHeightMultiplier] (1.2) — see
+ * `paginationLineHeightMultiplierForWebViewSetting` — and every other slider position as the slider
+ * value itself. Shared pagination surfaces are Compose too, so they have to apply the same rule:
+ * using the CSS value directly draws 1.45x lines where Android draws 1.2x, which spends a fifth of
+ * every page on leading and paginates the same book into a different number of pages.
+ *
+ * HTML/WebView surfaces keep using the CSS value as-is; only native pagination converts.
+ */
+fun sharedPaginationLineHeightMultiplier(cssLineSpacing: Float): Float {
+    val webViewMultiplier = cssLineSpacing / AndroidEpubFormatBenchmark.baseLineSpacing
+    return if (abs(webViewMultiplier - 1f) < 0.001f) {
+        SharedNativePaginationNormalLineHeightMultiplier
+    } else {
+        webViewMultiplier
+    }
+}
+
+/**
+ * The reader's base leading in sp for native (Compose) pagination: the size a block measures and
+ * draws at when the book's CSS sets no line height of its own.
+ *
+ * Measurement and rendering must both read this rather than
+ * `fontSize * lineSpacing` directly, or a page measured with one leading draws with another.
+ */
+fun ReaderSettings.sharedPaginationBaseLineHeightSp(): Float =
+    fontSize * sharedPaginationLineHeightMultiplier(lineSpacing)
 
 enum class AndroidEpubFormatSlider {
     FONT_SIZE,

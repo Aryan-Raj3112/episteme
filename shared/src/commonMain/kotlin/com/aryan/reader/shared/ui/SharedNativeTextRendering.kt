@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.shared.sharedPaginationBaseLineHeightSp
 import com.aryan.reader.paginatedreader.EpubChapterTextIndex
 import com.aryan.reader.paginatedreader.CssStyle
 import com.aryan.reader.paginatedreader.MATH_PLACEHOLDER_CHAR
@@ -190,7 +191,9 @@ internal fun SemanticTextBlock.renderedTextStyle(
         // leading, never the block size scaled (Android's paragraph style
         // carries CSS line-height or the reader base). Size-scaled leading
         // drew headers and sized blocks roomier than Android on every book.
-        ?: (settings.fontSize * settings.lineSpacing).sp
+        // The base leading itself is the native pagination one, exactly as
+        // measured, or a page's drawn lines disagree with its measured lines.
+        ?: settings.sharedPaginationBaseLineHeightSp().sp
     // Same vertical-ruby reserve as measurement: furigana consumes real column
     // pitch in vertical writing, so the drawn leading must reserve it exactly
     // like the measured leading or pages mismatch.

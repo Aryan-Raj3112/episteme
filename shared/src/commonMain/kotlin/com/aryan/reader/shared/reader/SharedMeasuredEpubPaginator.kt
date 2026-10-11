@@ -10,6 +10,8 @@ import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import com.aryan.reader.paginatedreader.MATH_PLACEHOLDER_CHAR
+import com.aryan.reader.shared.sharedPaginationBaseLineHeightSp
+import com.aryan.reader.shared.sharedPaginationLineHeightMultiplier
 import com.aryan.reader.shared.ui.sharedNativeBaselineShift
 import com.aryan.reader.shared.ui.sharedNativeInlineMathId
 import com.aryan.reader.shared.ui.sharedNativeInlineMathMetrics
@@ -513,6 +515,12 @@ class SharedMeasuredEpubPaginator(
                 drainHorizontalBlocks()
             }
         }
+        // Android benchmark parity: `paginateReaderBlocks` commits its trailing partial
+        // page (`commitPage("final")`) and `paginateVerticalFlow` ends with `emit()`.
+        // Without this flush a chapter whose last blocks land mid-page leaves them in
+        // `pageBlocks` and returns one page short, so the chapter's tail is on no page
+        // record at all — measured pagination hides the end of every such chapter.
+        emitPage("final")
         val chapterPages = pages.ifEmpty {
             listOf(
                 ReaderPage(
@@ -599,7 +607,7 @@ class SharedMeasuredEpubPaginator(
         val annotated = block.toAnnotatedString(style.fontSize.value, style.textAlign)
         val minimumLineHeight = style.lineHeight.takeIfSpecified()
             ?.let { lineHeight -> with(density) { lineHeight.toPx().roundToInt() } }
-            ?: with(density) { (settings.fontSize * settings.lineSpacing).sp.toPx().roundToInt() }
+            ?: with(density) { settings.sharedPaginationBaseLineHeightSp().sp.toPx().roundToInt() }
         if (annotated.text.isBlank()) return minimumLineHeight.coerceAtLeast(1)
         return measureTextLayout(annotated, style, widthPx, block.mathPlaceholderRanges(style.fontSize.value))
             .size
@@ -787,7 +795,8 @@ class SharedMeasuredEpubPaginator(
         settings: ReaderSettings
     ): Pair<SemanticBlock, SemanticBlock>? {
         currentCoroutineContext().ensureActive()
-        val minimumSplitHeight = with(density) { (settings.fontSize * settings.lineSpacing * 2f).sp.toPx().roundToInt() }
+        val minimumSplitHeight =
+            with(density) { (settings.sharedPaginationBaseLineHeightSp() * 2f).sp.toPx().roundToInt() }
         if (availableHeight < minimumSplitHeight) return null
         return when (block) {
             is SemanticTextBlock -> splitTextBlock(block, availableHeight, geometry, baseStyle, settings)
@@ -1102,9 +1111,9 @@ class SharedMeasuredEpubPaginator(
             when {
                 lineHeight.isEm -> lineHeight.value
                 lineHeight.isSp -> lineHeight.value / fontSize.value.coerceAtLeast(0.01f)
-                else -> settings.lineSpacing
+                else -> sharedPaginationLineHeightMultiplier(settings.lineSpacing)
             }
-        } ?: settings.lineSpacing
+        } ?: sharedPaginationLineHeightMultiplier(settings.lineSpacing)
         val verticalDecorations = blockDecorationVerticalPx() + effectiveTopMarginPx() +
             effectiveBottomMarginPx(settings)
         val columnHeightPx = (geometry.pageHeightPx - verticalDecorations).coerceAtLeast(48).toFloat()
@@ -1720,7 +1729,7 @@ internal fun SemanticTextBlock.textStyle(baseStyle: TextStyle, settings: ReaderS
     val lineHeight = style.paragraphStyle.lineHeight.takeIfSpecified()
         ?.resolveLineHeightSp(fontSize.value)
         ?: baseStyle.lineHeight.takeIf { it.isSpecified }
-        ?: (settings.fontSize * settings.lineSpacing).sp
+        ?: settings.sharedPaginationBaseLineHeightSp().sp
     // Vertical furigana consumes real column pitch beside its base; reserve
     // it in measurement exactly as the renderer does so pages never mismatch.
     // Horizontal ruby overhangs into the leading like browsers, with no
@@ -1781,7 +1790,11 @@ private fun TextStyle.withAndroidPaginationTextMetrics(): TextStyle {
 internal fun measurementBaseStyle(settings: ReaderSettings, fontFamily: FontFamily): TextStyle {
     return TextStyle(
         fontSize = settings.fontSize.sp,
-        lineHeight = (settings.fontSize * settings.lineSpacing).sp,
+        // Android benchmark parity: native pagination converts the stored CSS line spacing to the
+        // Compose multiplier (`paginationLineHeightMultiplierForWebViewSetting`), so a stored 1.45
+        // measures as 1.2x here. Measuring looser than the renderer draws loses lines per page and
+        // paginates the same settings into different pages than Android.
+        lineHeight = settings.sharedPaginationBaseLineHeightSp().sp,
         fontFamily = fontFamily,
         fontWeight = settings.fontWeight.takeIf { it > 0 }?.let(::FontWeight),
         letterSpacing = settings.letterSpacing.em,

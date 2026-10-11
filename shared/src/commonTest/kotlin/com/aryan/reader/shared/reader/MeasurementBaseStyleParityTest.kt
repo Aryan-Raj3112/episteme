@@ -8,6 +8,9 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.paginatedreader.CssStyle
 import com.aryan.reader.paginatedreader.SemanticParagraph
+import com.aryan.reader.shared.SharedNativePaginationNormalLineHeightMultiplier
+import com.aryan.reader.shared.sharedPaginationBaseLineHeightSp
+import com.aryan.reader.shared.sharedPaginationLineHeightMultiplier
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -50,11 +53,35 @@ class MeasurementBaseStyleParityTest {
         )
 
         assertEquals(20.sp, base.fontSize)
-        assertEquals(30.sp, base.lineHeight)
+        // Native pagination leading: 1.5x stores as the slider position, not the CSS
+        // value, exactly as Android's Compose pagination renders it.
+        assertEquals(
+            20f * sharedPaginationLineHeightMultiplier(1.5f),
+            base.lineHeight.value,
+            0.0001f
+        )
         assertEquals(FontFamily.Serif, base.fontFamily)
         assertEquals(FontWeight(600), base.fontWeight)
         assertEquals(0.04f.em, base.letterSpacing)
         assertEquals(LineBreak.Simple, base.lineBreak)
+    }
+
+    @Test
+    fun `measurement base style uses android normal pagination leading at the default spacing`() {
+        // Stored 1.45 (the reader's normal CSS line height) must measure as the 1.2x
+        // Compose multiplier Android's native pagination draws with, or shared
+        // pagination fits about a fifth fewer lines per page than Android.
+        val base = measurementBaseStyle(
+            settings = ReaderSettings(fontSize = 20, readingMode = ReaderReadingMode.PAGINATED),
+            fontFamily = FontFamily.Default
+        )
+
+        assertEquals(24.sp, base.lineHeight)
+        assertEquals(20f * SharedNativePaginationNormalLineHeightMultiplier, base.lineHeight.value, 0.0001f)
+        // The same base leading feeds the fallbacks measurement and rendering use
+        // when a block's own style carries no line height.
+        val scaled = ReaderSettings(fontSize = 36, readingMode = ReaderReadingMode.PAGINATED)
+        assertEquals(36f * 1.2f, scaled.sharedPaginationBaseLineHeightSp(), 0.0001f)
     }
 
     @Test
