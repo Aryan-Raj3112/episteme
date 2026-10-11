@@ -16,6 +16,7 @@ import com.aryan.reader.paginatedreader.SemanticParagraph
 import com.aryan.reader.paginatedreader.lineHeightWithRubyReserve
 import com.aryan.reader.paginatedreader.resolveReaderBlockFontFamily
 import com.aryan.reader.paginatedreader.resolveReaderBlockFontWeight
+import com.aryan.reader.shared.sharedNativeFontSizeSp
 import com.aryan.reader.shared.sharedPaginationLineHeightMultiplier
 import com.aryan.reader.shared.ui.sharedNativeParagraphStyle
 import kotlin.test.Test
@@ -127,14 +128,16 @@ class SharedReaderStyleParityTest {
         val base = baseStyle(s)
 
         // h1 with UA 2em size (36sp at the nominal baseline): the font stays
-        // large but the leading is the 20sp-reader base (20 * 1.5/1.45), like
-        // Android's Compose pagination, which measures the slider value rather
-        // than the stored CSS line spacing.
-        val readerBaseLeading = 20f * sharedPaginationLineHeightMultiplier(1.5f)
+        // large but the leading is the level-scaled native reader base, like
+        // Android's `createHeaderTextStyle` draws (base x h1 scale) — never the
+        // block size scaled, and never the unscaled base under a scaled header,
+        // which overlaps wrapped header lines that Android draws cleanly.
+        val native20 = s.sharedNativeFontSizeSp()
+        val readerBaseLeading = native20 * sharedPaginationLineHeightMultiplier(1.5f)
         val h1 = header(CssStyle(fontSize = 36.sp))
         val h1Style = h1.textStyle(base, s)
         assertEquals(36.sp, h1Style.fontSize)
-        assertEquals(readerBaseLeading, h1Style.lineHeight.value, 0.0001f)
+        assertEquals(readerBaseLeading * sharedHeadingFontScale(1), h1Style.lineHeight.value, 0.0001f)
 
         val bigBody = paragraph(CssStyle(fontSize = 36.sp))
         val bigStyle = bigBody.textStyle(base, s)
@@ -150,8 +153,9 @@ class SharedReaderStyleParityTest {
         val fixed = paragraph(CssStyle(fontSize = 36.sp, paragraphStyle = ParagraphStyle(lineHeight = 40.sp)))
         assertEquals(40.sp, fixed.textStyle(base, s).lineHeight)
 
+        // 2em resolves against the native reader size (stored 20 -> native), like Android.
         val relative = paragraph(CssStyle(paragraphStyle = ParagraphStyle(lineHeight = 2.em)))
-        assertEquals(40.sp, relative.textStyle(base, s).lineHeight)
+        assertEquals((s.sharedNativeFontSizeSp() * 2f).sp, relative.textStyle(base, s).lineHeight)
     }
 
     // Font style and family.

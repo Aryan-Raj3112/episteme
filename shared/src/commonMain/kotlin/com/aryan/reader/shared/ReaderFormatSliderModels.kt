@@ -35,6 +35,22 @@ object AndroidEpubFormatBenchmark {
 const val SharedNativePaginationNormalLineHeightMultiplier: Float = 1.2f
 
 /**
+ * Base font size in sp for native (Compose) pagination surfaces.
+ *
+ * Android benchmark: `PaginatedReader.layoutTextStyle` and
+ * `NativeVerticalReaderScreen.layoutTextStyle` both start from
+ * `MaterialTheme.typography.bodyLarge` (16sp) times the font-size slider, while the
+ * stored [ReaderSettings.fontSize] (and [AndroidEpubFormatBenchmark.baseFontSizeSp] = 18)
+ * describes the WebView surface (18px at 1.0x). Native surfaces must therefore render
+ * 16sp at the default setting, not 18sp, or every line, heading and paragraph gap
+ * measures ~12.5% larger than Android and the same book paginates differently.
+ *
+ * HTML/WebView surfaces keep using [AndroidEpubFormatBenchmark.baseFontSizeSp] as-is;
+ * only native pagination converts via [ReaderSettings.sharedNativeFontSizeSp].
+ */
+const val SharedNativePaginationBaseFontSizeSp: Float = 16f
+
+/**
  * The line-height multiplier a native (Compose) pagination surface must use for a stored line
  * spacing, in shared settings units.
  *
@@ -59,14 +75,29 @@ fun sharedPaginationLineHeightMultiplier(cssLineSpacing: Float): Float {
 }
 
 /**
+ * The reader's base font size in sp for native (Compose) pagination: the size a block
+ * measures and draws at when the book's CSS sets no font size of its own.
+ *
+ * Converts the stored WebView-based [ReaderSettings.fontSize] (18 at 1.0x) to the native
+ * base ([SharedNativePaginationBaseFontSizeSp] = 16 at 1.0x), matching Android's
+ * `bodyLarge.fontSize * fontSizeMultiplier`. Measurement, rendering, CSS em resolution,
+ * paragraph gaps and image fallbacks must all read this rather than `fontSize` directly,
+ * or native pages measure larger than Android's.
+ */
+fun ReaderSettings.sharedNativeFontSizeSp(): Float =
+    SharedNativePaginationBaseFontSizeSp * (fontSize / AndroidEpubFormatBenchmark.baseFontSizeSp)
+
+/**
  * The reader's base leading in sp for native (Compose) pagination: the size a block measures and
  * draws at when the book's CSS sets no line height of its own.
  *
  * Measurement and rendering must both read this rather than
  * `fontSize * lineSpacing` directly, or a page measured with one leading draws with another.
+ * The base is the native font size ([ReaderSettings.sharedNativeFontSizeSp]), not the stored
+ * WebView size, matching Android's `adjustedFontSize * paginationLineHeightMultiplier`.
  */
 fun ReaderSettings.sharedPaginationBaseLineHeightSp(): Float =
-    fontSize * sharedPaginationLineHeightMultiplier(lineSpacing)
+    sharedNativeFontSizeSp() * sharedPaginationLineHeightMultiplier(lineSpacing)
 
 enum class AndroidEpubFormatSlider {
     FONT_SIZE,

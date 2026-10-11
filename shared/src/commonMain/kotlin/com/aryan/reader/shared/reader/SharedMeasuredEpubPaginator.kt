@@ -10,6 +10,7 @@ import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import com.aryan.reader.paginatedreader.MATH_PLACEHOLDER_CHAR
+import com.aryan.reader.shared.sharedNativeFontSizeSp
 import com.aryan.reader.shared.sharedPaginationBaseLineHeightSp
 import com.aryan.reader.shared.sharedPaginationLineHeightMultiplier
 import com.aryan.reader.shared.ui.sharedNativeBaselineShift
@@ -569,7 +570,15 @@ class SharedMeasuredEpubPaginator(
             is SemanticWrappingBlock -> measureWrapping(block, geometry, baseStyle, settings)
             is SemanticImage -> measureImage(block, geometry, settings)
             is SemanticMath -> measureMath(block, geometry, baseStyle, settings)
-            is SemanticSpacer -> if (block.isExplicitLineBreak) 8 else 16
+            // Android benchmark parity (`SharedContentStyler`: non-break spacer
+            // is a fixed 8.dp box, break spacer is one base-font line): raw px
+            // constants here measured density-blind and disagreed with both
+            // Android and the 16.dp the renderer drew, so rules sat in the
+            // wrong place and pagination could clip them.
+            is SemanticSpacer -> with(density) {
+                if (block.isExplicitLineBreak) settings.sharedNativeFontSizeSp().sp.toPx().roundToInt()
+                else 8.dp.toPx().roundToInt()
+            }
         }
         return (contentHeight + padding + borders).coerceAtLeast(1)
     }
@@ -1366,7 +1375,7 @@ class SharedMeasuredEpubPaginator(
     }
 
     private fun ReaderSettings.renderedDefaultBlockSpacingPx(): Int {
-        return with(density) { (fontSize * paragraphSpacing).sp.toPx().roundToInt() }.coerceAtLeast(0)
+        return with(density) { (sharedNativeFontSizeSp() * paragraphSpacing).sp.toPx().roundToInt() }.coerceAtLeast(0)
     }
 
 }
@@ -1512,7 +1521,7 @@ internal fun measureImageSize(
     val measuredHeight = if (style.height.isSpecified && style.height > 0.dp) {
         with(density) { style.height.toPx().roundToInt() }
     } else {
-        with(density) { (settings.fontSize * 8f).sp.toPx().roundToInt() }
+        with(density) { (settings.sharedNativeFontSizeSp() * 8f).sp.toPx().roundToInt() }
     }
     val coercedHeight = measuredHeight.coerceIn(
         24,
@@ -1716,20 +1725,25 @@ private fun CssStyle.toMeasurementHyphens(): Hyphens {
 internal fun SemanticTextBlock.textStyle(baseStyle: TextStyle, settings: ReaderSettings): TextStyle {
     val fontSize = (style.fontSize.takeIfSpecified()
         ?: style.spanStyle.fontSize.takeIfSpecified())
-        ?.resolveFontSizeSp(settings.fontSize.toFloat())
+        ?.resolveFontSizeSp(settings.sharedNativeFontSizeSp())
         ?: when (this) {
-            is SemanticHeader -> (settings.fontSize * sharedHeadingFontScale(level)).sp
+            is SemanticHeader -> (settings.sharedNativeFontSizeSp() * sharedHeadingFontScale(level)).sp
             else -> baseStyle.fontSize
         }
     // Android benchmark parity: the default leading is the reader base leading,
-    // never the block size scaled (Android's paragraph style carries CSS
-    // line-height or the reader base; `createHeaderTextStyle`'s scaled leading
-    // is shadowed the same way). Size-scaled leading here paginated headers
-    // and sized blocks differently from Android on every book.
+    // never the block size scaled — except for headers, where Android draws
+    // `createHeaderTextStyle`'s level-scaled leading (base x heading scale) over
+    // whatever the paragraph style carries. An unscaled base under a scaled
+    // header font overlaps wrapped header lines that Android draws cleanly, so
+    // measurement scales the fallback identically: measure and render must agree.
+    // (Android measures headers with the unscaled base, but its pages are drawn
+    // with the scaled one; matching the drawn value keeps this stack's
+    // measure == render invariant, which is what prevents cut-off pages.)
+    val headerScale = if (this is SemanticHeader) sharedHeadingFontScale(level) else 1f
     val lineHeight = style.paragraphStyle.lineHeight.takeIfSpecified()
         ?.resolveLineHeightSp(fontSize.value)
-        ?: baseStyle.lineHeight.takeIf { it.isSpecified }
-        ?: settings.sharedPaginationBaseLineHeightSp().sp
+        ?: baseStyle.lineHeight.takeIf { it.isSpecified }?.let { (it.value * headerScale).sp }
+        ?: (settings.sharedPaginationBaseLineHeightSp() * headerScale).sp
     // Vertical furigana consumes real column pitch beside its base; reserve
     // it in measurement exactly as the renderer does so pages never mismatch.
     // Horizontal ruby overhangs into the leading like browsers, with no
@@ -1789,7 +1803,7 @@ private fun TextStyle.withAndroidPaginationTextMetrics(): TextStyle {
  */
 internal fun measurementBaseStyle(settings: ReaderSettings, fontFamily: FontFamily): TextStyle {
     return TextStyle(
-        fontSize = settings.fontSize.sp,
+        fontSize = settings.sharedNativeFontSizeSp().sp,
         // Android benchmark parity: native pagination converts the stored CSS line spacing to the
         // Compose multiplier (`paginationLineHeightMultiplierForWebViewSetting`), so a stored 1.45
         // measures as 1.2x here. Measuring looser than the renderer draws loses lines per page and
@@ -1822,7 +1836,7 @@ internal fun livePaginationStyling(
     geometry: MeasuredPageGeometry,
     density: Float
 ): LivePaginationStyling {
-    val baseFontSizeSp = settings.fontSize.toFloat()
+    val baseFontSizeSp = settings.sharedNativeFontSizeSp()
     val constraints = Constraints(
         maxWidth = geometry.pageWidthPx.coerceAtLeast(1),
         maxHeight = geometry.pageHeightPx.coerceAtLeast(1)

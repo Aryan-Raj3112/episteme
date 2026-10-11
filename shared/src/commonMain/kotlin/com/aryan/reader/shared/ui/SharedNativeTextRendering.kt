@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.shared.sharedNativeFontSizeSp
 import com.aryan.reader.shared.sharedPaginationBaseLineHeightSp
 import com.aryan.reader.paginatedreader.EpubChapterTextIndex
 import com.aryan.reader.paginatedreader.CssStyle
@@ -180,20 +181,18 @@ internal fun SemanticTextBlock.renderedTextStyle(
 ): TextStyle {
     val fontSize = (style.fontSize.takeIfSpecified()
         ?: style.spanStyle.fontSize.takeIfSpecified())
-        ?.resolveFontSizeSp(settings.fontSize.toFloat())
+        ?.resolveFontSizeSp(settings.sharedNativeFontSizeSp())
         ?: when (this) {
-            is SemanticHeader -> (settings.fontSize * sharedHeadingFontScale(level)).sp
-            else -> settings.fontSize.sp
+            is SemanticHeader -> (settings.sharedNativeFontSizeSp() * sharedHeadingFontScale(level)).sp
+            else -> settings.sharedNativeFontSizeSp().sp
         }
     val lineHeight = style.paragraphStyle.lineHeight.takeIfSpecified()
         ?.resolveLineHeightSp(fontSize.value)
-        // Android benchmark parity: the default leading is the reader base
-        // leading, never the block size scaled (Android's paragraph style
-        // carries CSS line-height or the reader base). Size-scaled leading
-        // drew headers and sized blocks roomier than Android on every book.
-        // The base leading itself is the native pagination one, exactly as
-        // measured, or a page's drawn lines disagree with its measured lines.
-        ?: settings.sharedPaginationBaseLineHeightSp().sp
+        // Android benchmark parity: headers draw `createHeaderTextStyle`'s
+        // level-scaled base leading, so the fallback scales identically here —
+        // drawn lines must match measured lines (see textStyle()).
+        ?: (settings.sharedPaginationBaseLineHeightSp() *
+            (if (this is SemanticHeader) sharedHeadingFontScale(level) else 1f)).sp
     // Same vertical-ruby reserve as measurement: furigana consumes real column
     // pitch in vertical writing, so the drawn leading must reserve it exactly
     // like the measured leading or pages mismatch.
@@ -571,6 +570,28 @@ internal fun Modifier.sharedNativeCssBox(blockStyle: BlockStyle): Modifier = dra
         )
     }
 }
+
+/**
+ * Whether an `hr` spacer with this (themed) style would draw nothing at all.
+ *
+ * Browsers render even an unstyled `<hr>` as a visible rule, and the WebView
+ * surfaces inherit that for free — but a native box with no border and no
+ * background is a blank gap. The ReadBeyond sonnets style `hr` with margins
+ * and width only (`hr { margin-left: 5%; width: 90% }`), so without a default
+ * the rules around the nav vanish on native while both WebViews show them.
+ * Deliberately native-only: Android's own native spacer stays a blank 8.dp
+ * box (benchmark untouched — see the parity doc), this only closes the gap
+ * toward the WebView behavior users compare against.
+ */
+internal fun BlockStyle.needsDefaultHrRule(): Boolean =
+    borderTop == null && borderBottom == null && !backgroundColor.isSpecified
+
+/**
+ * The default `hr` rule color, matching the WebView theme override
+ * (`epub_reader.js`: `#CCCCCC` light, `#444444` dark).
+ */
+internal fun defaultHrRuleColor(isDarkTheme: Boolean): Color =
+    if (isDarkTheme) Color(0xFF444444) else Color(0xFFCCCCCC)
 
 internal fun BlockStyle.sharedNativeThemeBlockStyle(
     isDarkTheme: Boolean,

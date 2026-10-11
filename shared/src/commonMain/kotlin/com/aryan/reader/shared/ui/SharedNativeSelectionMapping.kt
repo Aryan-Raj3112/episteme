@@ -44,6 +44,7 @@ import com.aryan.reader.shared.epubHighlightColorTag
 import com.aryan.reader.shared.legacyEpubHighlightColorForArgb
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.sharedNativeFontSizeSp
 import com.aryan.reader.shared.reader.SharedEpubCutoffDiagnosticsTag
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
@@ -1358,7 +1359,7 @@ internal fun SemanticBlock.renderedDefaultBottomSpacingDp(settings: ReaderSettin
 @Composable
 internal fun ReaderSettings.renderedDefaultBlockSpacingDp(): Dp {
     val density = LocalDensity.current
-    return with(density) { (fontSize * paragraphSpacing).sp.toDp() }
+    return with(density) { (sharedNativeFontSizeSp() * paragraphSpacing).sp.toDp() }
 }
 
 internal fun SharedReaderTextAlign.toComposeTextAlign(): TextAlign {

@@ -64,7 +64,8 @@ import androidx.compose.ui.unit.sp
 import com.aryan.reader.paginatedreader.SemanticBlock
 import com.aryan.reader.paginatedreader.SemanticImage
 import com.aryan.reader.shared.ReaderExternalLookupAction
-import com.aryan.reader.shared.sharedPaginationLineHeightMultiplier
+import com.aryan.reader.shared.sharedNativeFontSizeSp
+import com.aryan.reader.shared.sharedPaginationBaseLineHeightSp
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.readerLookupUsesAiDictionary
 
@@ -1139,17 +1140,12 @@ fun SharedNativeVerticalReader(
                                     color = renderPlan.foreground,
                                     textAlign = fallbackTextAlign,
                                     style = MaterialTheme.typography.bodyLarge.copy(
-                                        fontSize = renderPlan.settings.fontSize.sp,
+                                        fontSize = renderPlan.settings.sharedNativeFontSizeSp().sp,
                                         // Native pagination leading, Android benchmark parity: the
                                         // stored CSS line spacing converts to the Compose multiplier
                                         // the measured pagination used, or measured line breaks and
                                         // drawn line breaks disagree.
-                                        lineHeight = (
-                                            renderPlan.settings.fontSize *
-                                                sharedPaginationLineHeightMultiplier(
-                                                    renderPlan.settings.lineSpacing
-                                                )
-                                            ).sp,
+                                        lineHeight = renderPlan.settings.sharedPaginationBaseLineHeightSp().sp,
                                         fontFamily = readerFontFamily,
                                         fontWeight = renderPlan.settings.fontWeight.takeIf { it > 0 }?.let(::FontWeight),
                                         letterSpacing = renderPlan.settings.letterSpacing.em

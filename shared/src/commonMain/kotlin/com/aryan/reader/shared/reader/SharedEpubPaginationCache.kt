@@ -31,7 +31,14 @@ private const val SharedEpubPaginationCacheSchemaVersion = 1
 // Android benchmark already does), and native pagination leading converts the
 // stored CSS line spacing to the Compose multiplier Android uses, so pages
 // measured under 21 are both short of their chapter tail and too loosely led.
-private const val SharedEpubPaginationProcessingVersion = 22
+// 22 -> 23: native pagination renders the stored WebView-based font size at
+// Android's 16sp bodyLarge base instead of 18sp, so pages measured under 22
+// are set ~12.5% too large on every line, heading and paragraph gap.
+// 23 -> 24: header relative sizes resolve once instead of twice (spans under
+// a sized header no longer compound to ~75% too large), header default
+// leading is level-scaled like Android draws, and spacers measure the same
+// density-aware 8.dp / base-font heights both platforms render.
+private const val SharedEpubPaginationProcessingVersion = 24
 private const val SharedEpubPaginationPageCacheVersion = 3
 
 data class SharedEpubPaginationCacheKey(

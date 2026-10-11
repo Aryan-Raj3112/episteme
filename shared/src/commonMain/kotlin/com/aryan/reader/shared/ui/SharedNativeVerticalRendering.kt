@@ -75,6 +75,7 @@ import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.sharedNativeFontSizeSp
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
 import kotlin.io.encoding.Base64
@@ -569,7 +570,7 @@ internal fun SharedSemanticBlockView(
                                 .width(SharedNativeListItemMarkerAreaWidthDp.dp)
                                 .padding(end = SharedNativeListItemMarkerEndPaddingDp.dp)
                             if (markerImage != null && imageContent != null) {
-                                val markerSize = with(LocalDensity.current) { (settings.fontSize * 0.85f).sp.toDp() }
+                                val markerSize = with(LocalDensity.current) { (settings.sharedNativeFontSizeSp() * 0.85f).sp.toDp() }
                                 Box(
                                     modifier = markerModifier,
                                     contentAlignment = Alignment.CenterEnd
@@ -848,7 +849,31 @@ internal fun SharedSemanticBlockView(
                 )
             }
 
-            is SemanticSpacer -> Spacer(contentModifier.height(if (block.isExplicitLineBreak) 8.dp else 16.dp))
+            // Android benchmark parity (`SharedContentStyler` spacer heights):
+            // a break spacer is one base-font line, anything else (hr) is a
+            // fixed 8.dp box — the same values the measured paginator reserves,
+            // so rules paginate where they draw. An hr with no authored border
+            // or background additionally draws the browser-default rule both
+            // WebViews get for free (see BlockStyle.needsDefaultHrRule).
+            is SemanticSpacer -> {
+                val spacerHeight = if (block.isExplicitLineBreak) {
+                    with(LocalDensity.current) { settings.sharedNativeFontSizeSp().sp.toDp() }
+                } else {
+                    8.dp
+                }
+                if (!block.isExplicitLineBreak && blockStyle.needsDefaultHrRule()) {
+                    val ruleColor = defaultHrRuleColor(settings.darkMode)
+                    Spacer(
+                        contentModifier.height(spacerHeight).drawBehind {
+                            val stroke = 1.dp.toPx()
+                            val y = size.height / 2f
+                            drawLine(ruleColor, Offset(0f, y), Offset(size.width, y), strokeWidth = stroke)
+                        }
+                    )
+                } else {
+                    Spacer(contentModifier.height(spacerHeight))
+                }
+            }
         }
     }
 }
@@ -1233,7 +1258,7 @@ internal fun List<SemanticParagraph>.sharedNativeCollapsedParagraphGapPx(
         if (explicitGap != 0.dp) {
             explicitGap.toPx()
         } else {
-            (settings.fontSize * settings.paragraphSpacing).sp.toPx()
+            (settings.sharedNativeFontSizeSp() * settings.paragraphSpacing).sp.toPx()
         }
     }
 }
@@ -1415,7 +1440,7 @@ internal fun Modifier.sharedNativeImageSize(
         .then(
             if (scaledSize == null) {
                 val fallbackHeight = style.height.takeIfPositiveSpecified()
-                    ?: with(density) { (settings.fontSize * 8f).sp.toDp() }
+                    ?: with(density) { (settings.sharedNativeFontSizeSp() * 8f).sp.toDp() }
                 Modifier.height(fallbackHeight)
             } else {
                 Modifier

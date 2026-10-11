@@ -8,7 +8,10 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.paginatedreader.CssStyle
 import com.aryan.reader.paginatedreader.SemanticParagraph
+import com.aryan.reader.shared.AndroidEpubFormatBenchmark
+import com.aryan.reader.shared.SharedNativePaginationBaseFontSizeSp
 import com.aryan.reader.shared.SharedNativePaginationNormalLineHeightMultiplier
+import com.aryan.reader.shared.sharedNativeFontSizeSp
 import com.aryan.reader.shared.sharedPaginationBaseLineHeightSp
 import com.aryan.reader.shared.sharedPaginationLineHeightMultiplier
 import kotlin.test.Test
@@ -52,11 +55,14 @@ class MeasurementBaseStyleParityTest {
             fontFamily = FontFamily.Serif
         )
 
-        assertEquals(20.sp, base.fontSize)
+        // Native base: stored 20 measures as Android's 16sp bodyLarge scaled by the
+        // 20/18 slider position, not as 20sp.
+        val native20 = SharedNativePaginationBaseFontSizeSp * (20f / AndroidEpubFormatBenchmark.baseFontSizeSp)
+        assertEquals(native20.sp, base.fontSize)
         // Native pagination leading: 1.5x stores as the slider position, not the CSS
         // value, exactly as Android's Compose pagination renders it.
         assertEquals(
-            20f * sharedPaginationLineHeightMultiplier(1.5f),
+            native20 * sharedPaginationLineHeightMultiplier(1.5f),
             base.lineHeight.value,
             0.0001f
         )
@@ -71,17 +77,20 @@ class MeasurementBaseStyleParityTest {
         // Stored 1.45 (the reader's normal CSS line height) must measure as the 1.2x
         // Compose multiplier Android's native pagination draws with, or shared
         // pagination fits about a fifth fewer lines per page than Android.
+        // The size base is Android's 16sp bodyLarge: stored 20 -> 16 * (20/18).
+        val native20 = SharedNativePaginationBaseFontSizeSp * (20f / AndroidEpubFormatBenchmark.baseFontSizeSp)
         val base = measurementBaseStyle(
             settings = ReaderSettings(fontSize = 20, readingMode = ReaderReadingMode.PAGINATED),
             fontFamily = FontFamily.Default
         )
 
-        assertEquals(24.sp, base.lineHeight)
-        assertEquals(20f * SharedNativePaginationNormalLineHeightMultiplier, base.lineHeight.value, 0.0001f)
+        assertEquals((native20 * SharedNativePaginationNormalLineHeightMultiplier).sp, base.lineHeight)
+        assertEquals(native20 * SharedNativePaginationNormalLineHeightMultiplier, base.lineHeight.value, 0.0001f)
         // The same base leading feeds the fallbacks measurement and rendering use
         // when a block's own style carries no line height.
         val scaled = ReaderSettings(fontSize = 36, readingMode = ReaderReadingMode.PAGINATED)
-        assertEquals(36f * 1.2f, scaled.sharedPaginationBaseLineHeightSp(), 0.0001f)
+        val native36 = SharedNativePaginationBaseFontSizeSp * (36f / AndroidEpubFormatBenchmark.baseFontSizeSp)
+        assertEquals(native36 * 1.2f, scaled.sharedPaginationBaseLineHeightSp(), 0.0001f)
     }
 
     @Test

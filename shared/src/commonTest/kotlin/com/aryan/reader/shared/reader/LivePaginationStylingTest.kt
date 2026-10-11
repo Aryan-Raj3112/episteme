@@ -73,11 +73,13 @@ class LivePaginationStylingTest {
     }
 
     @Test
-    fun `live em sizes resolve against the live reader size`() {
-        // 175% of the 20sp reader size, not of the nominal 18sp baseline.
-        assertEquals(35.sp, liveHeader().style.fontSize)
-        // UA `h1 { margin-bottom: 1em }` at the live size.
-        assertEquals(20.dp, liveHeader().style.blockStyle.margin.bottom)
+    fun `live em sizes resolve against the live native reader size`() {
+        // 175% of the native reader size (stored 20 -> 16 * (20/18) native, matching
+        // Android's bodyLarge base), not of the nominal 18sp load baseline.
+        val native20 = 16f * (20f / 18f)
+        assertEquals((native20 * 1.75f).sp, liveHeader().style.fontSize)
+        // UA `h1 { margin-bottom: 1em }` at the live native size.
+        assertEquals(native20.dp, liveHeader().style.blockStyle.margin.bottom)
     }
 
     @Test

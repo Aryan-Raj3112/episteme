@@ -1403,7 +1403,14 @@ private class SharedEpubSemanticBlockBuilder(
     ) {
         val finalStyle = elementFinalStyle(element, inherited)
         if (finalStyle.display == "none") return
-        val local = buildLocalText(listOf(element), finalStyle)
+        // Pass the PARENT style, not the final style: buildLocalText re-derives
+        // the element's own rules (see elementFinalStyle), so handing it the
+        // already-resolved final style applies a relative font-size twice.
+        // Android benchmark parity (JVM `buildSemanticTextAndSpans` resolves the
+        // element once, then lays out only its child nodes): `h1.chapterTitle
+        // { font-size: 175% }` resolved 1.75 x 28sp = 49sp spans under a 28sp
+        // block, drawing every heading ~75% too large and wrapping it.
+        val local = buildLocalText(listOf(element), inherited)
         if (local.text.isBlank()) return
         target += SemanticHeader(
             level = SharedEpubHeaderLevels[element.localName] ?: 1,
@@ -1424,9 +1431,12 @@ private class SharedEpubSemanticBlockBuilder(
     ) {
         val finalStyle = elementFinalStyle(element, inherited)
         if (finalStyle.display == "none") return
+        // Parent style, not the final style: buildLocalText re-derives the
+        // element's own rules, so the final style would apply a relative
+        // font-size twice (same double-application as buildHeader).
         val local = buildLocalText(
             listOf(element),
-            finalStyle,
+            inherited,
             SharedSemanticCssWhiteSpacePreserves(finalStyle.whiteSpace)
         )
         if (local.text.isBlank()) return
@@ -1450,9 +1460,14 @@ private class SharedEpubSemanticBlockBuilder(
         // `pre { white-space: normal }` still wins.
         val finalStyle = CssStyle(whiteSpace = "pre-wrap").merge(elementFinalStyle(element, inherited))
         if (finalStyle.display == "none") return
+        // Default-underneath composition, not the final style: buildLocalText
+        // re-derives the element's own rules, so the final style would apply a
+        // relative font-size twice (same double-application as buildHeader).
+        // Repeating the default-underneath merge here keeps `pre` whitespace
+        // identical while the font-size resolves exactly once.
         val local = buildLocalText(
             listOf(element),
-            finalStyle,
+            CssStyle(whiteSpace = "pre-wrap").merge(inherited),
             SharedSemanticCssWhiteSpacePreserves(finalStyle.whiteSpace)
         )
         if (local.text.isBlank()) return
