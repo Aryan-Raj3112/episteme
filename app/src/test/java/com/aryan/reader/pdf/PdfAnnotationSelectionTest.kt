@@ -3,6 +3,7 @@ package com.aryan.reader.pdf
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import com.aryan.reader.pdf.data.PdfAnnotation
+import com.aryan.reader.shared.pdf.sharedPdfSelectionDispatchSlopPx
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -47,6 +48,40 @@ class PdfAnnotationSelectionTest {
             annotations, 0.9f, 0.9f, pageWidthPx = 1000f, pageAspectRatio = 0.7f
         )
         assertNull(hit)
+    }
+
+    @Test
+    fun `dispatch hit is tight but tap re-hit stays generous`() {
+        // B2 parity pair: the gesture dispatcher hits with the tight dispatch
+        // slop so lassos can start between strokes, while a tap ending without
+        // a lasso re-hits with the full finger slop so small strokes stay
+        // tappable. Same rule as sharedPdfSelectionDispatchSlopPx + the shared
+        // lasso-session tap re-hit.
+        val stroke = annotation(
+            "a", listOf(PdfPoint(0.5f, 0.5f), PdfPoint(0.6f, 0.5f))
+        )
+        val pageWidthPx = 1000f
+        val nearY = 0.5f + 20f / pageWidthPx
+        // Tight dispatch hit: on the stroke yes, one slop away no.
+        assertNotNull(
+            findPdfTopmostSelectionHit(
+                listOf(stroke), 0.55f, 0.5f, pageWidthPx, 0.7f,
+                tapSlopPx = sharedPdfSelectionDispatchSlopPx(30f),
+            )
+        )
+        assertNull(
+            findPdfTopmostSelectionHit(
+                listOf(stroke), 0.55f, 0.5f + 30f / pageWidthPx, pageWidthPx, 0.7f,
+                tapSlopPx = sharedPdfSelectionDispatchSlopPx(30f),
+            )
+        )
+        // Generous re-hit: the same near miss selects instead of clearing.
+        assertNotNull(
+            findPdfTopmostSelectionHit(
+                listOf(stroke), 0.55f, nearY, pageWidthPx, 0.7f,
+                tapSlopPx = 30f,
+            )
+        )
     }
 
     @Test
