@@ -73,6 +73,9 @@ import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.paginatedreader.imagePageHeightBudgetPx
 import com.aryan.reader.paginatedreader.NATIVE_LIST_MARKER_AREA_WIDTH_DP
 import com.aryan.reader.paginatedreader.NATIVE_LIST_MARKER_END_PADDING_DP
+import com.aryan.reader.paginatedreader.nativeImageContentAlignment
+import com.aryan.reader.paginatedreader.nativeImageContentScale
+import com.aryan.reader.paginatedreader.nativeInvertColorMatrix
 import com.aryan.reader.paginatedreader.nativeListMarkerImageSizeSp
 import com.aryan.reader.paginatedreader.nativeVerticalBlockKey
 import com.aryan.reader.paginatedreader.nativeVerticalEmptyKey
@@ -1382,32 +1385,15 @@ internal fun String?.sharedNativeSvgViewBoxSize(): Pair<Float, Float>? {
     return if (width > 0f && height > 0f) width to height else null
 }
 
-internal fun SemanticImage.imageContentAlignment(): Alignment {
-    val style = style.blockStyle
-    return when {
-        style.float == "right" || style.horizontalAlign == "right" || style.horizontalAlign == "end" -> Alignment.CenterEnd
-        style.float == "left" || style.horizontalAlign == "left" || style.horizontalAlign == "start" -> Alignment.CenterStart
-        else -> Alignment.Center
-    }
-}
+internal fun SemanticImage.imageContentAlignment(): Alignment =
+    nativeImageContentAlignment(style.blockStyle)
 
-internal fun SemanticImage.sharedNativeImageContentScale(): ContentScale {
-    return when (style.blockStyle.objectFit) {
-        "cover" -> ContentScale.Crop
-        "fill" -> ContentScale.FillBounds
-        "contain", "scale-down" -> ContentScale.Fit
-        else -> ContentScale.Fit
-    }
-}
+internal fun SemanticImage.sharedNativeImageContentScale(): ContentScale =
+    nativeImageContentScale(style.blockStyle)
 
 internal fun SemanticImage.sharedNativeImageColorMatrix(): FloatArray? {
     if (style.blockStyle.filter != "invert(100%)") return null
-    return floatArrayOf(
-        -1f, 0f, 0f, 0f, 255f,
-        0f, -1f, 0f, 0f, 255f,
-        0f, 0f, -1f, 0f, 255f,
-        0f, 0f, 0f, 1f, 0f
-    )
+    return nativeInvertColorMatrix()
 }
 
 internal fun SemanticImage.sharedNativeImageColorFilter(): ColorFilter? {

@@ -1693,22 +1693,11 @@ internal fun computeImageRenderSizeDp(
     return with(density) { widthPx.toDp() to heightPx.toDp() }
 }
 
-internal fun imageBlockContentAlignment(style: BlockStyle): Alignment {
-    return when {
-        style.float == "right" || style.horizontalAlign == "right" || style.horizontalAlign == "end" -> Alignment.CenterEnd
-        style.float == "left" || style.horizontalAlign == "left" || style.horizontalAlign == "start" -> Alignment.CenterStart
-        else -> Alignment.Center
-    }
-}
+internal fun imageBlockContentAlignment(style: BlockStyle): Alignment =
+    nativeImageContentAlignment(style)
 
-internal fun imageContentScale(style: BlockStyle): ContentScale {
-    return when (style.objectFit) {
-        "cover" -> ContentScale.Crop
-        "fill" -> ContentScale.FillBounds
-        "contain", "scale-down" -> ContentScale.Fit
-        else -> ContentScale.Fit
-    }
-}
+internal fun imageContentScale(style: BlockStyle): ContentScale =
+    nativeImageContentScale(style)
 
 internal fun nativeVerticalSvgContentFromDataUri(source: String): String? {
     return decodeNativeVerticalSvgDataUri(source)

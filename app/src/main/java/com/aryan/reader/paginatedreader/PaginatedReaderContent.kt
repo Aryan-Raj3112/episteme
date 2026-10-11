@@ -1566,30 +1566,8 @@ internal fun PaginatedReaderContent(
                                             val style = block.style
                                             val colorFilter =
                                                 if (block.style.filter == "invert(100%)") {
-                                                    val matrix = floatArrayOf(
-                                                        -1f,
-                                                        0f,
-                                                        0f,
-                                                        0f,
-                                                        255f,
-                                                        0f,
-                                                        -1f,
-                                                        0f,
-                                                        0f,
-                                                        255f,
-                                                        0f,
-                                                        0f,
-                                                        -1f,
-                                                        0f,
-                                                        255f,
-                                                        0f,
-                                                        0f,
-                                                        0f,
-                                                        1f,
-                                                        0f
-                                                    )
                                                     ColorFilter.colorMatrix(
-                                                        ColorMatrix(matrix)
+                                                        ColorMatrix(nativeInvertColorMatrix())
                                                     )
                                                 } else {
                                                     null
@@ -2830,29 +2808,7 @@ internal fun RenderFlexChildBlock(
         is ImageBlock -> if (!hideImages) {
             val style = childBlock.style
             val colorFilter = if (childBlock.style.filter == "invert(100%)") {
-                val matrix = floatArrayOf(
-                    -1f,
-                    0f,
-                    0f,
-                    0f,
-                    255f,
-                    0f,
-                    -1f,
-                    0f,
-                    0f,
-                    255f,
-                    0f,
-                    0f,
-                    -1f,
-                    0f,
-                    255f,
-                    0f,
-                    0f,
-                    0f,
-                    1f,
-                    0f
-                )
-                ColorFilter.colorMatrix(ColorMatrix(matrix))
+                ColorFilter.colorMatrix(ColorMatrix(nativeInvertColorMatrix()))
             } else null
 
             BoxWithConstraints(contentAlignment = imageBlockContentAlignment(style)) {
