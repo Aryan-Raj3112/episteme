@@ -76,6 +76,7 @@ import com.aryan.reader.paginatedreader.NATIVE_LIST_MARKER_END_PADDING_DP
 import com.aryan.reader.paginatedreader.nativeImageContentAlignment
 import com.aryan.reader.paginatedreader.nativeImageContentScale
 import com.aryan.reader.paginatedreader.nativeInvertColorMatrix
+import com.aryan.reader.paginatedreader.nativeMathSvgDimensionDp
 import com.aryan.reader.paginatedreader.nativeListMarkerImageSizeSp
 import com.aryan.reader.paginatedreader.nativeVerticalBlockKey
 import com.aryan.reader.paginatedreader.nativeVerticalEmptyKey
@@ -1289,8 +1290,10 @@ internal fun SharedNativeMathBlock(
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?,
     modifier: Modifier = Modifier
 ) {
-    val image = remember(block.svgContent, block.svgWidth, block.svgHeight, block.svgViewBox, block.style) {
-        block.toSharedNativeSvgImage()
+    val density = LocalDensity.current
+    val fontSizeSp = settings.sharedNativeFontSizeSp()
+    val image = remember(block.svgContent, block.svgWidth, block.svgHeight, block.svgViewBox, block.style, fontSizeSp, density) {
+        block.toSharedNativeSvgImage(fontSizeSp, density)
     }
     if (image != null && imageContent != null) {
         SharedNativeImageBlock(
@@ -1342,14 +1345,23 @@ internal fun SharedNativeImageBlock(
 }
 
 @OptIn(ExperimentalEncodingApi::class)
-internal fun SemanticMath.toSharedNativeSvgImage(): SemanticImage? {
+internal fun SemanticMath.toSharedNativeSvgImage(
+    fontSizeSp: Float,
+    density: Density,
+): SemanticImage? {
     val svg = svgContent?.takeIf { it.isNotBlank() } ?: return null
     val viewBoxSize = svgViewBox.sharedNativeSvgViewBoxSize()
     return SemanticImage(
         path = "data:image/svg+xml;base64,${Base64.Default.encode(svg.encodeToByteArray())}",
         altText = altText ?: "SVG Image",
-        intrinsicWidth = svgWidth.sharedNativeSvgDimensionPx() ?: viewBoxSize?.first,
-        intrinsicHeight = svgHeight.sharedNativeSvgDimensionPx() ?: viewBoxSize?.second,
+        // px/pt/unitless resolve in dp-space as before; em/ex now resolve against
+        // the ambient font via Android's own parser instead of dropping to viewBox.
+        intrinsicWidth = svgWidth.sharedNativeSvgDimensionPx()
+            ?: nativeMathSvgDimensionDp(svgWidth, fontSizeSp, density)
+            ?: viewBoxSize?.first,
+        intrinsicHeight = svgHeight.sharedNativeSvgDimensionPx()
+            ?: nativeMathSvgDimensionDp(svgHeight, fontSizeSp, density)
+            ?: viewBoxSize?.second,
         style = style,
         elementId = elementId,
         cfi = cfi,

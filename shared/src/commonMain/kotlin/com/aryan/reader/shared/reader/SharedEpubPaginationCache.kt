@@ -38,7 +38,10 @@ private const val SharedEpubPaginationCacheSchemaVersion = 1
 // a sized header no longer compound to ~75% too large), header default
 // leading is level-scaled like Android draws, and spacers measure the same
 // density-aware 8.dp / base-font heights both platforms render.
-private const val SharedEpubPaginationProcessingVersion = 24
+// 24 -> 25: em/ex-sized math SVGs resolve against the ambient font like
+// Android instead of falling back to the viewBox, so their measured size
+// (and any page break after them) moves.
+private const val SharedEpubPaginationProcessingVersion = 25
 private const val SharedEpubPaginationPageCacheVersion = 3
 
 data class SharedEpubPaginationCacheKey(

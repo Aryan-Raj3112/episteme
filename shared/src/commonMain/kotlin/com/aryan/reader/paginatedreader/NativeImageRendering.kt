@@ -2,6 +2,8 @@ package com.aryan.reader.paginatedreader
 
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.sp
 
 /**
  * Image render decisions shared by both native stacks (B1 step 3, image block
@@ -37,4 +39,28 @@ fun nativeImageContentScale(blockStyle: BlockStyle): ContentScale = when (blockS
     "fill" -> ContentScale.FillBounds
     "contain", "scale-down" -> ContentScale.Fit
     else -> ContentScale.Fit
+}
+
+/**
+ * Font-relative math-SVG dimension in dp-space. The dp-space parser behind
+ * `SemanticMath.toSharedNativeSvgImage` covers px/pt/unitless only, so em/ex
+ * fell to the viewBox fallback while Android resolves them against the font
+ * size. This fills that gap through Android's own [parseSvgDimension]
+ * (physical px converted back to dp-space, matching how intrinsic dims are
+ * read downstream). Percent needs a container width the call site has not
+ * measured, so it stays null — recorded, not forced.
+ */
+fun nativeMathSvgDimensionDp(
+    dimension: String?,
+    fontSizeSp: Float,
+    density: Density,
+): Float? {
+    val lower = dimension?.trim()?.lowercase() ?: return null
+    if (!lower.endsWith("em") && !lower.endsWith("ex")) return null
+    if (density.density <= 0f) return null
+    val fontSizePx = with(density) { fontSizeSp.sp.toPx() }
+    // `lower` is already trimmed, so unit suffixes match despite source casing.
+    return parseSvgDimension(lower, fontSizePx, containerWidthPx = 0, density = density)
+        ?.div(density.density)
+        ?.takeIf { it > 0f }
 }
