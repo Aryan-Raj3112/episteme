@@ -1,4 +1,6 @@
 import com.android.build.api.dsl.KotlinMultiplatformAndroidLibraryTarget
+import java.io.File
+import org.gradle.api.GradleException
 import org.gradle.api.plugins.ExtensionAware
 import org.gradle.api.tasks.Exec
 
@@ -68,6 +70,85 @@ kotlin {
         val mobiSdk = if (name.contains("Simulator", ignoreCase = true)) "iphonesimulator" else "iphoneos"
         val mobiRoot = layout.buildDirectory.dir("native/libmobi/$name")
         val libarchiveRoot = layout.buildDirectory.dir("native/libarchive/$name")
+        val officeOxideRoot = layout.buildDirectory.dir("native/officeOxide/$name")
+        // cargo target triple per Kotlin/Native target.
+        val officeOxideTriple = when {
+            name.contains("Simulator", ignoreCase = true) -> "aarch64-apple-ios-sim"
+            name.startsWith("ios") -> "aarch64-apple-ios"
+            else -> null
+        }
+
+        /** Resolves `cargo`, falling back to rustup's default location when the
+         *  Gradle daemon's PATH does not include it (common when an IDE starts
+         *  the daemon). */
+        fun resolveCargoExecutable(): String? {
+            val pathEntries = System.getenv("PATH")
+                .orEmpty()
+                .split(File.pathSeparator)
+                .filter { it.isNotBlank() }
+            val candidates = buildList {
+                addAll(pathEntries.map { File(it, "cargo") })
+                add(File(System.getProperty("user.home"), ".cargo/bin/cargo"))
+            }
+            return candidates.firstOrNull { it.canExecute() }?.absolutePath
+        }
+
+        val buildOfficeOxideTask = tasks.register<Exec>("buildOfficeOxide${name.replaceFirstChar(Char::uppercaseChar)}") {
+            val officeOxideCrateDir = rootProject.layout.projectDirectory.dir("rust/office-oxide-bridge")
+            val triple = officeOxideTriple
+            if (triple == null) {
+                enabled = false
+            } else {
+                // Resolved here, at configuration time, into plain Strings: the
+                // task then carries no closures, which keeps it compatible
+                // with the configuration cache. Lenient on purpose: without
+                // the Rust toolchain the task skips via onlyIf (IDE sync and
+                // partial builds must still configure); CMake fails later with
+                // an actionable message if the .a is actually needed.
+                val cargo: String? = resolveCargoExecutable()
+                if (cargo == null) {
+                    logger.warn(
+                        "office_oxide: cargo not found; buildOfficeOxide* tasks will skip. " +
+                            "Install the Rust toolchain from https://rustup.rs to build native Office support."
+                    )
+                }
+                val outputDirectory = officeOxideRoot.get().asFile
+                workingDir = officeOxideCrateDir.asFile
+                onlyIf("Rust toolchain (cargo) is installed") { cargo != null }
+                inputs.dir(officeOxideCrateDir.dir("src").asFile)
+                inputs.files(
+                    officeOxideCrateDir.file("Cargo.toml").asFile,
+                    officeOxideCrateDir.file("Cargo.lock").asFile,
+                    officeOxideCrateDir.file("rust-toolchain.toml").asFile,
+                )
+                outputs.file(outputDirectory.resolve("liboffice_oxide_bridge.a"))
+                commandLine(
+                    cargo ?: "cargo",
+                    "build",
+                    "--release",
+                    "--lib",
+                    "--target",
+                    triple,
+                    "--target-dir",
+                    officeOxideCrateDir.dir("target").asFile.absolutePath,
+                )
+                // Copy the archive out of cargo's target dir so the cinterop link
+                // flags below refer to a stable, per-target path. doLast only
+                // touches task-local state (no script captures), so it is
+                // configuration-cache safe.
+                val builtArchive = officeOxideCrateDir
+                    .dir("target/$triple/release/liboffice_oxide_bridge.a")
+                    .asFile
+                doLast {
+                    if (!builtArchive.exists()) {
+                        throw GradleException("cargo did not produce $builtArchive")
+                    }
+                    outputDirectory.mkdirs()
+                    builtArchive.copyTo(outputDirectory.resolve("liboffice_oxide_bridge.a"), overwrite = true)
+                }
+            }
+        }
+
         val buildMobiTask = tasks.register<Exec>("buildMobi${name.replaceFirstChar(Char::uppercaseChar)}") {
             val outputDirectory = mobiRoot.get().asFile
             inputs.files(
@@ -138,6 +219,19 @@ kotlin {
                     )
                     tasks.named(interopProcessingTaskName).configure {
                         dependsOn(buildLibarchiveTask)
+                    }
+                }
+                val officeOxide by creating {
+                    defFile(project.file("src/nativeInterop/cinterop/office_oxide.def"))
+                    compilerOpts("-I${rootProject.file("rust/office-oxide-bridge/include").absolutePath}")
+                    // Static link (same pattern as mobi and libarchive): the
+                    // archive is merged into the static ReaderShared framework.
+                    extraOpts(
+                        "-libraryPath", officeOxideRoot.get().asFile.absolutePath,
+                        "-staticLibrary", "liboffice_oxide_bridge.a"
+                    )
+                    tasks.named(interopProcessingTaskName).configure {
+                        dependsOn(buildOfficeOxideTask)
                     }
                 }
             }

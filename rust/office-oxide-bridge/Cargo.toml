@@ -1,0 +1,37 @@
+[package]
+name = "office-oxide-bridge"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Stable C ABI over office_oxide for the Reader app (Android / iOS / desktop)."
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "office_oxide_bridge"
+# cdylib  -> Android .so and desktop .so
+# staticlib -> iOS .a, linked into the static ReaderShared framework (same
+#              pattern as libmobi.a / libreaderarchive.a)
+crate-type = ["cdylib", "staticlib"]
+path = "src/lib.rs"
+
+[dependencies]
+# Exact pin: this is a pre-1.0 dependency with a fast release cadence, so an
+# accidental minor bump must not change the app's behaviour. Bump deliberately.
+office_oxide = "=0.1.13"
+
+[dev-dependencies]
+# Only used by tests/render.rs to build a minimal DOCX fixture in memory.
+# Already present in the graph as an office_oxide dependency, so this adds no
+# build cost and does not affect the shipped library's size.
+zip = "=8.6.0"
+
+[profile.release]
+# Size matters here: this lands in every ABI of every app variant. Measured
+# against the default profile this is ~2x smaller. See docs/office-oxide-probe.
+opt-level = "s"
+lto = true
+codegen-units = 1
+# unwind, NOT abort: the entry points below catch_unwind so a panic inside the
+# library becomes an error code instead of killing the app process.
+panic = "unwind"
+strip = true
