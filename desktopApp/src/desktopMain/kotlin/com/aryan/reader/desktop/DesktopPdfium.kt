@@ -9,7 +9,6 @@ import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.PdfTocEntry
 import com.aryan.reader.shared.opds.OpdsCatalog
 import com.aryan.reader.shared.opds.OpdsStreamReference
-import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.PdfZoomSpec
@@ -33,7 +32,10 @@ import com.aryan.reader.shared.pdf.SharedPdfSearchResult
 import com.aryan.reader.shared.pdf.pdfInkAppearancePoints
 import com.aryan.reader.shared.pdf.sharedPdfDisplayPointToMediabox
 import com.aryan.reader.shared.pdf.sharedPdfDisplayRectToMediabox
+import com.aryan.reader.shared.pdf.sharedPdfHighlightExportColorArgb
 import com.aryan.reader.shared.pdf.sharedPdfInkAppearanceContent
+import com.aryan.reader.shared.pdf.sharedPdfInkExportColorArgb
+import com.aryan.reader.shared.pdf.sharedPdfInkStrokeWidthPdfUnits
 import com.aryan.reader.shared.pdf.sharedPdfRasterImageMatrix
 import com.aryan.reader.shared.pdf.sharedPdfRotationDegreesFromPdfiumCode
 import com.sun.jna.Callback
@@ -1668,17 +1670,14 @@ object DesktopPdfium {
                     minY = minOf(minY, y)
                     maxY = maxOf(maxY, y)
                 }
-                val strokeWidth = (annotation.strokeWidth * pageWidth).coerceAtLeast(0.25f)
+                val strokeWidth = sharedPdfInkStrokeWidthPdfUnits(annotation.strokeWidth, pageWidth)
+                // Keep the annotation colour and the /AP stroke colour identical:
+                // FPDFAnnot_SetAP only attaches the /GS opacity resource while /CA < 1.
+                val inkColorArgb = sharedPdfInkExportColorArgb(annotation.tool, annotation.colorArgb)
                 val annot = api.FPDFPage_CreateAnnot(page, FPDF_ANNOT_INK) ?: return@usePointer false
                 try {
                     api.FPDFAnnot_SetRect(annot, pdfRect(minX, maxY, maxX, minY, strokeWidth * 1.5f))
-                    val color = annotation.colorArgb.toPdfiumRgba().let { rgba ->
-                        if (annotation.tool == PdfInkTool.HIGHLIGHTER || annotation.tool == PdfInkTool.HIGHLIGHTER_ROUND) {
-                            rgba.withDefaultAlpha(102)
-                        } else {
-                            rgba
-                        }
-                    }
+                    val color = inkColorArgb.toPdfiumRgba()
                     api.FPDFAnnot_SetColor(annot, FPDF_ANNOT_COLOR, color.r, color.g, color.b, color.a)
                     api.FPDFAnnot_SetBorder(annot, 0f, 0f, strokeWidth)
                     runCatching { api.FPDFAnnot_SetFlags(annot, FPDF_ANNOT_FLAG_PRINT) }
@@ -1706,7 +1705,7 @@ object DesktopPdfium {
                             PdfPagePoint(x = x, y = y)
                         },
                         strokeWidthPdfUnits = strokeWidth,
-                        colorArgb = annotation.colorArgb,
+                        colorArgb = inkColorArgb,
                     )
                     if (appearance.isNotEmpty()) {
                         setPdfiumAnnotationAppearance(annot, appearance)
@@ -1769,7 +1768,10 @@ object DesktopPdfium {
                         appendedAll = api.FPDFAnnot_AppendAttachmentPoints(annot, quad) != 0 && appendedAll
                     }
                     api.FPDFAnnot_SetRect(annot, pdfRect(unionLeft, unionTop, unionRight, unionBottom, 1f))
-                    val color = annotation.colorArgb.toPdfiumRgba().withDefaultAlpha(102)
+                    // Viewers build the markup appearance from the annot colour, so burn
+                    // opaque palette colours down to the reader's on-screen render alpha.
+                    val color = sharedPdfHighlightExportColorArgb(annotation.style, annotation.colorArgb)
+                        .toPdfiumRgba()
                     api.FPDFAnnot_SetColor(annot, FPDF_ANNOT_COLOR, color.r, color.g, color.b, color.a)
                     runCatching { api.FPDFAnnot_SetFlags(annot, FPDF_ANNOT_FLAG_PRINT) }
                     setPdfiumAnnotationString(annot, "NM", annotation.id)
@@ -2218,11 +2220,7 @@ object DesktopPdfium {
         val g: Int,
         val b: Int,
         val a: Int
-    ) {
-        fun withDefaultAlpha(defaultAlpha: Int): PdfiumRgba {
-            return if (a == 255) copy(a = defaultAlpha.coerceIn(0, 255)) else this
-        }
-    }
+    )
 
     @Suppress("MemberVisibilityCanBePrivate")
     open class FsRectF() : Structure() {

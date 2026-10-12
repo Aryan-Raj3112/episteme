@@ -130,6 +130,77 @@ class PdfiumAnnotationExporterTest {
     }
 
     @Test
+    fun `buildPayload keeps the ink colour and its appearance opacity in sync`() {
+        val payload = PdfiumAnnotationExporter.buildPayload(
+            inkAnnotations = mapOf(
+                0 to listOf(
+                    PdfAnnotation(
+                        type = AnnotationType.INK,
+                        inkType = InkType.HIGHLIGHTER,
+                        pageIndex = 0,
+                        points = listOf(PdfPoint(0.1f, 0.2f), PdfPoint(0.9f, 0.2f)),
+                        color = Color(0x8CFFEB3B.toInt()),
+                        strokeWidth = 0.1f,
+                        id = "highlighter-opacity"
+                    ),
+                    PdfAnnotation(
+                        type = AnnotationType.INK,
+                        inkType = InkType.PEN,
+                        pageIndex = 0,
+                        points = listOf(PdfPoint(0.1f, 0.2f), PdfPoint(0.9f, 0.2f)),
+                        color = Color(0xFF336699.toInt()),
+                        strokeWidth = 0.01f,
+                        id = "opaque-pen"
+                    )
+                )
+            ),
+            textBoxes = emptyList(),
+            highlights = emptyList(),
+            pageSizes = listOf(PdfiumPageSize(width = 100, height = 100))
+        )
+
+        assertArrayEquals(intArrayOf(0x8CFFEB3B.toInt(), 0xFF336699.toInt()), payload.inkColors)
+        // FPDFAnnot_SetAP only attaches /GS while the annotation /CA is below 1, so only the
+        // translucent stroke may reference it or the name resolves to nothing.
+        assertTrue(
+            payload.inkAppearances[0],
+            payload.inkAppearances[0].startsWith("q\n/GS gs\n")
+        )
+        assertFalse(payload.inkAppearances[1], payload.inkAppearances[1].contains("gs"))
+    }
+
+    @Test
+    fun `buildPayload maps ink appearance through the rotation-aware page transform`() {
+        fun ink(pageIndex: Int, id: String) = PdfAnnotation(
+            type = AnnotationType.INK,
+            inkType = InkType.PEN,
+            pageIndex = pageIndex,
+            points = listOf(PdfPoint(0.25f, 0.75f), PdfPoint(0.5f, 0.5f)),
+            color = Color(0xFFFF0000.toInt()),
+            strokeWidth = 0.01f,
+            id = id
+        )
+
+        val payload = PdfiumAnnotationExporter.buildPayload(
+            inkAnnotations = mapOf(0 to listOf(ink(0, "unrotated")), 1 to listOf(ink(1, "rotated"))),
+            textBoxes = emptyList(),
+            highlights = emptyList(),
+            pageSizes = listOf(
+                PdfiumPageSize(width = 200, height = 100),
+                PdfiumPageSize(width = 200, height = 100, rotationDegrees = 90)
+            )
+        )
+
+        // Rotation 0: display (0.25, 0.75) of 200x100 -> page space (50, 25).
+        assertTrue(payload.inkAppearances[0], payload.inkAppearances[0].contains("50 25 m"))
+        assertTrue(payload.inkAppearances[0], payload.inkAppearances[0].contains("100 50 l"))
+        // Rotation 90: the same display point lands at page space (75, 50) of the swapped
+        // 100x200 media box. The old rotation-blind x*W,(1-y)*H put it at (50, 25).
+        assertTrue(payload.inkAppearances[1], payload.inkAppearances[1].contains("75 50 m"))
+        assertTrue(payload.inkAppearances[1], payload.inkAppearances[1].contains("50 100 l"))
+    }
+
+    @Test
     fun `buildPayload normalizes highlight rects and preserves names and content notes`() {
         val payload = PdfiumAnnotationExporter.buildPayload(
             inkAnnotations = emptyMap(),
@@ -167,7 +238,9 @@ class PdfiumAnnotationExporterTest {
         )
 
         assertArrayEquals(intArrayOf(1), payload.highlightPageIndices)
-        assertArrayEquals(intArrayOf(PdfHighlightColor.BLUE.color.toArgb()), payload.highlightColors)
+        // Opaque palette colours are burned down to the on-screen BACKGROUND render alpha
+        // (SharedPdfAndroidHighlightColors.RenderAlpha = 0.4 -> 102) before reaching native.
+        assertArrayEquals(intArrayOf(0x661976D2), payload.highlightColors)
         assertArrayEquals(intArrayOf(0), payload.highlightRectOffsets)
         assertArrayEquals(intArrayOf(2), payload.highlightRectCounts)
         assertArrayEquals(
@@ -210,7 +283,7 @@ class PdfiumAnnotationExporterTest {
             pageSizes = listOf(PdfiumPageSize(width = 100, height = 100))
         )
 
-        assertArrayEquals(intArrayOf(customColor.toArgb()), payload.highlightColors)
+        assertArrayEquals(intArrayOf(0x667B1FA2), payload.highlightColors)
     }
 
     @Test
@@ -233,7 +306,7 @@ class PdfiumAnnotationExporterTest {
             pageSizes = listOf(PdfiumPageSize(width = 100, height = 100))
         )
 
-        assertArrayEquals(intArrayOf(persistedColor.toArgb()), payload.highlightColors)
+        assertArrayEquals(intArrayOf(0x6600695C), payload.highlightColors)
     }
 
     @Test

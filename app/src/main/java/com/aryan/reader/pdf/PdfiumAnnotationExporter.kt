@@ -46,7 +46,11 @@ import com.aryan.reader.shared.pdf.SharedPdfAnnotationExportMapper
 import com.aryan.reader.shared.pdf.SharedPdfRichTextAlign
 import com.aryan.reader.shared.pdf.sharedPdfTextBoxParagraphAlignments
 import com.aryan.reader.shared.pdf.pdfInkAppearancePoints
+import com.aryan.reader.shared.pdf.sharedPdfDisplayPointToMediabox
+import com.aryan.reader.shared.pdf.sharedPdfHighlightExportColorArgb
 import com.aryan.reader.shared.pdf.sharedPdfInkAppearanceContent
+import com.aryan.reader.shared.pdf.sharedPdfInkExportColorArgb
+import com.aryan.reader.shared.pdf.sharedPdfInkStrokeWidthPdfUnits
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -290,7 +294,11 @@ internal object PdfiumAnnotationExporter {
             val pageHeight = pageSize.height.toFloat()
             inkPageIndices[index] = annotation.pageIndex
             inkTypes[index] = annotation.tool.toAndroidInkTypeOrdinal()
-            inkColors[index] = annotation.colorArgb
+            // The native bridge writes this same value into the annotation /CA and derives
+            // /InkList from it, and FPDFAnnot_SetAP only attaches the /GS opacity resource
+            // while /CA < 1, so the dict colour and the /AP stroke must come from one value.
+            val inkColorArgb = sharedPdfInkExportColorArgb(annotation.tool, annotation.colorArgb)
+            inkColors[index] = inkColorArgb
             inkStrokeWidths[index] = annotation.strokeWidth
             inkPointOffsets[index] = inkPointCursor / 2
             inkPointCounts[index] = points.size
@@ -299,16 +307,17 @@ internal object PdfiumAnnotationExporter {
             // Preview.app draws the annotation border rectangle when /AP is missing
             // and does not rebuild the path from /InkList. SetBorder clears any
             // existing appearance, so install the stroke stream after the border.
-            val strokeWidthPdfUnits = maxOf(0.25f, annotation.strokeWidth * pageWidth)
+            // The native bridge maps /InkList through the rotation-aware
+            // display→page-space transform; the appearance must use that same transform,
+            // not a rotation-blind x*W,(1-y)*H, or rotated pages export offset strokes.
             inkAppearances[index] = sharedPdfInkAppearanceContent(
-                pagePoints = points.map { point ->
-                    PdfPagePoint(
-                        x = point.x.coerceIn(0f, 1f) * pageWidth,
-                        y = (1f - point.y.coerceIn(0f, 1f)) * pageHeight,
-                    )
-                },
-                strokeWidthPdfUnits = strokeWidthPdfUnits,
-                colorArgb = annotation.colorArgb,
+                pagePoints = points.toMediaboxPagePoints(
+                    displayWidth = pageWidth,
+                    displayHeight = pageHeight,
+                    rotationDegrees = pageSize.rotationDegrees,
+                ),
+                strokeWidthPdfUnits = sharedPdfInkStrokeWidthPdfUnits(annotation.strokeWidth, pageWidth),
+                colorArgb = inkColorArgb,
             )
             points.forEach { point ->
                 inkPoints[inkPointCursor++] = point.x
@@ -371,7 +380,12 @@ internal object PdfiumAnnotationExporter {
         boundedHighlights.forEachIndexed { index, highlight ->
             highlightPageIndices[index] = highlight.pageIndex
             highlightSubtypes[index] = highlight.style.toPdfiumTextMarkupSubtype()
-            highlightColors[index] = highlight.colorArgb
+            // Viewers build the markup appearance from the annot colour, so burn opaque
+            // palette colours down to the alpha the reader draws on screen.
+            highlightColors[index] = sharedPdfHighlightExportColorArgb(
+                highlight.style,
+                highlight.colorArgb,
+            )
             highlightRectOffsets[index] = highlightRectCursor / 4
             highlightRectCounts[index] = highlight.boundsList.size
             highlightNames[index] = highlight.id
@@ -889,7 +903,37 @@ internal object PdfiumAnnotationExporter {
         return overlay
     }
 
-    private fun readPdfPageSizes(sourceFile: File): List<PdfiumPageSize> {
+    private suspend fun readPdfPageSizes(sourceFile: File): List<PdfiumPageSize> {
+        // PDFium is the authority: the native bridge maps ink strokes with these exact
+        // rotated sizes and rotations, so /AP geometry built from them stays aligned.
+        val pdfiumSizes = PdfiumEngineProvider.withPdfium {
+            readPdfiumPageGeometry(sourceFile.absolutePath)
+        }
+        if (!pdfiumSizes.isNullOrEmpty()) return pdfiumSizes
+        return readPdfRendererPageSizes(sourceFile)
+    }
+
+    private fun readPdfiumPageGeometry(sourcePath: String): List<PdfiumPageSize>? {
+        if (!NativePdfiumBridge.ensureLoaded()) return null
+        val flat = runCatching { NativePdfiumBridge.readPageGeometry(sourcePath) }
+            .onFailure { Timber.tag(EXPORT_GEOM_TAG).w(it, "Unable to read PDFium page geometry.") }
+            .getOrNull()
+            ?: return null
+        if (flat.size < 3) return null
+        return List(flat.size / 3) { index ->
+            val size = PdfiumPageSize(
+                width = flat[index * 3],
+                height = flat[index * 3 + 1],
+                rotationDegrees = flat[index * 3 + 2],
+            )
+            Timber.tag(EXPORT_GEOM_TAG).d(
+                "pageSize page=$index ${size.width}x${size.height} rotate=${size.rotationDegrees}",
+            )
+            size
+        }
+    }
+
+    private fun readPdfRendererPageSizes(sourceFile: File): List<PdfiumPageSize> {
         return ParcelFileDescriptor.open(sourceFile, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
             PdfRenderer(descriptor).use { renderer ->
                 List(renderer.pageCount) { index ->
@@ -905,6 +949,20 @@ internal object PdfiumAnnotationExporter {
                 }
             }
         }
+    }
+
+    private fun List<PdfPagePoint>.toMediaboxPagePoints(
+        displayWidth: Float,
+        displayHeight: Float,
+        rotationDegrees: Int,
+    ): List<PdfPagePoint> = mapNotNull { point ->
+        sharedPdfDisplayPointToMediabox(
+            xNorm = point.x,
+            yNorm = point.y,
+            displayWidth = displayWidth,
+            displayHeight = displayHeight,
+            rotationDegrees = rotationDegrees,
+        )?.let { (x, y) -> PdfPagePoint(x, y) }
     }
 
     private fun pageSizeFor(pageSizes: List<PdfiumPageSize>, pageIndex: Int): PdfiumPageSize =
@@ -1018,7 +1076,9 @@ internal data class PdfiumRasterOverlay(
 
 internal data class PdfiumPageSize(
     val width: Int,
-    val height: Int
+    val height: Int,
+    /** Clockwise page rotation (0/90/180/270) applied to the display size. */
+    val rotationDegrees: Int = 0
 ) {
     val aspect: Float
         get() = if (width > 0 && height > 0) width.toFloat() / height.toFloat() else Default.aspect
