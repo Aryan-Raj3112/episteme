@@ -34,6 +34,8 @@ class SharedOfficeOxideIosTest {
         assertTrue(SharedOfficeOxide.isAvailable, "office_oxide bridge unavailable")
         assertTrue(SharedOfficeOxide.supports("docx"))
         assertTrue(SharedOfficeOxide.supports(".DOCX"))
+        assertTrue(SharedOfficeOxide.supports("doc"))
+        assertTrue(SharedOfficeOxide.supports(".DOT"))
         assertFalse(SharedOfficeOxide.supports("odt"))
 
         val bytes = fixtureDocxBytes()

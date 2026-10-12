@@ -32,6 +32,7 @@
 				<string>org.oasis.opendocument.text</string>
 				<string>org.oasis.opendocument.text-flat</string>
 				<string>org.openxmlformats.wordprocessingml.document</string>
+				<string>com.microsoft.word.doc</string>
 				<string>com.microsoft.powerpoint.pptx</string>
 				<string>com.aryan.reader.fb2</string>
 				<string>com.aryan.reader.mobi</string>

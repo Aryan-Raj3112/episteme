@@ -237,7 +237,7 @@ class BookTtsContentRepository(context: Context) {
         FileType.ODT, FileType.FODT -> OdtParser(appContext).createOdtBook(
             input, item.bookId, originalBookNameHint = item.displayName, isFlat = item.type == FileType.FODT
         )
-        FileType.MD, FileType.TXT, FileType.HTML, FileType.DOCX -> SingleFileImporter(appContext).importSingleFile(
+        FileType.MD, FileType.TXT, FileType.HTML, FileType.DOCX, FileType.DOC -> SingleFileImporter(appContext).importSingleFile(
             input, item.type, item.displayName, item.bookId
         )
         else -> error("Unsupported reflow type ${item.type}")
@@ -326,7 +326,7 @@ class BookTtsContentRepository(context: Context) {
     companion object {
         val REFLOW_TYPES = setOf(
             FileType.EPUB, FileType.MOBI, FileType.FB2, FileType.ODT, FileType.FODT,
-            FileType.MD, FileType.TXT, FileType.HTML, FileType.DOCX
+            FileType.MD, FileType.TXT, FileType.HTML, FileType.DOCX, FileType.DOC
         )
 
         fun supports(type: FileType): Boolean = type == FileType.PDF || type in REFLOW_TYPES

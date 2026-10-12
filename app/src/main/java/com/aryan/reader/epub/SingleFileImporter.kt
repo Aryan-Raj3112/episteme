@@ -48,7 +48,7 @@ class SingleFileImporter(private val context: Context) {
     private val jsonSerializer = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     companion object {
-        private const val MAX_DOCX_ARCHIVE_BYTES = 64L * 1024L * 1024L
+        private const val MAX_OFFICE_ARCHIVE_BYTES = 64L * 1024L * 1024L
         private const val MAX_DOCX_XML_BYTES = 48L * 1024L * 1024L
         /**
          * Chapters split past this size, always between tags — never inside
@@ -243,6 +243,7 @@ class SingleFileImporter(private val context: Context) {
             FileType.TXT -> parsePlainText(inputStream, originalBookNameHint, bookId, parseContent)
             FileType.HTML -> parseHtml(inputStream, originalBookNameHint, bookId, parseContent)
             FileType.DOCX -> parseDocx(inputStream, originalBookNameHint, bookId, parseContent)
+            FileType.DOC -> parseDoc(inputStream, originalBookNameHint, bookId, parseContent)
             else -> parsePlainText(inputStream, originalBookNameHint, bookId, parseContent)
         }
     }
@@ -1372,6 +1373,34 @@ class SingleFileImporter(private val context: Context) {
         originalBookNameHint: String,
         bookId: String,
         parseContent: Boolean
+    ): EpubBook = importOfficeDocument(
+        inputStream, originalBookNameHint, bookId, parseContent, OfficeImportFormat.DOCX
+    )
+
+    private suspend fun parseDoc(
+        inputStream: InputStream,
+        originalBookNameHint: String,
+        bookId: String,
+        parseContent: Boolean
+    ): EpubBook = importOfficeDocument(
+        inputStream, originalBookNameHint, bookId, parseContent, OfficeImportFormat.DOC
+    )
+
+    /**
+     * DOCX is a zip of XML (validated as such); DOC is an opaque CFB binary
+     * (size-checked only — opening it as a zip would just throw).
+     */
+    private enum class OfficeImportFormat(val tag: String, val sourceSuffix: String) {
+        DOCX("DOCX", ".docx"),
+        DOC("DOC", ".doc"),
+    }
+
+    private suspend fun importOfficeDocument(
+        inputStream: InputStream,
+        originalBookNameHint: String,
+        bookId: String,
+        parseContent: Boolean,
+        format: OfficeImportFormat,
     ): EpubBook = withContext(Dispatchers.IO) {
         if (!parseContent) {
             return@withContext EpubBook(
@@ -1392,28 +1421,37 @@ class SingleFileImporter(private val context: Context) {
         val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
         val metadataFile = metadataFile(extractionDir)
 
-        readCachedSingleFileBook(metadataFile, extractionDir, "DOCX")?.let { cachedBook ->
-            Timber.tag("FileOpenPerf").d("[DOCX] Loaded from cache instantly | bookId=$bookId")
+        readCachedSingleFileBook(metadataFile, extractionDir, format.tag)?.let { cachedBook ->
+            Timber.tag("FileOpenPerf").d("[${format.tag}] Loaded from cache instantly | bookId=$bookId")
             return@withContext cachedBook
         }
         ImportedFileCache.resetActiveBookDir(context, bookId)
 
-        val parseStart = System.currentTimeMillis()
-        Timber.tag("FileOpenPerf").d("[DOCX] parseDocx START | file=$originalBookNameHint")
+        Timber.tag("FileOpenPerf").d("[${format.tag}] import START | file=$originalBookNameHint")
 
-        val sourceDocxFile = File(context.cacheDir, "temp_docx_source_${UUID.randomUUID()}.docx")
-        val tempFile = File(context.cacheDir, "temp_docx_${UUID.randomUUID()}.html")
+        val fileTag = format.tag.lowercase()
+        val sourceOfficeFile = File(context.cacheDir, "temp_${fileTag}_source_${UUID.randomUUID()}${format.sourceSuffix}")
+        val tempFile = File(context.cacheDir, "temp_${fileTag}_${UUID.randomUUID()}.html")
         try {
             inputStream.use { stream ->
-                FileOutputStream(sourceDocxFile).use { output ->
+                FileOutputStream(sourceOfficeFile).use { output ->
                     stream.copyTo(output)
                 }
             }
 
-            validateDocxForImport(sourceDocxFile, originalBookNameHint)
+            if (format == OfficeImportFormat.DOCX) {
+                validateDocxForImport(sourceOfficeFile, originalBookNameHint)
+            } else {
+                validateDocSizeForImport(sourceOfficeFile, originalBookNameHint)
+            }
 
-            // Native office_oxide first, mammoth fallback — see DocxHtmlConverter.
-            val htmlContent = DocxHtmlConverter.convert(sourceDocxFile, originalBookNameHint)
+            // Native office_oxide first, mammoth fallback for DOCX — see DocxHtmlConverter.
+            // DOC has no legacy fallback: mammoth cannot parse CFB binaries.
+            val htmlContent = if (format == OfficeImportFormat.DOCX) {
+                DocxHtmlConverter.convert(sourceOfficeFile, originalBookNameHint)
+            } else {
+                DocxHtmlConverter.convertDoc(sourceOfficeFile, originalBookNameHint)
+            }
 
             FileOutputStream(tempFile).bufferedWriter().use { writer ->
                 val title = originalBookNameHint.substringBeforeLast(".")
@@ -1426,8 +1464,8 @@ class SingleFileImporter(private val context: Context) {
                 return@withContext parseHtml(tempStream, originalBookNameHint, bookId, parseContent)
             }
         } finally {
-            if (sourceDocxFile.exists()) {
-                sourceDocxFile.delete()
+            if (sourceOfficeFile.exists()) {
+                sourceOfficeFile.delete()
             }
             if (tempFile.exists()) {
                 tempFile.delete()
@@ -1435,9 +1473,17 @@ class SingleFileImporter(private val context: Context) {
         }
     }
 
+    /** Size cap only — a DOC is an opaque CFB binary, not a zip of XML. */
+    private fun validateDocSizeForImport(sourceDocFile: File, originalBookNameHint: String) {
+        if (sourceDocFile.length() > MAX_OFFICE_ARCHIVE_BYTES) {
+            Timber.w("DOC file too large for import: file=$originalBookNameHint bytes=${sourceDocFile.length()}")
+            throw IllegalStateException("This DOC file is too large to open safely on this device.")
+        }
+    }
+
     private fun validateDocxForImport(sourceDocxFile: File, originalBookNameHint: String) {
         val archiveBytes = sourceDocxFile.length()
-        if (archiveBytes > MAX_DOCX_ARCHIVE_BYTES) {
+        if (archiveBytes > MAX_OFFICE_ARCHIVE_BYTES) {
             throw IllegalStateException("This DOCX file is too large to open safely on this device.")
         }
 

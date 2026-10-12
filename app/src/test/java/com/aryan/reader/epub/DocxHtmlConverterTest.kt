@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -17,6 +18,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import org.junit.Assert.assertThrows
 
 /**
  * [DocxHtmlConverter] routing: native bridge first, mammoth fallback.
@@ -140,6 +142,53 @@ class DocxHtmlConverterTest {
         val chapter = book.chapters.single()
         assertTrue(chapter.plainTextContent.contains("Fallback"))
         assertTrue(chapter.plainTextContent.contains("bold"))
+    }
+
+    @Test
+    fun `doc converts through oxide with no mammoth fallback`() {
+        val file = temp.newFile("source.doc")
+        file.writeBytes("fake-doc-bytes".toByteArray())
+        var rendered: ByteArray? = null
+        val oxide = DocxHtmlConverter.OxideRenderer { bytes ->
+            rendered = bytes
+            "<p>Legacy</p><hr /><hr /><p>text</p>"
+        }
+
+        val html = DocxHtmlConverter.convertDoc(file, "Legacy.doc", oxide)
+
+        assertEquals("<p>Legacy</p><hr /><p>text</p>", html)
+        assertArrayEquals("fake-doc-bytes".toByteArray(), rendered)
+    }
+
+    @Test
+    fun `doc throws a clean error when oxide cannot read it`() {
+        val file = temp.newFile("unreadable.doc")
+        file.writeBytes("not a document".toByteArray())
+
+        val error = assertThrows(IllegalStateException::class.java) {
+            DocxHtmlConverter.convertDoc(file, "Unreadable.doc", DocxHtmlConverter.OxideRenderer { null })
+        }
+        assertTrue(error.message!!.contains("DOC"))
+    }
+
+    @Test
+    fun `doc with disabled flag throws instead of calling oxide`() {
+        val file = temp.newFile("flag-off.doc")
+        file.writeBytes("fake-doc-bytes".toByteArray())
+        var called = false
+        val oxide = DocxHtmlConverter.OxideRenderer {
+            called = true
+            "<p>sentinel</p>"
+        }
+        try {
+            DocxHtmlConverter.preferOfficeOxide = false
+            assertThrows(IllegalStateException::class.java) {
+                DocxHtmlConverter.convertDoc(file, "Flagged.doc", oxide)
+            }
+            assertFalse(called)
+        } finally {
+            DocxHtmlConverter.preferOfficeOxide = true
+        }
     }
 
     @Test

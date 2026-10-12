@@ -427,6 +427,7 @@ object SharedTtsListenCapabilities {
         FileType.TXT,
         FileType.HTML,
         FileType.DOCX,
+        FileType.DOC,
     )
 
     fun supports(type: FileType): Boolean = type == FileType.PDF || type in reflowTypes

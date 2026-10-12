@@ -9,6 +9,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class SharedJvmBookLoaderTest {
@@ -98,6 +99,17 @@ class SharedJvmBookLoaderTest {
         assertTrue("CellA" in html)
         assertTrue("""<a href="https://example.com">link text</a>""" in html)
         assertTrue("<img src=\"data:image/png;base64," in html)
+    }
+
+    @Test
+    fun `doc loader errors cleanly without the desktop native bridge`() = withTempDir { dir ->
+        val file = File(dir, "legacy.doc")
+        file.writeBytes("not a word document".toByteArray())
+
+        val error = assertFailsWith<IllegalStateException> {
+            SharedJvmBookLoader.load(file, FileType.DOC)
+        }
+        assertTrue(error.message!!.contains("desktop"))
     }
 
     @Test

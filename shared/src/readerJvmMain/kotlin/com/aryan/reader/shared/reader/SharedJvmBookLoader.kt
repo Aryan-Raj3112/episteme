@@ -20,6 +20,8 @@ import com.aryan.reader.paginatedreader.UserAgentStylesheet
 import com.aryan.reader.paginatedreader.htmlToSemanticBlocks
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.docparse.SharedDocxDocumentParser
+import com.aryan.reader.shared.docparse.SharedOfficeHtmlChapters
+import com.aryan.reader.shared.office.SharedOfficeOxide
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
@@ -147,6 +149,10 @@ object SharedJvmBookLoader {
                 FileType.MD -> loadPlainText(file)
                 FileType.FB2 -> loadFb2(file)
                 FileType.DOCX -> loadDocx(file)
+                // Explicit branch (rather than the else below) so the error names
+                // the format — and so desktop starts working with no call-site
+                // changes when the desktop native bridge lands.
+                FileType.DOC -> loadDoc(file)
                 FileType.ODT -> loadOdt(file, isFlat = false)
                 FileType.FODT -> loadOdt(file, isFlat = true)
                 FileType.MOBI -> loadMobi(file)
@@ -475,6 +481,36 @@ object SharedJvmBookLoader {
             return ParsedDocument(title = title, author = author, chapters = chapters)
                 .toBook(file, parseCssRules(emptyMap()))
         }
+    }
+
+    /**
+     * Legacy Word binary (CFB/OLE2). The only engine is office_oxide, which is
+     * not wired on desktop yet ([SharedOfficeOxide] desktop actual is a stub
+     * reporting unavailable) — so this errors cleanly today. FileCapabilities
+     * keeps DOC desktop-unreadable until the desktop native bridge lands, at
+     * which point this starts working with no call-site changes.
+     */
+    private fun loadDoc(file: File): SharedEpubBook {
+        val title = file.nameWithoutExtension
+        val html = if (SharedOfficeOxide.supports("doc")) {
+            SharedOfficeOxide.renderHtml(file.readBytes(), "doc", embedImages = true)
+        } else {
+            null
+        } ?: error("DOC files are not supported on desktop yet.")
+        if (html.isBlank()) {
+            return htmlBook(
+                file = file,
+                title = title,
+                author = null,
+                html = "<p>This DOC did not contain readable text.</p>",
+                chapterTitle = title
+            )
+        }
+        val chapters = SharedOfficeHtmlChapters.split(html).map { chapter ->
+            ParsedChapter(title = chapter.title.orEmpty(), html = chapter.html, plainText = "")
+        }
+        return ParsedDocument(title = title, chapters = chapters)
+            .toBook(file, parseCssRules(emptyMap()))
     }
 
     private fun loadOdt(file: File, isFlat: Boolean): SharedEpubBook {

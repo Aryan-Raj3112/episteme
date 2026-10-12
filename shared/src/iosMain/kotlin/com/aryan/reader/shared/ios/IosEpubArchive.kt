@@ -436,6 +436,9 @@ internal fun loadIosEpubBook(book: BookItem): SharedEpubBook {
         iosMobiLog { "Routing book to MOBI loader id=${book.id} file=${book.displayName}" }
         return loadIosMobiBook(book).also { book.iosBookLoadCacheSave(cacheKey, it) }
     }
+    if (book.type == FileType.DOC) {
+        return loadIosDocBook(book).also { book.iosBookLoadCacheSave(cacheKey, it) }
+    }
     if (book.type in IOS_ZIP_DOCUMENT_READER_TYPES) {
         return loadIosZipDocumentBook(book).also { book.iosBookLoadCacheSave(cacheKey, it) }
     }
@@ -1082,6 +1085,45 @@ private fun loadIosZipDocumentBook(book: BookItem): SharedEpubBook {
 }
 
 /**
+ * Legacy Word binary (CFB/OLE2 — not a zip, so it cannot go through
+ * [loadIosZipDocumentBook]). The only engine is office_oxide: failure is a
+ * clean error rather than a fallback, because there is no legacy DOC path to
+ * regress and the hand-rolled parser cannot read CFB.
+ */
+private fun loadIosDocBook(book: BookItem): SharedEpubBook {
+    val title = book.title?.takeIf { it.isNotBlank() }
+        ?: book.displayName.substringBeforeLast('.').ifBlank { book.displayName }
+    val path = book.path.resolveIosEpubSourcePath() ?: error("DOC path is unavailable")
+    val bytes = path.readIosFileBytes()
+    require(bytes.size <= MAX_IOS_DOCX_ARCHIVE_BYTES) {
+        "This DOC file is too large to open safely on this device."
+    }
+    val html = if (SharedOfficeOxide.supports("doc")) {
+        SharedOfficeOxide.renderHtml(bytes, "doc", embedImages = true)
+    } else {
+        null
+    }
+    require(!html.isNullOrBlank()) { "No readable text was found in this DOC file" }
+    val split = SharedOfficeHtmlChapters.split(html)
+    val chapters = split.mapIndexed { index, chapter ->
+        SharedEpubChapter(
+            id = "${book.id}-part-${index + 1}",
+            title = chapter.title ?: if (split.size == 1) title else "Part ${index + 1}",
+            plainText = chapter.html.iosReaderPlainText(),
+            htmlContent = chapter.html.trim(),
+        )
+    }
+    require(chapters.isNotEmpty()) { "No readable text was found in this DOC file" }
+    return SharedEpubBook(
+        id = book.id,
+        fileName = book.displayName,
+        title = title,
+        author = book.author,
+        chapters = chapters,
+    )
+}
+
+/**
  * Structured DOCX rendering (headings become chapters, formatting is preserved,
  * media embeds as data URIs) matching Android's mammoth-based import fidelity.
  *
@@ -1111,7 +1153,7 @@ private fun loadIosDocxChaptersViaOxide(
         return null
     }
     val bytes = archive.sourceBytes
-    // Mirror Android's MAX_DOCX_ARCHIVE_BYTES: oversize packages skip the
+    // Mirror Android's MAX_OFFICE_ARCHIVE_BYTES: oversize packages skip the
     // native render and take the legacy path instead of failing the open.
     if (bytes.size > MAX_IOS_DOCX_ARCHIVE_BYTES) {
         return null
@@ -1141,7 +1183,7 @@ private fun loadIosDocxChaptersViaOxide(
 private val IosDocxRasterExtensions = setOf("png", "jpg", "jpeg", "gif", "bmp", "webp")
 
 /**
- * Mirror of Android `SingleFileImporter.MAX_DOCX_ARCHIVE_BYTES`: packages past
+ * Mirror of Android `SingleFileImporter.MAX_OFFICE_ARCHIVE_BYTES`: packages past
  * this skip the native render and take the legacy parser path.
  */
 private const val MAX_IOS_DOCX_ARCHIVE_BYTES = 64L * 1024L * 1024L

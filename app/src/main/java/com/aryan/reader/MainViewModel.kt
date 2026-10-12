@@ -2376,7 +2376,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     isFlat = type == FileType.FODT
                 )
 
-                FileType.MD, FileType.TXT, FileType.HTML, FileType.DOCX -> singleFileImporter.importSingleFile(
+                FileType.MD, FileType.TXT, FileType.HTML, FileType.DOCX, FileType.DOC -> singleFileImporter.importSingleFile(
                     inputStream = inputStream,
                     type = type,
                     originalBookNameHint = displayName,
@@ -3037,6 +3037,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             FileType.HTML,
             FileType.FB2,
             FileType.DOCX,
+            FileType.DOC,
             FileType.ODT,
             FileType.FODT,
             FileType.PPTX -> AnnotationExportFormatter.fromEpubHighlights(

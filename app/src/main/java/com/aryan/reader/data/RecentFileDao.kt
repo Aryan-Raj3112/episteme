@@ -171,7 +171,7 @@ interface RecentFileDao {
         AND isDeleted = 0
         AND (
             (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX') AND folderTextMetadataParsed = 0)
-            OR (type IN ('PDF', 'EPUB', 'TXT', 'MD', 'HTML', 'MOBI', 'FB2', 'CBZ', 'CBR', 'CB7', 'CBT', 'DOCX', 'ODT', 'FODT', 'PPTX') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
+            OR (type IN ('PDF', 'EPUB', 'TXT', 'MD', 'HTML', 'MOBI', 'FB2', 'CBZ', 'CBR', 'CB7', 'CBT', 'DOCX', 'DOC', 'ODT', 'FODT', 'PPTX') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
         )
         ORDER BY timestamp DESC
         LIMIT :limit
@@ -184,7 +184,7 @@ interface RecentFileDao {
         AND isDeleted = 0
         AND (
             (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX') AND folderTextMetadataParsed = 0)
-            OR (type IN ('PDF', 'EPUB', 'TXT', 'MD', 'HTML', 'MOBI', 'FB2', 'CBZ', 'CBR', 'CB7', 'CBT', 'DOCX', 'ODT', 'FODT', 'PPTX') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
+            OR (type IN ('PDF', 'EPUB', 'TXT', 'MD', 'HTML', 'MOBI', 'FB2', 'CBZ', 'CBR', 'CB7', 'CBT', 'DOCX', 'DOC', 'ODT', 'FODT', 'PPTX') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
         )
         ORDER BY timestamp DESC
         LIMIT :limit
@@ -197,7 +197,7 @@ interface RecentFileDao {
         AND isDeleted = 0
         AND (
             (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX') AND folderTextMetadataParsed = 0)
-            OR (type IN ('PDF', 'EPUB', 'TXT', 'MD', 'HTML', 'MOBI', 'FB2', 'CBZ', 'CBR', 'CB7', 'CBT', 'DOCX', 'ODT', 'FODT', 'PPTX') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
+            OR (type IN ('PDF', 'EPUB', 'TXT', 'MD', 'HTML', 'MOBI', 'FB2', 'CBZ', 'CBR', 'CB7', 'CBT', 'DOCX', 'DOC', 'ODT', 'FODT', 'PPTX') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
         )
     """)
     suspend fun countFolderBooksNeedingTextMetadata(): Int
@@ -208,7 +208,7 @@ interface RecentFileDao {
         AND isDeleted = 0
         AND (
             (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX') AND folderTextMetadataParsed = 0)
-            OR (type IN ('PDF', 'EPUB', 'TXT', 'MD', 'HTML', 'MOBI', 'FB2', 'CBZ', 'CBR', 'CB7', 'CBT', 'DOCX', 'ODT', 'FODT', 'PPTX') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
+            OR (type IN ('PDF', 'EPUB', 'TXT', 'MD', 'HTML', 'MOBI', 'FB2', 'CBZ', 'CBR', 'CB7', 'CBT', 'DOCX', 'DOC', 'ODT', 'FODT', 'PPTX') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
         )
     """)
     suspend fun countFolderBooksNeedingTextMetadata(sourceFolderUri: String): Int

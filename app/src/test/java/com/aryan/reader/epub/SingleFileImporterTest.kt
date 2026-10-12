@@ -10,6 +10,7 @@ import org.jsoup.nodes.Document
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -411,6 +412,25 @@ class SingleFileImporterTest {
         assertTrue(cleaned.contains("<p>Bogus</p>"))
         assertTrue(cleaned.contains("<p>No style</p>"))
         assertFalse("no inline CSS may survive: $cleaned", cleaned.contains("style="))
+    }
+
+    @Test
+    fun `doc import fails cleanly without a native bridge`() = runTest {
+        // The JVM has no native bridge, and DOC has no legacy fallback — the
+        // import must surface the converter's clean error, not a raw exception.
+        val importer = SingleFileImporter(contextWithCache(temp.newFolder("doc-no-bridge-cache")))
+
+        try {
+            importer.importSingleFile(
+                inputStream = ByteArrayInputStream("not a word document".toByteArray()),
+                type = FileType.DOC,
+                originalBookNameHint = "Legacy.doc",
+                bookId = "doc-no-bridge-book",
+            )
+            fail("expected IllegalStateException")
+        } catch (error: IllegalStateException) {
+            assertTrue(error.message!!.contains("DOC"))
+        }
     }
 
     @Test

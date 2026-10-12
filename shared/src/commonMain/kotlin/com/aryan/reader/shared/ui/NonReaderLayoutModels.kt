@@ -456,7 +456,7 @@ private val LibraryFileTypeGroupTemplates = listOf(
     NonReaderLibraryFileTypeGroup(
         titleKey = "desktop_file_type_group_documents",
         titleFallback = "Documents",
-        fileTypes = listOf(FileType.PDF, FileType.PPTX, FileType.DOCX, FileType.ODT, FileType.FODT)
+        fileTypes = listOf(FileType.PDF, FileType.PPTX, FileType.DOCX, FileType.DOC, FileType.ODT, FileType.FODT)
     ),
     NonReaderLibraryFileTypeGroup(
         titleKey = "desktop_file_type_group_text_web",

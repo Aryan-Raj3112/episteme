@@ -45,6 +45,14 @@ internal object DocxHtmlConverter {
         }
     }
 
+    private val sharedDocOxide = OxideRenderer { bytes ->
+        if (!SharedOfficeOxide.supports("doc")) {
+            null
+        } else {
+            SharedOfficeOxide.renderHtml(bytes, "doc", embedImages = true)
+        }
+    }
+
     /**
      * Raster image parts worth gating on. office_oxide only Base64-embeds
      * png/jpeg/gif (anything else has no MIME in its IR and degrades to alt
@@ -78,10 +86,36 @@ internal object DocxHtmlConverter {
             .let(::collapseRedundantBreaks)
     }
 
+    /**
+     * Converts an already-validated legacy DOC (CFB binary) file to an HTML
+     * fragment. Oxide-only by necessity: mammoth cannot parse CFB, and there
+     * was no legacy DOC path to regress — so failure surfaces as the same
+     * clean too-large/unreadable error shape the DOCX path uses, never a raw
+     * exception. There is no image gate here either: with no fallback engine,
+     * a gate could only turn a readable document into an error.
+     */
+    fun convertDoc(
+        sourceDocFile: File,
+        originalBookNameHint: String,
+        oxide: OxideRenderer = sharedDocOxide,
+    ): String {
+        if (!preferOfficeOxide) {
+            Timber.tag("FileOpenPerf")
+                .d("[DOC] office_oxide disabled by flag; no legacy DOC path exists | file=$originalBookNameHint")
+        } else {
+            val viaOxide = renderViaOfficeOxide(sourceDocFile, originalBookNameHint, oxide, tag = "DOC")
+            if (!viaOxide.isNullOrBlank()) {
+                return collapseRedundantBreaks(viaOxide)
+            }
+        }
+        throw IllegalStateException("This DOC file could not be opened on this device.")
+    }
+
     private fun renderViaOfficeOxide(
         sourceDocxFile: File,
         originalBookNameHint: String,
         oxide: OxideRenderer,
+        tag: String = "DOCX",
     ): String? {
         val started = System.currentTimeMillis()
         return try {
@@ -89,29 +123,29 @@ internal object DocxHtmlConverter {
             val html = oxide.render(bytes)
             if (html.isNullOrBlank()) {
                 Timber.tag("FileOpenPerf").d(
-                    "[DOCX] office_oxide could not read file; falling back to mammoth " +
+                    "[$tag] office_oxide could not read file " +
                         "| file=$originalBookNameHint inBytes=${bytes.size}",
                 )
                 null
             } else {
                 Timber.tag("FileOpenPerf").d(
-                    "[DOCX] office_oxide conversion done " +
+                    "[$tag] office_oxide conversion done " +
                         "| inBytes=${bytes.size} outChars=${html.length} " +
                         "imgTags=${html.split("<img").size - 1} " +
                         "elapsed=${System.currentTimeMillis() - started}ms",
                 )
                 Timber.tag(DOCX_IMAGE_DEBUG_TAG).d(
-                    "[DOCX] oxide | inBytes=${bytes.size} outChars=${html.length} " +
+                    "[$tag] oxide | inBytes=${bytes.size} outChars=${html.length} " +
                         "imgTags=${html.split("<img").size - 1}",
                 )
                 html
             }
         } catch (oom: OutOfMemoryError) {
-            Timber.e(oom, "DOCX conversion ran out of memory for $originalBookNameHint")
-            throw IllegalStateException("This DOCX file is too large to open safely on this device.")
+            Timber.e(oom, "$tag conversion ran out of memory for $originalBookNameHint")
+            throw IllegalStateException("This $tag file is too large to open safely on this device.")
         } catch (error: Exception) {
             Timber.tag("FileOpenPerf")
-                .w(error, "[DOCX] office_oxide failed; falling back to mammoth | file=$originalBookNameHint")
+                .w(error, "[$tag] office_oxide failed | file=$originalBookNameHint")
             null
         }
     }

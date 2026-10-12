@@ -1833,7 +1833,7 @@ internal fun sharedMobileFileTypeColor(type: FileType): Color {
         FileType.PDF -> Color(0xFFE53935)
         FileType.EPUB, FileType.MOBI, FileType.FB2 -> Color(0xFF1E88E5)
         FileType.CBZ, FileType.CBR, FileType.CB7, FileType.CBT -> Color(0xFF8E24AA)
-        FileType.DOCX, FileType.ODT, FileType.FODT -> Color(0xFF3949AB)
+        FileType.DOCX, FileType.DOC, FileType.ODT, FileType.FODT -> Color(0xFF3949AB)
         FileType.MD, FileType.TXT, FileType.HTML -> Color(0xFF00897B)
         FileType.PPTX -> Color(0xFFF4511E)
         FileType.AUDIOBOOK -> Color(0xFF6D4C41)

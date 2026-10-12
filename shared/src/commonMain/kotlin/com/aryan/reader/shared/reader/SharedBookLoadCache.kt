@@ -255,6 +255,7 @@ private fun FileType.requiresCachedSemanticBlocks(): Boolean {
         FileType.HTML,
         FileType.FB2,
         FileType.DOCX,
+        FileType.DOC,
         FileType.ODT,
         FileType.FODT -> true
         else -> false

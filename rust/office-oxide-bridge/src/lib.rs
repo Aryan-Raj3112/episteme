@@ -45,7 +45,7 @@ use office_oxide::{Document, DocumentFormat, OfficeError};
 /// meaning; never when merely adding a function.
 pub const OFFICE_BRIDGE_ABI_VERSION: u32 = 1;
 
-/// Input cap, matching `SingleFileImporter.MAX_DOCX_ARCHIVE_BYTES` (64 MiB) so
+/// Input cap, matching `SingleFileImporter.MAX_OFFICE_ARCHIVE_BYTES` (64 MiB) so
 /// the native layer enforces the same policy as the existing DOCX import path.
 const MAX_INPUT_BYTES: usize = 64 * 1024 * 1024;
 

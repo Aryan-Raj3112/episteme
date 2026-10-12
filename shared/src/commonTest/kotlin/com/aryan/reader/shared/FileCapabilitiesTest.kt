@@ -29,6 +29,11 @@ class FileCapabilitiesTest {
         assertEquals("epub", SharedFileCapabilities.primaryExtensionFor(FileType.EPUB))
         assertEquals("application/pdf", SharedFileCapabilities.mimeTypeFor(FileType.PDF))
         assertEquals("pptx", SharedFileCapabilities.primaryExtensionFor(FileType.PPTX))
+        assertEquals("doc", SharedFileCapabilities.primaryExtensionFor(FileType.DOC))
+        assertEquals("application/msword", SharedFileCapabilities.mimeTypeFor(FileType.DOC))
+        assertEquals(FileType.DOC, SharedFileCapabilities.fileTypeForName("report.doc"))
+        assertEquals(FileType.DOC, SharedFileCapabilities.fileTypeForName("template.DOT"))
+        assertTrue("application/msword" in SharedFileCapabilities.androidFilePickerMimeTypes)
         assertEquals(
             "application/vnd.openxmlformats-officedocument.presentationml.presentation",
             SharedFileCapabilities.mimeTypeFor(FileType.PPTX)
@@ -103,6 +108,17 @@ class FileCapabilitiesTest {
             ReaderFeatureSurface.EPUB_READER,
             SharedFileCapabilities.surfaceFor(FileType.MD, ReaderPlatform.ANDROID)
         )
+        assertEquals(
+            ReaderFeatureSurface.EPUB_READER,
+            SharedFileCapabilities.surfaceFor(FileType.DOC, ReaderPlatform.ANDROID)
+        )
+        assertEquals(
+            ReaderFeatureSurface.EPUB_READER,
+            SharedFileCapabilities.surfaceFor(FileType.DOC, ReaderPlatform.IOS)
+        )
+        assertNull(SharedFileCapabilities.surfaceFor(FileType.DOC, ReaderPlatform.DESKTOP))
+        assertTrue(SharedFileCapabilities.canOpen(FileType.DOC, ReaderPlatform.ANDROID))
+        assertTrue(SharedFileCapabilities.canOpen(FileType.DOC, ReaderPlatform.IOS))
         assertTrue(SharedFileCapabilities.canOpen(FileType.CBZ, ReaderPlatform.ANDROID))
         assertTrue(SharedFileCapabilities.canOpen(FileType.CBT, ReaderPlatform.ANDROID))
         assertTrue(SharedFileCapabilities.canOpen(FileType.CBT, ReaderPlatform.DESKTOP))
@@ -125,6 +141,7 @@ class FileCapabilitiesTest {
 
     @Test
     fun `shared metadata resolver handles provider mime types and guarded archive fallbacks`() {
+        assertEquals(FileType.DOC, SharedFileCapabilities.resolveFileTypeForMetadata("report", "application/msword"))
         assertEquals(FileType.PDF, SharedFileCapabilities.resolveFileTypeForMetadata("download", "application/pdf"))
         assertEquals(
             FileType.DOCX,
@@ -159,6 +176,8 @@ class FileCapabilitiesTest {
 
     @Test
     fun `desktop parity gaps list Android readable formats not yet available on desktop`() {
-        assertEquals(emptyList(), SharedFileCapabilities.desktopParityGaps())
+        // DOC is the first intentional gap: no desktop native bridge and no
+        // pure-JVM CFB parser, so desktop stays unsupported until Phase 3.
+        assertEquals(listOf(FileType.DOC), SharedFileCapabilities.desktopParityGaps())
     }
 }
