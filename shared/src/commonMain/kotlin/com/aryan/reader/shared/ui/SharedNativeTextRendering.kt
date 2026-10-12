@@ -443,7 +443,14 @@ internal fun TextUnit.resolveLineHeightSp(fontSizeSp: Float): TextUnit {
     }
 }
 
-internal fun Modifier.sharedNativeCssBox(blockStyle: BlockStyle): Modifier = drawBehind {
+/**
+ * CSS background + border box painter both native stacks share. Android's
+ * `drawCssBorders` delegates to this (B1 step 3, border kind) — the two were
+ * token-identical copies (background fill, dashed/dotted effects, four edges,
+ * four corner arcs). Draw helpers cannot be unit-tested in this stack (no
+ * `Path` equality, empty bounds off-device); the single copy is the guard.
+ */
+fun Modifier.sharedNativeCssBox(blockStyle: BlockStyle): Modifier = drawBehind {
     val borderTop = blockStyle.borderTop
     val borderRight = blockStyle.borderRight
     val borderBottom = blockStyle.borderBottom

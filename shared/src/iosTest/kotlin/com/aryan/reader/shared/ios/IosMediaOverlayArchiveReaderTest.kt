@@ -3,6 +3,7 @@
 package com.aryan.reader.shared.ios
 
 import com.aryan.reader.shared.reader.SharedMediaOverlayArchiveReader
+import com.aryan.reader.shared.reader.iosMediaOverlaySmilReaderFor
 import com.aryan.reader.shared.reader.SharedMediaOverlayAudioUri
 import com.aryan.reader.shared.reader.SharedMediaOverlayDocumentCache
 import com.aryan.reader.shared.reader.SharedMediaOverlayIndex
@@ -104,6 +105,57 @@ class IosMediaOverlayArchiveReaderTest {
     fun `an unregistered path yields no archive rather than opening one`() {
         assertNull(IosEpubResourceStore.registeredArchiveAtPath("/nowhere/" + bookId + ".epub"))
         assertNull(SharedMediaOverlayArchiveReader.at("/nowhere/" + bookId + ".epub"))
+    }
+
+    /**
+     * A SMIL reader built before the loader registers still finds narration after.
+     *
+     * First-open race: the reader screen composes (and builds its SMIL reader) before
+     * `loadIosEpubBook` registers the archive on its background dispatcher. Resolving the archive
+     * eagerly at composition cached that miss as a null reader for the whole open, so a narrated
+     * book showed no toolbar icon until it was closed and reopened. The seam resolves per read
+     * instead, so the same reader instance must start serving once the loader registers.
+     */
+    @Test
+    fun `a smil reader built before the loader registers still finds narration after`() {
+        val root = "${NSTemporaryDirectory().trimEnd('/')}/ios-media-overlay-late-$bookId"
+        NSFileManager.defaultManager.removeItemAtPath(root, null)
+        NSFileManager.defaultManager.createDirectoryAtPath(
+            path = root,
+            withIntermediateDirectories = true,
+            attributes = null,
+            error = null,
+        )
+        directory = root
+        val path = "$root/narrated.epub"
+        writeIosZipArchive(path, NarrationFixture.entries.keys.toList(), NarrationFixture.entries::get)
+        fixturePath = path
+
+        val lazy = assertNotNull(
+            iosMediaOverlaySmilReaderFor(path),
+            "Only a blank path may yield no reader; an unregistered path must yield a lazy one"
+        )
+        assertNull(
+            lazy("OEBPS/mo/chapter-01.smil"),
+            "No archive is registered yet, so there is no SMIL to serve"
+        )
+
+        IosEpubResourceStore.register(bookId, path)
+
+        val body = assertNotNull(
+            lazy("OEBPS/mo/chapter-01.smil"),
+            "The same reader built before registration must serve SMIL once the loader registers"
+        )
+        assertNotNull(
+            parseSharedMediaOverlayXml(body, "OEBPS/mo/chapter-01.smil", 0),
+            "The late-served SMIL must parse, or the fixture is broken rather than the seam"
+        )
+    }
+
+    @Test
+    fun `a blank path yields no smil reader`() {
+        assertNull(iosMediaOverlaySmilReaderFor(""))
+        assertNull(iosMediaOverlaySmilReaderFor("   "))
     }
 
     // --- the SMIL reader ----------------------------------------------------------------------
