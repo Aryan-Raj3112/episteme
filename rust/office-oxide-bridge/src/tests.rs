@@ -6,7 +6,7 @@
 /// than on a device.
 use super::*;
 use std::ffi::{CStr, CString};
-use std::io::{Cursor, Write};
+use std::io::{Cursor, Read, Write};
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
@@ -223,6 +223,99 @@ fn minimal_docx_with_document(document: &str) -> Vec<u8> {
             zip.start_file(name, options).unwrap();
             zip.write_all(contents.as_bytes()).unwrap();
         }
+        zip.finish().unwrap();
+    }
+    buffer
+}
+
+/// The office_oxide 0.1.13 gap the bridge shims: a floating image positioned
+/// with `<wp:align>` (Word's default for centered pictures) must still reach
+/// the HTML as an embedded `<img>`, not be silently dropped.
+#[test]
+fn align_positioned_floating_image_is_embedded_not_dropped() {
+    let docx = docx_with_align_positioned_image();
+    let (html, _) = unsafe { render(&docx, "docx", OFFICE_BRIDGE_HTML_EMBEDDED_IMAGES) }
+        .expect("align-positioned image must render");
+    assert!(
+        html.contains("<img src=\"data:image/png;base64,"),
+        "image bytes missing from HTML, got: {html}"
+    );
+    assert!(html.contains("Before"), "body text missing, got: {html}");
+}
+
+#[test]
+fn shim_rewrites_only_align_anchors() {
+    let docx = docx_with_align_positioned_image();
+    let shimmed = shim_align_positioned_anchors(&docx);
+
+    let read = |bytes: &[u8], name: &str| {
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut out = Vec::new();
+        archive
+            .by_name(name)
+            .unwrap()
+            .read_to_end(&mut out)
+            .unwrap();
+        String::from_utf8(out).unwrap()
+    };
+    let document = read(&shimmed, "word/document.xml");
+    assert!(
+        !document.contains("<wp:align>"),
+        "align survived: {document}"
+    );
+    assert!(
+        document.contains("<wp:posOffset>0</wp:posOffset>"),
+        "no posOffset written: {document}"
+    );
+    // Untouched parts stay byte-identical.
+    assert_eq!(
+        read(&shimmed, "[Content_Types].xml"),
+        read(&docx, "[Content_Types].xml")
+    );
+
+    // No align anywhere: byte-identical output, no re-zip churn.
+    let plain = minimal_docx();
+    assert_eq!(shim_align_positioned_anchors(&plain), plain);
+
+    // Not a zip at all: returned unchanged for the parse below to reject.
+    assert_eq!(shim_align_positioned_anchors(b"not a zip"), b"not a zip");
+}
+
+/// Minimal DOCX whose only image is an align-positioned floating anchor —
+/// the exact shape Word writes for a centered picture.
+fn docx_with_align_positioned_image() -> Vec<u8> {
+    const TYPES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Default Extension="png" ContentType="image/png"/>
+<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>"#;
+    const DOC_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rIdImg" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>
+</Relationships>"#;
+    const ANCHORED_DOCUMENT: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><w:body>
+<w:p><w:r><w:t>Before</w:t></w:r></w:p>
+<w:p><w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" locked="0" layoutInCell="1" allowOverlap="1" relativeHeight="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:align>center</wp:align></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:align>top</wp:align></wp:positionV><wp:extent cx="9525" cy="9525"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapSquare wrapText="largest"/><wp:docPr id="1" name="Picture 1" descr=""/><wp:cNvGraphicFramePr/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="1" name="image1.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdImg"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="9525" cy="9525"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>
+</w:body></w:document>"#;
+    let mut buffer = Vec::new();
+    {
+        let mut zip = ZipWriter::new(Cursor::new(&mut buffer));
+        let options = SimpleFileOptions::default();
+        for (name, contents) in [
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", RELS),
+            ("word/document.xml", ANCHORED_DOCUMENT),
+            ("word/_rels/document.xml.rels", DOC_RELS),
+        ] {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(contents.as_bytes()).unwrap();
+        }
+        // Content is irrelevant (raw bytes are embedded, never decoded).
+        zip.start_file("word/media/image1.png", options).unwrap();
+        zip.write_all(b"fakepngbytes").unwrap();
         zip.finish().unwrap();
     }
     buffer

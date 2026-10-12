@@ -34,7 +34,7 @@
 
 use std::cell::Cell;
 use std::ffi::{c_char, CStr, CString};
-use std::io::Cursor;
+use std::io::{Cursor, Read, Write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::slice;
 
@@ -165,6 +165,13 @@ pub unsafe extern "C" fn office_bridge_render(
     // caller's buffer once here rather than holding a raw pointer across the
     // unwind boundary below.
     let bytes = slice::from_raw_parts(data, len).to_vec();
+    // Compatibility shim for an office_oxide 0.1.13 parsing gap (see below).
+    // DOCX only: no other format uses DrawingML wordprocessing anchors.
+    let bytes = if format == DocumentFormat::Docx {
+        shim_align_positioned_anchors(&bytes)
+    } else {
+        bytes
+    };
 
     let rendered = catch_unwind(AssertUnwindSafe(|| render(&bytes, format, mode)));
     let text = match rendered {
@@ -194,6 +201,109 @@ pub unsafe extern "C" fn office_bridge_render(
             std::ptr::null_mut()
         }
     }
+}
+
+/// Compatibility shim for an office_oxide 0.1.13 parsing gap: a floating image
+/// positioned with `<wp:align>` instead of `<wp:posOffset>` parses to
+/// `anchor_position = None`, and `drawing_to_float_element` then discards the
+/// image bytes entirely (the `images` map *is* populated — the drawing is
+/// dropped). Word center-aligns pictures this way by default, so this is the
+/// common case, not an edge.
+///
+/// Rewrites `<wp:align>…</wp:align>` to `<wp:posOffset>0</wp:posOffset>` in the
+/// DOCX content parts before parsing. HTML output ignores positioning, so the
+/// zero offset changes nothing visible; it only makes the image reachable.
+/// Returns the input unchanged when there is nothing to rewrite (including when
+/// the bytes are not a readable zip — the parse below then fails cleanly as
+/// before). Remove when upstream emits images for align-positioned anchors.
+fn shim_align_positioned_anchors(bytes: &[u8]) -> Vec<u8> {
+    const ALIGN_OPEN: &[u8] = b"<wp:align>";
+    const ALIGN_CLOSE: &[u8] = b"</wp:align>";
+    const POS_OFFSET: &[u8] = b"<wp:posOffset>0</wp:posOffset>";
+
+    /// Content parts that may carry anchored drawings. Styles, numbering,
+    /// charts and embeddings cannot hold `wp:align` and are left alone.
+    fn is_content_part(name: &str) -> bool {
+        name == "word/document.xml"
+            || name == "word/footnotes.xml"
+            || name == "word/endnotes.xml"
+            || name == "word/comments.xml"
+            || (name.starts_with("word/header") || name.starts_with("word/footer"))
+                && name.ends_with(".xml")
+    }
+
+    fn rewrite_xml(xml: &[u8]) -> Option<Vec<u8>> {
+        if !xml.windows(ALIGN_OPEN.len()).any(|w| w == ALIGN_OPEN) {
+            return None;
+        }
+        let mut out = Vec::with_capacity(xml.len());
+        let mut rest = xml;
+        let mut rewritten = false;
+        while let Some(start) = rest.windows(ALIGN_OPEN.len()).position(|w| w == ALIGN_OPEN) {
+            let after_open = start + ALIGN_OPEN.len();
+            let Some(end) = rest[after_open..]
+                .windows(ALIGN_CLOSE.len())
+                .position(|w| w == ALIGN_CLOSE)
+            else {
+                break;
+            };
+            out.extend_from_slice(&rest[..start]);
+            out.extend_from_slice(POS_OFFSET);
+            rest = &rest[after_open + end + ALIGN_CLOSE.len()..];
+            rewritten = true;
+        }
+        out.extend_from_slice(rest);
+        rewritten.then_some(out)
+    }
+
+    let mut archive = match zip::ZipArchive::new(Cursor::new(bytes)) {
+        Ok(archive) => archive,
+        Err(_) => return bytes.to_vec(),
+    };
+    // Read first: ZipArchive borrows `bytes`, ZipWriter needs its own buffer.
+    let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut touched = false;
+    for index in 0..archive.len() {
+        let mut file = match archive.by_index(index) {
+            Ok(file) => file,
+            Err(_) => return bytes.to_vec(),
+        };
+        let name = file.name().to_string();
+        let mut contents = Vec::new();
+        if file.read_to_end(&mut contents).is_err() {
+            return bytes.to_vec();
+        }
+        if is_content_part(&name) {
+            if let Some(rewritten) = rewrite_xml(&contents) {
+                contents = rewritten;
+                touched = true;
+            }
+        }
+        entries.push((name, contents));
+    }
+    if !touched {
+        return bytes.to_vec();
+    }
+    let mut buffer = Vec::new();
+    {
+        let mut writer = zip::ZipWriter::new(Cursor::new(&mut buffer));
+        for (name, contents) in &entries {
+            // Store without recompressing: the bytes were already compressed
+            // once, and import latency matters more than a few saved bytes.
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            if writer.start_file(name, options).is_err() {
+                return bytes.to_vec();
+            }
+            if writer.write_all(contents).is_err() {
+                return bytes.to_vec();
+            }
+        }
+        if writer.finish().is_err() {
+            return bytes.to_vec();
+        }
+    }
+    buffer
 }
 
 fn render(bytes: &[u8], format: DocumentFormat, mode: i32) -> Result<String, i32> {

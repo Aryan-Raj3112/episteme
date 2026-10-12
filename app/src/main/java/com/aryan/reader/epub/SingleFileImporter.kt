@@ -35,8 +35,6 @@ import kotlinx.serialization.json.Json
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import org.jsoup.safety.Safelist
-import org.zwobble.mammoth.DocumentConverter
 import timber.log.Timber
 import java.io.BufferedReader
 import java.io.File
@@ -52,8 +50,23 @@ class SingleFileImporter(private val context: Context) {
     companion object {
         private const val MAX_DOCX_ARCHIVE_BYTES = 64L * 1024L * 1024L
         private const val MAX_DOCX_XML_BYTES = 48L * 1024L * 1024L
-        private const val MAX_HTML_CHAPTER_CHARS = 1_000_000
+        /**
+         * Chapters split past this size, always between tags — never inside
+         * one (see [findHtmlChunkEnd]). Sized so ordinary documents import as
+         * a single chapter while pathological ones still chunk into bounded
+         * pieces.
+         */
+        private const val MAX_HTML_CHAPTER_CHARS = 8_000_000
         private const val MAX_HTML_BUFFERED_LINE_CHARS = 128_000
+        /**
+         * How far a chapter may grow past [MAX_HTML_CHAPTER_CHARS] to keep a tag
+         * whole. Giant `<img src="data:…">` tags (a 1 MB photo is ~1.4 MB of
+         * base64) must never split across chapters: the first half parses as a
+         * broken tag the sanitizer drops (image lost) and the second half
+         * renders as pages of base64 soup. Past this budget a split is forced
+         * anyway to bound memory on hostile input (e.g. an unclosed `<`).
+         */
+        private const val MAX_CHAPTER_TAG_OVERFLOW_CHARS = 8_000_000
         private const val MAX_HTML_HEAD_SCAN_CHARS = 256_000
         private const val MAX_HTML_INLINE_CSS_CHARS = 256_000
         private const val MAX_SINGLE_FILE_PLAIN_TEXT_CHARS = 256_000
@@ -106,12 +119,7 @@ class SingleFileImporter(private val context: Context) {
         )
     }
 
-    private val htmlSafelist = Safelist.relaxed()
-        .addTags("article", "aside", "details", "div", "figcaption", "figure", "footer", "header", "main", "section", "summary")
-        .addAttributes(":all", "class", "dir", "id", "lang", "title")
-        .addAttributes("a", "name", "target")
-        .addProtocols("a", "href", "http", "https", "mailto", "tel", "#")
-        .addProtocols("img", "src", "http", "https", "data", "file", "content")
+    private val htmlSafelist = buildHtmlImportSafelist()
 
     private val htmlOutputSettings = Document.OutputSettings().prettyPrint(false)
 
@@ -876,6 +884,12 @@ class SingleFileImporter(private val context: Context) {
             var productEzoicScriptLines = 0
             var inStyle = false
             var inBody = false
+            // True while the chapter stream is inside an unclosed `<…>` tag
+            // (giant data-URI images span many lines). Lets appendBodySegment
+            // keep tags whole instead of splitting chapters mid-attribute.
+            var htmlTagOpen = false
+            // True once the chapter being built contains an `<img` tag.
+            var chapterHasImgTag = false
             var pageNum = 1
             val headBuilder = java.lang.StringBuilder()
             val currentChapterBuilder = java.lang.StringBuilder()
@@ -910,6 +924,34 @@ class SingleFileImporter(private val context: Context) {
                     )
                 )
                 currentChapterBuilder.clear()
+                chapterHasImgTag = false
+            }
+
+            /**
+             * Flushes unless the stream is inside an unclosed tag that still fits
+             * the overflow budget — splitting there would break the tag (see
+             * [MAX_CHAPTER_TAG_OVERFLOW_CHARS]).
+             */
+            fun shouldFlushChapter(): Boolean {
+                if (currentChapterBuilder.length < MAX_HTML_CHAPTER_CHARS) {
+                    return false
+                }
+                if (!htmlTagOpen) {
+                    return true
+                }
+                if (currentChapterBuilder.length - MAX_HTML_CHAPTER_CHARS <= MAX_CHAPTER_TAG_OVERFLOW_CHARS) {
+                    return false
+                }
+                Timber.tag(HTML_IMPORT_DEBUG_TAG).w(
+                    "html_chunk_force_split bookId=$bookId chapter=${chapters.size + 1} " +
+                        "chapterChars=${currentChapterBuilder.length} — unclosed tag exceeded overflow budget; " +
+                        "content past the split may render as text"
+                )
+                Timber.tag(DOCX_IMAGE_DEBUG_TAG).w(
+                    "html_chunk_force_split bookId=$bookId chapter=${chapters.size + 1} " +
+                        "chapterChars=${currentChapterBuilder.length} hasImgTag=$chapterHasImgTag"
+                )
+                return true
             }
 
             fun appendBodySegment(segment: String, startIndex: Int = 0, endIndex: Int = segment.length, addNewline: Boolean = true) {
@@ -917,16 +959,42 @@ class SingleFileImporter(private val context: Context) {
                 while (start < endIndex) {
                     val remainingCapacity = (MAX_HTML_CHAPTER_CHARS - currentChapterBuilder.length).coerceAtLeast(1)
                     val requestedEnd = minOf(endIndex, start + remainingCapacity)
-                    val chunkEnd = findHtmlChunkEnd(segment, start, requestedEnd, endIndex)
+                    val chunkEnd = findHtmlChunkEnd(segment, start, requestedEnd, endIndex, htmlTagOpen)
+                    if (chunkEnd > requestedEnd) {
+                        // Extended past the chapter budget to keep a tag whole.
+                        // Sample only — the chunk may hold megabytes of base64.
+                        val sample = segment.substring(start, minOf(start + 64, chunkEnd)).replace("\n", "")
+                        Timber.tag(HTML_IMPORT_DEBUG_TAG).d(
+                            "html_chunk_tag_overflow bookId=$bookId chapter=${chapters.size + 1} " +
+                                "continuesTag=$htmlTagOpen chunkChars=${chunkEnd - start} sample=$sample"
+                        )
+                        if (!htmlTagOpen && sample.contains("<img", ignoreCase = true) ||
+                            htmlTagOpen && chapterHasImgTag
+                        ) {
+                            Timber.tag(DOCX_IMAGE_DEBUG_TAG).d(
+                                "html_chunk_tag_overflow bookId=$bookId chapter=${chapters.size + 1} " +
+                                    "chunkChars=${chunkEnd - start} chapterChars=${currentChapterBuilder.length}"
+                            )
+                        }
+                    }
                     currentChapterBuilder.append(segment, start, chunkEnd)
+                    if (!chapterHasImgTag) {
+                        // The tag may start later in the segment; chunks tile
+                        // the range, so a later chunk still catches it.
+                        val imgAt = segment.indexOf("<img", startIndex = start, ignoreCase = true)
+                        if (imgAt in start until chunkEnd) {
+                            chapterHasImgTag = true
+                        }
+                    }
+                    htmlTagOpen = scanHtmlTagState(segment, start, chunkEnd, htmlTagOpen)
                     start = chunkEnd
-                    if (currentChapterBuilder.length >= MAX_HTML_CHAPTER_CHARS) {
+                    if (shouldFlushChapter()) {
                         flushChapter()
                     }
                 }
                 if (addNewline) {
                     currentChapterBuilder.append('\n')
-                    if (currentChapterBuilder.length >= MAX_HTML_CHAPTER_CHARS) {
+                    if (shouldFlushChapter()) {
                         flushChapter()
                     }
                 }
@@ -1155,6 +1223,7 @@ class SingleFileImporter(private val context: Context) {
                 "productEzoic=$hasProductEzoicBefore"
         )
         blockedNodes.remove()
+        retainTextAlignAttributes(body)
         val leakedScriptTextNodesRemoved = removeLeakedScriptTextNodes(body)
         val cleaned = Jsoup.clean(body.html(), "", htmlSafelist, htmlOutputSettings)
         val hasProductEzoicAfter = cleaned.contains("productEzoicAds", ignoreCase = true)
@@ -1343,17 +1412,8 @@ class SingleFileImporter(private val context: Context) {
 
             validateDocxForImport(sourceDocxFile, originalBookNameHint)
 
-            val htmlContent = sourceDocxFile.inputStream().use { stream ->
-                try {
-                    val converter = DocumentConverter()
-                    converter.convertToHtml(stream).value ?: ""
-                } catch (oom: OutOfMemoryError) {
-                    Timber.e(oom, "DOCX conversion ran out of memory for $originalBookNameHint")
-                    throw IllegalStateException("This DOCX file is too large to open safely on this device.")
-                }
-            }
-
-            Timber.tag("FileOpenPerf").d("[DOCX] parseDocx: mammoth conversion done | elapsed=${System.currentTimeMillis() - parseStart}ms")
+            // Native office_oxide first, mammoth fallback — see DocxHtmlConverter.
+            val htmlContent = DocxHtmlConverter.convert(sourceDocxFile, originalBookNameHint)
 
             FileOutputStream(tempFile).bufferedWriter().use { writer ->
                 val title = originalBookNameHint.substringBeforeLast(".")
@@ -1419,6 +1479,20 @@ class SingleFileImporter(private val context: Context) {
                 "scriptTags=$inputScriptTags productEzoic=$inputHasProductEzoic file=${file.absolutePath}"
         )
         val sanitizedBodyContent = sanitizeHtmlFragment(bodyContent, leadingTitleToDrop = title)
+        if (bodyContent.contains("<img")) {
+            // Lengths only — the src payload may be megabytes of base64.
+            val srcLens = Regex("src=\"[^\"]*\"").findAll(bodyContent)
+                .map { it.value.length }
+                .toList()
+            val lastImgOpen = bodyContent.lastIndexOf("<img")
+            Timber.tag(DOCX_IMAGE_DEBUG_TAG).d(
+                "html_write_chapter_images bookId=$bookId page=$pageNum " +
+                    "imgTags=${bodyContent.split("<img", ignoreCase = true).size - 1} " +
+                    "srcLens=${srcLens.take(20)}${if (srcLens.size > 20) " +${srcLens.size - 20} more" else ""} " +
+                    "truncatedImg=${lastImgOpen > bodyContent.lastIndexOf('>')} " +
+                    "bodyChars=${bodyContent.length} outputChars=${sanitizedBodyContent.length}"
+            )
+        }
         val outputScriptTags = Regex("<script\\b", RegexOption.IGNORE_CASE).findAll(sanitizedBodyContent).count()
         val outputHasProductEzoic = sanitizedBodyContent.contains("productEzoicAds", ignoreCase = true)
         Timber.tag(HTML_IMPORT_DEBUG_TAG).d(
@@ -1495,23 +1569,6 @@ class SingleFileImporter(private val context: Context) {
         }
     }
 
-    private fun findHtmlChunkEnd(
-        source: String,
-        start: Int,
-        requestedEnd: Int,
-        absoluteEnd: Int
-    ): Int {
-        if (requestedEnd >= absoluteEnd) return absoluteEnd
-
-        val tagStart = source.lastIndexOf('<', requestedEnd - 1)
-        val tagEnd = source.lastIndexOf('>', requestedEnd - 1)
-        if (tagStart > start && tagStart > tagEnd && requestedEnd - tagStart <= 4096) {
-            return tagStart
-        }
-
-        return requestedEnd
-    }
-
     private fun writeHtmlBodyContentChunked(writer: java.io.Writer, htmlContent: String) {
         var charsSinceBreak = 0
         for (char in htmlContent) {
@@ -1524,3 +1581,4 @@ class SingleFileImporter(private val context: Context) {
         }
     }
 }
+

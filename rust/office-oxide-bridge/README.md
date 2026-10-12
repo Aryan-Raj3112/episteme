@@ -67,6 +67,19 @@ cargo build --release --target aarch64-apple-darwin       # desktop
 Outputs: `target/<triple>/release/liboffice_oxide_bridge.{so,dylib}` (cdylib) and
 `liboffice_oxide_bridge.a` (staticlib).
 
+## Compatibility shims
+
+`render()` pre-processes the input for known upstream parsing gaps before handing it
+to office_oxide. Each shim is byte-identical when inapplicable and documented for
+removal once upstream fixes the gap:
+
+- **Align-positioned floating images** (`shim_align_positioned_anchors`, DOCX only):
+  office_oxide 0.1.13 discards `wp:anchor` drawings positioned with `<wp:align>`
+  instead of `<wp:posOffset>` (Word's default for centered pictures), losing the
+  image bytes. The shim rewrites them to `<wp:posOffset>0</wp:posOffset>` in the
+  content parts; HTML output ignores positioning, so only reachability changes.
+  Covered by `align_positioned_floating_image_is_embedded_not_dropped`.
+
 Cross-compiling without Gradle needs the linker set, otherwise cargo uses the host `cc`:
 
 ```sh

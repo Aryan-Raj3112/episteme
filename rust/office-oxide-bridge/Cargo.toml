@@ -1,6 +1,6 @@
 [package]
 name = "office-oxide-bridge"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 publish = false
 description = "Stable C ABI over office_oxide for the Reader app (Android / iOS / desktop)."
@@ -18,12 +18,12 @@ path = "src/lib.rs"
 # Exact pin: this is a pre-1.0 dependency with a fast release cadence, so an
 # accidental minor bump must not change the app's behaviour. Bump deliberately.
 office_oxide = "=0.1.13"
-
-[dev-dependencies]
-# Only used by tests/render.rs to build a minimal DOCX fixture in memory.
-# Already present in the graph as an office_oxide dependency, so this adds no
-# build cost and does not affect the shipped library's size.
-zip = "=8.6.0"
+# Already in the graph via office_oxide, so this adds no new crate — only the
+# ZipWriter code the align-anchor shim needs. Mirror office_oxide's own feature
+# selection (deflate only): the default features pull C dependencies (zstd-sys)
+# whose build scripts need an unversioned target clang the NDK does not ship,
+# and would bloat the .so for no reason — the shim stores entries uncompressed.
+zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
 
 [profile.release]
 # Size matters here: this lands in every ABI of every app variant. Measured
