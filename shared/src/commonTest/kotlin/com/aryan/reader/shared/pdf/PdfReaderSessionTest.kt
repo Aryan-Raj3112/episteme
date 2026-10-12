@@ -163,11 +163,11 @@ class PdfReaderSessionTest {
     }
 
     @Test
-    fun `scroll lock supports one thousand percent and clamps larger restored values`() {
+    fun `scroll lock supports five thousand percent and clamps larger restored values`() {
         val atMaximum = SharedPdfReaderState.initial(pageCount = 1)
-            .reduce(SharedPdfReaderAction.ScrollLockChanged(true, 10f, 1f, 2f))
+            .reduce(SharedPdfReaderAction.ScrollLockChanged(true, 50f, 1f, 2f))
         val aboveMaximum = atMaximum
-            .reduce(SharedPdfReaderAction.ScrollLockChanged(true, 25f, 3f, 4f))
+            .reduce(SharedPdfReaderAction.ScrollLockChanged(true, 75f, 3f, 4f))
 
         assertEquals(PDF_MAX_ZOOM_SCALE, atMaximum.lockedZoomScale)
         assertEquals(PDF_MAX_ZOOM_SCALE, aboveMaximum.lockedZoomScale)

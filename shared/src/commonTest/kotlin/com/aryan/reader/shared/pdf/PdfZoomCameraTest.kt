@@ -31,12 +31,12 @@ class PdfZoomCameraTest {
     }
 
     @Test
-    fun panBoundsRemainCorrectAtOneThousandPercent() {
-        val camera = PdfZoomCamera(PDF_MAX_ZOOM_SCALE, PdfZoomPoint(10_000f, -10_000f))
+    fun panBoundsRemainCorrectAtFiveThousandPercent() {
+        val camera = PdfZoomCamera(PDF_MAX_ZOOM_SCALE, PdfZoomPoint(20_000f, -20_000f))
             .normalized(viewport, content)
 
-        assertEquals(1_800f, camera.offset.x)
-        assertEquals(-2_600f, camera.offset.y)
+        assertEquals(9_800f, camera.offset.x)
+        assertEquals(-14_600f, camera.offset.y)
     }
 
     @Test
@@ -68,9 +68,10 @@ class PdfZoomCameraTest {
     fun oneHandZoomDoublesOverBenchmarkDistance() {
         assertEquals(2f, pdfOneHandZoomScale(1f, 240f, 240f))
         assertEquals(8f, pdfOneHandZoomScale(4f, 240f, 240f))
-        assertEquals(PDF_MAX_ZOOM_SCALE, pdfOneHandZoomScale(8f, 240f, 240f))
+        assertEquals(16f, pdfOneHandZoomScale(8f, 240f, 240f))
+        assertEquals(PDF_MAX_ZOOM_SCALE, pdfOneHandZoomScale(30f, 240f, 240f))
 
-        val maxCamera = PdfZoomCamera(20f).normalized(
+        val maxCamera = PdfZoomCamera(60f).normalized(
             PdfZoomSize(100f, 100f),
             PdfZoomSize(100f, 100f),
         )
@@ -100,19 +101,19 @@ class PdfZoomCameraTest {
     }
 
     @Test
-    fun visibleBoundsRemainNormalizedAtOneThousandPercent() {        val bounds = visiblePdfPageBounds(
+    fun visibleBoundsRemainNormalizedAtFiveThousandPercent() {        val bounds = visiblePdfPageBounds(
             camera = PdfZoomCamera(PDF_MAX_ZOOM_SCALE),
-            transformedPageLeft = -1_800f,
-            transformedPageTop = -3_600f,
-            transformedPageRight = 2_200f,
-            transformedPageBottom = 4_400f,
+            transformedPageLeft = -9_800f,
+            transformedPageTop = -19_600f,
+            transformedPageRight = 10_200f,
+            transformedPageBottom = 20_400f,
             viewportLeft = 0f,
             viewportTop = 0f,
             viewportRight = 400f,
             viewportBottom = 800f,
         )
 
-        assertEquals(PdfPageBounds(0.45f, 0.45f, 0.55f, 0.55f), bounds)
+        assertEquals(PdfPageBounds(0.49f, 0.49f, 0.51f, 0.51f), bounds)
     }
 
     @Test
