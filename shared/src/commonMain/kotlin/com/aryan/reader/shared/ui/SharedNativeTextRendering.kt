@@ -52,6 +52,10 @@ import com.aryan.reader.shared.sharedNativeFontSizeSp
 import com.aryan.reader.shared.sharedPaginationBaseLineHeightSp
 import com.aryan.reader.paginatedreader.EpubChapterTextIndex
 import com.aryan.reader.paginatedreader.CssStyle
+import com.aryan.reader.paginatedreader.nativeFlexColumnHorizontalAlignment
+import com.aryan.reader.paginatedreader.nativeFlexColumnVerticalArrangement
+import com.aryan.reader.paginatedreader.nativeFlexRowHorizontalArrangement
+import com.aryan.reader.paginatedreader.nativeFlexRowVerticalAlignment
 import com.aryan.reader.paginatedreader.MATH_PLACEHOLDER_CHAR
 import com.aryan.reader.paginatedreader.BlockStyle
 import com.aryan.reader.paginatedreader.BorderStyle
@@ -734,41 +738,17 @@ internal fun Color.sharedNativeSafeLuminance(): Float {
     return if (isSpecified) luminance() else 0f
 }
 
-internal fun BlockStyle.sharedNativeFlexHorizontalArrangement(): Arrangement.Horizontal {
-    return when (justifyContent) {
-        "center" -> Arrangement.Center
-        "flex-end" -> Arrangement.End
-        "space-between" -> Arrangement.SpaceBetween
-        "space-around" -> Arrangement.SpaceAround
-        else -> Arrangement.Start
-    }
-}
+internal fun BlockStyle.sharedNativeFlexHorizontalArrangement(): Arrangement.Horizontal =
+    nativeFlexRowHorizontalArrangement(justifyContent)
 
-internal fun BlockStyle.sharedNativeFlexVerticalArrangement(): Arrangement.Vertical {
-    return when (justifyContent) {
-        "center" -> Arrangement.Center
-        "flex-end" -> Arrangement.Bottom
-        "space-between" -> Arrangement.SpaceBetween
-        "space-around" -> Arrangement.SpaceAround
-        else -> Arrangement.Top
-    }
-}
+internal fun BlockStyle.sharedNativeFlexVerticalArrangement(): Arrangement.Vertical =
+    nativeFlexColumnVerticalArrangement(justifyContent)
 
-internal fun BlockStyle.sharedNativeFlexVerticalAlignment(): Alignment.Vertical {
-    return when (alignItems) {
-        "center" -> Alignment.CenterVertically
-        "flex-end" -> Alignment.Bottom
-        else -> Alignment.Top
-    }
-}
+internal fun BlockStyle.sharedNativeFlexVerticalAlignment(): Alignment.Vertical =
+    nativeFlexRowVerticalAlignment(alignItems)
 
-internal fun BlockStyle.sharedNativeFlexHorizontalAlignment(): Alignment.Horizontal {
-    return when (alignItems) {
-        "center" -> Alignment.CenterHorizontally
-        "flex-end" -> Alignment.End
-        else -> Alignment.Start
-    }
-}
+internal fun BlockStyle.sharedNativeFlexHorizontalAlignment(): Alignment.Horizontal =
+    nativeFlexColumnHorizontalAlignment(alignItems)
 
 internal fun Color.sharedNativeThemeColor(
     isDarkTheme: Boolean,

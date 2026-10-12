@@ -1023,32 +1023,6 @@ internal fun PaginatedReaderContent(
                                                 color = ttsHighlightColor
                                             )
 
-                                            @Suppress(
-                                                "UnusedVariable",
-                                                "Unused"
-                                            ) val diagnosticModifier =
-                                                if (block.textAlign == TextAlign.Justify) {
-                                                    Modifier.onGloballyPositioned { coordinates ->
-                                                        val width =
-                                                            coordinates.size.width
-                                                        Timber.d(
-                                                            """
-                                                [UI Render]
-                                                Block Index: ${block.blockIndex}
-                                                Text Start: ${
-                                                                block.content.text.take(
-                                                                    20
-                                                                )
-                                                            }...
-                                                Actual Render Width Px: $width
-                                                ------------------------------------------------
-                                            """.trimIndent()
-                                                        )
-                                                    }
-                                                } else {
-                                                    Modifier
-                                                }
-
                                             TextWithEmphasis(
                                                 text = finalContent,
                                                 style = paragraphStyle,
@@ -1307,19 +1281,9 @@ internal fun PaginatedReaderContent(
 
                                             if (block.style.flexDirection == "row") {
                                                 val horizontalArrangement =
-                                                    when (block.style.justifyContent) {
-                                                        "center" -> Arrangement.Center
-                                                        "flex-end" -> Arrangement.End
-                                                        "space-between" -> Arrangement.SpaceBetween
-                                                        "space-around" -> Arrangement.SpaceAround
-                                                        else -> Arrangement.Start
-                                                    }
+                                                    nativeFlexRowHorizontalArrangement(block.style.justifyContent)
                                                 val verticalAlignment =
-                                                    when (block.style.alignItems) {
-                                                        "center" -> Alignment.CenterVertically
-                                                        "flex-end" -> Alignment.Bottom
-                                                        else -> Alignment.Top
-                                                    }
+                                                    nativeFlexRowVerticalAlignment(block.style.alignItems)
                                                 val chantChildren: @Composable () -> Unit = {
                                                     block.children.forEach { childBlock ->
                                                         RenderFlexChildBlock(
@@ -1375,19 +1339,9 @@ internal fun PaginatedReaderContent(
                                                 }
                                             } else {
                                                 val verticalArrangement =
-                                                    when (block.style.justifyContent) {
-                                                        "center" -> Arrangement.Center
-                                                        "flex-end" -> Arrangement.Bottom
-                                                        "space-between" -> Arrangement.SpaceBetween
-                                                        "space-around" -> Arrangement.SpaceAround
-                                                        else -> Arrangement.Top
-                                                    }
+                                                    nativeFlexColumnVerticalArrangement(block.style.justifyContent)
                                                 val horizontalAlignment =
-                                                    when (block.style.alignItems) {
-                                                        "center" -> Alignment.CenterHorizontally
-                                                        "flex-end" -> Alignment.End
-                                                        else -> Alignment.Start
-                                                    }
+                                                    nativeFlexColumnHorizontalAlignment(block.style.alignItems)
                                                 Column(
                                                     modifier = paddingModifier.fillMaxWidth(),
                                                     verticalArrangement = verticalArrangement,
@@ -1722,12 +1676,12 @@ internal fun PaginatedReaderContent(
                                                                         cellStyle.width
                                                                     )
                                                                     else Modifier.weight(
-                                                                        cell.colspan.coerceAtLeast(1).toFloat(),
+                                                                        nativeTableCellWeight(cell.colspan),
                                                                         fill = true
                                                                     )
                                                                 } else {
                                                                     Modifier.weight(
-                                                                        cell.colspan.coerceAtLeast(1).toFloat(),
+                                                                        nativeTableCellWeight(cell.colspan),
                                                                         fill = true
                                                                     )
                                                                 }
@@ -2901,7 +2855,7 @@ internal fun RenderFlexChildBlock(
                             } else if (hasFixedWidths && cellStyle.width != Dp.Unspecified) {
                                 Modifier.width(cellStyle.width)
                             } else {
-                                Modifier.weight(cell.colspan.coerceAtLeast(1).toFloat(), fill = true)
+                                Modifier.weight(nativeTableCellWeight(cell.colspan), fill = true)
                             }
                             val cellModifier = cellContainerModifier
                                 .then(

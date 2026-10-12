@@ -77,6 +77,7 @@ import com.aryan.reader.paginatedreader.nativeImageContentAlignment
 import com.aryan.reader.paginatedreader.nativeImageContentScale
 import com.aryan.reader.paginatedreader.nativeInvertColorMatrix
 import com.aryan.reader.paginatedreader.nativeMathSvgDimensionDp
+import com.aryan.reader.paginatedreader.nativeTableCellWeight
 import com.aryan.reader.paginatedreader.nativeListMarkerImageSizeSp
 import com.aryan.reader.paginatedreader.nativeVerticalBlockKey
 import com.aryan.reader.paginatedreader.nativeVerticalEmptyKey
@@ -773,7 +774,7 @@ internal fun SharedSemanticBlockView(
                                 SharedNativeTableCellSizing.Fixed(themedWidth)
                             } else {
                                 SharedNativeTableCellSizing.Weighted(
-                                    cell.colspan.toFloat().coerceAtLeast(1f)
+                                    nativeTableCellWeight(cell.colspan)
                                 )
                             }
                         }
