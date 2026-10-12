@@ -9,6 +9,8 @@ import com.aryan.reader.shared.docparse.SharedDocxDocumentParser
 import com.aryan.reader.shared.docparse.SharedFb2DocumentParser
 import com.aryan.reader.shared.docparse.SharedMarkdownConverter
 import com.aryan.reader.shared.docparse.SharedOdtDocumentParser
+import com.aryan.reader.shared.docparse.SharedOfficeHtmlChapters
+import com.aryan.reader.shared.office.SharedOfficeOxide
 import com.aryan.reader.shared.sharedDocumentMetadataArchivePath
 import com.aryan.reader.shared.mobi.MOBI_ENCRYPTION_NONE
 import com.aryan.reader.shared.mobi.MOBI_SUCCESS
@@ -1082,8 +1084,75 @@ private fun loadIosZipDocumentBook(book: BookItem): SharedEpubBook {
 /**
  * Structured DOCX rendering (headings become chapters, formatting is preserved,
  * media embeds as data URIs) matching Android's mammoth-based import fidelity.
+ *
+ * Tries the native office_oxide bridge first — the same engine Android imports
+ * through — and falls back to the hand-rolled parser below on any failure, so
+ * every file the old path opened still opens.
  */
 private fun loadIosDocxChapters(
+    book: BookItem,
+    archive: IosZipEpubArchive,
+    title: String,
+): List<SharedEpubChapter> =
+    loadIosDocxChaptersViaOxide(book, archive, title)
+        ?: loadIosDocxChaptersViaParser(book, archive, title)
+
+/**
+ * DOCX through office_oxide: the whole package renders to one HTML fragment,
+ * which is then chaptered on its headings so the TOC keeps the shape the
+ * parser fallback produces. Null means "use the fallback", never an error.
+ */
+private fun loadIosDocxChaptersViaOxide(
+    book: BookItem,
+    archive: IosZipEpubArchive,
+    title: String,
+): List<SharedEpubChapter>? {
+    if (!SharedOfficeOxide.supports("docx")) {
+        return null
+    }
+    val bytes = archive.sourceBytes
+    // Mirror Android's MAX_DOCX_ARCHIVE_BYTES: oversize packages skip the
+    // native render and take the legacy path instead of failing the open.
+    if (bytes.size > MAX_IOS_DOCX_ARCHIVE_BYTES) {
+        return null
+    }
+    val html = SharedOfficeOxide.renderHtml(bytes, "docx", embedImages = true)
+    if (html.isNullOrBlank()) {
+        return null
+    }
+    // Same image gate as Android's DocxHtmlConverter: office_oxide 0.1.13 can
+    // drop floating images the bridge shim does not cover, while the parser
+    // below resolves them through document.xml.rels — so a render without
+    // <img> for a package that holds raster art defers to the parser.
+    if (!html.contains("<img") && archive.hasIosDocxRasterMedia()) {
+        return null
+    }
+    val chapters = SharedOfficeHtmlChapters.split(html)
+    return chapters.mapIndexed { index, chapter ->
+        SharedEpubChapter(
+            id = "${book.id}-part-${index + 1}",
+            title = chapter.title ?: if (chapters.size == 1) title else "Part ${index + 1}",
+            plainText = chapter.html.iosReaderPlainText(),
+            htmlContent = chapter.html.trim(),
+        )
+    }
+}
+
+private val IosDocxRasterExtensions = setOf("png", "jpg", "jpeg", "gif", "bmp", "webp")
+
+/**
+ * Mirror of Android `SingleFileImporter.MAX_DOCX_ARCHIVE_BYTES`: packages past
+ * this skip the native render and take the legacy parser path.
+ */
+private const val MAX_IOS_DOCX_ARCHIVE_BYTES = 64L * 1024L * 1024L
+
+private fun IosZipEpubArchive.hasIosDocxRasterMedia(): Boolean =
+    entryPaths.any { path ->
+        val lower = path.lowercase()
+        lower.startsWith("word/media/") && IosDocxRasterExtensions.any { lower.endsWith(".$it") }
+    }
+
+private fun loadIosDocxChaptersViaParser(
     book: BookItem,
     archive: IosZipEpubArchive,
     title: String,
@@ -1204,6 +1273,9 @@ internal class IosZipEpubArchive(path: String) : SharedEpubArchive {
     }
 
     override val entryPaths: Set<String> = entries.values.mapTo(linkedSetOf()) { it.path }
+
+    /** The raw package bytes (already held in memory); what the native DOCX render consumes. */
+    internal val sourceBytes: ByteArray get() = archiveBytes
 
     override fun readBytes(path: String): ByteArray? = readBytesTraced(path)
 

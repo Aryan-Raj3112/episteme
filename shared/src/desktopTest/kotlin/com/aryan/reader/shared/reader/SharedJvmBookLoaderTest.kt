@@ -46,6 +46,61 @@ class SharedJvmBookLoaderTest {
     }
 
     @Test
+    fun `docx loader keeps headings tables lists links and images`() = withTempDir { dir ->
+        val file = File(dir, "rich.docx")
+        val pixel = Base64.getDecoder().decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        )
+        writeZip(file) {
+            text(
+                "word/document.xml",
+                """
+                <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                    xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+                  <w:body>
+                    <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Part One</w:t></w:r></w:p>
+                    <w:p><w:r><w:t>Body text</w:t></w:r></w:p>
+                    <w:p><w:pPr><w:numPr><w:numId w:val="5"/></w:numPr></w:pPr><w:r><w:t>first</w:t></w:r></w:p>
+                    <w:tbl><w:tr><w:tc><w:p><w:r><w:t>CellA</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+                    <w:p><w:hyperlink r:id="rId2"><w:r><w:t>link text</w:t></w:r></w:hyperlink></w:p>
+                    <w:p><w:r><w:drawing><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:blip r:embed="img1"/></a:graphic></w:drawing></w:r></w:p>
+                  </w:body>
+                </w:document>
+                """.trimIndent()
+            )
+            text(
+                "word/numbering.xml",
+                """
+                <w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                  <w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/></w:lvl></w:abstractNum>
+                  <w:num w:numId="5"><w:abstractNumId w:val="0"/></w:num>
+                </w:numbering>
+                """.trimIndent()
+            )
+            text(
+                "word/_rels/document.xml.rels",
+                """
+                <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                  <Relationship Id="rId2" Target="https://example.com" TargetMode="External"/>
+                  <Relationship Id="img1" Target="media/pic.png"/>
+                </Relationships>
+                """.trimIndent()
+            )
+            bytes("word/media/pic.png", pixel)
+        }
+
+        val book = SharedJvmBookLoader.load(file, FileType.DOCX)
+
+        // Headings split chapters exactly like the iOS parser fallback.
+        assertEquals(listOf("Part One", "Chapter 2"), book.chapters.map { it.title })
+        val html = book.chapters.joinToString("\n") { it.htmlContent }
+        assertTrue("<li>first</li>" in html)
+        assertTrue("CellA" in html)
+        assertTrue("""<a href="https://example.com">link text</a>""" in html)
+        assertTrue("<img src=\"data:image/png;base64," in html)
+    }
+
+    @Test
     fun `odt loader extracts metadata and document text`() = withTempDir { dir ->
         val file = File(dir, "sample.odt")
         writeZip(file) {

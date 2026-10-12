@@ -19,6 +19,7 @@ import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.paginatedreader.UserAgentStylesheet
 import com.aryan.reader.paginatedreader.htmlToSemanticBlocks
 import com.aryan.reader.shared.FileType
+import com.aryan.reader.shared.docparse.SharedDocxDocumentParser
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
@@ -437,18 +438,42 @@ object SharedJvmBookLoader {
 
     private fun loadDocx(file: File): SharedEpubBook {
         ZipFile(file).use { zip ->
-            val documentXml = zip.readBytesOrNull("word/document.xml")
+            val documentXml = zip.readBytesOrNull("word/document.xml")?.let(SharedTextDecoding::decode)
                 ?: error("word/document.xml not found in DOCX archive.")
             val metadata = zip.readBytesOrNull("docProps/core.xml")?.let(::parseCoreMetadata) ?: ParsedMetadata()
-            val html = parseDocxBody(documentXml)
-            val title = metadata.title.takeUnlessBlank() ?: file.nameWithoutExtension
-            return htmlBook(
-                file = file,
-                title = title,
-                author = metadata.author.takeUnlessBlank(),
-                html = html.ifBlank { "<p>This DOCX did not contain readable text.</p>" },
-                chapterTitle = title
+            // The same portable parser iOS falls back to: headings, tables,
+            // lists (via numbering.xml), hyperlinks and embedded media — everything
+            // the old w:p/w:t-only reader below used to drop.
+            val numberingXml = zip.readBytesOrNull("word/numbering.xml")?.let(SharedTextDecoding::decode)
+            val relsXml = zip.readBytesOrNull("word/_rels/document.xml.rels")?.let(SharedTextDecoding::decode)
+            val hyperlinkTargets = relsXml?.let(SharedDocxDocumentParser::parseHyperlinkTargets).orEmpty()
+            val mediaTargets = relsXml?.let(SharedDocxDocumentParser::parseMediaTargets).orEmpty()
+            val parsed = SharedDocxDocumentParser.parse(
+                documentXml = documentXml,
+                numberingXml = numberingXml,
+                hyperlinkTargets = hyperlinkTargets,
+                mediaSrcResolver = { relationshipId ->
+                    mediaTargets[relationshipId]?.let { target ->
+                        zip.toDataUri(target, "word/document.xml")
+                    }
+                },
             )
+            val title = metadata.title.takeUnlessBlank() ?: file.nameWithoutExtension
+            val author = metadata.author.takeUnlessBlank()
+            val chapters = parsed?.chapters?.map { chapter ->
+                ParsedChapter(title = chapter.title.orEmpty(), html = chapter.html, plainText = "")
+            }.orEmpty()
+            if (chapters.isEmpty()) {
+                return htmlBook(
+                    file = file,
+                    title = title,
+                    author = author,
+                    html = "<p>This DOCX did not contain readable text.</p>",
+                    chapterTitle = title
+                )
+            }
+            return ParsedDocument(title = title, author = author, chapters = chapters)
+                .toBook(file, parseCssRules(emptyMap()))
         }
     }
 
@@ -651,30 +676,6 @@ object SharedJvmBookLoader {
             author = authors.joinToString(", ").takeUnlessBlank(),
             chapters = chapters
         )
-    }
-
-    private fun parseDocxBody(bytes: ByteArray): String {
-        val document = xmlDocument(bytes)
-        val html = StringBuilder()
-        document.allElementsByLocalTag("p").forEach { paragraph ->
-            val paragraphStyle = paragraph.allElementsByLocalTag("pstyle")
-                .firstOrNull()
-                ?.xmlAttr("val")
-            val text = StringBuilder()
-            paragraph.getAllElements().forEach { element ->
-                when (element.xmlTag()) {
-                    "t" -> text.append(element.wholeText().escapeHtml())
-                    "tab" -> text.append("    ")
-                    "br" -> text.append("<br/>")
-                }
-            }
-            val paragraphHtml = text.toString()
-            if (paragraphHtml.htmlToText().isNotBlank()) {
-                val tag = if (paragraphStyle.orEmpty().contains("heading", ignoreCase = true)) "h2" else "p"
-                html.append("<$tag>").append(paragraphHtml).append("</$tag>\n")
-            }
-        }
-        return html.toString()
     }
 
     private fun parseOdtBody(bytes: ByteArray): String {
@@ -1603,6 +1604,7 @@ object SharedJvmBookLoader {
             "jpg", "jpeg" -> "image/jpeg"
             "png" -> "image/png"
             "gif" -> "image/gif"
+            "bmp" -> "image/bmp"
             "svg" -> "image/svg+xml"
             "webp" -> "image/webp"
             "ttf" -> "font/ttf"
