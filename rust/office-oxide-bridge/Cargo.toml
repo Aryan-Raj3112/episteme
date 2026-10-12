@@ -1,6 +1,6 @@
 [package]
 name = "office-oxide-bridge"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 publish = false
 description = "Stable C ABI over office_oxide for the Reader app (Android / iOS / desktop)."
@@ -24,6 +24,14 @@ office_oxide = "=0.1.13"
 # whose build scripts need an unversioned target clang the NDK does not ship,
 # and would bloat the .so for no reason — the shim stores entries uncompressed.
 zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
+# Minimal CFB read/write for the legacy-DOC image shim below (append the main
+# stream's picture bytes to the Data stream office_oxide scans). Pure Rust,
+# no build scripts — NDK-safe. Pinned exactly like everything else here.
+cfb = "=0.10.0"
+# Event XML reader for the legacy-DOC chart enrichment below (ODF chart
+# package inside the OLE object). Already in the graph via office_oxide, so
+# this adds no new native code — only the reader API this crate calls directly.
+quick-xml = "=0.42.0"
 
 [profile.release]
 # Size matters here: this lands in every ABI of every app variant. Measured

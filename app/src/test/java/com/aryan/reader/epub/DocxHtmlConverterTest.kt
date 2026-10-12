@@ -151,12 +151,17 @@ class DocxHtmlConverterTest {
         var rendered: ByteArray? = null
         val oxide = DocxHtmlConverter.OxideRenderer { bytes ->
             rendered = bytes
-            "<p>Legacy</p><hr /><hr /><p>text</p>"
+            "<p>Legacy</p><hr /><hr />" +
+                "<img src=\"data:image/x-emf;base64,QUJD\" alt=\"\" />" +
+                "<img src=\"data:image/jpeg;base64,/9j/\" alt=\"\" />"
         }
 
         val html = DocxHtmlConverter.convertDoc(file, "Legacy.doc", oxide)
 
-        assertEquals("<p>Legacy</p><hr /><p>text</p>", html)
+        assertEquals(
+            "<p>Legacy</p><hr /><img src=\"data:image/jpeg;base64,/9j/\" alt=\"\" />",
+            html
+        )
         assertArrayEquals("fake-doc-bytes".toByteArray(), rendered)
     }
 
@@ -169,6 +174,24 @@ class DocxHtmlConverterTest {
             DocxHtmlConverter.convertDoc(file, "Unreadable.doc", DocxHtmlConverter.OxideRenderer { null })
         }
         assertTrue(error.message!!.contains("DOC"))
+    }
+
+    @Test
+    fun `doc strips metafile images but keeps raster ones`() {
+        val html = "<p>a</p>" +
+            "<img src=\"data:image/x-emf;base64,QUJD\" alt=\"\" />" +
+            "<img src=\"data:image/jpeg;base64,/9j/\" alt=\"\" />" +
+            "<img src=\"data:image/x-wmf;base64,QUJD\" alt=\"\" />" +
+            "<img src=\"data:image/png;base64,iVBOR\" alt=\"\" />" +
+            "<img src=\"data:image/tiff;base64,SUks\" alt=\"\" />"
+
+        val cleaned = stripUnrenderableImages(html, "charts.doc")
+
+        assertTrue(cleaned.contains("data:image/jpeg;base64"))
+        assertTrue(cleaned.contains("data:image/png;base64"))
+        assertFalse(cleaned.contains("x-emf"))
+        assertFalse(cleaned.contains("x-wmf"))
+        assertFalse(cleaned.contains("image/tiff"))
     }
 
     @Test

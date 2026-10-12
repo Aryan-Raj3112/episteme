@@ -105,7 +105,8 @@ internal object DocxHtmlConverter {
         } else {
             val viaOxide = renderViaOfficeOxide(sourceDocFile, originalBookNameHint, oxide, tag = "DOC")
             if (!viaOxide.isNullOrBlank()) {
-                return collapseRedundantBreaks(viaOxide)
+                val cleaned = stripUnrenderableImages(collapseRedundantBreaks(viaOxide), originalBookNameHint)
+                return cleaned
             }
         }
         throw IllegalStateException("This DOC file could not be opened on this device.")
@@ -246,3 +247,28 @@ internal fun collapseRedundantBreaks(html: String): String =
     HR_RUN_REGEX.replace(html, "<hr />")
 
 private val HR_RUN_REGEX = Regex("<hr(\\s*/)?>(\\s*<hr(\\s*/)?>)+", RegexOption.IGNORE_CASE)
+
+/**
+ * Drops `<img>` tags whose payload nothing in this stack can rasterize: vector
+ * metafiles (`x-emf`, `x-wmf`) and TIFF. Legacy DOC pictures surface in whatever
+ * format the writer stored — LibreOffice conversions wrap charts as EMF — and
+ * a broken-image icon is worse than clean absence. Raster formats
+ * (png/jpeg/gif/bmp) pass through untouched. DOC path only: DOCX renders never
+ * emit these MIMEs.
+ */
+internal fun stripUnrenderableImages(html: String, fileHintForLog: String = ""): String {
+    var stripped = 0
+    val cleaned = UNRENDERABLE_IMG_REGEX.replace(html) {
+        stripped++
+        ""
+    }
+    if (stripped > 0) {
+        Timber.tag(DOCX_IMAGE_DEBUG_TAG).d(
+            "[DOC] unrenderableImgs=$stripped removed (metafile/tiff) file=$fileHintForLog",
+        )
+    }
+    return cleaned
+}
+
+private val UNRENDERABLE_IMG_REGEX =
+    Regex("""<img\b[^>]*src="data:image/(x-emf|x-wmf|tiff)[^>]*>""", RegexOption.IGNORE_CASE)

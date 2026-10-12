@@ -34,7 +34,7 @@
 
 use std::cell::Cell;
 use std::ffi::{c_char, CStr, CString};
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::slice;
 
@@ -165,12 +165,12 @@ pub unsafe extern "C" fn office_bridge_render(
     // caller's buffer once here rather than holding a raw pointer across the
     // unwind boundary below.
     let bytes = slice::from_raw_parts(data, len).to_vec();
-    // Compatibility shim for an office_oxide 0.1.13 parsing gap (see below).
-    // DOCX only: no other format uses DrawingML wordprocessing anchors.
-    let bytes = if format == DocumentFormat::Docx {
-        shim_align_positioned_anchors(&bytes)
-    } else {
-        bytes
+    // Compatibility shims for office_oxide 0.1.13 parsing gaps (see below).
+    // DOCX: DrawingML anchors. DOC: pictures outside the Data stream.
+    let bytes = match format {
+        DocumentFormat::Docx => shim_align_positioned_anchors(&bytes),
+        DocumentFormat::Doc => shim_doc_images_to_data_stream(&bytes),
+        _ => bytes,
     };
 
     let rendered = catch_unwind(AssertUnwindSafe(|| render(&bytes, format, mode)));
@@ -184,6 +184,13 @@ pub unsafe extern "C" fn office_bridge_render(
             set_last_error(OFFICE_BRIDGE_ERR_INTERNAL);
             return std::ptr::null_mut();
         }
+    };
+    // Legacy DOC charts backed by an embedded ODF chart document surface as
+    // data paragraphs (below); every other format renders unchanged.
+    let text = if format == DocumentFormat::Doc {
+        splice_doc_chart_text(&text, &bytes)
+    } else {
+        text
     };
 
     // Legacy containers can legitimately carry NUL bytes in their text tables.
@@ -304,6 +311,382 @@ fn shim_align_positioned_anchors(bytes: &[u8]) -> Vec<u8> {
         }
     }
     buffer
+}
+
+/// Compatibility shim for an office_oxide 0.1.13 coverage gap: its DOC reader
+/// extracts pictures by scanning only the `Data` stream for OfficeArt BLIP
+/// records (`doc/images.rs::extract_images`), but some writers — LibreOffice
+/// conversions included — store the BLIPs in the main `WordDocument` stream
+/// instead. This repo's `file-sample_1MB.doc` carries its 1 MB JPEG there
+/// while `Data` is 191 bytes, so every picture was silently dropped.
+///
+/// When the `Data` scan finds nothing but the main stream holds decodable
+/// pictures, the main stream's bytes are appended to `Data` so the stock scan
+/// finds them. Appends only grow the stream, so existing FIB offsets into
+/// `Data` are preserved; conversion then proceeds untouched and emits the
+/// pictures as end-of-document images, which is upstream's designed placement
+/// for legacy DOC pictures (`convert_doc.rs::append_legacy_images`).
+///
+/// The gate is office_oxide's own scanner, so the shim only fires when the
+/// current behavior drops everything — otherwise the bytes pass through
+/// unchanged (including when they are not a readable CFB, in which case the
+/// parse below fails cleanly as before). Remove when upstream scans the main
+/// stream itself.
+fn shim_doc_images_to_data_stream(bytes: &[u8]) -> Vec<u8> {
+    use office_oxide::cfb::CfbReader;
+    use office_oxide::doc::images::extract_images;
+
+    let mut archive = match CfbReader::new(Cursor::new(bytes)) {
+        Ok(archive) => archive,
+        Err(_) => return bytes.to_vec(),
+    };
+    let data = archive.open_stream("Data").unwrap_or_default();
+    if !extract_images(&data).is_empty() {
+        return bytes.to_vec();
+    }
+    let word_document = match archive.open_stream("WordDocument") {
+        Ok(stream) => stream,
+        Err(_) => return bytes.to_vec(),
+    };
+    if extract_images(&word_document).is_empty() {
+        return bytes.to_vec();
+    }
+
+    let mut compound = match cfb::CompoundFile::open(Cursor::new(bytes.to_vec())) {
+        Ok(compound) => compound,
+        Err(_) => return bytes.to_vec(),
+    };
+    let appended = (|| -> std::io::Result<()> {
+        if !compound.exists("Data") {
+            compound.create_stream("Data")?;
+        }
+        let mut stream = compound.open_stream("Data")?;
+        stream.seek(SeekFrom::End(0))?;
+        stream.write_all(&word_document)?;
+        stream.flush()?;
+        Ok(())
+    })();
+    if appended.is_err() {
+        return bytes.to_vec();
+    }
+    compound.into_inner().into_inner()
+}
+
+/// Placeholder HTML office_oxide emits for an embedded OLE object it
+/// identifies but cannot render (`convert_doc.rs`: a data-less `Image` with
+/// the object's description as alt text).
+const OLE_PLACEHOLDER_HTML: &str = "<figure><figcaption>Embedded OLE Object</figcaption></figure>";
+
+/// Enrichment for legacy DOC charts backed by an embedded ODF chart document:
+/// LibreOffice writes `ProgID LibreOffice.ChartDocument.1` plus a
+/// `package_stream` holding an ODF chart package whose data table carries the
+/// categories, series and values. That table is rendered as plain paragraphs
+/// in the same shape office_oxide renders DrawingML charts for DOCX
+/// (`Categories: …` + one line per series), replacing the generic OLE
+/// placeholder one-for-one; leftovers (more charts than placeholders, or no
+/// placeholder at all) are appended at the end, where legacy pictures land.
+///
+/// Anything unrecognized — not a CFB, no chart ProgID, payload not a zip,
+/// table missing or empty — yields no paragraphs and the HTML passes through
+/// untouched, so enrichment can never fail an import the plain render would
+/// have survived. MSGraph (`MSGraph.Chart.8`) objects are binary MS-OGRAPH,
+/// not ODF, and stay placeholders. Remove if upstream ever renders them.
+fn splice_doc_chart_text(html: &str, bytes: &[u8]) -> String {
+    let charts = doc_chart_paragraphs(bytes);
+    if charts.is_empty() {
+        return html.to_string();
+    }
+    let blocks: Vec<String> = charts
+        .iter()
+        .map(|paragraphs| {
+            paragraphs
+                .iter()
+                .map(|text| format!("<p>{}</p>", escape_html_text(text)))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .collect();
+    let mut html = html.to_string();
+    for block in &blocks {
+        if html.contains(OLE_PLACEHOLDER_HTML) {
+            html = html.replacen(OLE_PLACEHOLDER_HTML, block, 1);
+        } else {
+            html.push_str("\n<hr />\n");
+            html.push_str(block);
+        }
+    }
+    html
+}
+
+/// Chart data paragraphs (one list per chart object) for a legacy DOC, or
+/// empty when the file holds no ODF-backed chart.
+fn doc_chart_paragraphs(bytes: &[u8]) -> Vec<Vec<String>> {
+    let mut compound = match cfb::CompoundFile::open(Cursor::new(bytes)) {
+        Ok(compound) => compound,
+        Err(_) => return Vec::new(),
+    };
+    // Direct children of the ObjectPool storage only, mirroring upstream's
+    // own OLE walk: deeper nesting is another object's business.
+    let objects: Vec<String> = compound
+        .walk()
+        .filter(|entry| entry.is_storage())
+        .filter_map(|entry| {
+            let path = entry.path();
+            if !is_direct_child(path, "ObjectPool") {
+                return None;
+            }
+            path.components()
+                .next_back()?
+                .as_os_str()
+                .to_str()
+                .map(str::to_string)
+        })
+        .collect();
+    let mut charts = Vec::new();
+    for object in objects {
+        let base = format!("ObjectPool/{object}");
+        let comp_obj = read_cfb_stream(&mut compound, &format!("{base}/\u{1}CompObj"));
+        // Gate on the chart ProgID so Excel/Equation/Word objects keep their
+        // placeholders: only chart objects can carry an ODF chart package.
+        let is_chart = comp_obj
+            .map(|data| data.windows(5).any(|w| w.eq_ignore_ascii_case(b"chart")))
+            .unwrap_or(false);
+        if !is_chart {
+            continue;
+        }
+        let Some(package) = read_cfb_stream(&mut compound, &format!("{base}/package_stream"))
+        else {
+            continue;
+        };
+        if let Some(paragraphs) = odf_chart_paragraphs(&package) {
+            charts.push(paragraphs);
+        }
+    }
+    charts
+}
+
+/// True when `path` is exactly `parent` + one component (walk paths carry a
+/// leading root, so this compares names, not raw components).
+fn is_direct_child(path: &std::path::Path, parent: &str) -> bool {
+    let names: Vec<_> = path
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(name) => name.to_str(),
+            _ => None,
+        })
+        .collect();
+    names.len() == 2 && names[0] == parent
+}
+
+fn read_cfb_stream<F: std::io::Read + std::io::Seek>(
+    compound: &mut cfb::CompoundFile<F>,
+    path: &str,
+) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut stream = compound.open_stream(path).ok()?;
+    let mut data = Vec::new();
+    stream.read_to_end(&mut data).ok()?;
+    Some(data)
+}
+
+/// Paragraphs for an ODF chart package (`package_stream` bytes): the first
+/// table's header row names the series (past the corner cell), its first
+/// column the categories, and the body the values — the same convention the
+/// DOCX chart extractor emits. `None` when the payload is not a chart table.
+fn odf_chart_paragraphs(package: &[u8]) -> Option<Vec<String>> {
+    if package.len() < 2 || &package[0..2] != b"PK" {
+        return None;
+    }
+    let mut archive = zip::ZipArchive::new(Cursor::new(package)).ok()?;
+    let mut content = String::new();
+    archive
+        .by_name("content.xml")
+        .ok()?
+        .read_to_string(&mut content)
+        .ok()?;
+    let table = first_odf_table(&content)?;
+    if table.len() < 2 || table[0].len() < 2 {
+        return None;
+    }
+    let categories: Vec<&str> = table[1..].iter().map(|row| row[0].as_str()).collect();
+    if categories.iter().all(|c| c.is_empty()) {
+        return None;
+    }
+    let mut paragraphs = vec![format!("Categories: {}", categories.join(", "))];
+    for (index, series) in table[0][1..].iter().enumerate() {
+        if series.is_empty() {
+            continue;
+        }
+        let values: Vec<&str> = table[1..]
+            .iter()
+            .map(|row| row.get(index + 1).map(String::as_str).unwrap_or(""))
+            .collect();
+        paragraphs.push(format!("{series}: {}", values.join(", ")));
+    }
+    if paragraphs.len() < 2 {
+        return None;
+    }
+    Some(paragraphs)
+}
+
+/// Rows of the first `<table:table>` in ODF `content.xml`: each cell is its
+/// `office:value` when present, else its text content. `table:covered-table-cell`
+/// contributes an empty cell so columns stay aligned; `number-columns-repeated`
+/// repeats the cell. Local tag names only, so writer prefix choices don't matter.
+fn first_odf_table(xml: &str) -> Option<Vec<Vec<String>>> {
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut table: Vec<Vec<String>> = Vec::new();
+    let mut row: Vec<String> = Vec::new();
+    let mut in_table = false;
+    let mut table_done = false;
+    let mut in_row = false;
+    let mut cell_value: Option<String> = None;
+    let mut cell_repeated = 1usize;
+    let mut cell_text = String::new();
+    let mut in_cell = false;
+    loop {
+        match reader.read_event() {
+            Err(_) => return None,
+            Ok(Event::Eof) => break,
+            Ok(Event::Start(element)) => match element.local_name().as_ref() {
+                "table" if !table_done => in_table = true,
+                "table-row" if in_table => {
+                    in_row = true;
+                    row = Vec::new();
+                }
+                "table-cell" if in_table && in_row => {
+                    in_cell = true;
+                    let (value, repeated) = read_cell_attrs(&element);
+                    cell_value = value;
+                    cell_repeated = repeated;
+                    cell_text.clear();
+                }
+                _ => {}
+            },
+            Ok(Event::Empty(element)) => match element.local_name().as_ref() {
+                "covered-table-cell" if in_table && in_row => row.push(String::new()),
+                "table-cell" if in_table && in_row => {
+                    // Self-closed cells (`<table:table-cell office:value="9.1"/>`)
+                    // carry everything in attributes; LibreOffice emits both forms.
+                    let (value, repeated) = read_cell_attrs(&element);
+                    let cell = value.unwrap_or_default();
+                    for _ in 0..repeated {
+                        row.push(cell.clone());
+                    }
+                }
+                _ => {}
+            },
+            Ok(Event::Text(text)) => {
+                if in_cell {
+                    cell_text.push_str(&text.xml10_content());
+                }
+            }
+            // Entity references arrive as their own events (`R`, `&amp;`, `D`
+            // come through separately), so resolve them here or text loses
+            // every `&`.
+            Ok(Event::GeneralRef(reference)) => {
+                if in_cell {
+                    cell_text.push_str(&resolve_entity_ref(&reference));
+                }
+            }
+            Ok(Event::End(element)) => match element.local_name().as_ref() {
+                "table-cell" if in_cell => {
+                    in_cell = false;
+                    let cell = cell_value
+                        .take()
+                        .unwrap_or_else(|| unescape_xml_attr(cell_text.trim()));
+                    for _ in 0..cell_repeated {
+                        row.push(cell.clone());
+                    }
+                    cell_repeated = 1;
+                }
+                "table-row" if in_row => {
+                    in_row = false;
+                    table.push(std::mem::take(&mut row));
+                }
+                "table" if in_table => {
+                    in_table = false;
+                    table_done = true;
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    if table.is_empty() {
+        return None;
+    }
+    Some(table)
+}
+
+/// Cell attributes for `<table:table-cell>` in either Start or Empty form:
+/// its `office:value` when present and its `number-columns-repeated` span.
+fn read_cell_attrs(element: &quick_xml::events::BytesStart) -> (Option<String>, usize) {
+    let mut value = None;
+    let mut repeated = 1usize;
+    for attribute in element.attributes().flatten() {
+        let name = attribute.key.local_name();
+        // Attribute values arrive unresolved, so unescape here; the
+        // pass-through fallback keeps anything already plain.
+        let text = unescape_xml_attr(&attribute.value);
+        match name.as_ref() {
+            "value" => value = Some(text),
+            "number-columns-repeated" => repeated = text.parse().unwrap_or(1).max(1),
+            _ => {}
+        }
+    }
+    (value, repeated)
+}
+
+/// Resolves one `&name;` reference to its character; unknown names pass
+/// through literally so the cell keeps them instead of losing content.
+fn resolve_entity_ref(reference: &str) -> String {
+    match reference {
+        "amp" => "&".to_string(),
+        "lt" => "<".to_string(),
+        "gt" => ">".to_string(),
+        "quot" => "\"".to_string(),
+        "apos" => "'".to_string(),
+        _ => {
+            let code = reference.strip_prefix('#').and_then(|number| {
+                if let Some(hex) = number
+                    .strip_prefix('x')
+                    .or_else(|| number.strip_prefix('X'))
+                {
+                    u32::from_str_radix(hex, 16).ok()
+                } else {
+                    number.parse().ok()
+                }
+            });
+            code.and_then(char::from_u32)
+                .map(|char| char.to_string())
+                .unwrap_or_else(|| format!("&{reference};"))
+        }
+    }
+}
+
+/// Entity-unescape for ODF attribute/text content (`&amp;` → `&`);
+/// pass-through on anything malformed rather than dropping the cell.
+fn unescape_xml_attr(raw: &str) -> String {
+    quick_xml::escape::unescape(raw)
+        .map(|text| text.into_owned())
+        .unwrap_or_else(|_| raw.to_string())
+}
+
+/// Minimal `& < > "` escaping for text injected into the HTML fragment.
+fn escape_html_text(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for char in text.chars() {
+        match char {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            _ => escaped.push(char),
+        }
+    }
+    escaped
 }
 
 fn render(bytes: &[u8], format: DocumentFormat, mode: i32) -> Result<String, i32> {

@@ -320,3 +320,203 @@ fn docx_with_align_positioned_image() -> Vec<u8> {
     }
     buffer
 }
+
+/// A minimal OfficeArt JPEG BLIP: record header + 17 UID bytes + a payload
+/// starting with the JPEG SOI marker — exactly what `extract_images` needs to
+/// accept it (it signature-checks the payload, never decodes it).
+fn jpeg_blip() -> Vec<u8> {
+    let payload = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
+    let mut blip = Vec::new();
+    blip.extend_from_slice(&0u16.to_le_bytes()); // ver + inst 0
+    blip.extend_from_slice(&0xF01Du16.to_le_bytes()); // msofbtBlipJPEG
+    blip.extend_from_slice(&(17u32 + payload.len() as u32).to_le_bytes());
+    blip.extend_from_slice(&[0u8; 17]); // UID + tag
+    blip.extend_from_slice(&payload);
+    blip
+}
+
+/// A minimal CFB with just the two streams the DOC shim cares about.
+fn minimal_doc_cfb(data_stream: &[u8], word_stream: &[u8]) -> Vec<u8> {
+    let mut compound = cfb::CompoundFile::create(Cursor::new(Vec::new())).expect("create cfb");
+    for (name, contents) in [("Data", data_stream), ("WordDocument", word_stream)] {
+        compound
+            .create_stream(name)
+            .expect("create stream")
+            .write_all(contents)
+            .expect("write stream");
+    }
+    compound.into_inner().into_inner()
+}
+
+/// The legacy-DOC gap the bridge shims: pictures stored in the main
+/// `WordDocument` stream (LibreOffice conversions do this) must still be
+/// recovered when the `Data` scan comes up empty — not silently dropped.
+#[test]
+fn doc_pictures_outside_data_stream_are_recovered() {
+    let cfb = minimal_doc_cfb(&[0u8; 64], &jpeg_blip());
+    let shimmed = shim_doc_images_to_data_stream(&cfb);
+    assert_ne!(
+        shimmed, cfb,
+        "shim must fire: Data scan is empty, main stream has a picture"
+    );
+
+    // The rewritten container still opens, and its Data stream now yields
+    // the picture through office_oxide's own scanner.
+    let mut archive = office_oxide::cfb::CfbReader::new(Cursor::new(&shimmed)).expect("re-open");
+    let data = archive.open_stream("Data").expect("Data stream");
+    let found = office_oxide::doc::images::extract_images(&data);
+    assert_eq!(found.len(), 1, "expected the recovered picture");
+    assert!(
+        found[0].data.starts_with(&[0xFF, 0xD8]),
+        "payload must be the JPEG"
+    );
+    // The main stream itself is untouched by the rewrite.
+    let word = archive.open_stream("WordDocument").expect("main stream");
+    assert_eq!(word, jpeg_blip());
+}
+
+#[test]
+fn doc_shim_is_byte_identical_when_nothing_needs_recovery() {
+    // Pictures already in Data: untouched.
+    let blip = jpeg_blip();
+    let cfb = minimal_doc_cfb(&blip, &[0u8; 64]);
+    assert_eq!(shim_doc_images_to_data_stream(&cfb), cfb);
+
+    // No pictures anywhere: untouched.
+    let bare = minimal_doc_cfb(&[0u8; 64], &[0u8; 64]);
+    assert_eq!(shim_doc_images_to_data_stream(&bare), bare);
+
+    // Not a CFB at all: untouched, for the parse below to reject.
+    let garbage = b"this is definitely not a compound document".to_vec();
+    assert_eq!(shim_doc_images_to_data_stream(&garbage), garbage);
+}
+
+/// Minimal ODF chart `content.xml`: corner + series header row, one row per
+/// category, values as `office:value`, names as text (one entity-escaped).
+fn chart_content_xml() -> String {
+    let mut xml = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><table:table table:name="local-table">"#,
+    );
+    xml.push_str("<table:table-row><table:table-cell/>");
+    for series in ["Column 1", "R&amp;D"] {
+        xml.push_str(&format!(
+            "<table:table-cell><text:p>{series}</text:p></table:table-cell>"
+        ));
+    }
+    xml.push_str("</table:table-row>");
+    for (category, values) in [("Row 1", ["9.1", "3.2"]), ("Row 2", ["2.4", "8.8"])] {
+        xml.push_str(&format!(
+            "<table:table-row><table:table-cell><text:p>{category}</text:p></table:table-cell>"
+        ));
+        for value in values {
+            xml.push_str(&format!(
+                r#"<table:table-cell office:value-type="float" office:value="{value}"/>"#
+            ));
+        }
+        xml.push_str("</table:table-row>");
+    }
+    xml.push_str("</table:table></office:body></office:document-content>");
+    xml
+}
+
+/// A zip holding `content.xml`, like an OLE `package_stream` wraps an ODF chart.
+fn chart_package(content: &str) -> Vec<u8> {
+    let mut buffer = Vec::new();
+    {
+        let mut zip = ZipWriter::new(Cursor::new(&mut buffer));
+        let options = SimpleFileOptions::default();
+        zip.start_file("content.xml", options).unwrap();
+        zip.write_all(content.as_bytes()).unwrap();
+        zip.finish().unwrap();
+    }
+    buffer
+}
+
+/// A CFB whose ObjectPool holds one object with the given CompObj bytes and
+/// package payload.
+fn doc_cfb_with_object(comp_obj: &[u8], package: &[u8]) -> Vec<u8> {
+    let mut compound = cfb::CompoundFile::create(Cursor::new(Vec::new())).expect("create cfb");
+    compound.create_storage("ObjectPool").expect("pool");
+    compound.create_storage("ObjectPool/obj1").expect("object");
+    for (name, contents) in [
+        ("ObjectPool/obj1/\u{1}CompObj", comp_obj),
+        ("ObjectPool/obj1/package_stream", package),
+    ] {
+        compound
+            .create_stream(name)
+            .expect("create stream")
+            .write_all(contents)
+            .expect("write stream");
+    }
+    compound.into_inner().into_inner()
+}
+
+const CHART_COMP_OBJ: &[u8] = b"\x01\x00\xfe\xffLibreOffice.ChartDocument.1\x00Embedded Object\x00";
+
+/// An ODF-backed chart object surfaces its data table as data paragraphs in
+/// the DOCX chart-text shape — with XML entities resolved exactly once.
+#[test]
+fn doc_chart_package_renders_as_data_paragraphs() {
+    let cfb = doc_cfb_with_object(CHART_COMP_OBJ, &chart_package(&chart_content_xml()));
+    let charts = doc_chart_paragraphs(&cfb);
+    assert_eq!(
+        charts,
+        vec![vec![
+            "Categories: Row 1, Row 2".to_string(),
+            "Column 1: 9.1, 2.4".to_string(),
+            "R&D: 3.2, 8.8".to_string(),
+        ]],
+        "chart data wrong: {charts:?}"
+    );
+
+    let html = splice_doc_chart_text(
+        "<p>Body</p><figure><figcaption>Embedded OLE Object</figcaption></figure>",
+        &cfb,
+    );
+    assert!(
+        html.contains("<p>Categories: Row 1, Row 2</p>"),
+        "chart text missing: {html}"
+    );
+    assert!(
+        html.contains("<p>R&amp;D: 3.2, 8.8</p>"),
+        "entity must resolve once then re-escape: {html}"
+    );
+    assert!(
+        !html.contains("Embedded OLE Object"),
+        "placeholder must be replaced: {html}"
+    );
+}
+
+#[test]
+fn doc_chart_splice_keeps_unmatched_placeholders_and_appends_extras() {
+    let cfb = doc_cfb_with_object(CHART_COMP_OBJ, &chart_package(&chart_content_xml()));
+    // Two placeholders, one chart: first replaced, second kept.
+    let html = splice_doc_chart_text(
+        "<figure><figcaption>Embedded OLE Object</figcaption></figure><figure><figcaption>Embedded OLE Object</figcaption></figure>",
+        &cfb,
+    );
+    assert_eq!(html.matches("Categories:").count(), 1);
+    assert!(html.contains("Embedded OLE Object"));
+    // No placeholder at all: appended after a rule, like legacy pictures.
+    let appended = splice_doc_chart_text("<p>Body</p>", &cfb);
+    assert!(appended.contains("<hr />\n<p>Categories: Row 1, Row 2</p>"));
+}
+
+#[test]
+fn doc_chart_ignores_anything_that_is_not_an_odf_chart() {
+    let package = chart_package(&chart_content_xml());
+    // Excel objects keep their placeholders even with a chart-shaped payload.
+    let excel = doc_cfb_with_object(b"Excel.Sheet.8\x00", &package);
+    assert!(doc_chart_paragraphs(&excel).is_empty());
+    assert!(!splice_doc_chart_text("<p>x</p>", &excel).contains("Categories:"));
+
+    // Chart ProgID but garbage payload, zip without content, or no table.
+    let garbage = doc_cfb_with_object(CHART_COMP_OBJ, b"not a zip");
+    assert!(doc_chart_paragraphs(&garbage).is_empty());
+    let no_content = doc_cfb_with_object(CHART_COMP_OBJ, &chart_package("<a/>"));
+    assert!(doc_chart_paragraphs(&no_content).is_empty());
+
+    // Not a CFB at all.
+    assert!(doc_chart_paragraphs(b"garbage").is_empty());
+    assert_eq!(splice_doc_chart_text("<p>x</p>", b"garbage"), "<p>x</p>");
+}
