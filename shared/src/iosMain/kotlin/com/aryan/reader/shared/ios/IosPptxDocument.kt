@@ -16,6 +16,7 @@ import com.aryan.reader.shared.pptx.SharedPptxElement
 import com.aryan.reader.shared.pptx.SharedPptxGradientFill
 import com.aryan.reader.shared.pptx.SharedPptxImageCrop
 import com.aryan.reader.shared.pptx.SharedPptxImageElement
+import com.aryan.reader.shared.pptx.SharedPptxOoXml
 import com.aryan.reader.shared.pptx.SharedPptxParagraph
 import com.aryan.reader.shared.pptx.SharedPptxPathCommand
 import com.aryan.reader.shared.pptx.SharedPptxPlaceholderKey
@@ -32,11 +33,7 @@ import com.aryan.reader.shared.pptx.SharedPptxVerticalAnchor
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
-
-private const val EMU_PER_POINT = 12_700f
-private const val DEFAULT_SLIDE_WIDTH_EMU = 12_192_000
-private const val DEFAULT_SLIDE_HEIGHT_EMU = 6_858_000
-private const val DEFAULT_TEXT_SIZE_PT = 18f
+import kotlin.math.roundToInt
 
 /** iOS PPTX loading entry point. The resulting chapters are intentionally one slide each. */
 internal fun loadIosPptxBook(book: BookItem): SharedEpubBook {
@@ -84,6 +81,32 @@ internal fun loadIosPptxBook(book: BookItem): SharedEpubBook {
 }
 
 internal class IosPptxParser(private val archive: IosZipEpubArchive) {
+    // Per-open caches: layout/master/theme/rels/table-style parts are shared across
+    // slides, so inflate + parse each backing entry once instead of O(slides) times.
+    private val textCache = mutableMapOf<String, String?>()
+    private val relsCache = mutableMapOf<String, Map<String, IosPptxRelationship>>()
+    private val themeCache = mutableMapOf<String, IosPptxTheme>()
+    private var tableStylesLoaded = false
+    private var tableStylesRoot: IosPptxXml? = null
+    private val tableStylesByTheme = mutableMapOf<IosPptxTheme, Map<String, IosPptxTableStyle>>()
+
+    private fun readText(path: String): String? = textCache.getOrPut(path) { archive.readText(path) }
+
+    private fun cachedRelationshipsFor(partPath: String): Map<String, IosPptxRelationship> =
+        relsCache.getOrPut(partPath) { relationshipsFor(partPath) }
+
+    private fun cachedTheme(path: String): IosPptxTheme =
+        themeCache.getOrPut(path) { readText(path)?.let(IosPptxXml::parse)?.let(::parseTheme) ?: IosPptxTheme() }
+
+    private fun cachedTableStyles(theme: IosPptxTheme): Map<String, IosPptxTableStyle> =
+        tableStylesByTheme.getOrPut(theme) {
+            if (!tableStylesLoaded) {
+                tableStylesRoot = readText("ppt/tableStyles.xml")?.let(IosPptxXml::parse)
+                tableStylesLoaded = true
+            }
+            resolveTableStyles(tableStylesRoot, theme)
+        }
+
     fun parse(): SharedPptxDeck {
         val slides = mutableListOf<SharedPptxSlide>()
         val summary = forEachSlide { _, slide -> slides += slide }
@@ -102,20 +125,20 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
      */
     fun forEachSlide(onSlide: (index: Int, slide: SharedPptxSlide) -> Unit): IosPptxParseSummary {
         val presentationPath = "ppt/presentation.xml"
-        val presentation = archive.readText(presentationPath)?.let(IosPptxXml::parse)
+        val presentation = readText(presentationPath)?.let(IosPptxXml::parse)
             ?: error("ppt/presentation.xml not found in PPTX archive")
-        val width = (presentation.first("sldSz")?.floatAttr("cx") ?: DEFAULT_SLIDE_WIDTH_EMU.toFloat())
-            .emuToPointInt()
-        val height = (presentation.first("sldSz")?.floatAttr("cy") ?: DEFAULT_SLIDE_HEIGHT_EMU.toFloat())
-            .emuToPointInt()
-        val presentationRelationships = relationshipsFor(presentationPath)
+        val width = (presentation.first("sldSz")?.floatAttr("cx") ?: SharedPptxOoXml.DEFAULT_SLIDE_WIDTH_EMU.toFloat())
+            .let(SharedPptxOoXml::emuToPointInt)
+        val height = (presentation.first("sldSz")?.floatAttr("cy") ?: SharedPptxOoXml.DEFAULT_SLIDE_HEIGHT_EMU.toFloat())
+            .let(SharedPptxOoXml::emuToPointInt)
+        val presentationRelationships = cachedRelationshipsFor(presentationPath)
         val slidePaths = presentation.descendants("sldId")
             .mapNotNull { it.attr("r:id") ?: it.attr("id") }
             .mapNotNull { presentationRelationships[it]?.resolvedTarget }
             .ifEmpty {
                 archive.entryPaths
-                    .filter { it.matches(Regex("ppt/slides/slide\\d+\\.xml", RegexOption.IGNORE_CASE)) }
-                    .sortedWith(naturalPathComparator)
+                    .filter(SharedPptxOoXml::isSlidePart)
+                    .sortedWith(SharedPptxOoXml.slidePathComparator)
             }
         var slideCount = 0
         slidePaths.forEach { path ->
@@ -139,26 +162,26 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
         width: Int,
         height: Int,
     ): SharedPptxSlide {
-        val slide = archive.readText(slidePath)?.let(IosPptxXml::parse)
+        val slide = readText(slidePath)?.let(IosPptxXml::parse)
             ?: error("Missing slide part: $slidePath")
-        val slideRels = relationshipsFor(slidePath)
+        val slideRels = cachedRelationshipsFor(slidePath)
         val layoutPath = slideRels.values.firstOrNull { it.type.endsWith("/slideLayout", true) }?.resolvedTarget
-        val layoutRels = layoutPath?.let(::relationshipsFor)
+        val layoutRels = layoutPath?.let(::cachedRelationshipsFor)
         val masterPath = layoutRels?.values?.firstOrNull { it.type.endsWith("/slideMaster", true) }?.resolvedTarget
-        val masterRels = masterPath?.let(::relationshipsFor)
+        val masterRels = masterPath?.let(::cachedRelationshipsFor)
         val themePath = masterRels?.values?.firstOrNull { it.type.endsWith("/theme", true) }?.resolvedTarget
-        val theme = themePath?.let { archive.readText(it)?.let(IosPptxXml::parse)?.let(::parseTheme) }
+        val theme = themePath?.let(::cachedTheme)
             ?: IosPptxTheme()
-        val tableStyles = parseTableStyles(theme)
+        val tableStyles = cachedTableStyles(theme)
 
         val master = masterPath?.let { path ->
-            archive.readText(path)?.let(IosPptxXml::parse)?.let {
-                parsePart(it, relationshipsFor(path), theme, renderPlaceholderText = false)
+            readText(path)?.let(IosPptxXml::parse)?.let {
+                parsePart(it, cachedRelationshipsFor(path), theme, renderPlaceholderText = false, tableStyles = tableStyles)
             }
         } ?: ParsedIosPart()
         val layout = layoutPath?.let { path ->
-            archive.readText(path)?.let(IosPptxXml::parse)?.let {
-                parsePart(it, relationshipsFor(path), theme, renderPlaceholderText = false)
+            readText(path)?.let(IosPptxXml::parse)?.let {
+                parsePart(it, cachedRelationshipsFor(path), theme, renderPlaceholderText = false, tableStyles = tableStyles)
             }
         } ?: ParsedIosPart()
         val current = parsePart(slide, slideRels, theme, renderPlaceholderText = true, tableStyles = tableStyles)
@@ -285,8 +308,8 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
             fillColor = fill,
             gradientFill = gradient,
             lineColor = lineColor,
-            lineWidthPoint = line?.floatAttr("w")?.emuToPoint()
-                ?: style?.first("lnRef")?.floatAttr("w")?.emuToPoint()
+            lineWidthPoint = line?.floatAttr("w")?.let(SharedPptxOoXml::emuToPoint)
+                ?: style?.first("lnRef")?.floatAttr("w")?.let(SharedPptxOoXml::emuToPoint)
                 ?: 0.75f,
             paragraphs = paragraphs,
             hyperlink = hyperlink,
@@ -317,7 +340,7 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
         return SharedPptxImageElement(
             bounds = spPr?.first("xfrm")?.rectFromTransform() ?: element.first("xfrm")?.rectFromTransform() ?: return null,
             bytes = bytes,
-            contentType = rel.resolvedTarget.substringAfterLast('.', "").lowercase().toImageContentType(),
+            contentType = SharedPptxOoXml.imageContentTypeForTarget(rel.resolvedTarget),
             crop = element.first("srcRect")?.let {
                 SharedPptxImageCrop(
                     left = it.floatAttr("l")?.div(100_000f)?.coerceIn(0f, 1f) ?: 0f,
@@ -342,7 +365,7 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
     ): SharedPptxTableElement? {
         val table = element.descendant("tbl") ?: return null
         val bounds = element.descendant("xfrm")?.rectFromTransform() ?: return null
-        val widths = table.first("tblGrid")?.all("gridCol")?.map { it.floatAttr("w")?.emuToPoint() } ?: emptyList()
+        val widths = table.first("tblGrid")?.all("gridCol")?.map { it.floatAttr("w")?.let(SharedPptxOoXml::emuToPoint) } ?: emptyList()
         val tableProperties = table.first("tblPr")
         val styleId = tableProperties?.first("tableStyleId")?.textContent()?.trim()
         val style = styleId?.let(tableStyles::get)
@@ -350,22 +373,24 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
         val lastRowStyled = tableProperties?.boolAttr("lastRow") == true
         val firstColumnStyled = tableProperties?.boolAttr("firstCol") == true
         val lastColumnStyled = tableProperties?.boolAttr("lastCol") == true
-        val rows = table.all("tr").mapIndexed { rowIndex, row ->
+        val bandRow = tableProperties?.boolAttr("bandRow") == true
+        val allRows = table.all("tr")
+        val rows = allRows.mapIndexed { rowIndex, row ->
             SharedPptxTableRow(
-                heightPoint = row.floatAttr("h")?.emuToPoint(),
+                heightPoint = row.floatAttr("h")?.let(SharedPptxOoXml::emuToPoint),
                 cells = row.all("tc").mapIndexed { index, cell ->
                     val props = cell.first("tcPr")
-                    val isFirstRow = firstRowStyled && rowIndex == 0
-                    val isLastRow = lastRowStyled && rowIndex == table.all("tr").lastIndex
-                    val isFirstColumn = firstColumnStyled && index == 0
-                    val isLastColumn = lastColumnStyled && index == row.all("tc").lastIndex
-                    val fallbackStyle = when {
-                        isFirstRow -> style?.firstRow
-                        isLastRow -> style?.lastRow
-                        isFirstColumn -> style?.firstColumn
-                        isLastColumn -> style?.lastColumn
-                        else -> style?.whole
-                    }
+                    val fallbackStyle = style?.cellStyle(
+                        rowIndex = rowIndex,
+                        columnIndex = index,
+                        rowCount = allRows.size,
+                        columnCount = row.all("tc").size,
+                        firstRowStyled = firstRowStyled,
+                        lastRowStyled = lastRowStyled,
+                        firstColumnStyled = firstColumnStyled,
+                        lastColumnStyled = lastColumnStyled,
+                        bandRow = bandRow,
+                    )
                     SharedPptxTableCell(
                         widthPoint = widths.getOrNull(index),
                         fillColor = props?.first("solidFill")?.let { solidColor(it, theme) } ?: fallbackStyle?.fillColor,
@@ -424,7 +449,8 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
         if (body == null) return emptyList()
         val listStyle = body.first("lstStyle")
         val defaults = listStyle?.first("defPPr")
-        val numberCounters = IntArray(9)
+        val numberCounters = IntArray(SharedPptxOoXml.MAX_NUMBERING_LEVELS)
+        val numberCounterStarted = BooleanArray(SharedPptxOoXml.MAX_NUMBERING_LEVELS)
         return body.all("p").mapNotNull { paragraph ->
             val pPr = paragraph.first("pPr")
             val level = (pPr?.intAttr("lvl")?.coerceAtLeast(0) ?: 0).coerceAtMost(numberCounters.lastIndex)
@@ -448,22 +474,39 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
                 "r" -> SharedPptxTextAlign.END
                 else -> SharedPptxTextAlign.START
             }
-            val explicitBullet = pPr?.first("buChar")?.attr("char")
-                ?: levelDefaults?.first("buChar")?.attr("char")
             val autoNumber = pPr?.first("buAutoNum") ?: levelDefaults?.first("buAutoNum")
-            val bullet = explicitBullet ?: autoNumber?.let {
-                val counter = numberCounters[level] + 1
-                numberCounters[level] = counter
-                numberCounters.fill(0, level + 1, numberCounters.size)
-                "$counter."
+            val bulletTypeface = pPr?.first("buFont")?.attr("typeface")
+                ?: levelDefaults?.first("buFont")?.attr("typeface")
+            // Matches the JVM parser: buNone wins, auto-number formats via the
+            // shared helper (arabic/alpha/roman + paren/period), buChar glyphs are
+            // normalized for Symbol/Wingdings typefaces.
+            val bullet = when {
+                (pPr?.first("buNone") ?: levelDefaults?.first("buNone")) != null -> null
+                autoNumber != null -> {
+                    val index = level.coerceIn(0, SharedPptxOoXml.MAX_NUMBERING_LEVELS - 1)
+                    if (!numberCounterStarted[index]) {
+                        numberCounters[index] = (autoNumber.intAttr("startAt") ?: 1).coerceAtLeast(1)
+                        numberCounterStarted[index] = true
+                    } else {
+                        numberCounters[index] += 1
+                    }
+                    for (resetIndex in index + 1 until SharedPptxOoXml.MAX_NUMBERING_LEVELS) {
+                        numberCounterStarted[resetIndex] = false
+                        numberCounters[resetIndex] = 0
+                    }
+                    SharedPptxOoXml.formatAutoNumber(numberCounters[index], autoNumber.attr("type").orEmpty())
+                }
+                else -> (pPr?.first("buChar")?.attr("char")
+                    ?: levelDefaults?.first("buChar")?.attr("char"))
+                    ?.let { SharedPptxOoXml.normalizeBulletGlyph(it, bulletTypeface) }
             }
             SharedPptxParagraph(
                 runs = runs,
                 alignment = align,
                 bullet = bullet,
                 level = level,
-                marginLeftPt = (pPr?.floatAttr("marL") ?: levelDefaults?.floatAttr("marL"))?.emuToPoint(),
-                indentPt = (pPr?.floatAttr("indent") ?: levelDefaults?.floatAttr("indent"))?.emuToPoint(),
+                marginLeftPt = (pPr?.floatAttr("marL") ?: levelDefaults?.floatAttr("marL"))?.let(SharedPptxOoXml::emuToPoint),
+                indentPt = (pPr?.floatAttr("indent") ?: levelDefaults?.floatAttr("indent"))?.let(SharedPptxOoXml::emuToPoint),
                 spaceBeforePt = pPr?.first("spcBef")?.spacingPoints()
                     ?: levelDefaults?.first("spcBef")?.spacingPoints()
                     ?: 0f,
@@ -474,7 +517,7 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
                     ?: levelDefaults?.first("lnSpc")?.spacingMultiple()
                     ?: 1f,
                 alignmentExplicit = pPr?.attr("algn") != null,
-                bulletExplicit = pPr?.first("buChar") != null || pPr?.first("buAutoNum") != null,
+                bulletExplicit = pPr?.first("buNone") != null || pPr?.first("buChar") != null || pPr?.first("buAutoNum") != null,
                 spaceBeforeExplicit = pPr?.first("spcBef") != null,
                 spaceAfterExplicit = pPr?.first("spcAft") != null,
                 lineSpacingExplicit = pPr?.first("lnSpc") != null,
@@ -533,7 +576,7 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
             ?: fallback?.first("cs")?.attr("typeface")
         return SharedPptxTextRun(
             text = text,
-            sizePt = size ?: DEFAULT_TEXT_SIZE_PT,
+            sizePt = size ?: SharedPptxOoXml.DEFAULT_TEXT_SIZE_PT,
             color = colorNode?.let { solidColor(it, theme) },
             bold = rPr?.boolAttr("b") ?: fallback?.boolAttr("b") ?: false,
             italic = rPr?.boolAttr("i") ?: fallback?.boolAttr("i") ?: false,
@@ -549,15 +592,14 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
     }
 
     private fun relationshipsFor(partPath: String): Map<String, IosPptxRelationship> {
-        val relPath = partPath.substringBeforeLast('/', "")
-            .let { parent -> if (parent.isBlank()) "_rels/${partPath.substringAfterLast('/')}.rels" else "$parent/_rels/${partPath.substringAfterLast('/')}.rels" }
-        val root = archive.readText(relPath)?.let(IosPptxXml::parse) ?: return emptyMap()
+        val relPath = SharedPptxOoXml.relationshipsPathFor(partPath)
+        val root = readText(relPath)?.let(IosPptxXml::parse) ?: return emptyMap()
         return root.all("Relationship").mapNotNull { node ->
             val id = node.attr("Id") ?: return@mapNotNull null
             val target = node.attr("Target") ?: return@mapNotNull null
             id to IosPptxRelationship(
                 target = target,
-                resolvedTarget = resolvePath(partPath, target),
+                resolvedTarget = SharedPptxOoXml.resolveRelationshipTarget(partPath, target, node.attr("TargetMode")),
                 type = node.attr("Type").orEmpty(),
                 targetMode = node.attr("TargetMode"),
             )
@@ -567,9 +609,9 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
     private fun parseTheme(xml: IosPptxXml): IosPptxTheme {
         val scheme = xml.descendant("clrScheme") ?: return IosPptxTheme()
         val colors = scheme.children.associateNotNull { child ->
-            val value = child.first("srgbClr")?.attr("val")?.hexColor()
-                ?: child.first("sysClr")?.attr("lastClr")?.hexColor()
-                ?: child.first("prstClr")?.attr("val")?.let(::presetColor)
+            val value = child.first("srgbClr")?.attr("val")?.let(SharedPptxOoXml::hexColorOrNull)
+                ?: child.first("sysClr")?.attr("lastClr")?.let(SharedPptxOoXml::hexColorOrNull)
+                ?: child.first("prstClr")?.attr("val")?.let(SharedPptxOoXml::presetColor)
             value?.let { child.localName to it }
         }.toMutableMap().apply {
             this["bg1"] = this["lt1"] ?: this["bg1"] ?: SharedPptxColor.WHITE
@@ -585,8 +627,14 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
         )
     }
 
-    private fun parseTableStyles(theme: IosPptxTheme): Map<String, IosPptxTableStyle> {
-        val root = archive.readText("ppt/tableStyles.xml")?.let(IosPptxXml::parse) ?: return emptyMap()
+    private fun parseTableStyles(theme: IosPptxTheme): Map<String, IosPptxTableStyle> =
+        cachedTableStyles(theme)
+
+    private fun resolveTableStyles(
+        root: IosPptxXml?,
+        theme: IosPptxTheme
+    ): Map<String, IosPptxTableStyle> {
+        if (root == null) return emptyMap()
         return root.all("tblStyle").mapNotNull { style ->
             val id = style.attr("styleId")?.trim()?.takeIf(String::isNotBlank) ?: return@mapNotNull null
             fun parsePart(name: String): IosPptxTableCellStyle? {
@@ -602,6 +650,8 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
                 lastRow = parsePart("lastRow"),
                 firstColumn = parsePart("firstCol"),
                 lastColumn = parsePart("lastCol"),
+                band1Horizontal = parsePart("band1H"),
+                band2Horizontal = parsePart("band2H"),
             )
         }.toMap()
     }
@@ -678,8 +728,8 @@ private data class IosPptxTransform(
             return IosPptxTransform(
                 scaleX = sx,
                 scaleY = sy,
-                dx = (offX - childOffX * sx).emuToPoint(),
-                dy = (offY - childOffY * sy).emuToPoint(),
+                dx = SharedPptxOoXml.emuToPoint(offX - childOffX * sx),
+                dy = SharedPptxOoXml.emuToPoint(offY - childOffY * sy),
                 rotationDegrees = (xfrm.floatAttr("rot") ?: 0f) / 60_000f,
             )
         }
@@ -749,7 +799,47 @@ private data class IosPptxTableStyle(
     val lastRow: IosPptxTableCellStyle? = null,
     val firstColumn: IosPptxTableCellStyle? = null,
     val lastColumn: IosPptxTableCellStyle? = null,
-)
+    val band1Horizontal: IosPptxTableCellStyle? = null,
+    val band2Horizontal: IosPptxTableCellStyle? = null,
+) {
+    /**
+     * Merge order matches the JVM parser (`SharedPptxTableStyle.cellStyle`):
+     * whole, then horizontal banding, then first/last row/column overrides.
+     */
+    fun cellStyle(
+        rowIndex: Int,
+        columnIndex: Int,
+        rowCount: Int,
+        columnCount: Int,
+        firstRowStyled: Boolean,
+        lastRowStyled: Boolean,
+        firstColumnStyled: Boolean,
+        lastColumnStyled: Boolean,
+        bandRow: Boolean
+    ): IosPptxTableCellStyle? {
+        var style = whole
+        if (bandRow) {
+            val bandIndex = rowIndex - if (firstRowStyled) 1 else 0
+            if (bandIndex >= 0) {
+                style = style.merge(if (bandIndex % 2 == 0) band1Horizontal else band2Horizontal)
+            }
+        }
+        if (firstRowStyled && rowIndex == 0) style = style.merge(firstRow)
+        if (lastRowStyled && rowIndex == rowCount - 1) style = style.merge(lastRow)
+        if (firstColumnStyled && columnIndex == 0) style = style.merge(firstColumn)
+        if (lastColumnStyled && columnIndex == columnCount - 1) style = style.merge(lastColumn)
+        return style
+    }
+
+    private fun IosPptxTableCellStyle?.merge(override: IosPptxTableCellStyle?): IosPptxTableCellStyle? {
+        if (this == null) return override
+        if (override == null) return this
+        return IosPptxTableCellStyle(
+            fillColor = override.fillColor ?: fillColor,
+            lineColor = override.lineColor ?: lineColor,
+        )
+    }
+}
 
 private data class IosPptxTableCellStyle(
     val fillColor: Int?,
@@ -840,10 +930,13 @@ private fun findXmlTagEnd(source: String, start: Int): Int {
     return -1
 }
 
+private val xmlAttributeRegex = Regex("([A-Za-z_][A-Za-z0-9_.:-]*)\\s*=\\s*([\"'])(.*?)\\2", setOf(RegexOption.DOT_MATCHES_ALL))
+private val xmlHexEntityRegex = Regex("&#x([0-9a-fA-F]+);")
+private val xmlDecimalEntityRegex = Regex("&#([0-9]+);")
+
 private fun parseAttributes(source: String): Map<String, String> {
     val output = linkedMapOf<String, String>()
-    val expression = Regex("([A-Za-z_][A-Za-z0-9_.:-]*)\\s*=\\s*([\\\"'])(.*?)\\2", setOf(RegexOption.DOT_MATCHES_ALL))
-    expression.findAll(source).forEach { match -> output[match.groupValues[1]] = match.groupValues[3].decodeXmlEntities() }
+    xmlAttributeRegex.findAll(source).forEach { match -> output[match.groupValues[1]] = match.groupValues[3].decodeXmlEntities() }
     return output
 }
 
@@ -852,30 +945,30 @@ private fun String.decodeXmlEntities(): String = replace("&lt;", "<")
     .replace("&quot;", "\"")
     .replace("&apos;", "'")
     .replace("&amp;", "&")
-    .replace(Regex("&#x([0-9a-fA-F]+);")) { match ->
+    .replace(xmlHexEntityRegex) { match ->
         match.groupValues[1].toIntOrNull(16)?.toChar()?.toString() ?: match.value
     }
-    .replace(Regex("&#([0-9]+);")) { match ->
+    .replace(xmlDecimalEntityRegex) { match ->
         match.groupValues[1].toIntOrNull()?.toChar()?.toString() ?: match.value
     }
 
 private fun IosPptxXml.floatAttr(name: String): Float? = attr(name)?.toFloatOrNull()
 private fun IosPptxXml.intAttr(name: String): Int? = attr(name)?.toIntOrNull()
-private fun IosPptxXml.boolAttr(name: String): Boolean? = attr(name)?.let { it == "1" || it.equals("true", true) }
+private fun IosPptxXml.boolAttr(name: String): Boolean? = attr(name)?.let(SharedPptxOoXml::isTruthyFlag)
 private fun IosPptxXml.rectFromTransform(): SharedPptxRect? {
     val off = first("off") ?: return null
     val ext = first("ext") ?: return null
-    val left = off.floatAttr("x")?.emuToPoint() ?: return null
-    val top = off.floatAttr("y")?.emuToPoint() ?: return null
-    val width = ext.floatAttr("cx")?.emuToPoint() ?: return null
-    val height = ext.floatAttr("cy")?.emuToPoint() ?: return null
+    val left = off.floatAttr("x")?.let(SharedPptxOoXml::emuToPoint) ?: return null
+    val top = off.floatAttr("y")?.let(SharedPptxOoXml::emuToPoint) ?: return null
+    val width = ext.floatAttr("cx")?.let(SharedPptxOoXml::emuToPoint) ?: return null
+    val height = ext.floatAttr("cy")?.let(SharedPptxOoXml::emuToPoint) ?: return null
     return SharedPptxRect(left, top, left + width, top + height)
 }
 private fun IosPptxXml.textInsets(): SharedPptxTextInsets = SharedPptxTextInsets(
-    left = (floatAttr("lIns") ?: floatAttr("marL"))?.emuToPoint() ?: SharedPptxTextInsets().left,
-    top = (floatAttr("tIns") ?: floatAttr("marT"))?.emuToPoint() ?: SharedPptxTextInsets().top,
-    right = (floatAttr("rIns") ?: floatAttr("marR"))?.emuToPoint() ?: SharedPptxTextInsets().right,
-    bottom = (floatAttr("bIns") ?: floatAttr("marB"))?.emuToPoint() ?: SharedPptxTextInsets().bottom,
+    left = (floatAttr("lIns") ?: floatAttr("marL"))?.let(SharedPptxOoXml::emuToPoint) ?: SharedPptxTextInsets().left,
+    top = (floatAttr("tIns") ?: floatAttr("marT"))?.let(SharedPptxOoXml::emuToPoint) ?: SharedPptxTextInsets().top,
+    right = (floatAttr("rIns") ?: floatAttr("marR"))?.let(SharedPptxOoXml::emuToPoint) ?: SharedPptxTextInsets().right,
+    bottom = (floatAttr("bIns") ?: floatAttr("marB"))?.let(SharedPptxOoXml::emuToPoint) ?: SharedPptxTextInsets().bottom,
 )
 private fun IosPptxXml.verticalAnchor(): SharedPptxVerticalAnchor = when (attr("anchor")) {
     "ctr" -> SharedPptxVerticalAnchor.MIDDLE
@@ -883,47 +976,16 @@ private fun IosPptxXml.verticalAnchor(): SharedPptxVerticalAnchor = when (attr("
     else -> SharedPptxVerticalAnchor.TOP
 }
 private fun IosPptxXml.spacingPoints(): Float? = first("spcPts")?.floatAttr("val")?.div(100f)
-    ?: first("spcPct")?.floatAttr("val")?.let { DEFAULT_TEXT_SIZE_PT * it / 100_000f }
+    ?: first("spcPct")?.floatAttr("val")?.let { SharedPptxOoXml.DEFAULT_TEXT_SIZE_PT * it / 100_000f }
 private fun IosPptxXml.spacingMultiple(): Float = first("spcPct")?.floatAttr("val")?.div(100_000f) ?: 1f
-private fun Float.emuToPoint(): Float = this / EMU_PER_POINT
-private fun Float.emuToPointInt(): Int = (this / EMU_PER_POINT).toInt().coerceAtLeast(1)
-private fun String.toImageContentType(): String = when (this) {
-    "jpg", "jpeg" -> "image/jpeg"
-    "png" -> "image/png"
-    "gif" -> "image/gif"
-    "webp" -> "image/webp"
-    "bmp" -> "image/bmp"
-    else -> "application/octet-stream"
-}
-
-private fun resolvePath(basePath: String, target: String): String {
-    if (target.startsWith("http://") || target.startsWith("https://")) return target
-    val parent = basePath.substringBeforeLast('/', "")
-    val parts = (if (parent.isBlank()) target else "$parent/$target").replace('\\', '/').split('/')
-    val normalized = mutableListOf<String>()
-    parts.forEach { part ->
-        when (part) {
-            "", "." -> Unit
-            ".." -> if (normalized.isNotEmpty()) normalized.removeAt(normalized.lastIndex)
-            else -> normalized += part
-        }
-    }
-    return normalized.joinToString("/")
-}
-
-private val naturalPathComparator = Comparator<String> { left, right ->
-    val l = left.substringAfterLast('/').replace(Regex("\\d+")) { it.value.padStart(8, '0') }
-    val r = right.substringAfterLast('/').replace(Regex("\\d+")) { it.value.padStart(8, '0') }
-    l.compareTo(r, true)
-}
 
 private fun solidColor(node: IosPptxXml, theme: IosPptxTheme): Int? {
     val colorNode = node.descendant("srgbClr") ?: node.descendant("schemeClr") ?: node.descendant("sysClr") ?: node.descendant("prstClr") ?: return null
     val base = when (colorNode.localName) {
-        "srgbClr" -> colorNode.attr("val")?.hexColor()
+        "srgbClr" -> colorNode.attr("val")?.let(SharedPptxOoXml::hexColorOrNull)
         "schemeClr" -> colorNode.attr("val")?.let { theme.colors[it] ?: theme.colors[it.lowercase()] }
-        "sysClr" -> colorNode.attr("lastClr")?.hexColor()
-        else -> colorNode.attr("val")?.let(::presetColor)
+        "sysClr" -> colorNode.attr("lastClr")?.let(SharedPptxOoXml::hexColorOrNull)
+        else -> colorNode.attr("val")?.let(SharedPptxOoXml::presetColor)
     } ?: return null
     val shade = colorNode.first("shade")?.floatAttr("val")?.div(100_000f)
     val tint = colorNode.first("tint")?.floatAttr("val")?.div(100_000f)
@@ -935,10 +997,10 @@ private fun solidColor(node: IosPptxXml, theme: IosPptxTheme): Int? {
         shade?.let { next *= it }
         tint?.let { next += (255f - next) * it }
         next = next * luminanceMultiplier + 255f * luminanceOffset
-        return next.toInt().coerceIn(0, 255)
+        return next.roundToInt().coerceIn(0, 255)
     }
     return SharedPptxColor.argb(
-        (SharedPptxColor.alpha(base) * alpha).toInt(),
+        (SharedPptxColor.alpha(base) * alpha).roundToInt().coerceIn(0, 255),
         channel(SharedPptxColor.red(base)),
         channel(SharedPptxColor.green(base)),
         channel(SharedPptxColor.blue(base)),
@@ -952,29 +1014,10 @@ private fun gradientColor(node: IosPptxXml, theme: IosPptxTheme): SharedPptxGrad
     return SharedPptxGradientFill(stops.first(), stops.last(), angle)
 }
 
-private fun String.hexColor(): Int? {
-    val value = trim().removePrefix("#")
-    if (value.length != 6) return null
-    return value.toLongOrNull(16)?.toInt()?.let { SharedPptxColor.rgb(it shr 16, it shr 8 and 0xff, it and 0xff) }
-}
-
 private fun String.resolvePptxTypeface(theme: IosPptxTheme): String = when (lowercase()) {
     "+mj-lt", "+mj-ea", "+mj-cs" -> theme.majorTypeface ?: this
     "+mn-lt", "+mn-ea", "+mn-cs" -> theme.minorTypeface ?: this
     else -> this
-}
-
-private fun presetColor(name: String): Int? = when (name.lowercase()) {
-    "black" -> SharedPptxColor.BLACK
-    "white" -> SharedPptxColor.WHITE
-    "red" -> SharedPptxColor.RED
-    "green" -> SharedPptxColor.GREEN
-    "blue" -> SharedPptxColor.BLUE
-    "yellow" -> SharedPptxColor.YELLOW
-    "cyan", "aqua" -> SharedPptxColor.CYAN
-    "magenta", "fuchsia" -> SharedPptxColor.MAGENTA
-    "gray", "grey" -> SharedPptxColor.GRAY
-    else -> null
 }
 
 private fun <T, R : Any> Iterable<T>.associateNotNull(transform: (T) -> Pair<String, R>?): Map<String, R> = buildMap {
@@ -988,7 +1031,7 @@ private fun buildIosCharBoxes(elements: List<SharedPptxElement>): List<SharedPpt
             var y = element.bounds.top + element.textInsets.top
             element.paragraphs.forEach { paragraph ->
                 val text = paragraph.runs.joinToString("") { it.text }
-                val size = paragraph.runs.firstOrNull()?.sizePt ?: DEFAULT_TEXT_SIZE_PT
+                val size = paragraph.runs.firstOrNull()?.sizePt ?: SharedPptxOoXml.DEFAULT_TEXT_SIZE_PT
                 val charWidth = size * 0.52f
                 var x = element.bounds.left + element.textInsets.left + (paragraph.marginLeftPt ?: 0f)
                 text.forEach { char ->
@@ -1076,7 +1119,7 @@ internal object IosPptxHtmlRenderer {
 
     private fun renderRun(run: SharedPptxTextRun, fontScale: Float = 1f): String {
         val style = buildString {
-            append("font-size:").append((run.sizePt ?: DEFAULT_TEXT_SIZE_PT) * fontScale.coerceIn(0.4f, 2f)).append("pt;")
+            append("font-size:").append((run.sizePt ?: SharedPptxOoXml.DEFAULT_TEXT_SIZE_PT) * fontScale.coerceIn(0.4f, 2f)).append("pt;")
             run.color?.let { append("color:").append(cssColor(it)).append(';') }
             if (run.bold) append("font-weight:700;")
             if (run.italic) append("font-style:italic;")

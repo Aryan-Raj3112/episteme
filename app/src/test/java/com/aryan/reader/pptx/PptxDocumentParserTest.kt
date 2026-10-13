@@ -117,6 +117,151 @@ class PptxDocumentParserTest {
         }
     }
 
+    @Test
+    fun `parser formats roman autonumbers and honors on flags`() {
+        val file = createPptx(
+            """
+            <p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+                xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+                <p:cSld><p:spTree>
+                    <p:sp>
+                        <p:nvSpPr><p:cNvPr id="2" name="Numbered"/></p:nvSpPr>
+                        <p:spPr><a:xfrm><a:off x="500000" y="500000"/><a:ext cx="3000000" cy="900000"/></a:xfrm></p:spPr>
+                        <p:txBody><a:bodyPr/>
+                            <a:p><a:pPr><a:buAutoNum type="romanUcPeriod"/></a:pPr><a:r><a:t>First</a:t></a:r></a:p>
+                            <a:p><a:pPr><a:buAutoNum type="romanUcPeriod"/></a:pPr><a:r><a:t>Second</a:t></a:r></a:p>
+                        </a:txBody>
+                    </p:sp>
+                    <p:sp>
+                        <p:nvSpPr><p:cNvPr id="3" name="OnFlag"/></p:nvSpPr>
+                        <p:spPr><a:xfrm><a:off x="500000" y="1800000"/><a:ext cx="3000000" cy="500000"/></a:xfrm></p:spPr>
+                        <p:txBody><a:bodyPr/><a:p><a:r><a:rPr b="on"/><a:t>Bold</a:t></a:r></a:p></p:txBody>
+                    </p:sp>
+                </p:spTree></p:cSld>
+            </p:sld>
+            """.trimIndent()
+        )
+
+        val deck = PptxDocumentParser.parse(file)
+
+        val numbered = deck.slides.single().elements
+            .filterIsInstance<PptxShapeElement>()
+            .single { shape -> shape.paragraphs.any { it.runs.any { run -> run.text == "First" } } }
+        assertEquals(listOf("I.", "II."), numbered.paragraphs.map { it.bullet })
+        val bold = deck.slides.single().elements
+            .filterIsInstance<PptxShapeElement>()
+            .single { shape -> shape.paragraphs.any { it.runs.any { run -> run.text == "Bold" } } }
+        assertTrue(bold.paragraphs.single().runs.single().bold)
+    }
+
+    @Test
+    fun `parser merges banded table styles`() {
+        val file = createPptx(
+            """
+            <p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+                xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+                <p:cSld><p:spTree>
+                    <p:graphicFrame>
+                        <p:nvGraphicFramePr><p:cNvPr id="6" name="Table"/></p:nvGraphicFramePr>
+                        <p:xfrm><a:off x="500000" y="500000"/><a:ext cx="3000000" cy="2400000"/></p:xfrm>
+                        <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">
+                            <a:tbl><a:tblPr bandRow="1"><a:tableStyleId>BAND</a:tableStyleId></a:tblPr><a:tblGrid><a:gridCol w="3000000"/></a:tblGrid>
+                                <a:tr><a:tc><a:txBody><a:bodyPr/><a:p><a:r><a:t>R1</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc></a:tr>
+                                <a:tr><a:tc><a:txBody><a:bodyPr/><a:p><a:r><a:t>R2</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc></a:tr>
+                                <a:tr><a:tc><a:txBody><a:bodyPr/><a:p><a:r><a:t>R3</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc></a:tr>
+                            </a:tbl>
+                        </a:graphicData></a:graphic>
+                    </p:graphicFrame>
+                </p:spTree></p:cSld>
+            </p:sld>
+            """.trimIndent(),
+            parts = mapOf(
+                "ppt/tableStyles.xml" to """
+                    <a:tblStyleLst xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+                        <a:tblStyle styleId="BAND">
+                            <a:band1H><a:tcStyle><a:fill><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:fill></a:tcStyle></a:band1H>
+                            <a:band2H><a:tcStyle><a:fill><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill></a:fill></a:tcStyle></a:band2H>
+                        </a:tblStyle>
+                    </a:tblStyleLst>
+                """.trimIndent().toByteArray()
+            )
+        )
+
+        val deck = PptxDocumentParser.parse(file)
+
+        val table = deck.slides.single().elements.filterIsInstance<PptxTableElement>().single()
+        assertEquals(3, table.rows.size)
+        assertEquals(0xFFFF0000.toInt(), table.rows[0].cells.single().fillColor)
+        assertEquals(0xFF0000FF.toInt(), table.rows[1].cells.single().fillColor)
+        assertEquals(0xFFFF0000.toInt(), table.rows[2].cells.single().fillColor)
+    }
+
+    @Test
+    fun `parser types svg images`() {
+        val file = createPptx(
+            """
+            <p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+                xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+                <p:cSld><p:spTree>
+                    <p:pic>
+                        <p:nvPicPr><p:cNvPr id="3" name="Vector"/></p:nvPicPr>
+                        <p:blipFill><a:blip r:embed="rId9"/></p:blipFill>
+                        <p:spPr><a:xfrm><a:off x="500000" y="500000"/><a:ext cx="1000000" cy="1000000"/></a:xfrm></p:spPr>
+                    </p:pic>
+                </p:spTree></p:cSld>
+            </p:sld>
+            """.trimIndent(),
+            slideRels = """
+                <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                    <Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/vector.svg"/>
+                </Relationships>
+            """.trimIndent(),
+            parts = mapOf("ppt/media/vector.svg" to "<svg/>".toByteArray())
+        )
+
+        val deck = PptxDocumentParser.parse(file)
+
+        val image = deck.slides.single().elements.filterIsInstance<PptxImageElement>().single()
+        assertEquals("image/svg+xml", image.contentType)
+    }
+
+    private fun createPptx(
+        slideXml: String,
+        slideRels: String? = null,
+        parts: Map<String, ByteArray> = emptyMap()
+    ): File {
+        val file = File.createTempFile("reader-test", ".pptx").apply { deleteOnExit() }
+        ZipOutputStream(file.outputStream()).use { zip ->
+            zip.putText(
+                "ppt/presentation.xml",
+                """
+                <p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+                    xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+                    <p:sldSz cx="9144000" cy="5143500"/>
+                    <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+                </p:presentation>
+                """.trimIndent()
+            )
+            zip.putText(
+                "ppt/_rels/presentation.xml.rels",
+                """
+                <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                    <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+                </Relationships>
+                """.trimIndent()
+            )
+            zip.putText("ppt/slides/slide1.xml", slideXml)
+            if (slideRels != null) {
+                zip.putText("ppt/slides/_rels/slide1.xml.rels", slideRels)
+            }
+            parts.forEach { (path, bytes) -> zip.putBytes(path, bytes) }
+        }
+        return file
+    }
+
     private fun createTinyPptx(): File {
         val file = File.createTempFile("reader-test", ".pptx").apply { deleteOnExit() }
         ZipOutputStream(file.outputStream()).use { zip ->
