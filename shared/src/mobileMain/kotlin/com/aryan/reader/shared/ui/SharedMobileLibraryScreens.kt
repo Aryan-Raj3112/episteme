@@ -244,6 +244,16 @@ fun SharedMobileUnifiedLibraryScreen(
     selectionActions: SharedMobileUnifiedLibraryActions? = null,
     /** Pull-to-sync trigger; hosts own the sync pipeline. */
     onRefreshLibrary: () -> Unit = {},
+    /**
+     * Inside-files search. Value comes from [state.searchInsideFiles]; the
+     * chip shows only when [onSearchInsideFilesChange] is non-null and
+     * content matches arrive via [contentSearchBookIds]. Hosts without a
+     * content index keep the defaults and see no UI change.
+     */
+    onSearchInsideFilesChange: ((Boolean) -> Unit)? = null,
+    contentSearchBookIds: Set<String> = emptySet(),
+    /** Mirrors library keystrokes to the host (content-index search); local filtering is unchanged. */
+    onLibrarySearchQueryChange: (String) -> Unit = {},
     // Android benchmark: readable file types differ per platform (FileCapabilities.kt).
     // Defaults to IOS to preserve current iOS callers; Android must pass ANDROID on adoption.
     platform: ReaderPlatform = ReaderPlatform.IOS,
@@ -280,6 +290,8 @@ fun SharedMobileUnifiedLibraryScreen(
         state.sortOrder,
         filter,
         query,
+        state.searchInsideFiles,
+        contentSearchBookIds,
     ) {
         mobileUnifiedLibraryBooks(
             books = state.rawLibraryBooks,
@@ -289,6 +301,8 @@ fun SharedMobileUnifiedLibraryScreen(
             sortOrder = state.sortOrder,
             // iOS books record the folder name while selections store Android's uriString.
             folderAliases = state.syncedFolders.associate { it.name to it.uriString },
+            searchInsideFiles = state.searchInsideFiles,
+            contentSearchBookIds = contentSearchBookIds,
         )
     }
     val continueReading = remember(state.rawLibraryBooks) {
@@ -465,7 +479,13 @@ fun SharedMobileUnifiedLibraryScreen(
                     searchQuery = query.takeIf { section == MobileUnifiedLibrarySection.HOME },
                     searchPlaceholder = readerString("unified_library_search_books", "Search your books"),
                     clearSearchDescription = readerString("content_desc_clear_query", "Clear search"),
-                    onSearchQueryChange = { query = it },
+                    onSearchQueryChange = {
+                        query = it
+                        onLibrarySearchQueryChange(it)
+                    },
+                    searchInsideFiles = state.searchInsideFiles,
+                    onSearchInsideFilesChange = onSearchInsideFilesChange,
+                    searchInsideFilesDescription = readerString("unified_library_search_inside_files", "Search inside files"),
                 )
             }
         },
@@ -511,8 +531,14 @@ fun SharedMobileUnifiedLibraryScreen(
                                 noResultsLabel = readerString("no_results_found", "No results found for %1\$s", query),
                                 showSearchField = false,
                                 itemKey = { it.id },
-                                onQueryChange = { query = it },
-                                onClose = { query = "" },
+                                onQueryChange = {
+                                    query = it
+                                    onLibrarySearchQueryChange(it)
+                                },
+                                onClose = {
+                                    query = ""
+                                    onLibrarySearchQueryChange("")
+                                },
                                 bookCard = { book ->
                                     SharedMobileBookCard(
                                         book = book,

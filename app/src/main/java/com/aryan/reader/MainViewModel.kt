@@ -89,6 +89,12 @@ import com.aryan.reader.epub.EpubParser
 import com.aryan.reader.epub.ImportedFileCache
 import com.aryan.reader.epub.MobiParser
 import com.aryan.reader.epub.SingleFileImporter
+import com.aryan.reader.search.GlobalSearchIndexer
+import com.aryan.reader.search.GlobalSearchLog
+import com.aryan.reader.search.brief
+import com.aryan.reader.search.GlobalSearchSession
+import com.aryan.reader.shared.search.SharedGlobalSearchPolicy
+import java.util.concurrent.atomic.AtomicInteger
 import com.aryan.reader.epub.hasReadableExtractedContent
 import com.aryan.reader.ml.ISpeechBubbleDetector
 import com.aryan.reader.ml.SpeechBubble
@@ -317,6 +323,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private var feedbackListener: Any? = null
     private val importMutex = Mutex()
     private val epubRecoveryMutex = Mutex()
+    /** In-memory content index for library-wide inside-files search. */
+    private val globalSearchSession = GlobalSearchSession(appContext.filesDir)
+    private val globalSearchQueryGeneration = AtomicInteger(0)
     private val _navigationEvent = Channel<NavigationEvent>(Channel.BUFFERED)
     @Suppress("unused")
     val navigationEvent = _navigationEvent.receiveAsFlow()
@@ -706,6 +715,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     0,
                 ).coerceIn(0, if (BuildConfig.IS_OFFLINE) 2 else 3),
                 recentLimit = prefs.getInt(KEY_RECENT_FILES_LIMIT, 0),
+                searchInsideFiles = prefs.getBoolean(KEY_SEARCH_INSIDE_FILES, false),
             ),
             shelfState = AppShelfState(
                 // Library Beta navigates shelves inside its own section, so a shelf id
@@ -7007,6 +7017,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         bookStore.addRecentFile(newItem)
         Timber.i("Added/Updated $displayName ($type) to recent files via repository.")
 
+        if (_internalState.value.libraryState.searchInsideFiles) {
+            GlobalSearchIndexer.enqueue(
+                appContext,
+                bookId,
+                uri.toString(),
+                type,
+                displayName,
+                "$fileSize:$fileContentModifiedTimestamp",
+            )
+        }
+
         if (isNewBook) {
             uploadNewBookAndMetadata(newItem)
         }
@@ -7691,6 +7712,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         pdfTextRepository.clearBookText(bookId)
         clearImportedFileCache(bookId)
         bookCacheDao.deleteEntireBookCache(bookId)
+        GlobalSearchIndexer.cancel(appContext, bookId)
+        globalSearchSession.remove(bookId)
     }
 
     private suspend fun clearImportedFileCache(bookId: String) {
@@ -8932,6 +8955,96 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         persistLibraryLandingState()
     }
 
+    private fun globalSearchEntries(books: List<RecentFileItem>): List<GlobalSearchSession.Entry> =
+        books.map { GlobalSearchSession.Entry(it.bookId, "${it.fileSize}:${it.fileContentModifiedTimestamp}") }
+
+    /**
+     * Library "search inside files" toggle. Enabling persists the choice and
+     * bulk-indexes the library in the background (per-book work, REPLACE);
+     * disabling clears content matches immediately and stops new work.
+     */
+    fun setSearchInsideFiles(enabled: Boolean) {
+        val previous = _internalState.value.libraryState.searchInsideFiles
+        if (previous == enabled) {
+            GlobalSearchLog.d { "setSearchInsideFiles ignored: already $enabled" }
+            return
+        }
+        _internalState.update {
+            it.copy(
+                libraryState = it.libraryState.copy(
+                    searchInsideFiles = enabled,
+                    contentSearchBookIds = emptySet(),
+                ),
+            )
+        }
+        prefs.edit { putBoolean(KEY_SEARCH_INSIDE_FILES, enabled) }
+        GlobalSearchLog.d { "toggle on=$enabled (was $previous) bulkIndex=$enabled" }
+        if (!enabled) return
+        viewModelScope.launch(Dispatchers.IO) {
+            // uiState, not _internalState: the DB projection is what fills
+            // rawLibraryFiles, and _internalState never carries the library.
+            val booksById = uiState.value.rawLibraryFiles.associateBy { it.bookId }
+            val entries = globalSearchEntries(booksById.values.toList())
+            GlobalSearchLog.d {
+                "bulk index start books=${entries.size} " +
+                    "searchable=${entries.count { e -> booksById[e.bookId]?.let { SharedGlobalSearchPolicy.isContentSearchable(it.type) } == true }}"
+            }
+            val missing = globalSearchSession.syncLibrary(entries)
+            GlobalSearchLog.d { "bulk index missing=${missing.size} of ${entries.size}" }
+            for (entry in missing) {
+                booksById[entry.bookId]?.let { item ->
+                    GlobalSearchIndexer.enqueue(
+                        appContext,
+                        item.bookId,
+                        item.uriString,
+                        item.type,
+                        item.displayName,
+                        entry.contentHash,
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Runs the in-memory content index for [query] (already debounced by the
+     * caller) and publishes matching book ids. Stale runs are dropped by
+     * [globalSearchQueryGeneration].
+     */
+    fun searchLibraryContent(query: String) {
+        val generation = globalSearchQueryGeneration.incrementAndGet()
+        GlobalSearchLog.d { "searchLibraryContent gen=$generation raw='$query'" }
+        viewModelScope.launch(Dispatchers.IO) {
+            val trimmed = query.trim()
+            val enabled = _internalState.value.libraryState.searchInsideFiles
+            val ids = if (!enabled || trimmed.isBlank()) {
+                GlobalSearchLog.d {
+                    "searchLibraryContent gen=$generation skipped enabled=$enabled blank=${trimmed.isBlank()}"
+                }
+                emptySet()
+            } else {
+                // uiState, not _internalState: the DB projection is what fills
+                // rawLibraryFiles, and _internalState never carries the library.
+                globalSearchSession.query(
+                    globalSearchEntries(uiState.value.rawLibraryFiles),
+                    trimmed,
+                )
+            }
+            if (globalSearchQueryGeneration.get() != generation) {
+                GlobalSearchLog.d {
+                    "searchLibraryContent gen=$generation stale (current=${globalSearchQueryGeneration.get()}) dropping"
+                }
+                return@launch
+            }
+            _internalState.update {
+                it.copy(libraryState = it.libraryState.copy(contentSearchBookIds = ids))
+            }
+            GlobalSearchLog.d {
+                "searchLibraryContent gen=$generation published ids=${ids.size}"
+            }
+        }
+    }
+
     /**
      * Opens a shelf. Library Beta owns its own shelf navigation state, so this no longer
      * forces the retired Library page index.
@@ -9157,6 +9270,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             putInt(KEY_LIBRARY_SCREEN_START_PAGE, state.libraryScreenStartPage)
             putInt(KEY_UNIFIED_LIBRARY_SECTION, state.unifiedLibrarySection)
             putBoolean(KEY_UNIFIED_LIBRARY_LIST_VIEW, state.unifiedLibraryListView)
+            putBoolean(KEY_SEARCH_INSIDE_FILES, state.libraryState.searchInsideFiles)
             putString(KEY_LAST_VIEWING_SHELF_ID, resolvedUiState.viewingShelfId)
             putBoolean(KEY_LAST_ADDING_BOOKS_TO_SHELF, resolvedUiState.isAddingBooksToShelf)
         }

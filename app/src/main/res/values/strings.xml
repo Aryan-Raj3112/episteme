@@ -115,6 +115,7 @@
     <string name="unified_library_no_shelves">No shelves yet</string>
     <string name="unified_library_no_folders">No synced folders yet</string>
     <string name="unified_library_search_books">Search your books</string>
+    <string name="unified_library_search_inside_files">Search inside files</string>
     <string name="unified_library_grid_view">Grid view</string>
     <string name="unified_library_list_view">List view</string>
     <string name="unified_library_sort_filter">Sort and filter</string>

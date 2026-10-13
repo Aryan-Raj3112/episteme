@@ -224,6 +224,8 @@ import com.aryan.reader.shared.MobileBookOpenPreflightAction
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.withMobileBookOpened
 import com.aryan.reader.shared.withMobileBookClosed
+import com.aryan.reader.shared.withMobileTabsEnabled
+import com.aryan.reader.shared.withReconciledMobilePdfTabs
 import com.aryan.reader.shared.withMobileLibrarySearchActive
 import com.aryan.reader.shared.withMobileLibrarySearchQuery
 import com.aryan.reader.shared.withMobileFolderFileTypes
@@ -4368,6 +4370,11 @@ private fun ReaderIosApp(
             )
             return
         }
+        // Android parity (`MainViewModel` open/switch): prune deleted ids
+        // before the cap check so a stale tab can never falsely block a new one.
+        if (!temporary && book.type == FileType.PDF && state.isTabsEnabled) {
+            state = state.withReconciledMobilePdfTabs()
+        }
         if (
             !temporary &&
             book.type == FileType.PDF &&
@@ -5133,6 +5140,42 @@ private fun ReaderIosApp(
         }
     }
 
+    fun setMobileTabsEnabled(enabled: Boolean) {
+        // Android benchmark (`AppUiModels.setTabsEnabled`): disabling keeps
+        // the active tab in memory so re-enabling restores it. The reader
+        // stays open on the active book; only the strip hides.
+        state = state.withMobileTabsEnabled(enabled)
+    }
+
+    fun closeHomeTab(book: BookItem) {
+        state = state.closeTab(book.id)
+        // Android parity (`MainViewModel.closeTab` -> `switchTab(next)`):
+        // closing the currently open book from Home must move the reader to
+        // the next active tab instead of leaving it on a closed book.
+        if (activeReaderBook?.id != book.id) return
+        val nextBook = state.activeTabBookId?.let { nextId ->
+            state.rawLibraryBooks.firstOrNull { it.id == nextId }
+        }
+        if (nextBook == null) {
+            clearIosReaderSession()
+            state = state.withoutMobileReaderSession()
+            activeReaderBook = null
+        } else {
+            activeReaderBook = nextBook
+            persistIosReaderSession(nextBook)
+        }
+    }
+
+    fun closeAllHomeTabs() {
+        // Android parity (`MainViewModel.closeAllTabs`): closing every tab
+        // exits the reader instead of leaving a selection behind.
+        state = state.reduce(AppAction.AllTabsClosed)
+            .copy(openTabs = emptyList())
+            .withoutMobileReaderSession()
+        clearIosReaderSession()
+        activeReaderBook = null
+    }
+
     LaunchedEffect(state.rawLibraryBooks, pdfSplitWorkspace) {
         if (!pdfSplitWorkspace.isOpen) return@LaunchedEffect
         val recovery = recoverIosPdfSplitWorkspace(pdfSplitWorkspace, state.rawLibraryBooks)
@@ -5155,6 +5198,25 @@ private fun ReaderIosApp(
                 state = state.withoutMobileReaderSession()
                 activeReaderBook = null
             }
+        }
+    }
+
+    LaunchedEffect(state.rawLibraryBooks, state.activeTabBookId) {
+        // Any library deletion path prunes tabs via `removeIosBooks`; when
+        // the pruned book is the open reader, follow Android's close/switch
+        // behavior instead of staying on a deleted file.
+        val current = activeReaderBook ?: return@LaunchedEffect
+        if (state.rawLibraryBooks.any { it.id == current.id }) return@LaunchedEffect
+        val nextBook = state.activeTabBookId?.let { nextId ->
+            state.rawLibraryBooks.firstOrNull { it.id == nextId }
+        }
+        if (nextBook == null) {
+            clearIosReaderSession()
+            state = state.withoutMobileReaderSession()
+            activeReaderBook = null
+        } else {
+            activeReaderBook = nextBook
+            persistIosReaderSession(nextBook)
         }
     }
 
@@ -6843,7 +6905,7 @@ private fun ReaderIosApp(
                                 }
                                 when (portableMutation) {
                                     is MobileSettingsMutation.SetTabsEnabled -> {
-                                        state = state.reduce(AppAction.TabsEnabledChanged(portableMutation.enabled))
+                                        setMobileTabsEnabled(portableMutation.enabled)
                                     }
                                     is MobileSettingsMutation.ChangeStrictFileFilter -> {
                                         when (portableMutation.effect) {
@@ -7306,10 +7368,10 @@ private fun ReaderIosApp(
                                         )
                                     }
                                     override fun closeTab(book: BookItem) {
-                                        state = state.closeTab(book.id)
+                                        closeHomeTab(book)
                                     }
                                     override fun closeAllTabs() {
-                                        state = state.reduce(AppAction.AllTabsClosed).copy(openTabs = emptyList())
+                                        closeAllHomeTabs()
                                     }
                                     override fun togglePinned(book: BookItem) {
                                         state = state.toggleHomePinned(book.id)
@@ -7392,7 +7454,7 @@ private fun ReaderIosApp(
                                         utilityScreen = IosUtilityScreen.LANGUAGE
                                     }
                                     override fun toggleTabs() {
-                                        state = state.reduce(AppAction.TabsEnabledChanged(!state.isTabsEnabled))
+                                        setMobileTabsEnabled(!state.isTabsEnabled)
                                     }
                                     override fun openExternalFileBehavior() {
                                         showExternalFileBehaviorDialog = true
@@ -9807,13 +9869,36 @@ private fun SharedReaderScreenState.removeIosBooks(
         cloudBookTombstones
     }
     fun List<BookItem>.withoutRemoved() = filterNot { it.id in bookIds }
+    val remainingRawBooks = rawLibraryBooks.withoutRemoved()
+    val remainingActiveTabBookId = activeTabBookId?.takeUnless { it in bookIds }
+    // Android parity: a deleted open book falls back to the active tab
+    // instead of leaving the reader selection on a missing file. The open
+    // reader itself is synced by the deletion effect below.
+    val nextSelectedBook: BookItem? = if (selectedBookId in bookIds) {
+        remainingActiveTabBookId?.let { nextId ->
+            remainingRawBooks.firstOrNull { it.id == nextId }
+        }
+    } else {
+        selectedBookId?.let { currentId ->
+            remainingRawBooks.firstOrNull { it.id == currentId }
+        }
+    }
+    // Session-only (temporary/external) selections are not in the raw
+    // library; keep them unless that exact session was removed.
+    val keepExternalSelection = selectedBookId !in bookIds &&
+        selectedBookId != null &&
+        nextSelectedBook == null &&
+        rawLibraryBooks.none { it.id == selectedBookId }
     return copy(
-        rawLibraryBooks = rawLibraryBooks.withoutRemoved(),
+        rawLibraryBooks = remainingRawBooks,
         libraryBooks = libraryBooks.withoutRemoved(),
         recentBooks = recentBooks.withoutRemoved(),
         openTabs = openTabs.withoutRemoved(),
         openTabIds = openTabIds.filterNot { it in bookIds },
-        activeTabBookId = activeTabBookId?.takeUnless { it in bookIds },
+        activeTabBookId = remainingActiveTabBookId,
+        selectedBookId = if (keepExternalSelection) selectedBookId else nextSelectedBook?.id,
+        selectedUriString = if (keepExternalSelection) selectedUriString else nextSelectedBook?.path,
+        selectedFileType = if (keepExternalSelection) selectedFileType else nextSelectedBook?.type,
         pinnedHomeBookIds = pinnedHomeBookIds - bookIds,
         pinnedLibraryBookIds = pinnedLibraryBookIds - bookIds,
         cloudBookTombstones = newTombstones,

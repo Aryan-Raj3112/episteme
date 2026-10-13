@@ -382,6 +382,8 @@ data class SharedReaderScreenState(
     val hasUnreadFeedback: Boolean = false,
     val searchQuery: String = "",
     val isSearchActive: Boolean = false,
+    /** Library "search inside files" toggle. False preserves metadata-only search. */
+    val searchInsideFiles: Boolean = false,
     val isRefreshing: Boolean = false,
     val reflowProgress: Float? = null,
     val recentBooks: List<BookItem> = emptyList(),

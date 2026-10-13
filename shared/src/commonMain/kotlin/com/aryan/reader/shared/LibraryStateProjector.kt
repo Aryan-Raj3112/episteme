@@ -21,6 +21,8 @@ data class BookShelfRef(
 data class LibraryFeatureState(
     val sortOrder: SortOrder = SortOrder.RECENT,
     val searchQuery: String = "",
+    /** Library "search inside files" toggle. False preserves metadata-only search. */
+    val searchInsideFiles: Boolean = false,
     val filters: LibraryFilters = LibraryFilters(),
     val syncedFolders: List<SyncedFolder> = emptyList(),
     val pinnedHomeBookIds: Set<String> = emptySet(),
@@ -55,7 +57,13 @@ data class SharedLibraryProjectionInput(
     val booksFromStore: List<BookItem>,
     val shelfRecords: List<ShelfRecord>,
     val shelfRefs: List<BookShelfRef>,
-    val tags: List<Tag>
+    val tags: List<Tag>,
+    /**
+     * Book ids with inside-file content matches for the current query.
+     * Honored only when [LibraryFeatureState.searchInsideFiles] is true;
+     * otherwise ignored so metadata-only behavior is byte-identical.
+     */
+    val contentSearchBookIds: Set<String> = emptySet(),
 )
 
 class SharedLibraryStateProjector(
@@ -65,7 +73,21 @@ class SharedLibraryStateProjector(
         val current = input.state
         val allLibraryBooks = input.booksFromStore.distinctBy { it.sharedLibraryIdentity() }
         val syncedFolders = current.syncedFolders.withSourceFolderFallbacks(allLibraryBooks)
-        val queried = filterBySearch(allLibraryBooks, current.searchQuery)
+        val metadataQueried = filterBySearch(allLibraryBooks, current.searchQuery)
+        // Toggle-on expansion: content-only books join metadata hits. Flag off
+        // keeps the metadata path byte-identical (no union, no reorder).
+        val queried = if (
+            current.searchInsideFiles &&
+            current.searchQuery.isNotBlank() &&
+            input.contentSearchBookIds.isNotEmpty()
+        ) {
+            val metadataIds = metadataQueried.mapTo(mutableSetOf()) { it.id }
+            metadataQueried + allLibraryBooks.filter {
+                it.id in input.contentSearchBookIds && it.id !in metadataIds
+            }
+        } else {
+            metadataQueried
+        }
         val filtered = applyLibraryFilters(queried, current.filters)
         val sortedLibraryBooks = sortBooks(filtered, current.sortOrder)
             .withPinnedFirst(current.pinnedLibraryBookIds)

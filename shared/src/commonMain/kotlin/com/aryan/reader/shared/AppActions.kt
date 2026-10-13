@@ -7,6 +7,8 @@ import com.aryan.reader.shared.reader.ReaderSearchOptions
 
 sealed interface LibraryAction {
     data class SearchChanged(val query: String) : LibraryAction
+    /** Library "search inside files" toggle. */
+    data class SearchInsideFilesChanged(val enabled: Boolean) : LibraryAction
     data class SortChanged(val sortOrder: SortOrder) : LibraryAction
     data class FiltersChanged(val filters: LibraryFilters) : LibraryAction
     data class BookSelectionToggled(val bookId: String) : LibraryAction

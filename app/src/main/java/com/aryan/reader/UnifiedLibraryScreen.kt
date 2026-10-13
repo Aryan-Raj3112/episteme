@@ -198,6 +198,11 @@ fun UnifiedLibraryScreen(
         delay(300)
         debouncedQuery = query
     }
+    // Content-index search follows the same debounce; the engine publishes
+    // matching book ids into uiState for the union in visibleBooks.
+    LaunchedEffect(debouncedQuery, uiState.libraryState.searchInsideFiles) {
+        viewModel.searchLibraryContent(debouncedQuery)
+    }
     var showLibraryControls by rememberSaveable { mutableStateOf(false) }
     var showAdvancedFilters by rememberSaveable { mutableStateOf(false) }
     var showThemeSheet by rememberSaveable { mutableStateOf(false) }
@@ -366,12 +371,22 @@ fun UnifiedLibraryScreen(
             )
         }
     }
-    val visibleBooks = remember(uiState.rawLibraryFiles, uiState.libraryFilters, filter, debouncedQuery, uiState.sortOrder) {
+    val visibleBooks = remember(
+        uiState.rawLibraryFiles,
+        uiState.libraryFilters,
+        filter,
+        debouncedQuery,
+        uiState.sortOrder,
+        uiState.libraryState.searchInsideFiles,
+        uiState.libraryState.contentSearchBookIds,
+    ) {
         sortFiles(
             filterUnifiedLibraryBooks(
                 applyLibraryFilters(uiState.rawLibraryFiles, uiState.libraryFilters),
                 filter,
-                debouncedQuery
+                debouncedQuery,
+                uiState.libraryState.searchInsideFiles,
+                uiState.libraryState.contentSearchBookIds,
             ),
             uiState.sortOrder
         )
@@ -608,6 +623,8 @@ fun UnifiedLibraryScreen(
                         onAccountClick = { scope.launch { accountDrawerState.open() } },
                         searchQuery = if (section == UnifiedLibrarySection.HOME) query else null,
                         onSearchQueryChange = { query = it },
+                        searchInsideFiles = uiState.libraryState.searchInsideFiles,
+                        onSearchInsideFilesChange = viewModel::setSearchInsideFiles,
                     )
                 }
             },
@@ -1168,12 +1185,27 @@ internal fun findContinueReadingBook(books: List<RecentFileItem>): RecentFileIte
     return books.firstOrNull { it.bookId == picked.id }
 }
 
-internal fun filterUnifiedLibraryBooks(books: List<RecentFileItem>, filter: UnifiedLibraryFilter, query: String): List<RecentFileItem> {
+internal fun filterUnifiedLibraryBooks(
+    books: List<RecentFileItem>,
+    filter: UnifiedLibraryFilter,
+    query: String,
+    searchInsideFiles: Boolean = false,
+    contentSearchBookIds: Set<String> = emptySet(),
+): List<RecentFileItem> {
     if (books.isEmpty()) return emptyList()
     val normalizedQuery = query.trim()
     val mapper = SharedProjectionBookItemCache(maxEntries = books.size)
     val byId = books.associateBy { it.bookId }
-    return mapper.map(books)
+    val metadataBooks = mapper.map(books)
         .filter { it.matchesMobileUnifiedLibraryFilter(filter, normalizedQuery) }
-        .mapNotNull { byId[it.id] }
+    if (!searchInsideFiles || normalizedQuery.isBlank() || contentSearchBookIds.isEmpty()) {
+        return metadataBooks.mapNotNull { byId[it.id] }
+    }
+    // Content-only books join metadata hits but still respect the active
+    // status filter (blank query = filter check without text matching).
+    val metadataIds = metadataBooks.mapTo(mutableSetOf()) { it.id }
+    return (metadataBooks + mapper.map(books).filter {
+        it.id in contentSearchBookIds && it.id !in metadataIds &&
+            it.matchesMobileUnifiedLibraryFilter(filter, "")
+    }).mapNotNull { byId[it.id] }
 }

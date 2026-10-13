@@ -5,7 +5,11 @@ import com.aryan.reader.shared.reader.ReaderSessionState
 
 fun LibraryState.reduce(action: LibraryAction): LibraryState {
     return when (action) {
-        is LibraryAction.SearchChanged -> copy(searchQuery = action.query)
+        is LibraryAction.SearchChanged -> copy(searchQuery = action.query, contentSearchBookIds = emptySet())
+        is LibraryAction.SearchInsideFilesChanged -> copy(
+            searchInsideFiles = action.enabled,
+            contentSearchBookIds = emptySet(),
+        )
         is LibraryAction.SortChanged -> copy(sortOrder = action.sortOrder)
         is LibraryAction.FiltersChanged -> copy(filters = action.filters)
         is LibraryAction.BookSelectionToggled -> {
@@ -114,6 +118,8 @@ fun AppShelfState.reduce(action: AppShelfAction): AppShelfState = when (action) 
 fun SharedReaderScreenState.reduce(action: LibraryAction): SharedReaderScreenState {
     val reduced = LibraryState(
         searchQuery = searchQuery,
+        searchInsideFiles = searchInsideFiles,
+        contentSearchBookIds = emptySet(),
         sortOrder = sortOrder,
         filters = libraryFilters,
         selectedBookIds = selectedBookIds,
@@ -123,6 +129,7 @@ fun SharedReaderScreenState.reduce(action: LibraryAction): SharedReaderScreenSta
     ).reduce(action)
     return copy(
         searchQuery = reduced.searchQuery,
+        searchInsideFiles = reduced.searchInsideFiles,
         sortOrder = reduced.sortOrder,
         libraryFilters = reduced.filters,
         selectedBookIds = reduced.selectedBookIds,

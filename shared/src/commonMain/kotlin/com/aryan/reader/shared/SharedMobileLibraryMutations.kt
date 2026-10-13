@@ -305,6 +305,17 @@ fun SharedReaderScreenState.withMobileLibrarySearchQuery(
     }
 }
 
+/**
+ * Library "search inside files" toggle. False preserves metadata-only
+ * search; hosts bulk-index on enable and clear content state on disable.
+ */
+fun SharedReaderScreenState.withMobileLibrarySearchInsideFiles(
+    enabled: Boolean,
+): SharedReaderScreenState {
+    if (searchInsideFiles == enabled) return this
+    return reduce(LibraryAction.SearchInsideFilesChanged(enabled))
+}
+
 fun planMobileImportBatch(
     files: List<ImportedBookFile>,
     existingBookIds: Set<String>,
@@ -629,6 +640,55 @@ fun SharedReaderScreenState.withMobileBookTabClosed(bookId: String): SharedReade
     return updated.copy(
         openTabs = updated.openTabIds.mapNotNull { id ->
             updated.rawLibraryBooks.firstOrNull { it.id == id }
+        },
+    )
+}
+
+/**
+ * Android benchmark (`AppUiModels.setTabsEnabled`): disabling tabs keeps the
+ * active tab in memory so re-enabling restores it. The shared
+ * [AppAction.TabsEnabledChanged] reducer wipes all tabs on disable, so mobile
+ * shells must route toggles through here instead of reducing directly.
+ */
+fun SharedReaderScreenState.withMobileTabsEnabled(enabled: Boolean): SharedReaderScreenState {
+    if (enabled) {
+        return reduce(AppAction.TabsEnabledChanged(true))
+    }
+    val activeId = activeTabBookId ?: return reduce(AppAction.TabsEnabledChanged(false))
+    val activeBook = openTabs.firstOrNull { it.id == activeId }
+        ?: rawLibraryBooks.firstOrNull { it.id == activeId }
+    return reduce(AppAction.TabsEnabledChanged(false)).copy(
+        openTabIds = listOf(activeId),
+        activeTabBookId = activeId,
+        openTabs = listOfNotNull(activeBook),
+    )
+}
+
+/**
+ * Drops tab ids that no longer exist in the library and enforces
+ * [MAX_OPEN_PDF_TABS], mirroring Android's `reconcileTabState` before every
+ * tab open/switch/close. Passive pruning only: the reader selection is left
+ * to the explicit close/remove paths.
+ */
+fun SharedReaderScreenState.withReconciledMobilePdfTabs(
+    maxOpenTabs: Int = MAX_OPEN_PDF_TABS,
+): SharedReaderScreenState {
+    val availableIds = rawLibraryBooks.mapTo(mutableSetOf()) { it.id }
+    val reconciledIds = openTabIds
+        .asSequence()
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .distinct()
+        .filter { it in availableIds }
+        .take(maxOpenTabs.coerceAtLeast(0))
+        .toList()
+    val reconciledActive = activeTabBookId?.takeIf { it in reconciledIds }
+    if (reconciledIds == openTabIds && reconciledActive == activeTabBookId) return this
+    return copy(
+        openTabIds = reconciledIds,
+        activeTabBookId = reconciledActive,
+        openTabs = reconciledIds.mapNotNull { id ->
+            rawLibraryBooks.firstOrNull { it.id == id }
         },
     )
 }

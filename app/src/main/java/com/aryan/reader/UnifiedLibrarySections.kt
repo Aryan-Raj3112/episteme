@@ -182,6 +182,8 @@ internal fun UnifiedLibraryTopBar(
     onAccountClick: () -> Unit,
     searchQuery: String?,
     onSearchQueryChange: (String) -> Unit,
+    searchInsideFiles: Boolean = false,
+    onSearchInsideFilesChange: ((Boolean) -> Unit)? = null,
 ) {
     val title = selectedShelf?.name ?: when (section) {
         UnifiedLibrarySection.HOME -> null
@@ -207,6 +209,9 @@ internal fun UnifiedLibraryTopBar(
         searchPlaceholder = stringResource(R.string.unified_library_search_books),
         clearSearchDescription = stringResource(R.string.content_desc_clear_query),
         onSearchQueryChange = onSearchQueryChange,
+        searchInsideFiles = searchInsideFiles,
+        onSearchInsideFilesChange = onSearchInsideFilesChange,
+        searchInsideFilesDescription = stringResource(R.string.unified_library_search_inside_files),
     )
 }
 

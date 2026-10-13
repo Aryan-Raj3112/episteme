@@ -181,6 +181,14 @@ data class LibraryFilters(
 data class LibraryState(
     val books: List<BookItem> = emptyList(),
     val searchQuery: String = "",
+    /** Library "search inside files" toggle. False preserves metadata-only search. */
+    val searchInsideFiles: Boolean = false,
+    /**
+     * Book ids with inside-file content matches for [searchQuery], supplied
+     * by the host's content index. Honored only when [searchInsideFiles] is
+     * true; cleared whenever the query or toggle changes.
+     */
+    val contentSearchBookIds: Set<String> = emptySet(),
     val sortOrder: SortOrder = SortOrder.RECENT,
     val filters: LibraryFilters = LibraryFilters(),
     val selectedBookIds: Set<String> = emptySet(),

@@ -90,6 +90,41 @@ class NonReaderLayoutModelsTest {
     }
 
     @Test
+    fun `unified library unions content-only books only when toggle is on`() {
+        val meta = book(id = "meta", displayName = "Alpha.epub")
+        val contentOnly = book(id = "content", displayName = "Beta.epub")
+        val books = listOf(meta, contentOnly)
+
+        val off = mobileUnifiedLibraryBooks(
+            books = books,
+            filter = MobileUnifiedLibraryFilter.ALL,
+            query = "alpha",
+            contentSearchBookIds = setOf("content"),
+        )
+        assertEquals(listOf("meta"), off.map { it.id })
+
+        val on = mobileUnifiedLibraryBooks(
+            books = books,
+            filter = MobileUnifiedLibraryFilter.ALL,
+            query = "alpha",
+            searchInsideFiles = true,
+            contentSearchBookIds = setOf("content"),
+        )
+        assertEquals(listOf("meta", "content"), on.map { it.id })
+
+        // Content-only books still respect the active status filter.
+        val finishedOnly = book(id = "done", displayName = "Zulu.epub", progress = 100f)
+        val filtered = mobileUnifiedLibraryBooks(
+            books = listOf(finishedOnly),
+            filter = MobileUnifiedLibraryFilter.UNREAD,
+            query = "harvest",
+            searchInsideFiles = true,
+            contentSearchBookIds = setOf("done"),
+        )
+        assertTrue(filtered.isEmpty())
+    }
+
+    @Test
     fun `unified library applies persisted filters and sort order`() {
         val folder = SyncedFolder("folder://downloads", "Downloads", lastScanTime = 0L)
         val beta = book("beta", title = "Beta", sourceFolder = "Downloads")

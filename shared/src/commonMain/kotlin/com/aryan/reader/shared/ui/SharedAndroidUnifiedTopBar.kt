@@ -12,6 +12,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
@@ -51,6 +52,14 @@ fun SharedAndroidUnifiedTopBar(
     searchPlaceholder: String = "",
     clearSearchDescription: String = "",
     onSearchQueryChange: (String) -> Unit = {},
+    /**
+     * Inside-files search toggle. The affordance appears only while a query is
+     * typed, which is the only moment it is actionable; hosts without a content
+     * index leave the callback null and see no change.
+     */
+    searchInsideFiles: Boolean = false,
+    onSearchInsideFilesChange: ((Boolean) -> Unit)? = null,
+    searchInsideFilesDescription: String = "Search inside files",
     modifier: Modifier = Modifier,
 ) {
     val focusManager = LocalFocusManager.current
@@ -91,6 +100,22 @@ fun SharedAndroidUnifiedTopBar(
                     keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
                     singleLine = true,
                 )
+                if (onSearchInsideFilesChange != null && searchQuery.isNotEmpty()) {
+                    IconButton(
+                        onClick = { onSearchInsideFilesChange(!searchInsideFiles) },
+                        modifier = Modifier.testTag("UnifiedLibrarySearchInsideFiles"),
+                    ) {
+                        Icon(
+                            Icons.Default.Description,
+                            contentDescription = searchInsideFilesDescription,
+                            tint = if (searchInsideFiles) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                }
             } else if (title != null) {
                 Text(
                     title,

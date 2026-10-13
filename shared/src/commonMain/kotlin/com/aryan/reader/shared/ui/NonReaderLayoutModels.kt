@@ -687,11 +687,31 @@ internal fun mobileUnifiedLibraryBooks(
     libraryFilters: LibraryFilters = LibraryFilters(),
     sortOrder: SortOrder = SortOrder.RECENT,
     folderAliases: Map<String, String> = emptyMap(),
+    /**
+     * Inside-file content matches for the current query. Unioned after
+     * metadata hits only when [searchInsideFiles] is true; otherwise
+     * ignored so metadata-only behavior is byte-identical.
+     */
+    searchInsideFiles: Boolean = false,
+    contentSearchBookIds: Set<String> = emptySet(),
 ): List<BookItem> {
     val normalizedQuery = query.trim()
-    val filteredBooks = applyLibraryFilters(books, libraryFilters, folderAliases)
+    val preFiltered = applyLibraryFilters(books, libraryFilters, folderAliases)
+    val metadataBooks = preFiltered
         .filter { it.matchesMobileUnifiedLibraryFilter(filter, normalizedQuery) }
-    return sortBooks(filteredBooks, sortOrder)
+    if (!searchInsideFiles || normalizedQuery.isBlank() || contentSearchBookIds.isEmpty()) {
+        return sortBooks(metadataBooks, sortOrder)
+    }
+    // Content-only books join metadata hits but still respect the active
+    // status filter (blank query = filter check without text matching).
+    val metadataIds = metadataBooks.mapTo(mutableSetOf()) { it.id }
+    return sortBooks(
+        metadataBooks + preFiltered.filter {
+            it.id in contentSearchBookIds && it.id !in metadataIds &&
+                it.matchesMobileUnifiedLibraryFilter(filter, "")
+        },
+        sortOrder,
+    )
 }
 
 /**
