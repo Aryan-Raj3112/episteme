@@ -14,6 +14,19 @@ import kotlin.test.assertTrue
 
 class SharedJvmBookLoaderTest {
     @Test
+    fun `pptx stays out of the shared jvm loader`() = withTempDir { dir ->
+        val file = File(dir, "slides.pptx")
+        writeZip(file) {
+            text("ppt/presentation.xml", "<p:presentation/>")
+        }
+
+        val failure = assertFailsWith<IllegalStateException> {
+            SharedJvmBookLoader.load(file, FileType.PPTX)
+        }
+        assertTrue(failure.message?.contains("PPTX") == true)
+    }
+
+    @Test
     fun `docx loader extracts core metadata and body text`() = withTempDir { dir ->
         val file = File(dir, "sample.docx")
         writeZip(file) {

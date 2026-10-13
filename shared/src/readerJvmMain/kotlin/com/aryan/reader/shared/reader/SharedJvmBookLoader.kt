@@ -156,6 +156,13 @@ object SharedJvmBookLoader {
                 FileType.ODT -> loadOdt(file, isFlat = false)
                 FileType.FODT -> loadOdt(file, isFlat = true)
                 FileType.MOBI -> loadMobi(file)
+                // PPTX intentionally bypasses this loader on every platform: the
+                // slide deck is parsed by SharedPptxDeckCache (Android/desktop,
+                // rendered natively) or loadIosPptxBook (iOS, one HTML chapter per
+                // slide). Routing slides through this EPUB-shaped pipeline could
+                // not represent them, so this stays a loud error rather than a
+                // silent fallback.
+                FileType.PPTX -> error("PPTX is not supported by the shared JVM reader loader.")
                 else -> error("${type.name} is not supported by the shared JVM reader loader.")
             }
             logJvmBookOpenTrace {
