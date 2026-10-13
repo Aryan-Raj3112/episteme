@@ -55,6 +55,8 @@ import com.aryan.reader.shared.pptx.SharedPptxTextAlign
 import com.aryan.reader.shared.pptx.SharedPptxTextInsets
 import com.aryan.reader.shared.pptx.SharedPptxTextRun
 import com.aryan.reader.shared.pptx.SharedPptxVerticalAnchor
+import com.aryan.reader.shared.pptx.displayText
+import com.aryan.reader.shared.pptx.effectiveLineSpacing
 import io.legere.pdfiumandroid.api.Bookmark
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -71,203 +73,58 @@ import kotlin.math.sin
 import androidx.core.graphics.withSave
 import androidx.core.graphics.withTranslation
 
-private const val EMU_PER_POINT = 12_700f
 private const val DEFAULT_TEXT_SIZE_PT = 18f
-private const val DEFAULT_TEXT_MARGIN_PT = 91_440f / EMU_PER_POINT
-private const val DEFAULT_LINE_SPACING_MULTIPLE = 1.0f
 
-internal data class PptxDeck(
-    val widthPoint: Int,
-    val heightPoint: Int,
-    val slides: List<PptxSlide>
-)
+// Single-source slide model: Android renders SharedPptx* directly (Desktop pattern).
+// The only Android-specific shape is RectF, converted at Canvas boundaries.
+internal typealias PptxDeck = SharedPptxDeck
+internal typealias PptxSlide = SharedPptxSlide
+internal typealias PptxCharBox = SharedPptxCharBox
+internal typealias PptxElement = SharedPptxElement
+internal typealias PptxShapeElement = SharedPptxShapeElement
+internal typealias PptxImageElement = SharedPptxImageElement
+internal typealias PptxImageCrop = SharedPptxImageCrop
+internal typealias PptxTableElement = SharedPptxTableElement
+internal typealias PptxTableRow = SharedPptxTableRow
+internal typealias PptxTableCell = SharedPptxTableCell
+internal typealias PptxParagraph = SharedPptxParagraph
+internal typealias PptxTextRun = SharedPptxTextRun
+internal typealias PptxTextAlign = SharedPptxTextAlign
+internal typealias PptxVerticalAnchor = SharedPptxVerticalAnchor
+internal typealias PptxAutoFitMode = SharedPptxAutoFitMode
+internal typealias PptxTextInsets = SharedPptxTextInsets
+internal typealias PptxGradientFill = SharedPptxGradientFill
+internal typealias PptxCustomGeometry = SharedPptxCustomGeometry
+internal typealias PptxPathCommand = SharedPptxPathCommand
 
-internal data class PptxSlide(
-    val widthPoint: Int,
-    val heightPoint: Int,
-    val backgroundColor: Int?,
-    val elements: List<PptxElement>,
-    val text: String,
-    val charBoxes: List<PptxCharBox>
-)
-
-internal data class PptxCharBox(
-    val char: Char,
-    val bounds: RectF
-)
-
-internal sealed interface PptxElement {
-    val bounds: RectF
-}
-
-internal data class PptxShapeElement(
-    override val bounds: RectF,
-    val preset: String,
-    val fillColor: Int?,
-    val gradientFill: PptxGradientFill? = null,
-    val lineColor: Int?,
-    val lineWidthPoint: Float,
-    val paragraphs: List<PptxParagraph>,
-    val hyperlink: String?,
-    val textInsets: PptxTextInsets = PptxTextInsets(),
-    val verticalAnchor: PptxVerticalAnchor = PptxVerticalAnchor.TOP,
-    val rotationDegrees: Float = 0f,
-    val renderText: Boolean = true,
-    val fontScale: Float = 1f,
-    val lineSpacingReduction: Float = 0f,
-    val autoFitMode: PptxAutoFitMode = PptxAutoFitMode.NONE,
-    val customGeometry: PptxCustomGeometry? = null
-) : PptxElement
-
-internal data class PptxImageElement(
-    override val bounds: RectF,
-    val bytes: ByteArray,
-    val contentType: String?,
-    val crop: PptxImageCrop = PptxImageCrop(),
-    val rotationDegrees: Float = 0f,
-    val opacity: Float = 1f
-) : PptxElement
-
-internal data class PptxImageCrop(
-    val left: Float = 0f,
-    val top: Float = 0f,
-    val right: Float = 0f,
-    val bottom: Float = 0f
-)
-
-internal data class PptxTableElement(
-    override val bounds: RectF,
-    val rows: List<PptxTableRow>,
-    val rotationDegrees: Float = 0f
-) : PptxElement
-
-internal data class PptxTableRow(
-    val heightPoint: Float?,
-    val cells: List<PptxTableCell>
-)
-
-internal data class PptxTableCell(
-    val widthPoint: Float?,
-    val fillColor: Int?,
-    val lineColor: Int?,
-    val paragraphs: List<PptxParagraph>,
-    val textInsets: PptxTextInsets = PptxTextInsets(left = 3.6f, top = 3.6f, right = 3.6f, bottom = 3.6f),
-    val verticalAnchor: PptxVerticalAnchor = PptxVerticalAnchor.TOP
-)
-
-internal data class PptxParagraph(
-    val runs: List<PptxTextRun>,
-    val alignment: PptxTextAlign = PptxTextAlign.START,
-    val bullet: String? = null,
-    val level: Int = 0,
-    val marginLeftPt: Float? = null,
-    val indentPt: Float? = null,
-    val spaceBeforePt: Float = 0f,
-    val spaceAfterPt: Float = 0f,
-    val lineSpacingMultiple: Float = DEFAULT_LINE_SPACING_MULTIPLE,
-    val alignmentExplicit: Boolean = false,
-    val bulletExplicit: Boolean = false,
-    val spaceBeforeExplicit: Boolean = false,
-    val spaceAfterExplicit: Boolean = false,
-    val lineSpacingExplicit: Boolean = false
-)
-
-internal data class PptxTextRun(
-    val text: String,
-    val sizePt: Float? = null,
-    val color: Int? = null,
-    val bold: Boolean = false,
-    val italic: Boolean = false,
-    val typeface: String? = null,
-    val baseline: Float = 0f,
-    val sizeExplicit: Boolean = false,
-    val colorExplicit: Boolean = false,
-    val boldExplicit: Boolean = false,
-    val italicExplicit: Boolean = false,
-    val typefaceExplicit: Boolean = false,
-    val baselineExplicit: Boolean = false
-)
-
-internal enum class PptxTextAlign {
-    START,
-    CENTER,
-    END
-}
-
-internal enum class PptxVerticalAnchor {
-    TOP,
-    MIDDLE,
-    BOTTOM
-}
-
-internal enum class PptxAutoFitMode {
-    NONE,
-    NORMAL,
-    SHAPE
-}
-
-internal data class PptxTextInsets(
-    val left: Float = DEFAULT_TEXT_MARGIN_PT,
-    val top: Float = DEFAULT_TEXT_MARGIN_PT,
-    val right: Float = DEFAULT_TEXT_MARGIN_PT,
-    val bottom: Float = DEFAULT_TEXT_MARGIN_PT
-)
-
-internal data class PptxGradientFill(
-    val startColor: Int,
-    val endColor: Int,
-    val angleDegrees: Float = 0f
-)
-
-internal data class PptxCustomGeometry(
-    val width: Float,
-    val height: Float,
-    val commands: List<PptxPathCommand>
-) {
-    fun toPath(bounds: RectF): Path {
-        val scaleX = bounds.width() / width.coerceAtLeast(1f)
-        val scaleY = bounds.height() / height.coerceAtLeast(1f)
-        fun x(value: Float) = bounds.left + value * scaleX
-        fun y(value: Float) = bounds.top + value * scaleY
-        return Path().apply {
-            commands.forEach { command ->
-                when (command) {
-                    is PptxPathCommand.MoveTo -> moveTo(x(command.x), y(command.y))
-                    is PptxPathCommand.LineTo -> lineTo(x(command.x), y(command.y))
-                    is PptxPathCommand.QuadTo -> quadTo(
-                        x(command.x1),
-                        y(command.y1),
-                        x(command.x2),
-                        y(command.y2)
-                    )
-                    is PptxPathCommand.CubicTo -> cubicTo(
-                        x(command.x1),
-                        y(command.y1),
-                        x(command.x2),
-                        y(command.y2),
-                        x(command.x3),
-                        y(command.y3)
-                    )
-                    PptxPathCommand.Close -> close()
-                }
+internal fun SharedPptxCustomGeometry.toPath(bounds: SharedPptxRect): Path {
+    val scaleX = bounds.width() / width.coerceAtLeast(1f)
+    val scaleY = bounds.height() / height.coerceAtLeast(1f)
+    fun x(value: Float) = bounds.left + value * scaleX
+    fun y(value: Float) = bounds.top + value * scaleY
+    return Path().apply {
+        commands.forEach { command ->
+            when (command) {
+                is SharedPptxPathCommand.MoveTo -> moveTo(x(command.x), y(command.y))
+                is SharedPptxPathCommand.LineTo -> lineTo(x(command.x), y(command.y))
+                is SharedPptxPathCommand.QuadTo -> quadTo(
+                    x(command.x1),
+                    y(command.y1),
+                    x(command.x2),
+                    y(command.y2)
+                )
+                is SharedPptxPathCommand.CubicTo -> cubicTo(
+                    x(command.x1),
+                    y(command.y1),
+                    x(command.x2),
+                    y(command.y2),
+                    x(command.x3),
+                    y(command.y3)
+                )
+                SharedPptxPathCommand.Close -> close()
             }
         }
     }
-}
-
-internal sealed interface PptxPathCommand {
-    data class MoveTo(val x: Float, val y: Float) : PptxPathCommand
-    data class LineTo(val x: Float, val y: Float) : PptxPathCommand
-    data class QuadTo(val x1: Float, val y1: Float, val x2: Float, val y2: Float) : PptxPathCommand
-    data class CubicTo(
-        val x1: Float,
-        val y1: Float,
-        val x2: Float,
-        val y2: Float,
-        val x3: Float,
-        val y3: Float
-    ) : PptxPathCommand
-    object Close : PptxPathCommand
 }
 
 internal object PptxDeckCache {
@@ -275,178 +132,10 @@ internal object PptxDeckCache {
 }
 
 internal object PptxDocumentParser {
-    fun parse(file: File): PptxDeck = SharedPptxDeckCache.load(file).toAndroidPptxDeck()
+    fun parse(file: File): PptxDeck = SharedPptxDeckCache.load(file)
 }
 
-private fun SharedPptxDeck.toAndroidPptxDeck(): PptxDeck {
-    return PptxDeck(
-        widthPoint = widthPoint,
-        heightPoint = heightPoint,
-        slides = slides.map { it.toAndroidPptxSlide() }
-    )
-}
-
-private fun SharedPptxSlide.toAndroidPptxSlide(): PptxSlide {
-    return PptxSlide(
-        widthPoint = widthPoint,
-        heightPoint = heightPoint,
-        backgroundColor = backgroundColor,
-        elements = elements.map { it.toAndroidPptxElement() },
-        text = text,
-        charBoxes = charBoxes.map { it.toAndroidPptxCharBox() }
-    )
-}
-
-private fun SharedPptxCharBox.toAndroidPptxCharBox(): PptxCharBox {
-    return PptxCharBox(char = char, bounds = bounds.toRectF())
-}
-
-private fun SharedPptxElement.toAndroidPptxElement(): PptxElement {
-    return when (this) {
-        is SharedPptxShapeElement -> PptxShapeElement(
-            bounds = bounds.toRectF(),
-            preset = preset,
-            fillColor = fillColor,
-            gradientFill = gradientFill?.toAndroidPptxGradientFill(),
-            lineColor = lineColor,
-            lineWidthPoint = lineWidthPoint,
-            paragraphs = paragraphs.map { it.toAndroidPptxParagraph() },
-            hyperlink = hyperlink,
-            textInsets = textInsets.toAndroidPptxTextInsets(),
-            verticalAnchor = verticalAnchor.toAndroidPptxVerticalAnchor(),
-            rotationDegrees = rotationDegrees,
-            renderText = renderText,
-            fontScale = fontScale,
-            lineSpacingReduction = lineSpacingReduction,
-            autoFitMode = autoFitMode.toAndroidPptxAutoFitMode(),
-            customGeometry = customGeometry?.toAndroidPptxCustomGeometry()
-        )
-        is SharedPptxImageElement -> PptxImageElement(
-            bounds = bounds.toRectF(),
-            bytes = bytes,
-            contentType = contentType,
-            crop = crop.toAndroidPptxImageCrop(),
-            rotationDegrees = rotationDegrees,
-            opacity = opacity
-        )
-        is SharedPptxTableElement -> PptxTableElement(
-            bounds = bounds.toRectF(),
-            rows = rows.map { it.toAndroidPptxTableRow() },
-            rotationDegrees = rotationDegrees
-        )
-    }
-}
-
-private fun SharedPptxRect.toRectF(): RectF = RectF(left, top, right, bottom)
-
-private fun SharedPptxImageCrop.toAndroidPptxImageCrop(): PptxImageCrop {
-    return PptxImageCrop(left = left, top = top, right = right, bottom = bottom)
-}
-
-private fun SharedPptxTableRow.toAndroidPptxTableRow(): PptxTableRow {
-    return PptxTableRow(
-        heightPoint = heightPoint,
-        cells = cells.map { it.toAndroidPptxTableCell() }
-    )
-}
-
-private fun SharedPptxTableCell.toAndroidPptxTableCell(): PptxTableCell {
-    return PptxTableCell(
-        widthPoint = widthPoint,
-        fillColor = fillColor,
-        lineColor = lineColor,
-        paragraphs = paragraphs.map { it.toAndroidPptxParagraph() },
-        textInsets = textInsets.toAndroidPptxTextInsets(),
-        verticalAnchor = verticalAnchor.toAndroidPptxVerticalAnchor()
-    )
-}
-
-private fun SharedPptxParagraph.toAndroidPptxParagraph(): PptxParagraph {
-    return PptxParagraph(
-        runs = runs.map { it.toAndroidPptxTextRun() },
-        alignment = alignment.toAndroidPptxTextAlign(),
-        bullet = bullet,
-        level = level,
-        marginLeftPt = marginLeftPt,
-        indentPt = indentPt,
-        spaceBeforePt = spaceBeforePt,
-        spaceAfterPt = spaceAfterPt,
-        lineSpacingMultiple = lineSpacingMultiple,
-        alignmentExplicit = alignmentExplicit,
-        bulletExplicit = bulletExplicit,
-        spaceBeforeExplicit = spaceBeforeExplicit,
-        spaceAfterExplicit = spaceAfterExplicit,
-        lineSpacingExplicit = lineSpacingExplicit
-    )
-}
-
-private fun SharedPptxTextRun.toAndroidPptxTextRun(): PptxTextRun {
-    return PptxTextRun(
-        text = text,
-        sizePt = sizePt,
-        color = color,
-        bold = bold,
-        italic = italic,
-        typeface = typeface,
-        baseline = baseline,
-        sizeExplicit = sizeExplicit,
-        colorExplicit = colorExplicit,
-        boldExplicit = boldExplicit,
-        italicExplicit = italicExplicit,
-        typefaceExplicit = typefaceExplicit,
-        baselineExplicit = baselineExplicit
-    )
-}
-
-private fun SharedPptxTextAlign.toAndroidPptxTextAlign(): PptxTextAlign {
-    return when (this) {
-        SharedPptxTextAlign.START -> PptxTextAlign.START
-        SharedPptxTextAlign.CENTER -> PptxTextAlign.CENTER
-        SharedPptxTextAlign.END -> PptxTextAlign.END
-    }
-}
-
-private fun SharedPptxVerticalAnchor.toAndroidPptxVerticalAnchor(): PptxVerticalAnchor {
-    return when (this) {
-        SharedPptxVerticalAnchor.TOP -> PptxVerticalAnchor.TOP
-        SharedPptxVerticalAnchor.MIDDLE -> PptxVerticalAnchor.MIDDLE
-        SharedPptxVerticalAnchor.BOTTOM -> PptxVerticalAnchor.BOTTOM
-    }
-}
-
-private fun SharedPptxAutoFitMode.toAndroidPptxAutoFitMode(): PptxAutoFitMode {
-    return when (this) {
-        SharedPptxAutoFitMode.NONE -> PptxAutoFitMode.NONE
-        SharedPptxAutoFitMode.NORMAL -> PptxAutoFitMode.NORMAL
-        SharedPptxAutoFitMode.SHAPE -> PptxAutoFitMode.SHAPE
-    }
-}
-
-private fun SharedPptxTextInsets.toAndroidPptxTextInsets(): PptxTextInsets {
-    return PptxTextInsets(left = left, top = top, right = right, bottom = bottom)
-}
-
-private fun SharedPptxGradientFill.toAndroidPptxGradientFill(): PptxGradientFill {
-    return PptxGradientFill(startColor = startColor, endColor = endColor, angleDegrees = angleDegrees)
-}
-
-private fun SharedPptxCustomGeometry.toAndroidPptxCustomGeometry(): PptxCustomGeometry {
-    return PptxCustomGeometry(
-        width = width,
-        height = height,
-        commands = commands.map { it.toAndroidPptxPathCommand() }
-    )
-}
-
-private fun SharedPptxPathCommand.toAndroidPptxPathCommand(): PptxPathCommand {
-    return when (this) {
-        is SharedPptxPathCommand.MoveTo -> PptxPathCommand.MoveTo(x, y)
-        is SharedPptxPathCommand.LineTo -> PptxPathCommand.LineTo(x, y)
-        is SharedPptxPathCommand.QuadTo -> PptxPathCommand.QuadTo(x1, y1, x2, y2)
-        is SharedPptxPathCommand.CubicTo -> PptxPathCommand.CubicTo(x1, y1, x2, y2, x3, y3)
-        SharedPptxPathCommand.Close -> PptxPathCommand.Close
-    }
-}
+internal fun SharedPptxRect.toRectF(): RectF = RectF(left, top, right, bottom)
 
 internal class PptxDocumentWrapper(
     private val file: File,
@@ -532,7 +221,7 @@ internal class PptxPageWrapper(
         return slide.elements.mapNotNull { element ->
             val shape = element as? PptxShapeElement ?: return@mapNotNull null
             val link = shape.hyperlink?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            ReaderLink(uri = link, destPageIdx = null, bounds = RectF(shape.bounds))
+            ReaderLink(uri = link, destPageIdx = null, bounds = shape.bounds.toRectF())
         }
     }
 
@@ -565,7 +254,7 @@ internal class PptxTextPage(
                 .values
                 .mapNotNull { boxes ->
                     boxes.fold<PptxCharBox, RectF?>(null) { acc, box ->
-                        acc?.apply { union(box.bounds) } ?: RectF(box.bounds)
+                        acc?.apply { union(box.bounds.toRectF()) } ?: box.bounds.toRectF()
                     }
                 }
             rects += lineRects.map(::ReaderTextRect)
@@ -584,7 +273,7 @@ internal class PptxTextPage(
         val pointY = y.toFloat()
         val expanded = RectF()
         slide.charBoxes.forEachIndexed { index, box ->
-            expanded.set(box.bounds)
+            expanded.set(box.bounds.left, box.bounds.top, box.bounds.right, box.bounds.bottom)
             expanded.inset(-xTolerance.toFloat(), -yTolerance.toFloat())
             if (expanded.contains(pointX, pointY)) return index
         }
@@ -592,7 +281,7 @@ internal class PptxTextPage(
     }
 
     override suspend fun textPageGetCharBox(index: Int): RectF? {
-        return slide.charBoxes.getOrNull(index)?.bounds?.let(::RectF)
+        return slide.charBoxes.getOrNull(index)?.bounds?.toRectF()
     }
 
     override suspend fun textPageGetUnicode(index: Int): Int {
@@ -672,7 +361,7 @@ private data class PreparedParagraphLayout(
 )
 
 private data class LaidOutTableCell(
-    val rect: RectF,
+    val rect: SharedPptxRect,
     val cell: PptxTableCell
 )
 
@@ -686,6 +375,7 @@ private fun LaidOutTableCell.asShape(): PptxShapeElement {
         lineWidthPoint = 0.75f,
         paragraphs = cell.paragraphs,
         hyperlink = null,
+        placeholderKey = null,
         textInsets = cell.textInsets,
         verticalAnchor = cell.verticalAnchor
     )
@@ -724,7 +414,8 @@ private object PptxSlideRenderer {
                     color = shape.fillColor ?: Color.TRANSPARENT
                 }
             }
-            if (shape.gradientFill != null || (shape.fillColor != null && Color.alpha(shape.fillColor) > 0)) {
+            val fillColor = shape.fillColor
+            if (shape.gradientFill != null || (fillColor != null && Color.alpha(fillColor) > 0)) {
                 drawPresetShape(canvas, shape.bounds, shape.preset, shape.customGeometry, fillPaint)
             }
 
@@ -748,7 +439,7 @@ private object PptxSlideRenderer {
         val clip = shape.textBounds().takeUnless { shape.autoFitMode == PptxAutoFitMode.SHAPE }
         layout.forEach { paragraph ->
             canvas.withSave {
-                clip?.let { clipRect(it) }
+                clip?.let { clipRect(it.toRectF()) }
                 translate(paragraph.x, paragraph.y)
                 paragraph.layout.draw(this)
             }
@@ -758,7 +449,7 @@ private object PptxSlideRenderer {
     private fun drawTable(canvas: Canvas, table: PptxTableElement) {
         canvas.withRotation(table.bounds, table.rotationDegrees) {
             layoutTableCells(table).forEach { laidOutCell ->
-                val rect = laidOutCell.rect
+                val rect = laidOutCell.rect.toRectF()
                 val cell = laidOutCell.cell
                 val fill = cell.fillColor
                 if (fill != null && Color.alpha(fill) > 0) {
@@ -786,28 +477,29 @@ private object PptxSlideRenderer {
                 canvas.drawBitmap(
                     bitmap,
                     image.crop.sourceRect(bitmap.width, bitmap.height),
-                    image.bounds,
+                    image.bounds.toRectF(),
                     Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
                         alpha = (255f * image.opacity.coerceIn(0f, 1f)).roundToInt().coerceIn(0, 255)
                     }
                 )
                 bitmap.recycle()
             } else {
+                val bounds = image.bounds.toRectF()
                 val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     style = Paint.Style.FILL
                     color = Color.LTGRAY
                 }
-                canvas.drawRect(image.bounds, paint)
+                canvas.drawRect(bounds, paint)
                 paint.style = Paint.Style.STROKE
                 paint.color = Color.GRAY
                 paint.strokeWidth = 0.75f
-                canvas.drawRect(image.bounds, paint)
+                canvas.drawRect(bounds, paint)
             }
         }
     }
 }
 
-private fun layoutParagraphs(shape: PptxShapeElement, bounds: RectF): List<LaidOutParagraph> {
+private fun layoutParagraphs(shape: PptxShapeElement, bounds: SharedPptxRect): List<LaidOutParagraph> {
     if (shape.paragraphs.isEmpty() || bounds.width() <= 0f || bounds.height() <= 0f) return emptyList()
     val baseTextBounds = shape.textBounds(bounds)
     if (baseTextBounds.width() <= 0f || baseTextBounds.height() <= 0f) return emptyList()
@@ -827,7 +519,7 @@ private fun layoutParagraphs(shape: PptxShapeElement, bounds: RectF): List<LaidO
 
     val totalHeight = prepared.totalHeight()
     val textBounds = if (shape.autoFitMode == PptxAutoFitMode.SHAPE && totalHeight > baseTextBounds.height()) {
-        RectF(baseTextBounds).apply { bottom = top + totalHeight }
+        baseTextBounds.copy(bottom = baseTextBounds.top + totalHeight)
     } else {
         baseTextBounds
     }
@@ -856,7 +548,7 @@ private fun layoutParagraphs(shape: PptxShapeElement, bounds: RectF): List<LaidO
 
 private fun prepareParagraphLayouts(
     shape: PptxShapeElement,
-    textBounds: RectF,
+    textBounds: SharedPptxRect,
     fontScale: Float
 ): List<PreparedParagraphLayout> {
     val layoutWidth = textBounds.width().roundToInt().coerceAtLeast(1)
@@ -880,24 +572,13 @@ private fun List<PreparedParagraphLayout>.totalHeight(): Float {
     }.toFloat()
 }
 
-private fun PptxParagraph.effectiveLineSpacing(shape: PptxShapeElement): Float {
-    val reduced = lineSpacingMultiple * (1f - shape.lineSpacingReduction)
-    return reduced.coerceIn(0.9f, 2.5f)
-}
-
-private fun PptxShapeElement.textBounds(sourceBounds: RectF = bounds): RectF {
-    return RectF(
+private fun PptxShapeElement.textBounds(sourceBounds: SharedPptxRect = bounds): SharedPptxRect {
+    return SharedPptxRect(
         sourceBounds.left + textInsets.left,
         sourceBounds.top + textInsets.top,
         sourceBounds.right - textInsets.right,
         sourceBounds.bottom - textInsets.bottom
     )
-}
-
-private fun PptxParagraph.displayText(): String {
-    val text = runs.joinToString("") { it.text }
-    val prefix = bullet?.takeIf { it.isNotBlank() }?.let { "$it " }.orEmpty()
-    return prefix + text
 }
 
 private fun PptxParagraph.toSpannable(displayText: String, fontScale: Float): SpannableStringBuilder {
@@ -1002,7 +683,7 @@ private fun StaticLayout.charBoxesFor(text: String, originX: Float, originY: Flo
     }
 }
 
-private fun RectF.rotatedBounds(bounds: RectF, rotationDegrees: Float): RectF {
+private fun RectF.rotatedBounds(bounds: SharedPptxRect, rotationDegrees: Float): RectF {
     if (rotationDegrees == 0f) return this
     val radians = Math.toRadians(rotationDegrees.toDouble())
     val cosValue = cos(radians).toFloat()
@@ -1030,10 +711,10 @@ private fun RectF.rotatedBounds(bounds: RectF, rotationDegrees: Float): RectF {
 private fun layoutTableCells(table: PptxTableElement): List<LaidOutTableCell> {
     if (table.rows.isEmpty() || table.bounds.width() <= 0f || table.bounds.height() <= 0f) return emptyList()
     val explicitHeight = table.rows
-        .mapNotNull { it.heightPoint?.takeIf { h -> h > 0f } }
+        .mapNotNull { row -> row.heightPoint?.takeIf { h -> h > 0f } }
         .sumOf { it.toDouble() }
         .toFloat()
-    val missingRows = table.rows.count { it.heightPoint == null || it.heightPoint <= 0f }
+    val missingRows = table.rows.count { row -> val h = row.heightPoint; h == null || h <= 0f }
     val fallbackHeight = if (missingRows > 0) {
         ((table.bounds.height() - explicitHeight).coerceAtLeast(1f)) / missingRows
     } else {
@@ -1045,10 +726,10 @@ private fun layoutTableCells(table: PptxTableElement): List<LaidOutTableCell> {
     table.rows.forEach { row ->
         val rowHeight = row.heightPoint?.takeIf { it > 0f } ?: fallbackHeight
         val explicitWidth = row.cells
-            .mapNotNull { it.widthPoint?.takeIf { w -> w > 0f } }
+            .mapNotNull { cell -> cell.widthPoint?.takeIf { w -> w > 0f } }
             .sumOf { it.toDouble() }
             .toFloat()
-        val missingCells = row.cells.count { it.widthPoint == null || it.widthPoint <= 0f }
+        val missingCells = row.cells.count { cell -> val w = cell.widthPoint; w == null || w <= 0f }
         val fallbackWidth = if (missingCells > 0) {
             ((table.bounds.width() - explicitWidth).coerceAtLeast(1f)) / missingCells
         } else if (row.cells.isNotEmpty()) {
@@ -1060,7 +741,7 @@ private fun layoutTableCells(table: PptxTableElement): List<LaidOutTableCell> {
         row.cells.forEach { cell ->
             val cellWidth = cell.widthPoint?.takeIf { it > 0f } ?: fallbackWidth
             cells += LaidOutTableCell(
-                rect = RectF(x, y, x + cellWidth, y + rowHeight),
+                rect = SharedPptxRect(x, y, x + cellWidth, y + rowHeight),
                 cell = cell
             )
             x += cellWidth
@@ -1070,7 +751,7 @@ private fun layoutTableCells(table: PptxTableElement): List<LaidOutTableCell> {
     return cells
 }
 
-private inline fun Canvas.withRotation(bounds: RectF, rotationDegrees: Float, block: () -> Unit) {
+private inline fun Canvas.withRotation(bounds: SharedPptxRect, rotationDegrees: Float, block: () -> Unit) {
     withSave {
         try {
             if (rotationDegrees != 0f) {
@@ -1084,7 +765,7 @@ private inline fun Canvas.withRotation(bounds: RectF, rotationDegrees: Float, bl
 
 private fun drawPresetShape(
     canvas: Canvas,
-    bounds: RectF,
+    bounds: SharedPptxRect,
     preset: String,
     customGeometry: PptxCustomGeometry?,
     paint: Paint
@@ -1093,28 +774,29 @@ private fun drawPresetShape(
         canvas.drawPath(customGeometry.toPath(bounds), paint)
         return
     }
+    val rect = bounds.toRectF()
     when (preset) {
         "line" -> canvas.drawLine(bounds.left, bounds.top, bounds.right, bounds.bottom, paint)
-        "ellipse" -> canvas.drawOval(bounds, paint)
-        "roundrect", "roundRect" -> canvas.drawRoundRect(bounds, bounds.width() * 0.08f, bounds.height() * 0.08f, paint)
+        "ellipse" -> canvas.drawOval(rect, paint)
+        "roundrect", "roundRect" -> canvas.drawRoundRect(rect, rect.width() * 0.08f, rect.height() * 0.08f, paint)
         "triangle" -> canvas.drawPath(Path().apply {
-            moveTo(bounds.centerX(), bounds.top)
-            lineTo(bounds.right, bounds.bottom)
-            lineTo(bounds.left, bounds.bottom)
+            moveTo(rect.centerX(), rect.top)
+            lineTo(rect.right, rect.bottom)
+            lineTo(rect.left, rect.bottom)
             close()
         }, paint)
         "diamond" -> canvas.drawPath(Path().apply {
-            moveTo(bounds.centerX(), bounds.top)
-            lineTo(bounds.right, bounds.centerY())
-            lineTo(bounds.centerX(), bounds.bottom)
-            lineTo(bounds.left, bounds.centerY())
+            moveTo(rect.centerX(), rect.top)
+            lineTo(rect.right, rect.centerY())
+            lineTo(rect.centerX(), rect.bottom)
+            lineTo(rect.left, rect.centerY())
             close()
         }, paint)
-        else -> canvas.drawRect(bounds, paint)
+        else -> canvas.drawRect(rect, paint)
     }
 }
 
-private fun PptxGradientFill.toShader(bounds: RectF): Shader {
+private fun PptxGradientFill.toShader(bounds: SharedPptxRect): Shader {
     val radians = Math.toRadians(angleDegrees.toDouble())
     val dx = cos(radians).toFloat() * bounds.width()
     val dy = sin(radians).toFloat() * bounds.height()
@@ -1135,7 +817,7 @@ private fun scaledTextSize(sizePt: Float?, fontScale: Float): Int {
         .coerceAtLeast(1)
 }
 
-private fun PptxImageCrop.sourceRect(width: Int, height: Int): Rect {
+internal fun PptxImageCrop.sourceRect(width: Int, height: Int): Rect {
     val leftPx = (width * left).roundToInt().coerceIn(0, width - 1)
     val topPx = (height * top).roundToInt().coerceIn(0, height - 1)
     val rightPx = (width * (1f - right)).roundToInt().coerceIn(leftPx + 1, width)

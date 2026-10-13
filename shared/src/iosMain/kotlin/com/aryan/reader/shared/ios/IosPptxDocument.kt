@@ -8,7 +8,6 @@ import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
 import com.aryan.reader.shared.pptx.SharedPptxAutoFitMode
-import com.aryan.reader.shared.pptx.SharedPptxCharBox
 import com.aryan.reader.shared.pptx.SharedPptxColor
 import com.aryan.reader.shared.pptx.SharedPptxCustomGeometry
 import com.aryan.reader.shared.pptx.SharedPptxDeck
@@ -18,6 +17,7 @@ import com.aryan.reader.shared.pptx.SharedPptxImageCrop
 import com.aryan.reader.shared.pptx.SharedPptxImageElement
 import com.aryan.reader.shared.pptx.SharedPptxOoXml
 import com.aryan.reader.shared.pptx.SharedPptxParagraph
+import com.aryan.reader.shared.pptx.SharedPptxTextIndexer
 import com.aryan.reader.shared.pptx.SharedPptxPathCommand
 import com.aryan.reader.shared.pptx.SharedPptxPlaceholderKey
 import com.aryan.reader.shared.pptx.SharedPptxRect
@@ -199,28 +199,9 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
             }
         }
         val background = current.backgroundColor ?: layout.backgroundColor ?: master.backgroundColor ?: SharedPptxColor.WHITE
-        val text = buildString {
-            elements.forEachIndexed { index, element ->
-                if (index > 0 && isNotEmpty()) append('\n')
-                when (element) {
-                    is SharedPptxShapeElement -> if (element.renderText) element.paragraphs.forEachIndexed { paragraphIndex, paragraph ->
-                        if (paragraphIndex > 0) append('\n')
-                        if (paragraph.bullet != null) append(paragraph.bullet).append(' ')
-                        paragraph.runs.forEach { append(it.text) }
-                    }
-                    is SharedPptxTableElement -> element.rows.forEach { row ->
-                        if (isNotEmpty()) append('\n')
-                        row.cells.forEachIndexed { cellIndex, cell ->
-                            if (cellIndex > 0) append('\t')
-                            cell.paragraphs.forEach { paragraph -> paragraph.runs.forEach { append(it.text) } }
-                        }
-                    }
-                    is SharedPptxImageElement -> Unit
-                }
-            }
-        }.trim()
-        val boxes = buildIosCharBoxes(elements)
-        return SharedPptxSlide(width, height, background, elements, text, boxes)
+        // Single-source text + char boxes (anchor/rotation/autofit-aware, like Android).
+        val textIndex = SharedPptxTextIndexer.index(elements)
+        return SharedPptxSlide(width, height, background, elements, textIndex.text, textIndex.charBoxes)
     }
 
     private fun parsePart(
@@ -1022,32 +1003,6 @@ private fun String.resolvePptxTypeface(theme: IosPptxTheme): String = when (lowe
 
 private fun <T, R : Any> Iterable<T>.associateNotNull(transform: (T) -> Pair<String, R>?): Map<String, R> = buildMap {
     for (item in this@associateNotNull) transform(item)?.let { put(it.first, it.second) }
-}
-
-private fun buildIosCharBoxes(elements: List<SharedPptxElement>): List<SharedPptxCharBox> {
-    val output = mutableListOf<SharedPptxCharBox>()
-    elements.forEach { element ->
-        if (element is SharedPptxShapeElement && element.renderText) {
-            var y = element.bounds.top + element.textInsets.top
-            element.paragraphs.forEach { paragraph ->
-                val text = paragraph.runs.joinToString("") { it.text }
-                val size = paragraph.runs.firstOrNull()?.sizePt ?: SharedPptxOoXml.DEFAULT_TEXT_SIZE_PT
-                val charWidth = size * 0.52f
-                var x = element.bounds.left + element.textInsets.left + (paragraph.marginLeftPt ?: 0f)
-                text.forEach { char ->
-                    if (char == '\n') {
-                        y += size * 1.2f
-                        x = element.bounds.left + element.textInsets.left
-                    } else {
-                        output += SharedPptxCharBox(char, SharedPptxRect(x, y, x + charWidth, y + size * 1.2f))
-                        x += charWidth
-                    }
-                }
-                y += size * 1.2f * paragraph.lineSpacingMultiple
-            }
-        }
-    }
-    return output
 }
 
 internal object IosPptxHtmlRenderer {

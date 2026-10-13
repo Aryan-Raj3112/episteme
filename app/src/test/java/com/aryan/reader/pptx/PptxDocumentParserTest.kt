@@ -2,9 +2,14 @@ package com.aryan.reader.pptx
 
 import android.content.ContentResolver
 import android.content.Context
+import android.graphics.Rect
 import android.net.Uri
 import com.aryan.reader.FileType
 import com.aryan.reader.pdf.DocumentFactory
+import com.aryan.reader.shared.pptx.SharedPptxCustomGeometry
+import com.aryan.reader.shared.pptx.SharedPptxImageCrop
+import com.aryan.reader.shared.pptx.SharedPptxPathCommand
+import com.aryan.reader.shared.pptx.SharedPptxRect
 import io.legere.pdfiumandroid.suspend.PdfiumCoreKt
 import io.mockk.every
 import io.mockk.mockk
@@ -88,6 +93,41 @@ class PptxDocumentParserTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun `shared rect converts to android rect losslessly`() {
+        val rect = SharedPptxRect(1.5f, 2.5f, 10f, 20f).toRectF()
+
+        assertEquals(1.5f, rect.left)
+        assertEquals(2.5f, rect.top)
+        assertEquals(10f, rect.right)
+        assertEquals(20f, rect.bottom)
+    }
+
+    @Test
+    fun `custom geometry scales into shared bounds`() {
+        val geometry = SharedPptxCustomGeometry(
+            width = 1000f,
+            height = 1000f,
+            commands = listOf(
+                SharedPptxPathCommand.MoveTo(500f, 0f),
+                SharedPptxPathCommand.LineTo(1000f, 1000f),
+                SharedPptxPathCommand.Close
+            )
+        )
+
+        val path = geometry.toPath(SharedPptxRect(0f, 0f, 100f, 50f))
+
+        assertTrue(!path.isEmpty)
+    }
+
+    @Test
+    fun `image crop maps to pixel rect`() {
+        val rect = SharedPptxImageCrop(left = 0.25f, top = 0.25f, right = 0.25f, bottom = 0.25f)
+            .sourceRect(100, 200)
+
+        assertEquals(Rect(25, 50, 75, 150), rect)
     }
 
     @Test
