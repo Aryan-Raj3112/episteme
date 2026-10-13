@@ -3,6 +3,7 @@ package com.aryan.reader.shared
 import com.aryan.reader.shared.pdf.SharedPdfReaderViewport
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
 
 enum class FileType {
     PDF, EPUB, MOBI, MD, TXT, HTML, FB2, CBZ, CBR, CB7, CBT, DOCX, DOC, ODT, FODT, PPTX, AUDIOBOOK, UNKNOWN
@@ -184,11 +185,13 @@ data class LibraryState(
     /** Library "search inside files" toggle. False preserves metadata-only search. */
     val searchInsideFiles: Boolean = false,
     /**
-     * Book ids with inside-file content matches for [searchQuery], supplied
-     * by the host's content index. Honored only when [searchInsideFiles] is
-     * true; cleared whenever the query or toggle changes.
+     * Inside-file content matches for [searchQuery], supplied by the host's
+     * content index and already ordered best-first. Honored only when
+     * [searchInsideFiles] is true; cleared whenever the query or toggle
+     * changes. Carries snippets and match ranges so library rows can preview
+     * the matched text; ids are derived where only membership is needed.
      */
-    val contentSearchBookIds: Set<String> = emptySet(),
+    val contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
     val sortOrder: SortOrder = SortOrder.RECENT,
     val filters: LibraryFilters = LibraryFilters(),
     val selectedBookIds: Set<String> = emptySet(),

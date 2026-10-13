@@ -44,9 +44,22 @@ class GlobalSearchSessionTest {
     @Test
     fun `query finds indexed book and ignores blank queries`() = runTest {
         val s = session()
-        assertEquals(setOf("indexed"), s.query(entries(), "harvest"))
+        val hits = s.query(entries(), "harvest")
+        assertEquals(listOf("indexed"), hits.map { it.bookId })
+        // Snippets travel with the hit so library rows can preview the match.
+        val snippet = hits.single().hits.single()
+        assertTrue(snippet.snippet.contains("harvest"))
+        assertTrue(snippet.matchRanges.isNotEmpty())
         assertTrue(s.query(entries(), "").isEmpty())
         assertTrue(s.query(entries(), "absent-term").isEmpty())
+    }
+
+    @Test
+    fun `query never surfaces a book that left the library`() = runTest {
+        val s = session()
+        // "indexed" exists on disk but is not in the entries passed in.
+        val results = s.query(listOf(GlobalSearchSession.Entry("missing", "1:2")), "harvest")
+        assertTrue(results.isEmpty())
     }
 
     @Test

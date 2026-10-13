@@ -9,6 +9,9 @@ import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.SharedFeaturePolicy
 import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedReaderScreenState
+import com.aryan.reader.shared.reader.ReaderLocator
+import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
+import com.aryan.reader.shared.search.SharedGlobalSearchHit
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfType
 import com.aryan.reader.shared.SortOrder
@@ -99,7 +102,7 @@ class NonReaderLayoutModelsTest {
             books = books,
             filter = MobileUnifiedLibraryFilter.ALL,
             query = "alpha",
-            contentSearchBookIds = setOf("content"),
+            contentSearchResults = listOf(contentResult("content", score = 1.0)),
         )
         assertEquals(listOf("meta"), off.map { it.id })
 
@@ -108,7 +111,7 @@ class NonReaderLayoutModelsTest {
             filter = MobileUnifiedLibraryFilter.ALL,
             query = "alpha",
             searchInsideFiles = true,
-            contentSearchBookIds = setOf("content"),
+            contentSearchResults = listOf(contentResult("content", score = 1.0)),
         )
         assertEquals(listOf("meta", "content"), on.map { it.id })
 
@@ -119,9 +122,26 @@ class NonReaderLayoutModelsTest {
             filter = MobileUnifiedLibraryFilter.UNREAD,
             query = "harvest",
             searchInsideFiles = true,
-            contentSearchBookIds = setOf("done"),
+            contentSearchResults = listOf(contentResult("done", score = 1.0)),
         )
         assertTrue(filtered.isEmpty())
+    }
+
+    @Test
+    fun `content-only books follow relevance, not recency`() {
+        val best = book(id = "best", displayName = "Best.epub")
+        val recent = book(id = "recent", displayName = "Recent.epub", positionModified = 99_000L)
+        val ordered = mobileUnifiedLibraryBooks(
+            books = listOf(recent, best),
+            filter = MobileUnifiedLibraryFilter.ALL,
+            query = "love",
+            searchInsideFiles = true,
+            contentSearchResults = listOf(
+                contentResult("best", score = 9.0),
+                contentResult("recent", score = 1.0),
+            ),
+        )
+        assertEquals(listOf("best", "recent"), ordered.map { it.id })
     }
 
     @Test
@@ -959,3 +979,22 @@ class NonReaderLayoutModelsTest {
         sourceFolder = sourceFolder
     )
 }
+
+private fun contentResult(bookId: String, score: Double, hits: Int = 1) =
+    SharedGlobalSearchBookResult(
+        bookId = bookId,
+        score = score,
+        matchingChunkCount = hits,
+        hits = (0 until hits).map { index ->
+            SharedGlobalSearchHit(
+                bookId = bookId,
+                chunkIndex = index,
+                locator = ReaderLocator(chapterIndex = index),
+                snippet = "match $index",
+                matchRanges = emptyList(),
+                score = score,
+                chapterIndex = index,
+                pageIndex = null,
+            )
+        },
+    )

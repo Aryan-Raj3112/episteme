@@ -48,7 +48,9 @@ internal object SharedOfficeHtmlChapters {
             .takeIf(String::isNotBlank)
 
     private val HEADING_REGEX =
-        Regex("""<h([1-6])\b[^>]*>(.*?)</h\1\s*>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        // `(?is)` inline flags, not RegexOption: DOT_MATCHES_ALL is absent from
+        // the common stdlib and breaks compileIosMainKotlinMetadata.
+        Regex("""(?is)<h([1-6])\b[^>]*>(.*?)</h\1\s*>""")
     private val TAG_STRIP_REGEX = Regex("""<[^>]+>""")
     private val WHITESPACE_REGEX = Regex("""\s+""")
 }

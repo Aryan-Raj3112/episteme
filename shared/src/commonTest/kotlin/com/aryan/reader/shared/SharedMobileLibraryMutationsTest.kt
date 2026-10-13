@@ -297,13 +297,13 @@ class SharedMobileLibraryMutationsTest {
         val state = LibraryState(
             searchQuery = "history",
             searchInsideFiles = true,
-            contentSearchBookIds = setOf("b1"),
+            contentSearchResults = emptyList(),
         )
 
-        assertTrue(state.reduce(LibraryAction.SearchChanged("rome")).contentSearchBookIds.isEmpty())
+        assertTrue(state.reduce(LibraryAction.SearchChanged("rome")).contentSearchResults.isEmpty())
         val toggled = state.reduce(LibraryAction.SearchInsideFilesChanged(false))
         assertFalse(toggled.searchInsideFiles)
-        assertTrue(toggled.contentSearchBookIds.isEmpty())
+        assertTrue(toggled.contentSearchResults.isEmpty())
     }
 
     @Test

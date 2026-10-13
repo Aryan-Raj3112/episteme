@@ -1,5 +1,7 @@
 package com.aryan.reader.shared
 
+import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
+
 data class ShelfRecord(
     val id: String,
     val name: String,
@@ -59,11 +61,11 @@ data class SharedLibraryProjectionInput(
     val shelfRefs: List<BookShelfRef>,
     val tags: List<Tag>,
     /**
-     * Book ids with inside-file content matches for the current query.
-     * Honored only when [LibraryFeatureState.searchInsideFiles] is true;
-     * otherwise ignored so metadata-only behavior is byte-identical.
+     * Inside-file content matches for the current query, best-first. Honored
+     * only when [LibraryFeatureState.searchInsideFiles] is true; otherwise
+     * ignored so metadata-only behavior is byte-identical.
      */
-    val contentSearchBookIds: Set<String> = emptySet(),
+    val contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
 )
 
 class SharedLibraryStateProjector(
@@ -76,14 +78,15 @@ class SharedLibraryStateProjector(
         val metadataQueried = filterBySearch(allLibraryBooks, current.searchQuery)
         // Toggle-on expansion: content-only books join metadata hits. Flag off
         // keeps the metadata path byte-identical (no union, no reorder).
+        val contentBookIds = input.contentSearchResults.mapTo(mutableSetOf()) { it.bookId }
         val queried = if (
             current.searchInsideFiles &&
             current.searchQuery.isNotBlank() &&
-            input.contentSearchBookIds.isNotEmpty()
+            contentBookIds.isNotEmpty()
         ) {
             val metadataIds = metadataQueried.mapTo(mutableSetOf()) { it.id }
             metadataQueried + allLibraryBooks.filter {
-                it.id in input.contentSearchBookIds && it.id !in metadataIds
+                it.id in contentBookIds && it.id !in metadataIds
             }
         } else {
             metadataQueried

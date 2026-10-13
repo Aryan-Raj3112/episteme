@@ -16,6 +16,7 @@ import com.aryan.reader.shared.isOpdsStream
 import com.aryan.reader.shared.applyLibraryFilters
 import com.aryan.reader.shared.filterBySearch
 import com.aryan.reader.shared.progressPercentValue
+import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
 import com.aryan.reader.shared.sortBooks
 import com.aryan.reader.shared.toHomeScreenModel
 
@@ -688,30 +689,33 @@ internal fun mobileUnifiedLibraryBooks(
     sortOrder: SortOrder = SortOrder.RECENT,
     folderAliases: Map<String, String> = emptyMap(),
     /**
-     * Inside-file content matches for the current query. Unioned after
-     * metadata hits only when [searchInsideFiles] is true; otherwise
+     * Inside-file content matches for the current query, best-first. Unioned
+     * after metadata hits only when [searchInsideFiles] is true; otherwise
      * ignored so metadata-only behavior is byte-identical.
      */
     searchInsideFiles: Boolean = false,
-    contentSearchBookIds: Set<String> = emptySet(),
+    contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
 ): List<BookItem> {
     val normalizedQuery = query.trim()
     val preFiltered = applyLibraryFilters(books, libraryFilters, folderAliases)
     val metadataBooks = preFiltered
         .filter { it.matchesMobileUnifiedLibraryFilter(filter, normalizedQuery) }
-    if (!searchInsideFiles || normalizedQuery.isBlank() || contentSearchBookIds.isEmpty()) {
+    if (!searchInsideFiles || normalizedQuery.isBlank() || contentSearchResults.isEmpty()) {
         return sortBooks(metadataBooks, sortOrder)
     }
     // Content-only books join metadata hits but still respect the active
     // status filter (blank query = filter check without text matching).
+    // Relevance wins inside this group: best content match first, otherwise a
+    // strong hit sits below a book the user merely opened last.
     val metadataIds = metadataBooks.mapTo(mutableSetOf()) { it.id }
-    return sortBooks(
-        metadataBooks + preFiltered.filter {
-            it.id in contentSearchBookIds && it.id !in metadataIds &&
-                it.matchesMobileUnifiedLibraryFilter(filter, "")
-        },
-        sortOrder,
-    )
+    val contentOnly = contentSearchResults
+        .filter { it.bookId !in metadataIds }
+    return sortBooks(metadataBooks, sortOrder) +
+        contentOnly.mapNotNull { result ->
+            preFiltered.firstOrNull {
+                it.id == result.bookId && it.matchesMobileUnifiedLibraryFilter(filter, "")
+            }
+        }
 }
 
 /**

@@ -140,6 +140,7 @@ import com.aryan.reader.shared.opds.OpdsCatalog
 import com.aryan.reader.shared.opds.OpdsEntry
 import com.aryan.reader.shared.opds.SharedOpdsDownloadLocation
 import com.aryan.reader.shared.opds.SharedOpdsScreenState
+import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
 import com.aryan.reader.shared.sortBooks
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -251,7 +252,7 @@ fun SharedMobileUnifiedLibraryScreen(
      * content index keep the defaults and see no UI change.
      */
     onSearchInsideFilesChange: ((Boolean) -> Unit)? = null,
-    contentSearchBookIds: Set<String> = emptySet(),
+    contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
     /** Mirrors library keystrokes to the host (content-index search); local filtering is unchanged. */
     onLibrarySearchQueryChange: (String) -> Unit = {},
     // Android benchmark: readable file types differ per platform (FileCapabilities.kt).
@@ -291,7 +292,7 @@ fun SharedMobileUnifiedLibraryScreen(
         filter,
         query,
         state.searchInsideFiles,
-        contentSearchBookIds,
+        contentSearchResults,
     ) {
         mobileUnifiedLibraryBooks(
             books = state.rawLibraryBooks,
@@ -302,7 +303,7 @@ fun SharedMobileUnifiedLibraryScreen(
             // iOS books record the folder name while selections store Android's uriString.
             folderAliases = state.syncedFolders.associate { it.name to it.uriString },
             searchInsideFiles = state.searchInsideFiles,
-            contentSearchBookIds = contentSearchBookIds,
+            contentSearchResults = contentSearchResults,
         )
     }
     val continueReading = remember(state.rawLibraryBooks) {
@@ -485,7 +486,7 @@ fun SharedMobileUnifiedLibraryScreen(
                     },
                     searchInsideFiles = state.searchInsideFiles,
                     onSearchInsideFilesChange = onSearchInsideFilesChange,
-                    searchInsideFilesDescription = readerString("unified_library_search_inside_files", "Search inside files"),
+                    searchInsideFilesLabel = readerString("unified_library_search_inside_files", "Search inside files"),
                 )
             }
         },

@@ -7,6 +7,9 @@ import kotlin.math.max
  * Snippet builder. Finds the first word-start match of any query term (same
  * word-boundary rule as in-reader search), cuts [SharedGlobalSearchPolicy.SNIPPET_RADIUS]
  * chars of context, and returns match ranges inside the snippet for UI highlight.
+ *
+ * Every query term is highlighted, not just the one that won the window race:
+ * "when my love" has to highlight all three words to read as a match.
  */
 object SharedGlobalSearchSnippet {
 
@@ -38,27 +41,58 @@ object SharedGlobalSearchSnippet {
             val head = text.take(radius * 2).trim()
             return head to emptyList()
         }
-        val matchLen = if (bestNeedle == query.prefixTerm) {
-            // Extend the prefix to the full word for a stable highlight.
-            wordLengthAt(text, bestOffset)
-        } else {
-            bestNeedle.length
-        }
+        val matchLen = matchLength(text, bestOffset, bestNeedle, query)
         val start = max(0, bestOffset - radius)
         val end = (bestOffset + matchLen + radius).coerceAtMost(text.length)
         val prefix = if (start > 0) "…" else ""
         val suffix = if (end < text.length) "…" else ""
         val snippet = prefix + text.substring(start, end).trim() + suffix
-        // Locate the match inside the built snippet (robust to trimming).
-        val matchText = text.substring(bestOffset, (bestOffset + matchLen).coerceAtMost(text.length))
-        val inSnippet = snippet.indexOf(matchText, ignoreCase = true)
-        val ranges = if (inSnippet >= 0) {
-            listOf(IntRange(inSnippet, inSnippet + matchText.length - 1))
-        } else {
-            emptyList()
-        }
-        return snippet to ranges
+        return snippet to snippetMatchRanges(snippet, needles, query)
     }
+
+    /** Highlight spans for every needle occurrence inside [snippet]. */
+    private fun snippetMatchRanges(
+        snippet: String,
+        needles: List<String>,
+        query: SharedSearchQuery,
+    ): List<IntRange> {
+        val raw = buildList {
+            for (needle in needles) {
+                val offsets = readerWordStartMatchOffsets(snippet, needle).ifEmpty {
+                    // The snippet is a trimmed window, so a needle that straddled
+                    // the cut survives as a prefix match at its word start.
+                    if (needle == query.prefixTerm) listOfNotNull(findPrefixOffset(snippet, needle)) else emptyList()
+                }
+                for (offset in offsets) {
+                    val length = if (needle == query.prefixTerm) {
+                        wordLengthAt(snippet, offset)
+                    } else {
+                        needle.length
+                    }
+                    add(IntRange(offset, (offset + length - 1).coerceAtMost(snippet.length - 1)))
+                }
+            }
+        }
+        return raw.sortedBy { it.first }.fold(mutableListOf()) { merged, range ->
+            val last = merged.lastOrNull()
+            // Overlaps come from a prefix match swallowing the same word another
+            // needle already covered; merging keeps the annotated string valid.
+            if (last != null && range.first <= last.last + 1) {
+                merged[merged.lastIndex] = IntRange(last.first, maxOf(last.last, range.last))
+            } else {
+                merged += range
+            }
+            merged
+        }
+    }
+
+    private fun matchLength(text: String, offset: Int, needle: String, query: SharedSearchQuery): Int =
+        if (needle == query.prefixTerm) {
+            // Extend the prefix to the full word for a stable highlight.
+            wordLengthAt(text, offset)
+        } else {
+            needle.length
+        }
 
     private fun findPrefixOffset(text: String, prefix: String): Int? {
         if (prefix.isBlank()) return null

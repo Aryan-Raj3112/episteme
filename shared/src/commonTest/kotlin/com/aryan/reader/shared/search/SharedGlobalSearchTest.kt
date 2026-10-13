@@ -2,6 +2,7 @@ package com.aryan.reader.shared.search
 
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
+import com.aryan.reader.shared.reader.ReaderLocator
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -12,6 +13,24 @@ private fun chunk(text: String, chapter: Int? = 0, page: Int? = null) = SharedSe
     chapterIndex = chapter,
     pageIndex = page,
     text = text,
+)
+
+private fun contentResult(bookId: String, score: Double = 1.0) = SharedGlobalSearchBookResult(
+    bookId = bookId,
+    score = score,
+    matchingChunkCount = 1,
+    hits = listOf(
+        SharedGlobalSearchHit(
+            bookId = bookId,
+            chunkIndex = 0,
+            locator = ReaderLocator(chapterIndex = 0),
+            snippet = "snippet",
+            matchRanges = emptyList(),
+            score = score,
+            chapterIndex = 0,
+            pageIndex = null,
+        )
+    ),
 )
 
 class SharedGlobalSearchTokenizerTest {
@@ -113,6 +132,45 @@ class SharedGlobalSearchIndexTest {
         assertEquals(1, ranges.size)
         val range = ranges.single()
         assertEquals("history", snippet.substring(range.first, range.last + 1).lowercase())
+    }
+
+    @Test
+    fun `snippet highlights every query term, not just the winning one`() {
+        val text = "a history of the roman window opening onto the old forum"
+        val (snippet, ranges) = SharedGlobalSearchSnippet.build(text, parseSharedSearchQuery("roman history"))
+        assertTrue("roman" in snippet.lowercase())
+        val covered = ranges.map { snippet.substring(it.first, it.last + 1).lowercase() }
+        assertTrue("history" in covered)
+        assertTrue("roman" in covered)
+        // No overlap: highlights must be disjoint spans for an annotated string.
+        ranges.zipWithNext { current, next ->
+            assertTrue(current.last < next.first)
+        }
+    }
+
+    @Test
+    fun `snippet extends a typed prefix to the whole word`() {
+        val text = "a history of the roman forum and other windows"
+        val (snippet, ranges) = SharedGlobalSearchSnippet.build(text, parseSharedSearchQuery("windo"))
+        val covered = ranges.map { snippet.substring(it.first, it.last + 1).lowercase() }
+        assertTrue("windows" in covered)
+    }
+
+    @Test
+    fun `snippet merge keeps overlapping highlights valid`() {
+        // "history of" and "history" both match the same word start.
+        val text = "the history of rome and the history of paris and more text here"
+        val (snippet, ranges) = SharedGlobalSearchSnippet.build(
+            text,
+            parseSharedSearchQuery("\"history of\" history"),
+        )
+        assertTrue(ranges.isNotEmpty())
+        ranges.forEach { range ->
+            assertTrue(range.first >= 0 && range.last < snippet.length)
+        }
+        ranges.zipWithNext { current, next ->
+            assertTrue(current.last < next.first)
+        }
     }
 
     @Test
@@ -221,7 +279,7 @@ class SharedGlobalSearchLibraryTest {
     }
 
     @Test
-    fun `projector ignores content ids when toggle is off`() {
+    fun `projector ignores content results when toggle is off`() {
         val books = listOf(book("a", "Alpha"), book("b", "Beta"))
         val base = com.aryan.reader.shared.SharedLibraryProjectionInput(
             state = com.aryan.reader.shared.LibraryFeatureState(searchQuery = "alpha"),
@@ -229,7 +287,7 @@ class SharedGlobalSearchLibraryTest {
             shelfRecords = emptyList(),
             shelfRefs = emptyList(),
             tags = emptyList(),
-            contentSearchBookIds = setOf("b"),
+            contentSearchResults = listOf(contentResult("b")),
         )
         val off = com.aryan.reader.shared.SharedLibraryStateProjector().project(base)
         assertEquals(listOf("a"), off.libraryBooks.map { it.id })

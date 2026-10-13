@@ -225,7 +225,8 @@ class SingleFileImporter(private val context: Context) {
         type: FileType,
         originalBookNameHint: String,
         bookId: String,
-        parseContent: Boolean = true
+        parseContent: Boolean = true,
+        extractionDirOverride: File? = null
     ): EpubBook {
 
         Timber.tag(HTML_IMPORT_DEBUG_TAG).d("import_start type=$type bookId=$bookId name=$originalBookNameHint parseContent=$parseContent")
@@ -235,16 +236,18 @@ class SingleFileImporter(private val context: Context) {
         val isCodeOrData = com.aryan.reader.isCodeOrDataFileName(originalBookNameHint)
 
         if (type == FileType.HTML && (isCsv || isCodeOrData)) {
-            return parseDynamicContentToHtml(inputStream, originalBookNameHint, bookId, parseContent, isCsv)
+            return parseDynamicContentToHtml(
+                inputStream, originalBookNameHint, bookId, parseContent, isCsv, extractionDirOverride
+            )
         }
 
         return when (type) {
-            FileType.MD -> parseMarkdown(inputStream, originalBookNameHint, bookId, parseContent)
-            FileType.TXT -> parsePlainText(inputStream, originalBookNameHint, bookId, parseContent)
-            FileType.HTML -> parseHtml(inputStream, originalBookNameHint, bookId, parseContent)
-            FileType.DOCX -> parseDocx(inputStream, originalBookNameHint, bookId, parseContent)
-            FileType.DOC -> parseDoc(inputStream, originalBookNameHint, bookId, parseContent)
-            else -> parsePlainText(inputStream, originalBookNameHint, bookId, parseContent)
+            FileType.MD -> parseMarkdown(inputStream, originalBookNameHint, bookId, parseContent, extractionDirOverride)
+            FileType.TXT -> parsePlainText(inputStream, originalBookNameHint, bookId, parseContent, extractionDirOverride)
+            FileType.HTML -> parseHtml(inputStream, originalBookNameHint, bookId, parseContent, extractionDirOverride)
+            FileType.DOCX -> parseDocx(inputStream, originalBookNameHint, bookId, parseContent, extractionDirOverride)
+            FileType.DOC -> parseDoc(inputStream, originalBookNameHint, bookId, parseContent, extractionDirOverride)
+            else -> parsePlainText(inputStream, originalBookNameHint, bookId, parseContent, extractionDirOverride)
         }
     }
 
@@ -253,7 +256,8 @@ class SingleFileImporter(private val context: Context) {
         originalBookNameHint: String,
         bookId: String,
         parseContent: Boolean,
-        isCsv: Boolean
+        isCsv: Boolean,
+        extractionDirOverride: File?
     ): EpubBook = withContext(Dispatchers.IO) {
 
         val tempFile = File(context.cacheDir, "temp_conv_${UUID.randomUUID()}.html")
@@ -330,7 +334,8 @@ class SingleFileImporter(private val context: Context) {
         inputStream: InputStream,
         originalBookNameHint: String,
         bookId: String,
-        parseContent: Boolean
+        parseContent: Boolean,
+        extractionDirOverride: File? = null
     ): EpubBook = withContext(Dispatchers.IO) {
         if (!parseContent) {
             return@withContext EpubBook(
@@ -348,7 +353,8 @@ class SingleFileImporter(private val context: Context) {
             )
         }
 
-        val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
+        val extractionDir = extractionDirOverride?.let(ImportedFileCache::prepareDirectory)
+            ?: ImportedFileCache.ensureActiveBookDir(context, bookId)
         // Version the Markdown cache because headings are now materialized as
         // chapters rather than leaving every document as a single "Page 1".
         val metadataFile = File(extractionDir, MARKDOWN_METADATA_FILE)
@@ -357,7 +363,12 @@ class SingleFileImporter(private val context: Context) {
             Timber.tag("FileOpenPerf").d("[MD] Loaded from cache instantly | bookId=$bookId")
             return@withContext cachedBook
         }
-        ImportedFileCache.resetActiveBookDir(context, bookId)
+        // A private extraction dir is already freshly prepared by the
+        // caller; resetting the shared active dir here would delete the
+        // chapters of the book a reader currently has open.
+        if (extractionDirOverride == null) {
+            ImportedFileCache.resetActiveBookDir(context, bookId)
+        }
 
         val parseStart = System.currentTimeMillis()
         Timber.tag(DIAG_TAG).i("IMPORT: parseMarkdown START | file=$originalBookNameHint | nativeParser=${SharedMarkdownParser.isNative()}")
@@ -604,7 +615,8 @@ class SingleFileImporter(private val context: Context) {
         inputStream: InputStream,
         originalBookNameHint: String,
         bookId: String,
-        parseContent: Boolean
+        parseContent: Boolean,
+        extractionDirOverride: File? = null
     ): EpubBook = withContext(Dispatchers.IO) {
         if (!parseContent) {
             return@withContext EpubBook(
@@ -622,7 +634,8 @@ class SingleFileImporter(private val context: Context) {
             )
         }
 
-        val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
+        val extractionDir = extractionDirOverride?.let(ImportedFileCache::prepareDirectory)
+            ?: ImportedFileCache.ensureActiveBookDir(context, bookId)
         val txtCacheMetadataFile = txtMetadataFile(extractionDir)
         val legacyMetadataFile = metadataFile(extractionDir)
         Timber.tag(TXT_FORMAT_TRACE_TAG).d(
@@ -641,7 +654,12 @@ class SingleFileImporter(private val context: Context) {
             return@withContext cachedBook
         }
         Timber.tag(TXT_FORMAT_TRACE_TAG).d("event=android_txt_cache_miss bookId=$bookId resetDir=true")
-        ImportedFileCache.resetActiveBookDir(context, bookId)
+        // A private extraction dir is already freshly prepared by the
+        // caller; resetting the shared active dir here would delete the
+        // chapters of the book a reader currently has open.
+        if (extractionDirOverride == null) {
+            ImportedFileCache.resetActiveBookDir(context, bookId)
+        }
 
         val parseStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[TXT] parsePlainText START | file=$originalBookNameHint")
@@ -835,7 +853,8 @@ class SingleFileImporter(private val context: Context) {
         inputStream: InputStream,
         originalBookNameHint: String,
         bookId: String,
-        parseContent: Boolean
+        parseContent: Boolean,
+        extractionDirOverride: File? = null
     ): EpubBook = withContext(Dispatchers.IO) {
         if (!parseContent) {
             return@withContext EpubBook(
@@ -853,7 +872,8 @@ class SingleFileImporter(private val context: Context) {
             )
         }
 
-        val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
+        val extractionDir = extractionDirOverride?.let(ImportedFileCache::prepareDirectory)
+            ?: ImportedFileCache.ensureActiveBookDir(context, bookId)
         val metadataFile = metadataFile(extractionDir)
         val extractionFilesSummary = extractionDir.htmlDebugFileList()
         Timber.tag(HTML_IMPORT_DEBUG_TAG).d(
@@ -867,7 +887,12 @@ class SingleFileImporter(private val context: Context) {
             return@withContext cachedBook
         }
         Timber.tag(HTML_IMPORT_DEBUG_TAG).d("html_cache_reset_before_parse bookId=$bookId dir=${extractionDir.absolutePath}")
-        ImportedFileCache.resetActiveBookDir(context, bookId)
+        // A private extraction dir is already freshly prepared by the
+        // caller; resetting the shared active dir here would delete the
+        // chapters of the book a reader currently has open.
+        if (extractionDirOverride == null) {
+            ImportedFileCache.resetActiveBookDir(context, bookId)
+        }
 
         val parseStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[HTML] parseHtml START | file=$originalBookNameHint")
@@ -1372,18 +1397,22 @@ class SingleFileImporter(private val context: Context) {
         inputStream: InputStream,
         originalBookNameHint: String,
         bookId: String,
-        parseContent: Boolean
+        parseContent: Boolean,
+        extractionDirOverride: File? = null
     ): EpubBook = importOfficeDocument(
-        inputStream, originalBookNameHint, bookId, parseContent, OfficeImportFormat.DOCX
+        inputStream, originalBookNameHint, bookId, parseContent, OfficeImportFormat.DOCX,
+        extractionDirOverride
     )
 
     private suspend fun parseDoc(
         inputStream: InputStream,
         originalBookNameHint: String,
         bookId: String,
-        parseContent: Boolean
+        parseContent: Boolean,
+        extractionDirOverride: File? = null
     ): EpubBook = importOfficeDocument(
-        inputStream, originalBookNameHint, bookId, parseContent, OfficeImportFormat.DOC
+        inputStream, originalBookNameHint, bookId, parseContent, OfficeImportFormat.DOC,
+        extractionDirOverride
     )
 
     /**
@@ -1401,6 +1430,7 @@ class SingleFileImporter(private val context: Context) {
         bookId: String,
         parseContent: Boolean,
         format: OfficeImportFormat,
+        extractionDirOverride: File? = null
     ): EpubBook = withContext(Dispatchers.IO) {
         if (!parseContent) {
             return@withContext EpubBook(
@@ -1418,14 +1448,20 @@ class SingleFileImporter(private val context: Context) {
             )
         }
 
-        val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
+        val extractionDir = extractionDirOverride?.let(ImportedFileCache::prepareDirectory)
+            ?: ImportedFileCache.ensureActiveBookDir(context, bookId)
         val metadataFile = metadataFile(extractionDir)
 
         readCachedSingleFileBook(metadataFile, extractionDir, format.tag)?.let { cachedBook ->
             Timber.tag("FileOpenPerf").d("[${format.tag}] Loaded from cache instantly | bookId=$bookId")
             return@withContext cachedBook
         }
-        ImportedFileCache.resetActiveBookDir(context, bookId)
+        // A private extraction dir is already freshly prepared by the
+        // caller; resetting the shared active dir here would delete the
+        // chapters of the book a reader currently has open.
+        if (extractionDirOverride == null) {
+            ImportedFileCache.resetActiveBookDir(context, bookId)
+        }
 
         Timber.tag("FileOpenPerf").d("[${format.tag}] import START | file=$originalBookNameHint")
 

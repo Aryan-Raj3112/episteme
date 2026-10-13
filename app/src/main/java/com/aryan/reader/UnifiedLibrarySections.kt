@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.SortOrder
+import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
 import com.aryan.reader.shared.ui.AppIcon
 
 /**
@@ -211,7 +212,7 @@ internal fun UnifiedLibraryTopBar(
         onSearchQueryChange = onSearchQueryChange,
         searchInsideFiles = searchInsideFiles,
         onSearchInsideFilesChange = onSearchInsideFilesChange,
-        searchInsideFilesDescription = stringResource(R.string.unified_library_search_inside_files),
+        searchInsideFilesLabel = stringResource(R.string.unified_library_search_inside_files),
     )
 }
 
@@ -263,7 +264,12 @@ internal fun UnifiedLibraryHome(
     onCloseTab: (RecentFileItem) -> Unit,
     onCloseAllTabs: () -> Unit,
     widthSizeClass: WindowWidthSizeClass,
+    searchInsideFiles: Boolean = false,
+    contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
 ) {
+    // Content search replaces the grid: one row per matching book, its matched
+    // text, and an expand affordance for the rest of that book's matches.
+    val contentSearchActive = searchInsideFiles && query.isNotBlank()
     com.aryan.reader.shared.ui.SharedAndroidUnifiedLibraryHome(
         books = books,
         continueReading = continueReading.takeIf { filter == UnifiedLibraryFilter.ALL && query.isBlank() },
@@ -272,13 +278,30 @@ internal fun UnifiedLibraryHome(
         advancedFilterCount = advancedFilterCount,
         useListView = useListView,
         strings = com.aryan.reader.shared.ui.SharedAndroidUnifiedHomeStrings(
-            noBooks = stringResource(R.string.unified_library_no_books),
+            noBooks = if (contentSearchActive) {
+                stringResource(R.string.library_content_search_no_results)
+            } else {
+                stringResource(R.string.unified_library_no_books)
+            },
             filterBooks = stringResource(R.string.content_desc_filter),
             gridView = stringResource(R.string.unified_library_grid_view),
             listView = stringResource(R.string.unified_library_list_view),
             filterLabels = UnifiedLibraryFilter.entries.associateWith { stringResource(it.labelRes) },
         ),
         itemKey = { it.bookId },
+        contentSearchActive = contentSearchActive,
+        contentSearchResults = contentSearchResults,
+        contentResultRow = { item, result, expanded, onToggleExpanded ->
+            LibraryContentSearchResultRow(
+                item = item,
+                result = result,
+                expanded = expanded,
+                onToggleExpanded = onToggleExpanded,
+                onClick = { onBookClick(item) },
+                onLongClick = { onBookLongClick(item) },
+                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
+            )
+        },
         onFilterChange = onFilterChange,
         onControls = onControlsClick,
         onAdvancedFilters = onAdvancedFiltersClick,

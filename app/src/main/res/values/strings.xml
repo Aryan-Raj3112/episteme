@@ -116,6 +116,15 @@
     <string name="unified_library_no_folders">No synced folders yet</string>
     <string name="unified_library_search_books">Search your books</string>
     <string name="unified_library_search_inside_files">Search inside files</string>
+    <string name="library_content_search_more_matches">%1$d more matches</string>
+    <string name="library_content_search_fewer_matches">Show fewer</string>
+    <plurals name="library_content_search_match_count">
+        <item quantity="one">%1$d match</item>
+        <item quantity="other">%1$d matches</item>
+    </plurals>
+    <string name="library_content_search_chapter">Chapter %1$d</string>
+    <string name="library_content_search_page">Page %1$d</string>
+    <string name="library_content_search_no_results">No matches in your books</string>
     <string name="unified_library_grid_view">Grid view</string>
     <string name="unified_library_list_view">List view</string>
     <string name="unified_library_sort_filter">Sort and filter</string>

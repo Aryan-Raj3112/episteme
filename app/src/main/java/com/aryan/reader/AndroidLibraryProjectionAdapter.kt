@@ -30,7 +30,8 @@ internal object AndroidLibraryProjectionAdapter {
                 .let(projectionBookItemCache::map),
             shelfRecords = input.dbShelves.map { it.toSharedShelfRecord() },
             shelfRefs = input.shelfRefs.map { it.toSharedBookShelfRef() },
-            tags = input.dbTags.map { it.toSharedTag() }
+            tags = input.dbTags.map { it.toSharedTag() },
+            contentSearchResults = input.state.libraryState.contentSearchResults,
         )
         return AndroidLibraryProjectionContext(
             projectionState = projectionState,

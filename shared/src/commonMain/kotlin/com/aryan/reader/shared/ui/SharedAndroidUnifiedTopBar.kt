@@ -1,10 +1,12 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -15,6 +17,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -53,23 +57,27 @@ fun SharedAndroidUnifiedTopBar(
     clearSearchDescription: String = "",
     onSearchQueryChange: (String) -> Unit = {},
     /**
-     * Inside-files search toggle. The affordance appears only while a query is
-     * typed, which is the only moment it is actionable; hosts without a content
-     * index leave the callback null and see no change.
+     * Inside-files search toggle. Rendered as a small labelled chip under the
+     * search field, visible as soon as the field takes focus (and while a
+     * query remains) so the option is discoverable before anything is typed.
+     * Hosts without a content index leave the callback null and see no change.
      */
     searchInsideFiles: Boolean = false,
     onSearchInsideFilesChange: ((Boolean) -> Unit)? = null,
-    searchInsideFilesDescription: String = "Search inside files",
+    searchInsideFilesLabel: String = "Search inside files",
     modifier: Modifier = Modifier,
 ) {
     val focusManager = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
     var searchFocused by remember { mutableStateOf(false) }
+    val showContentScopeToggle = onSearchInsideFilesChange != null &&
+        searchQuery != null && !showingShelf && (searchFocused || searchQuery.isNotEmpty())
     Surface(shadowElevation = 1.dp, modifier = modifier.fillMaxWidth()) {
-        Row(
-            Modifier.fillMaxWidth().statusBarsPadding().height(64.dp).padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Column(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp)) {
+            Row(
+                Modifier.fillMaxWidth().height(64.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
             if (showingShelf) {
                 IconButton(onClick = onBackFromShelf) { Icon(Icons.AutoMirrored.Filled.ArrowBack, backToShelvesDescription) }
             } else {
@@ -100,22 +108,6 @@ fun SharedAndroidUnifiedTopBar(
                     keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
                     singleLine = true,
                 )
-                if (onSearchInsideFilesChange != null && searchQuery.isNotEmpty()) {
-                    IconButton(
-                        onClick = { onSearchInsideFilesChange(!searchInsideFiles) },
-                        modifier = Modifier.testTag("UnifiedLibrarySearchInsideFiles"),
-                    ) {
-                        Icon(
-                            Icons.Default.Description,
-                            contentDescription = searchInsideFilesDescription,
-                            tint = if (searchInsideFiles) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        )
-                    }
-                }
             } else if (title != null) {
                 Text(
                     title,
@@ -129,6 +121,35 @@ fun SharedAndroidUnifiedTopBar(
                 Spacer(Modifier.weight(1f))
             }
             IconButton(onClick = onAccount, modifier = Modifier.testTag("UnifiedLibraryProfile")) { accountAvatar() }
+        }
+            if (showContentScopeToggle) {
+                val onToggle: (Boolean) -> Unit = onSearchInsideFilesChange
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 4.dp, top = 2.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    FilterChip(
+                        selected = searchInsideFiles,
+                        onClick = { onToggle(!searchInsideFiles) },
+                        modifier = Modifier.testTag("UnifiedLibrarySearchInsideFiles"),
+                        shape = CircleShape,
+                        label = {
+                            Text(
+                                searchInsideFilesLabel,
+                                style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1,
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Description,
+                                contentDescription = null,
+                                modifier = Modifier.size(FilterChipDefaults.IconSize),
+                            )
+                        },
+                    )
+                }
+            }
         }
     }
 }

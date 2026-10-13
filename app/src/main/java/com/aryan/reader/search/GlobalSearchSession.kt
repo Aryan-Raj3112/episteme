@@ -1,5 +1,6 @@
 package com.aryan.reader.search
 
+import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
 import com.aryan.reader.shared.search.SharedGlobalSearchCoordinator
 import com.aryan.reader.shared.search.SharedGlobalSearchStorage
 import java.io.File
@@ -47,21 +48,40 @@ class GlobalSearchSession(
         }
     }
 
-    /** Book ids matching [rawQuery], after syncing [entries]. Empty means none. */
-    suspend fun query(entries: List<Entry>, rawQuery: String): Set<String> =
+    /**
+     * Book results matching [rawQuery], best-first, after syncing [entries].
+     * Empty means none. Snippets come from the persisted chunk texts, so the
+     * library rows can preview the matched text and highlight it.
+     */
+    suspend fun query(entries: List<Entry>, rawQuery: String): List<SharedGlobalSearchBookResult> =
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 refreshLocked(entries.associate { it.bookId to it.contentHash })
-                if (rawQuery.isBlank()) return@withLock emptySet()
-                val ids = coordinator.search(rawQuery).mapTo(mutableSetOf()) { it.bookId }
+                if (rawQuery.isBlank()) return@withLock emptyList()
+                val results = coordinator.search(rawQuery)
+                val wantedIds = entries.mapTo(HashSet()) { entry -> entry.bookId }
+                val visible = results.filter { it.bookId in wantedIds }
                 GlobalSearchLog.d {
                     "query raw='$rawQuery' entries=${entries.size} " +
-                        "inMemory=${coordinator.bookCount()} matches=${ids.size} " +
-                        "ids=${ids.take(8)}"
+                        "inMemory=${coordinator.bookCount()} books=${visible.size} " +
+                        "ids=${visible.take(8).map { it.bookId }}"
                 }
-                ids
+                visible
             }
         }
+
+    /**
+     * True when a persisted payload for [entry]'s exact hash is loaded, i.e.
+     * indexing would be a no-op. Lets callers skip enqueueing work they can
+     * already answer from disk.
+     */
+    suspend fun isFresh(entry: Entry): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            loadedHashes[entry.bookId] == entry.contentHash ||
+                (coordinator.loadPersistedBook(entry.bookId) &&
+                    coordinator.contentHashOf(entry.bookId) == entry.contentHash)
+        }
+    }
 
     /** Forgets one book's loaded hash (e.g. after delete). File removal is the caller's job. */
     suspend fun remove(bookId: String) {

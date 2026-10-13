@@ -93,6 +93,7 @@ import com.aryan.reader.search.GlobalSearchIndexer
 import com.aryan.reader.search.GlobalSearchLog
 import com.aryan.reader.search.brief
 import com.aryan.reader.search.GlobalSearchSession
+import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
 import com.aryan.reader.shared.search.SharedGlobalSearchPolicy
 import java.util.concurrent.atomic.AtomicInteger
 import com.aryan.reader.epub.hasReadableExtractedContent
@@ -326,6 +327,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     /** In-memory content index for library-wide inside-files search. */
     private val globalSearchSession = GlobalSearchSession(appContext.filesDir)
     private val globalSearchQueryGeneration = AtomicInteger(0)
+
+    /** (bookId, hash) set the index was last reconciled against; null = dirty. */
+    @Volatile
+    private var globalSearchLibrarySignature: String? = null
     private val _navigationEvent = Channel<NavigationEvent>(Channel.BUFFERED)
     @Suppress("unused")
     val navigationEvent = _navigationEvent.receiveAsFlow()
@@ -1793,6 +1798,20 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         viewModelScope.launch(Dispatchers.IO) {
             FolderAnnotationExportWorker.scheduleAllPending(appContext)
+        }
+
+        // Content index reconcile: books added while "search inside files"
+        // was off, or before the feature existed, have no payload and would
+        // stay invisible until something re-indexes them.
+        viewModelScope.launch(Dispatchers.IO) {
+            libraryFlow
+                .map { it.first }
+                .distinctUntilChanged()
+                .collectLatest {
+                    if (_internalState.value.libraryState.searchInsideFiles) {
+                        reconcileGlobalSearchIndex()
+                    }
+                }
         }
 
         // BookCacheDatabase opens on first access; defer it to the collector
@@ -7018,14 +7037,26 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         Timber.i("Added/Updated $displayName ($type) to recent files via repository.")
 
         if (_internalState.value.libraryState.searchInsideFiles) {
-            GlobalSearchIndexer.enqueue(
-                appContext,
+            val entry = GlobalSearchSession.Entry(
                 bookId,
-                uri.toString(),
-                type,
-                displayName,
                 "$fileSize:$fileContentModifiedTimestamp",
             )
+            // Without this every open re-enqueues the same hash: the worker
+            // runs only to discover the payload is already current.
+            viewModelScope.launch(Dispatchers.IO) {
+                if (globalSearchSession.isFresh(entry)) {
+                    GlobalSearchLog.d { "import index skipped bookId=$bookId fresh" }
+                    return@launch
+                }
+                GlobalSearchIndexer.enqueue(
+                    appContext,
+                    bookId,
+                    uri.toString(),
+                    type,
+                    displayName,
+                    entry.contentHash,
+                )
+            }
         }
 
         if (isNewBook) {
@@ -8973,24 +9004,49 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             it.copy(
                 libraryState = it.libraryState.copy(
                     searchInsideFiles = enabled,
-                    contentSearchBookIds = emptySet(),
+                    contentSearchResults = emptyList(),
                 ),
             )
         }
         prefs.edit { putBoolean(KEY_SEARCH_INSIDE_FILES, enabled) }
         GlobalSearchLog.d { "toggle on=$enabled (was $previous) bulkIndex=$enabled" }
+        // Force the reconcile collector to re-scan: books imported while the
+        // toggle was off have no payload, and without this they stay invisible
+        // until the next library change.
+        globalSearchLibrarySignature = null
         if (!enabled) return
+        reconcileGlobalSearchIndex()
+    }
+
+    /**
+     * Indexes every searchable book that has no fresh payload. Runs on
+     * toggle-on and whenever the library changes, so books that existed
+     * before "search inside files" was enabled (or imported while it was off)
+     * are backfilled instead of silently returning no matches.
+     *
+     * Guarded by [globalSearchLibrarySignature]: a no-op while the set of
+     * (bookId, hash) pairs is unchanged, which keeps progress writes in Room
+     * from re-enqueueing work on every emission.
+     */
+    private fun reconcileGlobalSearchIndex(force: Boolean = false) {
         viewModelScope.launch(Dispatchers.IO) {
-            // uiState, not _internalState: the DB projection is what fills
-            // rawLibraryFiles, and _internalState never carries the library.
-            val booksById = uiState.value.rawLibraryFiles.associateBy { it.bookId }
-            val entries = globalSearchEntries(booksById.values.toList())
-            GlobalSearchLog.d {
-                "bulk index start books=${entries.size} " +
-                    "searchable=${entries.count { e -> booksById[e.bookId]?.let { SharedGlobalSearchPolicy.isContentSearchable(it.type) } == true }}"
+            if (!_internalState.value.libraryState.searchInsideFiles) return@launch
+            // Read the store, not uiState: uiState.value only carries the
+            // library while a UI node is subscribed, and the startup collector
+            // runs before that is guaranteed.
+            val items = bookStore.getRecentFilesFlow().first().filter {
+                SharedGlobalSearchPolicy.isContentSearchable(it.type)
             }
+            val signature = items
+                .map { "${it.bookId}:${it.fileSize}:${it.fileContentModifiedTimestamp}" }
+                .sorted()
+                .joinToString("\n")
+            if (!force && signature == globalSearchLibrarySignature) return@launch
+            globalSearchLibrarySignature = signature
+            val booksById = items.associateBy { it.bookId }
+            val entries = globalSearchEntries(items)
             val missing = globalSearchSession.syncLibrary(entries)
-            GlobalSearchLog.d { "bulk index missing=${missing.size} of ${entries.size}" }
+            GlobalSearchLog.d { "reconcile books=${entries.size} missing=${missing.size}" }
             for (entry in missing) {
                 booksById[entry.bookId]?.let { item ->
                     GlobalSearchIndexer.enqueue(
@@ -9008,8 +9064,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     /**
      * Runs the in-memory content index for [query] (already debounced by the
-     * caller) and publishes matching book ids. Stale runs are dropped by
-     * [globalSearchQueryGeneration].
+     * caller) and publishes the matching books with their snippet hits. Stale
+     * runs are dropped by [globalSearchQueryGeneration].
      */
     fun searchLibraryContent(query: String) {
         val generation = globalSearchQueryGeneration.incrementAndGet()
@@ -9017,11 +9073,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch(Dispatchers.IO) {
             val trimmed = query.trim()
             val enabled = _internalState.value.libraryState.searchInsideFiles
-            val ids = if (!enabled || trimmed.isBlank()) {
+            val results: List<SharedGlobalSearchBookResult> = if (!enabled || trimmed.isBlank()) {
                 GlobalSearchLog.d {
                     "searchLibraryContent gen=$generation skipped enabled=$enabled blank=${trimmed.isBlank()}"
                 }
-                emptySet()
+                emptyList()
             } else {
                 // uiState, not _internalState: the DB projection is what fills
                 // rawLibraryFiles, and _internalState never carries the library.
@@ -9037,10 +9093,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 return@launch
             }
             _internalState.update {
-                it.copy(libraryState = it.libraryState.copy(contentSearchBookIds = ids))
+                it.copy(libraryState = it.libraryState.copy(contentSearchResults = results))
             }
             GlobalSearchLog.d {
-                "searchLibraryContent gen=$generation published ids=${ids.size}"
+                "searchLibraryContent gen=$generation published books=${results.size} " +
+                    "hits=${results.sumOf { it.hits.size }}"
             }
         }
     }

@@ -32,6 +32,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.remember
+import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -67,9 +70,23 @@ fun <T> SharedAndroidUnifiedLibraryHome(
     widthClass: SharedAndroidHomeWidthClass = SharedAndroidHomeWidthClass.COMPACT,
     /** Rendered above the continue-reading card; empty when multi-tab reading is idle. */
     openTabsContent: @Composable () -> Unit = {},
+    /**
+     * Inside-file content search. When [contentSearchActive] is true the grid
+     * is replaced by one row per matching book, expanded to show more of that
+     * book's matches on demand.
+     */
+    contentSearchActive: Boolean = false,
+    contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
+    contentResultRow: @Composable (T, SharedGlobalSearchBookResult, Boolean, () -> Unit) -> Unit = { _, _, _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val gridCells = widthClass.bookGridCells()
+    // Expansion lives here so the row composable stays stateless and the host
+    // only supplies layout.
+    val expandedBooks = remember { mutableStateMapOf<String, Boolean>() }
+    val contentResultsById = remember(contentSearchResults) {
+        contentSearchResults.associateBy { it.bookId }
+    }
     Column(modifier.fillMaxSize().padding(horizontal = 20.dp)) {
         openTabsContent()
         continueReading?.let { continueCard(it, Modifier.padding(top = 16.dp)) }
@@ -88,17 +105,50 @@ fun <T> SharedAndroidUnifiedLibraryHome(
                     IconButton(onClick = onAdvancedFilters) { Icon(Icons.Default.FilterList, contentDescription = strings.filterBooks) }
                 }
             }
-            item {
-                IconButton(onClick = { onListViewChange(!useListView) }) {
-                    Icon(
-                        if (useListView) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.FormatListNumbered,
-                        contentDescription = if (useListView) strings.gridView else strings.listView,
-                    )
+            if (!contentSearchActive) {
+                item {
+                    IconButton(onClick = { onListViewChange(!useListView) }) {
+                        Icon(
+                            if (useListView) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.FormatListNumbered,
+                            contentDescription = if (useListView) strings.gridView else strings.listView,
+                        )
+                    }
                 }
             }
         }
         if (books.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(strings.noBooks, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        } else if (contentSearchActive) {
+            Surface(
+                Modifier.weight(1f).padding(top = 16.dp),
+                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                tonalElevation = 1.dp,
+            ) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(12.dp, 12.dp, 12.dp, 96.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    // Iterate the merged book list, not the content results:
+                    // books matching metadata only must still appear, just
+                    // without the matched-text body.
+                    items(books, key = itemKey) { book ->
+                        val result = contentResultsById[itemKey(book)]
+                        if (result != null) {
+                            val expanded = expandedBooks[result.bookId] == true
+                            contentResultRow(
+                                book,
+                                result,
+                                expanded,
+                                { expandedBooks[result.bookId] = !expanded },
+                            )
+                        } else {
+                            bookListItem(book)
+                        }
+                    }
+                }
+            }
         } else {
             Surface(
                 Modifier.weight(1f).padding(top = 16.dp),

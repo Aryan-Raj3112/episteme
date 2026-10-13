@@ -124,6 +124,7 @@ import com.aryan.reader.data.AudiobookImporter
 import com.aryan.reader.audiobook.AudiobookController
 import com.aryan.reader.shared.AnnotationExportFormat
 import com.aryan.reader.shared.CloudFolderSyncSelection
+import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
 import com.aryan.reader.shared.ui.AppIcon
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerAppearance
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerCapabilities
@@ -374,21 +375,19 @@ fun UnifiedLibraryScreen(
     val visibleBooks = remember(
         uiState.rawLibraryFiles,
         uiState.libraryFilters,
+        uiState.sortOrder,
         filter,
         debouncedQuery,
-        uiState.sortOrder,
         uiState.libraryState.searchInsideFiles,
-        uiState.libraryState.contentSearchBookIds,
+        uiState.libraryState.contentSearchResults,
     ) {
-        sortFiles(
-            filterUnifiedLibraryBooks(
-                applyLibraryFilters(uiState.rawLibraryFiles, uiState.libraryFilters),
-                filter,
-                debouncedQuery,
-                uiState.libraryState.searchInsideFiles,
-                uiState.libraryState.contentSearchBookIds,
-            ),
-            uiState.sortOrder
+        filterUnifiedLibraryBooks(
+            applyLibraryFilters(uiState.rawLibraryFiles, uiState.libraryFilters),
+            filter,
+            debouncedQuery,
+            uiState.libraryState.searchInsideFiles,
+            uiState.libraryState.contentSearchResults,
+            uiState.sortOrder,
         )
     }
     val section = UnifiedLibrarySection.fromPersisted(uiState.unifiedLibrarySection)
@@ -658,6 +657,8 @@ fun UnifiedLibraryScreen(
                     tabsEnabled = uiState.isTabsEnabled,
                     onCloseTab = { viewModel.closeTab(it.bookId) },
                     onCloseAllTabs = { showCloseAllTabsDialog = true },
+                    searchInsideFiles = uiState.libraryState.searchInsideFiles,
+                    contentSearchResults = uiState.libraryState.contentSearchResults,
                 )
                 UnifiedLibrarySection.AUDIOBOOKS -> AudiobooksLibrarySection(
                     modifier = Modifier.padding(padding),
@@ -1190,22 +1191,28 @@ internal fun filterUnifiedLibraryBooks(
     filter: UnifiedLibraryFilter,
     query: String,
     searchInsideFiles: Boolean = false,
-    contentSearchBookIds: Set<String> = emptySet(),
+    contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
+    sortOrder: SortOrder = SortOrder.RECENT,
 ): List<RecentFileItem> {
     if (books.isEmpty()) return emptyList()
     val normalizedQuery = query.trim()
-    val mapper = SharedProjectionBookItemCache(maxEntries = books.size)
     val byId = books.associateBy { it.bookId }
-    val metadataBooks = mapper.map(books)
+    val sharedBooks = SharedProjectionBookItemCache(maxEntries = books.size).map(books)
+    val metadataBooks = sharedBooks
         .filter { it.matchesMobileUnifiedLibraryFilter(filter, normalizedQuery) }
-    if (!searchInsideFiles || normalizedQuery.isBlank() || contentSearchBookIds.isEmpty()) {
-        return metadataBooks.mapNotNull { byId[it.id] }
+        .mapNotNull { byId[it.id] }
+    if (!searchInsideFiles || normalizedQuery.isBlank() || contentSearchResults.isEmpty()) {
+        return sortFiles(metadataBooks, sortOrder)
     }
-    // Content-only books join metadata hits but still respect the active
+    // Content-only books follow metadata hits but still respect the active
     // status filter (blank query = filter check without text matching).
-    val metadataIds = metadataBooks.mapTo(mutableSetOf()) { it.id }
-    return (metadataBooks + mapper.map(books).filter {
-        it.id in contentSearchBookIds && it.id !in metadataIds &&
-            it.matchesMobileUnifiedLibraryFilter(filter, "")
-    }).mapNotNull { byId[it.id] }
+    // Relevance wins inside this group: best content match first, otherwise a
+    // strong hit sits below a book the user merely opened last.
+    val metadataIds = metadataBooks.mapTo(HashSet()) { it.bookId }
+    val contentScores = contentSearchResults.associate { it.bookId to it.score }
+    val contentOnly = sharedBooks
+        .filter { it.id !in metadataIds && it.matchesMobileUnifiedLibraryFilter(filter, "") }
+        .sortedByDescending { contentScores[it.id] ?: Double.NEGATIVE_INFINITY }
+        .mapNotNull { byId[it.id] }
+    return sortFiles(metadataBooks, sortOrder) + contentOnly
 }

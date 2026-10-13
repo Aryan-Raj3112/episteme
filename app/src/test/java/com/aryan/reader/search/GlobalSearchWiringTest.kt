@@ -34,11 +34,15 @@ class GlobalSearchWiringTest {
     }
 
     @Test
-    fun `bulk indexing on toggle enable also reads the projected ui state`() {
+    fun `index reconcile on toggle enable reads the projected ui state`() {
         val source = readMain("MainViewModel.kt")
         assertTrue(
-            source.contains("uiState.value.rawLibraryFiles.associateBy { it.bookId }"),
+            "reconcile must read the store: uiState has no subscriber at startup",
+            source.contains("bookStore.getRecentFilesFlow().first()"),
         )
+        // The reconcile path is what backfills books added while the toggle was off.
+        assertTrue(source.contains("private fun reconcileGlobalSearchIndex("))
+        assertTrue(source.contains("reconcileGlobalSearchIndex()"))
     }
 
     @Test
@@ -61,9 +65,25 @@ class GlobalSearchWiringTest {
         assertTrue("each reset must be gated on no-override, found $gated gates", gated == resets)
     }
 
+    @Test
+    fun `inside-files toggle appears as soon as the search field takes focus`() {
+        val topBar = readMain("SharedAndroidUnifiedTopBar.kt")
+        val home = readMain("SharedAndroidUnifiedLibraryHome.kt")
+        assertTrue(
+            "focus must reveal the toggle, not just a non-empty query",
+            topBar.contains("searchFocused || searchQuery.isNotEmpty()"),
+        )
+        assertTrue("the toggle is a labelled control, not an icon-only button", topBar.contains("searchInsideFilesLabel"))
+        // Results mode replaces the grid with one row per matching book.
+        assertTrue(home.contains("contentSearchActive"))
+        assertTrue(home.contains("contentResultRow"))
+    }
+
     private fun readMain(relativePath: String): String =
         listOf(
             File("src/main/java/com/aryan/reader/$relativePath"),
             File("app/src/main/java/com/aryan/reader/$relativePath"),
-        ).first { it.isFile }.readText()
+            File("shared/src/commonMain/kotlin/com/aryan/reader/shared/ui/$relativePath"),
+            File("../shared/src/commonMain/kotlin/com/aryan/reader/shared/ui/$relativePath"),
+        ).firstOrNull { it.isFile }?.readText().orEmpty()
 }
