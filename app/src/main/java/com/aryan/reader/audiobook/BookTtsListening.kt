@@ -392,6 +392,30 @@ internal fun defaultBookTtsProgress(context: Context, bookId: String) = BookTtsL
     pitch = loadTtsPitch(context)
 )
 
+/**
+ * Whether a Listen voice/mode pick must restart the session to take effect.
+ *
+ * The service applies voice/mode only at session start (reader benchmark),
+ * so a pick on a paused live session needs an explicit restart; a pick with
+ * no live session applies at the next start by itself, and there is no TTS
+ * engine to restart in narration mode or while speaking/loading (pickers
+ * lock then).
+ */
+internal fun shouldRestartListenForVoiceChange(
+    listenSource: SharedListenAudioSource,
+    playbackSource: String?,
+    activeBookId: String?,
+    requestedBookId: String,
+    sessionFinished: Boolean,
+    isPlaying: Boolean,
+    isLoading: Boolean,
+): Boolean = !listenSource.isOverlay() &&
+    playbackSource == "AUDIOBOOK_TTS" &&
+    activeBookId == requestedBookId &&
+    !sessionFinished &&
+    !isPlaying &&
+    !isLoading
+
 class BookTtsSessionCoordinator(
     context: Context,
     private val scope: CoroutineScope,
@@ -829,6 +853,10 @@ class BookTtsAudiobookController(
             Timber.tag("BOOK_TTS_AUDIOBOOK").i("Ignoring duplicate resume request for active book=$bookId")
             return
         }
+        launchStart(bookId, policy, chapterIndex)
+    }
+
+    private fun launchStart(bookId: String, policy: String, chapterIndex: Int? = null) {
         when (sharedListeningHandoff(SharedListeningTarget.GENERATED_BOOK_TTS)) {
             SharedListeningHandoff.STOP_AUDIOBOOK -> appContext.startService(
                 Intent(appContext, AudiobookPlaybackService::class.java).setAction(ACTION_AUDIOBOOK_STOP),
@@ -851,6 +879,31 @@ class BookTtsAudiobookController(
             }
             ContextCompat.startForegroundService(appContext, intent)
         }
+    }
+
+    /**
+     * Restarts the live TTS session at its saved position so a voice/mode
+     * pick takes effect. The service applies voice/mode only at session
+     * start (same as the reader), and this sheet closes on stop — so without
+     * an explicit restart a paused-session pick would never be heard.
+     * Starts playing: hearing the new voice is the confirmation the pick
+     * applied. No-op unless a paused TTS session for this book is live
+     * (pickers lock while speaking/loading; narration has no TTS engine).
+     */
+    fun restartListenSessionForVoiceChange(bookId: String) {
+        if (!shouldRestartListenForVoiceChange(
+                listenSource = _listenSource.value,
+                playbackSource = playbackState.value.playbackSource,
+                activeBookId = playbackState.value.bookId,
+                requestedBookId = bookId,
+                sessionFinished = playbackState.value.sessionFinished,
+                isPlaying = playbackState.value.isPlaying,
+                isLoading = playbackState.value.isLoading,
+            )
+        ) return
+        // Chained after the stop ack (which lands after the service tore the
+        // session down), so the fresh start can never slip in front of it.
+        ttsController.stop { launchStart(bookId, BookTtsSessionCoordinator.START_RESUME, null) }
     }
 
     fun togglePlay() {

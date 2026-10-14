@@ -282,6 +282,21 @@ internal fun RecentFileItem.toTtsAudiobookUiItem(
     lastListenedAt = progress?.updatedAt ?: 0L
 )
 
+/**
+ * Everything a Listen voice pick can change, as one comparable key.
+ *
+ * The voice sheet's tabs have no uniform change callback (the device tab
+ * saves through its own prefs), so the sheet snapshots this on open and
+ * restarts the session on dismiss only when it moved — one restart for any
+ * number of picks, and none for a peek.
+ */
+internal fun listenVoicePickKey(context: android.content.Context): String =
+    listOf(
+        loadListenTtsMode(context).name,
+        loadListenTtsSpeaker(context),
+        loadListenNativeVoice(context),
+    ).joinToString("\u001F")
+
 internal fun AudiobookEntity.toUiItem(
     libraryItem: RecentFileItem? = null
 ): AudiobookUiItem {
@@ -709,15 +724,12 @@ private fun BookTtsPlayerSheet(
     var showListenVoiceSettings by remember { mutableStateOf(false) }
     var listenMode by remember(context) { mutableStateOf(loadListenTtsMode(context)) }
     var listenSpeaker by remember(context) { mutableStateOf(loadListenTtsSpeaker(context)) }
-    // Locked for any live Listen session — playing, loading AND paused. A
-    // paused session keeps old-voice audio queued (and Listen applies voice
-    // changes at the next session start), so switching then resuming would
-    // keep playing the previous voice.
+    // Locked while speaking/loading, free while paused or idle: the reader
+    // benchmark freezes pickers for any live session, but Listen's sheet
+    // closes on stop, which would make the voice unreachable. Paused picks
+    // restart the session on dismiss (below), so they are heard.
     val listenTtsActive = !inOverlayMode && playback.connected && !playback.sessionFinished
-    // Only freeze the voice/engine controls while something is actually being spoken. The
-    // Listen player sheet closes on stop, so requiring a full stop would make the voice
-    // settings unreachable; pausing is a safe point to change it.
-    val listenTtsVoiceLocked = !inOverlayMode && playback.isPlaying
+    val listenTtsVoiceLocked = !inOverlayMode && (playback.isPlaying || playback.isLoading)
     var adapterRate by remember { mutableFloatStateOf(prepared.savedProgress?.speechRate ?: loadTtsSpeechRate(context)) }
     var adapterPitch by remember { mutableFloatStateOf(prepared.savedProgress?.pitch ?: loadTtsPitch(context)) }
     val sharedItem = remember(sourceBook, prepared.savedProgress, overlayInfo) {
@@ -792,6 +804,14 @@ private fun BookTtsPlayerSheet(
     )
     DisposableEffect(controller) { onDispose(controller::release) }
 
+    // Voice picks across every tab (engine, cloud speaker, device voice)
+    // funnel through one restart: the service applies voice/mode only at
+    // session start, so a single stop-chained restart on dismiss both covers
+    // tabs with no change callback and avoids a restart per tap.
+    var voicePickBaseline by remember { mutableStateOf("") }
+    LaunchedEffect(showListenVoiceSettings) {
+        if (showListenVoiceSettings) voicePickBaseline = listenVoicePickKey(context)
+    }
     if (showListenVoiceSettings) {
         TtsSettingsSheet(
             isVisible = true,
@@ -800,6 +820,10 @@ private fun BookTtsPlayerSheet(
                 // Re-read in case the device-voice tab changed the native pick.
                 listenMode = loadListenTtsMode(context)
                 listenSpeaker = loadListenTtsSpeaker(context)
+                if (listenVoicePickKey(context) != voicePickBaseline) {
+                    voicePickBaseline = listenVoicePickKey(context)
+                    controller.restartListenSessionForVoiceChange(sourceBook.bookId)
+                }
             },
             currentMode = listenMode,
             onModeChange = { newMode ->

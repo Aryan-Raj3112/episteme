@@ -278,7 +278,7 @@ class TtsController(context: Context) : Player.Listener {
         mediaController?.play()
     }
 
-    fun stop() {
+    fun stop(onStopped: () -> Unit = {}) {
         Timber.d("UI sending STOP command.")
         pendingStartArgs = null
         _ttsState.value = _ttsState.value.copy(
@@ -291,6 +291,7 @@ class TtsController(context: Context) : Player.Listener {
             // Cancel a just-started connection too; otherwise tapping Stop
             // during startup could still create and warm up the service.
             disconnect()
+            onStopped()
             return
         }
         controller.sendCustomCommand(STOP_TTS_COMMAND, Bundle.EMPTY).addListener(
@@ -298,7 +299,10 @@ class TtsController(context: Context) : Player.Listener {
                 // The service receives an explicit-stop callback and calls
                 // stopSelf(). Releasing our binding lets onDestroy shut down the
                 // heavyweight system engine without affecting Pause or handoffs.
+                // The command result lands after the service handled the stop,
+                // so a chained start (voice-change restart) is ordered after it.
                 if (mediaController === controller) disconnect()
+                onStopped()
             },
             ContextCompat.getMainExecutor(context)
         )
