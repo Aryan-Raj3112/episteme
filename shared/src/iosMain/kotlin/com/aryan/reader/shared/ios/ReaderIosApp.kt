@@ -8217,6 +8217,12 @@ private fun ReaderIosApp(
                                         replacements = state.readerTtsReplacementPreferences,
                                     )
                                 },
+                                onPrepareTtsListen = { book ->
+                                    ttsListenController.ensureContent(
+                                        book,
+                                        replacements = state.readerTtsReplacementPreferences,
+                                    )
+                                },
                                 onToggleTtsPlayback = ttsListenController::togglePlay,
                                 onSeekTtsChunk = ttsListenController::seekToChunk,
                                 onSeekTtsChapter = ttsListenController::selectChapter,

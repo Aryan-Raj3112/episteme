@@ -1232,7 +1232,9 @@ internal class IosBookTtsListeningController(
         persistNow(progressFor(currentChapterIndex, currentChunkIndex.coerceAtLeast(0), completed = false))
         val chunk = currentChunks.getOrNull(currentChunkIndex) ?: return
         // Only the device engine has rate/pitch: cloud synthesis takes them server-side.
-        if (!sessionEngineIsCloud) localEngine.setSpeechParameters(safeRate, safePitch)
+        // In-memory push (see startEngineAt): Listen's rate must not rewrite
+        // the reader's stored pick.
+        if (!sessionEngineIsCloud) localEngine.applySessionVoice(selectedVoiceIdentifier, safeRate, safePitch)
         if ((state.isPlaying || state.isLoading) && currentChunkIndex >= 0) {
             startEngineAt(currentChunkIndex, playWhenReady = true)
         }
@@ -1395,9 +1397,11 @@ internal class IosBookTtsListeningController(
             "startEngineAt chapter=$currentChapterIndex chunk=$safeChunk of ${chunks.size} " +
                 "playWhenReady=$playWhenReady"
         )
-        // Listen's own voice/rate choices, applied to the shared engine for this session.
-        localEngine.setSpeechParameters(sessionSpeechRate, sessionPitch)
-        selectedVoiceIdentifier?.let { localEngine.setVoice(it) }
+        // Listen's own voice/rate choices, applied to the shared engine for this
+        // session only: applySessionVoice is in-memory, so Listen's picks never
+        // leak into the reader's stored settings, and a null (system-default)
+        // pick clears the engine's stored voice instead of leaving a stale one.
+        localEngine.applySessionVoice(selectedVoiceIdentifier, sessionSpeechRate, sessionPitch)
         localEngine.start(
             chunks = engineChunks,
             bookTitle = currentBookTitle,
@@ -1814,6 +1818,14 @@ internal class IosBookTtsListeningController(
     ): IosEpubListenContent {
         val archive = openIosZipArchive(book.path)
             ?: error("EPUB path is unavailable")
+        // Register the stable path (not this transient instance) so
+        // narration's SMIL/audio borrows resolve through the store for a book
+        // the reader never opened. Without this the OPF index above reports
+        // narration while every archive read fails, which presents as
+        // per-chapter "no narration audio" on a narrated book. Path-only, so
+        // a reader-open book keeps its instance and nothing doubles the
+        // resident 124 MB reference.
+        book.path?.takeIf { it.isNotBlank() }?.let { IosEpubResourceStore.register(book.id, it) }
         val overlayIndex = runCatching { loadSharedEpubMediaOverlayIndex(archive) }
             .getOrDefault(SharedMediaOverlayIndex.EMPTY)
         val spineChapters = loadSharedEpubTtsChapters(

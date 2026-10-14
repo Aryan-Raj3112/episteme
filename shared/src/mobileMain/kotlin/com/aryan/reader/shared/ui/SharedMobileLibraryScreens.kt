@@ -235,6 +235,13 @@ fun SharedMobileUnifiedLibraryScreen(
     listenSourceByBook: Map<String, SharedListenAudioSource> = emptyMap(),
     onListenSourceChange: (BookItem, SharedListenAudioSource) -> Unit = { _, _ -> },
     onStartTtsListen: (BookItem, SharedTtsListenStartPolicy, Int?) -> Unit = { _, _, _ -> },
+    /**
+     * Prepares a book's Listen content (chapters, narration availability)
+     * without starting playback. Called when the player sheet opens idle so
+     * badges, the TTS/narration switcher and chapter titles match Android's
+     * connect-on-open; playback paths load through their start call instead.
+     */
+    onPrepareTtsListen: (BookItem) -> Unit = {},
     onToggleTtsPlayback: () -> Unit = {},
     onSeekTtsChunk: (Int) -> Unit = {},
     onSeekTtsChapter: (Int) -> Unit = {},
@@ -733,6 +740,7 @@ fun SharedMobileUnifiedLibraryScreen(
                         showPlayerSheet = true
                     },
                     onOpenTtsPlayer = { item, _ ->
+                        onPrepareTtsListen(item.book)
                         ttsPlayerItem = item
                         showTtsPlayerSheet = true
                     },
@@ -942,7 +950,14 @@ fun SharedMobileUnifiedLibraryScreen(
         }
     }
     if (showTtsPlayerSheet) {
-        ttsPlayerItem?.let { item ->
+        ttsPlayerItem?.let { rawItem ->
+            // The captured row predates preparation: overlay facts arrive
+            // asynchronously (Android's prepare, iOS's ensureContent), so the
+            // sheet must read the live map or the switcher stays hidden until
+            // the sheet is closed and reopened.
+            val item = rawItem.copy(
+                mediaOverlay = ttsOverlayInfoByBook[rawItem.book.id] ?: rawItem.mediaOverlay,
+            )
             SharedMobileTtsPlayerSheet(
                 item = item,
                 playback = ttsListenState,
