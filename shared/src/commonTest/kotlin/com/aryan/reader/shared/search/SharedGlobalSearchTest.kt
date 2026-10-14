@@ -231,6 +231,72 @@ class SharedGlobalSearchCoordinatorTest {
         assertFalse(coordinator.needsIndex("scanned", "h1"))
         assertTrue(coordinator.needsIndex("scanned", "h2"))
     }
+
+    @Test
+    fun `matchingChunkCount reports total while hits stay capped`() {
+        val coordinator = SharedGlobalSearchCoordinator()
+        val chunks = (0 until 30).map { idx ->
+            SharedSearchChunk(chunkIndex = idx, pageIndex = idx, text = "history of rome volume $idx")
+        }
+        coordinator.upsertBookChunks("b1", "h1", chunks)
+        val results = coordinator.search("history")
+        assertEquals(1, results.size)
+        val result = results.single()
+        assertEquals(30, result.matchingChunkCount)
+        assertEquals(SharedGlobalSearchPolicy.MAX_HITS_PER_BOOK, result.hits.size)
+    }
+
+    @Test
+    fun `index searchWithTotal separates preview from total`() {
+        val chunks = (0 until 25).map { idx ->
+            SharedSearchChunk(chunkIndex = idx, chapterIndex = idx, text = "magic kingdom tale $idx")
+        }
+        val index = SharedGlobalSearchIndex.build("b1", "h1", chunks)
+        val total = index.searchWithTotal(parseSharedSearchQuery("magic"))
+        assertEquals(25, total.totalMatchingChunks)
+        assertEquals(SharedGlobalSearchPolicy.MAX_HITS_PER_BOOK, total.hits.size)
+        // Legacy entry point keeps returning only the capped preview.
+        assertEquals(total.hits.size, index.search(parseSharedSearchQuery("magic")).size)
+    }
+
+    @Test
+    fun `pdf hits carry page indices for location labels`() {
+        val coordinator = SharedGlobalSearchCoordinator()
+        coordinator.upsertBookChunks(
+            "pdf1",
+            "h1",
+            SharedSearchChunkIndexer.fromPdfPageTexts(
+                listOf("history on page one", "unrelated", "more history on page three"),
+            ),
+        )
+        val result = coordinator.search("history").single()
+        assertEquals(2, result.matchingChunkCount)
+        assertEquals(listOf(0, 2), result.hits.mapNotNull { it.pageIndex }.sorted())
+    }
+
+    @Test
+    fun `old payload without locations needs reindex`() {
+        val storage = InMemorySharedGlobalSearchStorage()
+        val coordinator = SharedGlobalSearchCoordinator(storage)
+        storage.saveBook(
+            SharedGlobalSearchPersistedBookIndex(
+                bookId = "pdf1",
+                contentHash = "h1",
+                chunkCount = 1,
+                totalTerms = 1,
+                postings = mapOf("history" to listOf(SharedGlobalSearchPersistedPosting(0, 1))),
+                chunkTexts = listOf("history on page one"),
+                // Old format: location arrays missing.
+                chapterIndices = emptyList(),
+                pageIndices = emptyList(),
+                blockIndices = emptyList(),
+                charOffsets = emptyList(),
+                cfis = emptyList(),
+                anchorIds = emptyList(),
+            ),
+        )
+        assertTrue(coordinator.needsIndex("pdf1", "h1"))
+    }
 }
 
 class SharedGlobalSearchLibraryTest {

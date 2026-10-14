@@ -171,6 +171,8 @@ import com.aryan.reader.RenderMode
 import com.aryan.reader.audiobook.ACTION_AUDIOBOOK_STOP
 import com.aryan.reader.audiobook.AudiobookPlaybackService
 import com.aryan.reader.shared.SearchResult
+import com.aryan.reader.shared.search.bestReaderResultForLibraryHit
+import com.aryan.reader.shared.search.navigationQuote
 import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.AnnotationExportFormat
 import com.aryan.reader.shared.AnnotationExportFormatter
@@ -1097,6 +1099,9 @@ fun EpubReaderHost(
     }
 
     val searchState = rememberSearchState(scope = scope, searcher = epubSearcher)
+    // Deep-links must not steal field focus (no keyboard on open); manual
+    // search opens set this back to true (see onToggleSearch call sites).
+    var searchAutoFocusEnabled by remember(bookId) { mutableStateOf(true) }
     val isEpubSliderReady = when {
         isNativeVerticalMode -> nativeVerticalTotalPages > 0
         currentRenderMode == RenderMode.VERTICAL_SCROLL -> true
@@ -2178,7 +2183,8 @@ fun EpubReaderHost(
         searchState = searchState,
         webViewRef = if (isNativeVerticalMode) null else webViewRefForTts,
         currentChapterIndex = currentChapterIndex,
-        focusRequester = searchFocusRequester
+        focusRequester = searchFocusRequester,
+        autoFocus = searchAutoFocusEnabled,
     )
 
     val totalPagesInCurrentChapter = remember(currentScrollHeightValue, currentClientHeightValue) {
@@ -3629,7 +3635,7 @@ fun EpubReaderHost(
         navigateToEpubJumpLocator(target)
     }
 
-    fun navigateToSearchResult(index: Int) {
+    fun navigateToSearchResult(index: Int, recordHistory: Boolean = true) {
         Timber.tag("NavDiag").d("navigateToSearchResult index: $index")
         val targetResult = searchState.searchResults.getOrNull(index)
         if (targetResult != null && currentRenderMode == RenderMode.VERTICAL_SCROLL) {
@@ -3652,10 +3658,12 @@ fun EpubReaderHost(
                     val scrollLocator = exactLocator
                         ?: bookPaginator.getLocatorForPage(pageIdx)
                         ?: Locator(targetResult.locationInSource, targetResult.chunkIndex.coerceAtLeast(0) * 20, 0)
-                    recordEpubJump(
-                        scrollLocator.toEpubJumpLocator(pageIndex = pageIdx)
-                            .copy(textQuote = targetResult.snippet.text)
-                    )
+                    if (recordHistory) {
+                        recordEpubJump(
+                            scrollLocator.toEpubJumpLocator(pageIndex = pageIdx)
+                                .copy(textQuote = targetResult.snippet.text)
+                        )
+                    }
                     requestNativeVerticalLocatorScroll(
                         locator = scrollLocator,
                         fallbackPage = pageIdx,
@@ -3666,13 +3674,15 @@ fun EpubReaderHost(
                 }
                 return
             }
-            recordEpubJump(
-                SharedReaderLocator(
-                    chapterIndex = targetResult.locationInSource,
-                    cfi = "android-search:${targetResult.chunkIndex}:${targetResult.occurrenceIndexInLocation}",
-                    textQuote = targetResult.snippet.text
+            if (recordHistory) {
+                recordEpubJump(
+                    SharedReaderLocator(
+                        chapterIndex = targetResult.locationInSource,
+                        cfi = "android-search:${targetResult.chunkIndex}:${targetResult.occurrenceIndexInLocation}",
+                        textQuote = targetResult.snippet.text
+                    )
                 )
-            )
+            }
         }
         if (targetResult != null && currentRenderMode == RenderMode.PAGINATED) {
             scope.launch {
@@ -3683,9 +3693,11 @@ fun EpubReaderHost(
                     val pageIdx = bookPaginator.findStablePageForSearchResult(targetResult) ?: return@launch
                     Timber.tag("NavDiag").d("onPaginatedScrollToPage pageIdx=$pageIdx")
                     val targetLocator = bookPaginator.getLocatorForPage(pageIdx)
-                    paginatedJumpLocatorForPage(pageIdx, targetLocator)
-                        ?.copy(textQuote = targetResult.snippet.text)
-                        ?.let { recordEpubJump(it) }
+                    if (recordHistory) {
+                        paginatedJumpLocatorForPage(pageIdx, targetLocator)
+                            ?.copy(textQuote = targetResult.snippet.text)
+                            ?.let { recordEpubJump(it) }
+                    }
                     scrollPaginatedToJumpPage(pageIdx, targetLocator)
                 } finally {
                     navigation.isNavigatingToPosition = false
@@ -3734,12 +3746,58 @@ fun EpubReaderHost(
             onPaginatedScrollToPage = { pageIdx ->
                 Timber.tag("NavDiag").d("onPaginatedScrollToPage pageIdx=$pageIdx")
                 val targetLocator = (paginator as? BookPaginator)?.getLocatorForPage(pageIdx)
-                paginatedJumpLocatorForPage(pageIdx, targetLocator)
-                    ?.copy(textQuote = searchState.searchResults.getOrNull(index)?.snippet?.text)
-                    ?.let { recordEpubJump(it) }
+                if (recordHistory) {
+                    paginatedJumpLocatorForPage(pageIdx, targetLocator)
+                        ?.copy(textQuote = searchState.searchResults.getOrNull(index)?.snippet?.text)
+                        ?.let { recordEpubJump(it) }
+                }
                 scrollPaginatedToJumpPage(pageIdx, targetLocator)
             }
         )
+    }
+
+    // Library inside-files deep-link: the book already opened at the hit's
+    // chapter (initialLocator). Seed jump history with the saved position so
+    // Back returns to it, pre-load the library query in the reader's own
+    // search UI, then auto-step once to the matching occurrence without
+    // recording a second history entry (Back goes straight to the origin).
+    val librarySearch = uiState.librarySearchDeepLink?.takeIf { it.bookId == bookId }
+    var librarySearchAutoStepDone by remember(bookId) { mutableStateOf(false) }
+    var pendingLibraryQuote by remember(bookId) { mutableStateOf<String?>(null) }
+    var pendingLibraryQuery by remember(bookId) { mutableStateOf<String?>(null) }
+    var pendingLibraryChapter by remember(bookId) { mutableStateOf<Int?>(null) }
+    LaunchedEffect(librarySearch?.hit, bookId) {
+        val deepLink = librarySearch ?: return@LaunchedEffect
+        librarySearchAutoStepDone = false
+        deepLink.epubOrigin?.let { origin ->
+            val chapter = initialLocator?.chapterIndex ?: deepLink.hit.chapterIndex
+            if (chapter != null) {
+                recordEpubJump(chapterStartJumpLocator(chapter), currentLocator = origin)
+            }
+        }
+        pendingLibraryQuote = deepLink.hit.navigationQuote()
+        pendingLibraryQuery = deepLink.query
+        pendingLibraryChapter = deepLink.hit.chapterIndex
+        // Mirror a manual search open exactly (bars + query + results panel)
+        // so the deep-link lands in the real reader search UI — except field
+        // focus: popping the keyboard unprompted on open is wrong.
+        searchAutoFocusEnabled = false
+        searchState.onQueryChange(deepLink.query)
+        searchState.isSearchActive = true
+        searchState.showSearchResultsPanel = true
+        showBars = true
+        viewModel.consumeLibrarySearchDeepLink()
+    }
+    LaunchedEffect(searchState.searchResults) {
+        if (librarySearchAutoStepDone) return@LaunchedEffect
+        val quote = pendingLibraryQuote ?: return@LaunchedEffect
+        if (searchState.searchQuery != pendingLibraryQuery) return@LaunchedEffect
+        val results = searchState.searchResults
+        if (results.isEmpty()) return@LaunchedEffect
+        librarySearchAutoStepDone = true
+        val match = bestReaderResultForLibraryHit(quote, results.map { it.snippet.text })
+            ?: results.indexOfFirst { it.locationInSource == pendingLibraryChapter }.takeIf { it >= 0 }
+        if (match != null) navigateToSearchResult(match, recordHistory = false)
     }
 
     LaunchedEffect(paginatedPagerState.currentPage, currentRenderMode) {
@@ -5594,7 +5652,8 @@ fun EpubReaderHost(
                     EpubReaderSearchOverlay(
                         searchState = searchState,
                         onNavigateResult = { index -> navigateToSearchResult(index) },
-                        bottomPadding = bottomPadding
+                        bottomPadding = bottomPadding,
+                        topInset = stableChromeTopPadding,
                     )
                 }
 
@@ -5821,7 +5880,11 @@ fun EpubReaderHost(
                         showBars = !isMusicianMode
                     },
                     searchFocusRequester = searchFocusRequester,
-                    modifier = Modifier.align(Alignment.TopCenter),
+                    // Chrome sits outside the inset-padded content layer, so the
+                    // top bar pads for the status bar itself (ignoring-visibility
+                    // insets keep it stable when bars transiently appear).
+                    modifier = Modifier.align(Alignment.TopCenter)
+                        .padding(top = stableChromeTopPadding),
                     onOpenTtsSettings = { showTtsSettingsSheet = true },
                     onOpenTtsReplacements = { showTtsReplacementsSheet = true },
                     onOpenBookReplacements = { showBookReplacementsSheet = true },
@@ -5846,6 +5909,7 @@ fun EpubReaderHost(
                         }
                     },
                     onToggleSearch = {
+                        searchAutoFocusEnabled = true
                         searchState.isSearchActive = true
                         searchState.showSearchResultsPanel = true
                         showBars = true
@@ -6180,6 +6244,7 @@ fun EpubReaderHost(
                         }
                     },
                     onToggleSearch = {
+                        searchAutoFocusEnabled = true
                         searchState.isSearchActive = true
                         searchState.showSearchResultsPanel = true
                         showBars = true

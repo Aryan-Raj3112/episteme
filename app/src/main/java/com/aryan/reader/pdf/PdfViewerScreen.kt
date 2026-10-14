@@ -4285,6 +4285,26 @@ private fun PdfViewerScreenContent(
         }
     }
 
+    // Library inside-files deep-link: the book already opened at the hit's
+    // page (initialPage). Seed jump history with the saved page so Back
+    // returns to it, and pre-load the library query in the PDF search UI
+    // (highlight-all + prev/next). Page-level hits need no auto-step.
+    val libraryPdfSearch = uiState.librarySearchDeepLink?.takeIf { it.bookId == currentBookId }
+    LaunchedEffect(libraryPdfSearch?.hit, currentBookId, isDocumentReady, totalDisplayPages) {
+        val deepLink = libraryPdfSearch ?: return@LaunchedEffect
+        if (!isDocumentReady || totalDisplayPages <= 0) return@LaunchedEffect
+        val targetDisplay = (deepLink.hit.pageIndex ?: deepLink.hit.chapterIndex)
+            ?.let { pdfPageToDisplayPage(it) }
+        val originDisplay = deepLink.pdfOriginPage?.let { pdfPageToDisplayPage(it) }
+        if (originDisplay != null && targetDisplay != null && originDisplay != targetDisplay) {
+            jumpHistory = jumpHistory.record(originDisplay, targetDisplay, totalDisplayPages)
+        }
+        searchState.onQueryChange(deepLink.query)
+        searchState.isSearchActive = true
+        searchState.showSearchResultsPanel = false
+        viewModel.consumeLibrarySearchDeepLink()
+    }
+
     // A split workspace delegates back to the focused pane first so its
     // dialogs/search/editor state close before the workspace itself exits.
     if (ownsPaneGlobals) BackHandler(enabled = true) {

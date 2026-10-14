@@ -373,7 +373,8 @@ fun EpubReaderSearchEffects(
     searchState: SearchState,
     webViewRef: WebView?,
     currentChapterIndex: Int,
-    focusRequester: FocusRequester
+    focusRequester: FocusRequester,
+    autoFocus: Boolean = true,
 ) {
     // 1. Auto-Highlight in WebView
     LaunchedEffect(searchState.searchResults, currentChapterIndex) {
@@ -396,11 +397,14 @@ fun EpubReaderSearchEffects(
         }
     }
 
-    // 2. Focus Management
-    LaunchedEffect(searchState.isSearchActive) {
+    // 2. Focus Management (deep-links suppress the initial focus so the
+    // keyboard doesn't pop unprompted; manual opens re-enable it).
+    LaunchedEffect(searchState.isSearchActive, autoFocus) {
         if (searchState.isSearchActive) {
-            delay(100)
-            focusRequester.requestFocus()
+            if (autoFocus) {
+                delay(100)
+                focusRequester.requestFocus()
+            }
         } else {
             webViewRef?.evaluateJavascript("javascript:window.clearSearchHighlights();", null)
         }
@@ -411,7 +415,11 @@ fun EpubReaderSearchEffects(
 fun EpubReaderSearchOverlay(
     searchState: SearchState,
     onNavigateResult: (Int) -> Unit,
-    bottomPadding: Dp
+    bottomPadding: Dp,
+    // Status-bar inset of the host chrome layer (the overlay sits outside the
+    // inset-padded content, like the top bar). Added to the fixed drop-down
+    // offset so results never start under the status bar.
+    topInset: Dp = 0.dp,
 ) {
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -434,7 +442,7 @@ fun EpubReaderSearchOverlay(
                     searchState.showSearchResultsPanel = false
                     keyboardController?.hide()
                 },
-                modifier = Modifier.padding(top = 50.dp)
+                modifier = Modifier.padding(top = topInset + 50.dp)
             )
         }
 

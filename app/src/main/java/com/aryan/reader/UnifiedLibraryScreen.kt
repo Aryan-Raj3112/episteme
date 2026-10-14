@@ -27,10 +27,12 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -104,6 +106,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -415,11 +418,37 @@ fun UnifiedLibraryScreen(
         selectedShelfId = parentId
     }
 
-    BackHandler(enabled = selectedItems.isNotEmpty() || selectedShelfId != null) {
-        if (selectedItems.isNotEmpty()) {
-            viewModel.clearContextualAction()
-        } else {
-            navigateShelfUp()
+    val focusManager = LocalFocusManager.current
+    // Keyboard visibility as state: back dismisses the IME first (keeping
+    // the query + results) so there is a way to hide the keyboard without
+    // leaving search. Reads the IME inset directly so no shared-API change
+    // is needed; dialogs still win because they register back later (LIFO).
+    val isKeyboardOpen = WindowInsets.isImeVisible
+    // System back unwinds library layers innermost-first: selection, then an
+    // open keyboard, then an active HOME search (query + results), then shelf
+    // navigation. Search must clear before shelf-up so a filtered shelf view
+    // doesn't pop away with the query still applied underneath.
+    val backAction = nextLibraryBackAction(
+        hasSelection = selectedItems.isNotEmpty(),
+        isKeyboardOpen = isKeyboardOpen,
+        isSearchActive = section == UnifiedLibrarySection.HOME && query.isNotBlank(),
+        inShelf = selectedShelfId != null,
+    )
+    BackHandler(enabled = backAction != LibraryBackAction.NONE) {
+        when (nextLibraryBackAction(
+            hasSelection = selectedItems.isNotEmpty(),
+            isKeyboardOpen = isKeyboardOpen,
+            isSearchActive = section == UnifiedLibrarySection.HOME && query.isNotBlank(),
+            inShelf = selectedShelfId != null,
+        )) {
+            LibraryBackAction.CLEAR_SELECTION -> viewModel.clearContextualAction()
+            LibraryBackAction.HIDE_KEYBOARD -> focusManager.clearFocus()
+            LibraryBackAction.CLEAR_SEARCH -> {
+                query = ""
+                focusManager.clearFocus()
+            }
+            LibraryBackAction.SHELF_UP -> navigateShelfUp()
+            LibraryBackAction.NONE -> Unit
         }
     }
 
@@ -692,6 +721,9 @@ fun UnifiedLibraryScreen(
                         } else viewModel.onRecentFileClicked(item)
                     },
                     onBookLongClick = viewModel::onRecentItemLongPress,
+                    onContentHitClick = { item, hit, hitQuery ->
+                        viewModel.openLibrarySearchHit(item, hit, hitQuery)
+                    },
                     openTabs = uiState.openTabs,
                     tabsEnabled = uiState.isTabsEnabled,
                     onCloseTab = { viewModel.closeTab(it.bookId) },
@@ -1236,6 +1268,28 @@ internal fun findContinueReadingBook(books: List<RecentFileItem>): RecentFileIte
     val mapper = SharedProjectionBookItemCache(maxEntries = books.size)
     val picked = mobileUnifiedContinueReadingBook(mapper.map(books)) ?: return null
     return books.firstOrNull { it.bookId == picked.id }
+}
+
+/** Innermost-first system-back priority for the unified library. */
+internal enum class LibraryBackAction {
+    CLEAR_SELECTION,
+    HIDE_KEYBOARD,
+    CLEAR_SEARCH,
+    SHELF_UP,
+    NONE,
+}
+
+internal fun nextLibraryBackAction(
+    hasSelection: Boolean,
+    isSearchActive: Boolean,
+    inShelf: Boolean,
+    isKeyboardOpen: Boolean = false,
+): LibraryBackAction = when {
+    hasSelection -> LibraryBackAction.CLEAR_SELECTION
+    isKeyboardOpen -> LibraryBackAction.HIDE_KEYBOARD
+    isSearchActive -> LibraryBackAction.CLEAR_SEARCH
+    inShelf -> LibraryBackAction.SHELF_UP
+    else -> LibraryBackAction.NONE
 }
 
 internal fun filterUnifiedLibraryBooks(

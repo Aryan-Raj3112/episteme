@@ -123,17 +123,27 @@ class SharedGlobalSearchIndex private constructor(
      * AND search over chunks. Returns chunk hits sorted by BM25 desc,
      * capped at [SharedGlobalSearchPolicy.MAX_HITS_PER_BOOK].
      */
-    fun search(query: SharedSearchQuery, maxHits: Int = SharedGlobalSearchPolicy.MAX_HITS_PER_BOOK): List<SharedGlobalSearchHit> {
-        if (query.isEmpty || chunks.isEmpty()) return emptyList()
+    fun search(query: SharedSearchQuery, maxHits: Int = SharedGlobalSearchPolicy.MAX_HITS_PER_BOOK): List<SharedGlobalSearchHit> =
+        searchWithTotal(query, maxHits).hits
+
+    /**
+     * Same as [search] but also reports the uncapped total so callers can
+     * badge the true match count while previewing only the best hits.
+     */
+    fun searchWithTotal(
+        query: SharedSearchQuery,
+        maxHits: Int = SharedGlobalSearchPolicy.MAX_HITS_PER_BOOK,
+    ): SharedGlobalSearchIndexResult {
+        if (query.isEmpty || chunks.isEmpty()) return SharedGlobalSearchIndexResult(emptyList(), 0)
         val termCandidates = query.terms.map { term ->
             term to candidatesFor(term, isPrefix = term == query.prefixTerm)
         }
         // Every term must occur somewhere; otherwise the AND is empty.
-        if (termCandidates.any { it.second.isEmpty() }) return emptyList()
+        if (termCandidates.any { it.second.isEmpty() }) return SharedGlobalSearchIndexResult(emptyList(), 0)
         var matching: Set<Int>? = null
         for ((_, cands) in termCandidates) {
             matching = if (matching == null) cands.keys.toSet() else matching.intersect(cands.keys)
-            if (matching.isEmpty()) return emptyList()
+            if (matching.isEmpty()) return SharedGlobalSearchIndexResult(emptyList(), 0)
         }
         // Phrase-only queries have no term constraints: every chunk is a candidate.
         val matchedChunks = matching ?: chunks.indices.toSet()
@@ -147,7 +157,7 @@ class SharedGlobalSearchIndex private constructor(
                 query.phrases.all { phrase -> text.contains(phrase, ignoreCase = true) }
             }.toSet()
         }
-        if (phraseFiltered.isEmpty()) return emptyList()
+        if (phraseFiltered.isEmpty()) return SharedGlobalSearchIndexResult(emptyList(), 0)
 
         val scored = phraseFiltered.mapNotNull { idx ->
             var score = 0.0
@@ -174,8 +184,12 @@ class SharedGlobalSearchIndex private constructor(
                 chapterIndex = chunk.chapterIndex,
                 pageIndex = chunk.pageIndex,
             )
-        }.sortedByDescending { it.score }.take(maxHits.coerceAtLeast(1))
-        return scored
+        }.sortedByDescending { it.score }
+        val total = scored.size
+        return SharedGlobalSearchIndexResult(
+            hits = scored.take(maxHits.coerceAtLeast(1)),
+            totalMatchingChunks = total,
+        )
     }
 }
 
@@ -192,8 +206,14 @@ class SharedGlobalSearchCoordinator(
 
     fun bookCount(): Int = indexes.size
 
-    fun needsIndex(bookId: String, contentHash: String): Boolean =
-        hashes[bookId] != contentHash && storage.loadBook(bookId)?.contentHash != contentHash
+    fun needsIndex(bookId: String, contentHash: String): Boolean {
+        if (hashes[bookId] == contentHash) return false
+        val persisted = storage.loadBook(bookId) ?: return true
+        if (persisted.contentHash != contentHash) return true
+        // Same content but an old payload without location arrays would render
+        // label-less rows (PDFs showing only the file name with no page).
+        return !persisted.hasCompleteLocations()
+    }
 
     /** Returns false when there was nothing indexable ( caller maps to NO_NATIVE_TEXT). */
     fun upsertBookChunks(bookId: String, contentHash: String, chunks: List<SharedSearchChunk>): Boolean {
@@ -217,6 +237,7 @@ class SharedGlobalSearchCoordinator(
 
     fun loadPersistedBook(bookId: String): Boolean {
         val persisted = storage.loadBook(bookId) ?: return false
+        if (!persisted.hasCompleteLocations()) return false
         indexes[bookId] = SharedGlobalSearchIndex.fromPersisted(persisted)
         hashes[bookId] = persisted.contentHash
         return true
@@ -243,14 +264,15 @@ class SharedGlobalSearchCoordinator(
         if (query.isEmpty) return emptyList()
         val out = mutableListOf<SharedGlobalSearchBookResult>()
         for ((bookId, index) in indexes) {
-            val hits = index.search(query)
+            val result = index.searchWithTotal(query)
+            val hits = result.hits
             if (hits.isEmpty()) continue
             val best = hits.maxOf { it.score }
-            val bonus = 0.5 * ln(1.0 + hits.size.toDouble())
+            val bonus = 0.5 * ln(1.0 + result.totalMatchingChunks.toDouble())
             out += SharedGlobalSearchBookResult(
                 bookId = bookId,
                 score = best + bonus,
-                matchingChunkCount = hits.size,
+                matchingChunkCount = result.totalMatchingChunks,
                 hits = hits,
             )
         }

@@ -7,6 +7,7 @@ import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.paginatedreader.Locator
 import com.aryan.reader.shared.AppAction as SharedAppAction
 import com.aryan.reader.shared.LibraryAction as SharedLibraryAction
+import com.aryan.reader.shared.search.SharedLibrarySearchDeepLink
 import com.aryan.reader.shared.reconcileAvailableBooks
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.toggleSelection
@@ -57,6 +58,13 @@ data class ReaderScreenState(
     val initialPageInBook: Int? = null,
     val initialPageInBookIsExplicit: Boolean = false,
     val isOpeningFromTtsNotification: Boolean = false,
+    /**
+     * Library inside-files hit awaiting reader deep-link. Set by
+     * [MainViewModel.openLibrarySearchHit], consumed once by the reader
+     * (which seeds jump history + pre-loads the query), cleared on consume
+     * and on every [startReaderSession] so stale hits never re-fire.
+     */
+    val librarySearchDeepLink: SharedLibrarySearchDeepLink? = null,
     /**
      * Resolved TTS-audiobook target whose playback sheet should be presented
      * after its notification was tapped. Cleared by the consuming surface.

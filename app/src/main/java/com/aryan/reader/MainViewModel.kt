@@ -95,6 +95,7 @@ import com.aryan.reader.search.brief
 import com.aryan.reader.search.GlobalSearchSession
 import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
 import com.aryan.reader.shared.search.SharedGlobalSearchPolicy
+import com.aryan.reader.shared.search.SharedLibrarySearchDeepLink
 import java.util.concurrent.atomic.AtomicInteger
 import com.aryan.reader.epub.hasReadableExtractedContent
 import com.aryan.reader.ml.ISpeechBubbleDetector
@@ -102,6 +103,7 @@ import com.aryan.reader.ml.SpeechBubble
 import com.aryan.reader.ml.SpeechBubbleDetector
 import com.aryan.reader.paginatedreader.Locator
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
+import com.aryan.reader.shared.search.SharedGlobalSearchHit
 import com.aryan.reader.paginatedreader.data.BookProcessingWorker
 import com.aryan.reader.pdf.PdfCoverGenerator
 import com.aryan.reader.pdf.PDF_BLANK_PAGE_PERSISTENCE_TAG
@@ -4022,7 +4024,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 initialLocator = null,
                 initialPageInBook = null,
                 initialPageInBookIsExplicit = false,
-                isOpeningFromTtsNotification = false
+                isOpeningFromTtsNotification = false,
+                librarySearchDeepLink = null
             )
         }
         if (!isTemporaryExternalSession) {
@@ -7787,7 +7790,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         initialLocatorOverride: Locator? = null,
         initialCfiOverride: String? = null,
         preserveTtsOnOpen: Boolean = false,
-        persistToLibrary: Boolean = true
+        persistToLibrary: Boolean = true,
+        librarySearchDeepLink: SharedLibrarySearchDeepLink? = null
     ) {
         val openBookStartTime = System.currentTimeMillis()
         ReaderPerfLog.d("FileOpen start bookId=$bookId type=$type")
@@ -7863,7 +7867,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     initialCfi = initialCfiOverride,
                     initialPageInBook = initialPageOverride,
                     initialPageInBookIsExplicit = isInitialPageExplicit,
-                    isOpeningFromTtsNotification = preserveTtsOnOpen
+                    isOpeningFromTtsNotification = preserveTtsOnOpen,
+                    librarySearchDeepLink = librarySearchDeepLink
                 )
             }
 
@@ -8713,6 +8718,102 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 downloadBook(item, openWhenComplete = true)
             }
         }
+    }
+
+    /**
+     * Library inside-files hit tap: opens the book at the hit's location
+     * with the library query pre-loaded in the reader's own search UI, and
+     * seeds jump history with the saved position so Back returns to it.
+     * Header/cover taps keep [onRecentFileClicked] (resume position).
+     */
+    fun openLibrarySearchHit(item: RecentFileItem, hit: SharedGlobalSearchHit, query: String) {
+        if (_internalState.value.contextualActionItems.isNotEmpty()) {
+            _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.BookSelectionToggled(item.bookId)) }
+            return
+        }
+        viewModelScope.launch {
+            if (item.sourceFolderUri != null && item.uriString != null) {
+                val location = withContext(Dispatchers.IO) {
+                    resolveFolderBookLocation(item)
+                }
+                if (location.uri == null) {
+                    _internalState.update {
+                        it.copy(errorMessage = appContext.getString(R.string.error_file_location_not_found))
+                    }
+                    return@launch
+                }
+                if (item.isAvailable) {
+                    openLibrarySearchHitAtUri(location.uri, item, hit, query)
+                } else {
+                    downloadBook(item, openWhenComplete = true)
+                }
+                return@launch
+            }
+            if (item.isAvailable) {
+                item.getUri()?.let { uri ->
+                    openLibrarySearchHitAtUri(uri, item, hit, query)
+                } ?: run {
+                    _internalState.update { it.copy(errorMessage = appContext.getString(R.string.error_file_location_not_found)) }
+                    return@launch
+                }
+            } else {
+                downloadBook(item, openWhenComplete = true)
+            }
+        }
+    }
+
+    private suspend fun openLibrarySearchHitAtUri(
+        uri: Uri,
+        item: RecentFileItem,
+        hit: SharedGlobalSearchHit,
+        query: String,
+    ) {
+        val recent = withContext(Dispatchers.IO) { bookStore.getFileByBookId(item.bookId) }
+        if (item.type in PDF_VIEWER_FILE_TYPES) {
+            // PPTX indexes slides on the chapter axis; PDF pages follow slide order.
+            val targetPage = libraryHitPdfTargetPage(hit, recent?.lastPage)
+            openBook(
+                uri,
+                item.bookId,
+                item.type,
+                item.displayName,
+                initialPageOverride = targetPage,
+                isInitialPageExplicit = targetPage != null,
+                librarySearchDeepLink = SharedLibrarySearchDeepLink(
+                    bookId = item.bookId,
+                    query = query,
+                    hit = hit,
+                    pdfOriginPage = recent?.lastPage,
+                ),
+            )
+        } else if (item.type in EPUB_READER_FILE_TYPES) {
+            val chapter = libraryHitEpubTargetChapter(hit, recent?.lastChapterIndex)
+            openBook(
+                uri,
+                item.bookId,
+                item.type,
+                item.displayName,
+                initialLocatorOverride = Locator(
+                    chapterIndex = chapter,
+                    blockIndex = (hit.locator.blockIndex ?: 0).coerceAtLeast(0),
+                    charOffset = (hit.locator.charOffset ?: 0).coerceAtLeast(0),
+                ),
+                initialCfiOverride = hit.locator.cfi,
+                librarySearchDeepLink = SharedLibrarySearchDeepLink(
+                    bookId = item.bookId,
+                    query = query,
+                    hit = hit,
+                    epubOrigin = libraryHitEpubOrigin(recent),
+                ),
+            )
+        } else {
+            onRecentFileClicked(item)
+        }
+    }
+
+    /** One-shot consume after the reader seeds history + starts its search. */
+    fun consumeLibrarySearchDeepLink() {
+        _internalState.update { it.copy(librarySearchDeepLink = null) }
     }
 
     /**

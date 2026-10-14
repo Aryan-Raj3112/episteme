@@ -60,12 +60,21 @@ data class SharedGlobalSearchHit(
     val pageIndex: Int? = null,
 )
 
-/** Book-level grouping for library rows. */
+/** Book-level grouping for library rows.
+ * [matchingChunkCount] is the total uncapped chunk matches in the book;
+ * [hits] is the capped preview (best-first, at most MAX_HITS_PER_BOOK).
+ */
 data class SharedGlobalSearchBookResult(
     val bookId: String,
     val score: Double,
     val matchingChunkCount: Int,
     val hits: List<SharedGlobalSearchHit>,
+)
+
+/** Capped preview plus uncapped total for one book's index search. */
+data class SharedGlobalSearchIndexResult(
+    val hits: List<SharedGlobalSearchHit>,
+    val totalMatchingChunks: Int,
 )
 
 /** Why a book has no content hits. */
@@ -101,7 +110,20 @@ data class SharedGlobalSearchPersistedBookIndex(
     val cfis: List<String?> = emptyList(),
     val anchorIds: List<String?> = emptyList(),
     val status: String = SharedSearchIndexStatus.INDEXED.name,
-)
+) {
+    /** Old payloads predate location arrays; same-hash but label-less rows re-index. */
+    fun hasCompleteLocations(): Boolean {
+        if (chunkCount == 0) return true
+        if (chunkTexts.size != chunkCount) return false
+        if (chapterIndices.size != chunkCount) return false
+        if (pageIndices.size != chunkCount) return false
+        if (blockIndices.size != chunkCount) return false
+        if (charOffsets.size != chunkCount) return false
+        if (cfis.size != chunkCount) return false
+        if (anchorIds.size != chunkCount) return false
+        return true
+    }
+}
 
 /** Storage seam platforms implement (files/Room). Shared owns the bytes. */
 interface SharedGlobalSearchStorage {

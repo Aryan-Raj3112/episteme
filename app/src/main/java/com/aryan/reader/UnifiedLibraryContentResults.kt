@@ -1,5 +1,6 @@
 package com.aryan.reader
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -36,6 +37,9 @@ import com.aryan.reader.shared.ui.SharedContentSearchSnippet
  * book text the query hit, and an affordance for the rest of that book's
  * matches. Only the best chunk shows until expanded, which keeps the list
  * readable when one book repeats the query term many times.
+ *
+ * Tapping a snippet deep-links into the hit ([onHitClick]); tapping anywhere
+ * else resumes the book ([onClick]).
  */
 @Composable
 internal fun LibraryContentSearchResultRow(
@@ -45,6 +49,7 @@ internal fun LibraryContentSearchResultRow(
     onToggleExpanded: () -> Unit,
     onClick: () -> Unit,
     onLongClick: () -> Unit = {},
+    onHitClick: (SharedGlobalSearchHit) -> Unit = {},
     usePdfFileNameAsDisplayName: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
@@ -106,7 +111,7 @@ internal fun LibraryContentSearchResultRow(
                     snippet = hit.snippet,
                     matchRanges = hit.matchRanges,
                     locationLabel = contentSearchLocationLabel(hit),
-                    modifier = Modifier.padding(top = 8.dp),
+                    modifier = Modifier.padding(top = 8.dp).clickable { onHitClick(hit) },
                 )
             }
             if (hiddenMatches > 0 || (expanded && result.hits.size > 1)) {

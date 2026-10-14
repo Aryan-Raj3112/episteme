@@ -41,6 +41,7 @@ import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.SortOrder
 import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
+import com.aryan.reader.shared.search.SharedGlobalSearchHit
 import com.aryan.reader.shared.ui.AppIcon
 
 /**
@@ -266,6 +267,7 @@ internal fun UnifiedLibraryHome(
     widthSizeClass: WindowWidthSizeClass,
     searchInsideFiles: Boolean = false,
     contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
+    onContentHitClick: (RecentFileItem, SharedGlobalSearchHit, String) -> Unit = { _, _, _ -> },
 ) {
     // Content search replaces the grid: one row per matching book, its matched
     // text, and an expand affordance for the rest of that book's matches.
@@ -299,6 +301,7 @@ internal fun UnifiedLibraryHome(
                 onToggleExpanded = onToggleExpanded,
                 onClick = { onBookClick(item) },
                 onLongClick = { onBookLongClick(item) },
+                onHitClick = { hit -> onContentHitClick(item, hit, query) },
                 usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
             )
         },
