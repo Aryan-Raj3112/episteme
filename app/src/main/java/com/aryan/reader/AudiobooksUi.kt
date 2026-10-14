@@ -347,6 +347,8 @@ internal fun AudiobooksLibrarySection(
     onAudiobookClick: (AudiobookUiItem) -> Unit,
     onListenWithTtsClick: (RecentFileItem) -> Unit,
     onAddAudiobookClick: () -> Unit,
+    onPlayTtsClick: (RecentFileItem) -> Unit = onListenWithTtsClick,
+    onPlayAudiobookClick: (AudiobookUiItem) -> Unit = onAudiobookClick,
 ) {
     val adapterLibraryBooksById = remember(libraryBooks) { libraryBooks.associateBy(RecentFileItem::bookId) }
     val sharedAudiobooks = remember(audiobooks, adapterLibraryBooksById) {
@@ -407,8 +409,16 @@ internal fun AudiobooksLibrarySection(
                 ?.toUiItem(adapterLibraryBooksById[sharedBook.bookId])
                 ?.let(onAudiobookClick)
         },
+        onPlayAudiobook = { sharedBook ->
+            audiobooks.firstOrNull { it.bookId == sharedBook.bookId }
+                ?.toUiItem(adapterLibraryBooksById[sharedBook.bookId])
+                ?.let(onPlayAudiobookClick)
+        },
         onOpenTtsPlayer = { item, _ ->
             adapterLibraryBooksById[item.book.id]?.let(onListenWithTtsClick)
+        },
+        onPlayTtsPlayer = { item ->
+            adapterLibraryBooksById[item.book.id]?.let(onPlayTtsClick)
         },
         onAddAudiobook = onAddAudiobookClick,
         modifier = modifier,
@@ -626,6 +636,16 @@ internal fun TtsBookPickerSheet(
     val controller = remember { AudiobookController(context) }
     val playback by controller.state.collectAsStateWithLifecycle()
     LaunchedEffect(item.id) { item.playbackRequest?.let(controller::connect) }
+    // Row play buttons open the sheet with autoStart: start once the session
+    // is connected. Card taps open idle. togglePlay is a no-op until the
+    // controller exists, so a late connection can never double-start.
+    var autoStarted by remember(item.id) { mutableStateOf(false) }
+    LaunchedEffect(item.id, playback.connected, playback.isPlaying, item.autoStart) {
+        if (item.autoStart && !autoStarted && playback.connected && !playback.isPlaying) {
+            autoStarted = true
+            controller.togglePlay(onBeforePlay)
+        }
+    }
     DisposableEffect(controller) { onDispose(controller::release) }
     val request = item.playbackRequest
     val sharedAudiobook = remember(item) {

@@ -355,6 +355,8 @@ internal class IosBookTtsListeningController(
     private var interruptionState = LocalTtsInterruptionState()
     private var sleepTimerJob: Job? = null
     private var persistJob: Job? = null
+    /** Replacements of the latest start, so a later resume restarts with the same text. */
+    private var lastReplacements: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences()
     private val interruptionMonitor = IosTtsAudioInterruptionMonitor(::handleAudioInterruption)
 
     init {
@@ -494,6 +496,7 @@ internal class IosBookTtsListeningController(
         )
         sleepTimerJob?.cancel()
         sleepTimerJob = null
+        lastReplacements = replacements
         scope.launch {
             val content = contentCache[bookId]
                 ?: withContext(Dispatchers.Default) { loadContentOrNull(book, replacements) }
@@ -637,6 +640,25 @@ internal class IosBookTtsListeningController(
                 }
             }
             updateBookTtsNowPlaying()
+            return
+        }
+        // Selected narration but idle (e.g. right after switching sources):
+        // play starts it rather than stalling on empty TTS chunks.
+        val selectedBookId = currentBookId
+        val selectedBook = currentBook
+        if (selectedBookId != null && selectedBook != null &&
+            listenSourceFor(selectedBookId).isOverlay() &&
+            overlayInfoFor(selectedBookId).hasNarration && overlayEngine != null
+        ) {
+            iosTtsListenLog("resume() starting selected narration bookId=$selectedBookId")
+            start(selectedBook, SharedTtsListenStartPolicy.RESUME, null, lastReplacements)
+            return
+        }
+        // Switched back to TTS with no live chunks: restart from saved
+        // progress rather than stalling the play button.
+        if ((currentChunks.isEmpty() || currentChunkIndex < 0) && selectedBook != null) {
+            iosTtsListenLog("resume() restarting TTS bookId=$selectedBookId")
+            start(selectedBook, SharedTtsListenStartPolicy.RESUME, null, lastReplacements)
             return
         }
         if (currentChunks.isEmpty() || currentChunkIndex < 0) return
@@ -796,17 +818,13 @@ internal class IosBookTtsListeningController(
         )
 
     /**
-     * Explicit source choice. Never a fallback: switching stops the other
-     * engine outright, and starting the newly chosen source is the tap itself.
-     * The host arbitrates first (`onMediaOverlayStarting` /
-     * `onListenSessionStarting`), so the engines stopped here belong to the
-     * outgoing session.
+     * Explicit source choice. Never starts playback: switching stops the other
+     * engine outright and records the pick, and the next play tap starts the
+     * newly chosen source from where it left off. The host arbitrates first
+     * (`onMediaOverlayStarting` / `onListenSessionStarting`), so the engines
+     * stopped here belong to the outgoing session.
      */
-    fun selectListenSource(
-        book: BookItem,
-        source: SharedListenAudioSource,
-        replacements: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
-    ) {
+    fun selectListenSource(book: BookItem, source: SharedListenAudioSource) {
         // Guard before persisting: an unavailable source must never pin the
         // book to a choice that cannot play.
         if (source.isOverlay() && (!overlayInfoFor(book.id).hasNarration || overlayEngine == null)) return
@@ -814,10 +832,8 @@ internal class IosBookTtsListeningController(
         listenSourceByBook[book.id] = source
         if (source.isOverlay()) {
             engineStop()
-            start(book, SharedTtsListenStartPolicy.RESUME, null, replacements)
         } else {
             stopOverlaySession()
-            start(book, SharedTtsListenStartPolicy.RESUME, null, replacements)
         }
     }
 

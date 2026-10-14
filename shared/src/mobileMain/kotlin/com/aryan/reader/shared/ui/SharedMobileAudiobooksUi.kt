@@ -126,7 +126,6 @@ import com.aryan.reader.shared.removeCustomSleepTimer
 import com.aryan.reader.shared.sanitizeCustomSleepTimerMinutes
 import com.aryan.reader.shared.progressFraction
 import com.aryan.reader.shared.sharedAudiobookRemainingLabel
-import com.aryan.reader.shared.sharedShouldAutoStartTtsListen
 import com.aryan.reader.shared.sortSharedAudiobooks
 import com.aryan.reader.shared.toSharedAudiobookLibraryItem
 import kotlin.math.abs
@@ -320,6 +319,17 @@ fun SharedMobileAudiobooksSection(
     onOpenTtsPlayer: (SharedTtsListenItem, Boolean) -> Unit,
     onAddAudiobook: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Explicit play-button tap on a TTS row. Card taps only open the player
+     * (autoStart=false); playback starts from a play button. Defaults to the
+     * legacy open-and-start for hosts that have not split the two yet.
+     */
+    onPlayTtsPlayer: (SharedTtsListenItem) -> Unit = { item -> onOpenTtsPlayer(item, true) },
+    /**
+     * Explicit play-button tap on an imported-audiobook row. Same contract as
+     * [onPlayTtsPlayer]: card taps open, play buttons start.
+     */
+    onPlayAudiobook: (SharedAudiobook) -> Unit = onOpenPlayer,
 ) {
     var source by remember { mutableStateOf(ListenSource.ALL) }
     var status by remember { mutableStateOf(SharedAudiobookStatus.ALL) }
@@ -457,7 +467,7 @@ fun SharedMobileAudiobooksSection(
                             SharedMobileTtsContinueCard(
                                 item = item,
                                 isActive = ttsPlayback.connected && item.book.id == ttsPlayback.bookId,
-                                onOpen = { onOpenTtsPlayer(item, true) },
+                                onOpen = { onOpenTtsPlayer(item, false) },
                                 modifier = Modifier.padding(horizontal = 20.dp),
                             )
                         }
@@ -485,21 +495,28 @@ fun SharedMobileAudiobooksSection(
                 items(regularEntries, key = { it.id }) { entry ->
                     if (entry.isTts) {
                         entry.tts?.let { item ->
+                            val rowActive = ttsPlayback.connected && item.book.id == ttsPlayback.bookId
                             SharedMobileTtsRow(
                                 item = item,
-                                isActive = ttsPlayback.connected && item.book.id == ttsPlayback.bookId,
-                                isPlaying = ttsPlayback.connected && item.book.id == ttsPlayback.bookId && ttsPlayback.isPlaying,
-                                onOpen = { onOpenTtsPlayer(item, sharedShouldAutoStartTtsListen(item.book.id, ttsPlayback)) },
+                                isActive = rowActive,
+                                isPlaying = rowActive && ttsPlayback.isPlaying,
+                                onOpen = { onOpenTtsPlayer(item, false) },
+                                // The play button on the already-active row only
+                                // opens: resuming happens from the player, so a
+                                // tap there can never restart the session.
+                                onPlay = { if (rowActive) onOpenTtsPlayer(item, false) else onPlayTtsPlayer(item) },
                                 modifier = Modifier.padding(horizontal = 20.dp),
                             )
                         }
                     } else {
                         entry.audiobook?.let { book ->
+                            val rowActive = book.bookId == playback.bookId
                             SharedMobileAudiobookRow(
                                 audiobook = book,
-                                isActive = book.bookId == playback.bookId,
-                                isPlaying = book.bookId == playback.bookId && playback.isPlaying,
+                                isActive = rowActive,
+                                isPlaying = rowActive && playback.isPlaying,
                                 onOpen = { onOpenPlayer(book) },
+                                onPlay = { if (rowActive) onOpenPlayer(book) else onPlayAudiobook(book) },
                                 modifier = Modifier.padding(horizontal = 20.dp),
                             )
                         }
@@ -783,6 +800,7 @@ private fun SharedMobileTtsRow(
     isPlaying: Boolean,
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
+    onPlay: () -> Unit = onOpen,
 ) {
     Card(
         onClick = onOpen,
@@ -849,9 +867,11 @@ private fun SharedMobileTtsRow(
                 )
             }
             Surface(
+                onClick = onPlay,
                 shape = CircleShape,
                 color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primaryContainer,
                 contentColor = if (isActive) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.testTag("ListenLibraryRowPlay-${item.book.id}"),
             ) {
                 Icon(
                     imageVector = if (isActive) Icons.AutoMirrored.Filled.VolumeUp else Icons.Default.PlayArrow,
@@ -1023,6 +1043,7 @@ fun SharedMobileAudiobookRow(
     isPlaying: Boolean,
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
+    onPlay: () -> Unit = onOpen,
 ) {
     Card(
         onClick = onOpen,
@@ -1083,9 +1104,11 @@ fun SharedMobileAudiobookRow(
                 )
             }
             Surface(
+                onClick = onPlay,
                 shape = CircleShape,
                 color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primaryContainer,
                 contentColor = if (isActive) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.testTag("ListenLibraryRowPlay-${audiobook.bookId}"),
             ) {
                 Icon(
                     imageVector = if (isActive) Icons.AutoMirrored.Filled.VolumeUp else Icons.Default.PlayArrow,

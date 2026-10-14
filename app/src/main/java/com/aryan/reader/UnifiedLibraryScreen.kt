@@ -725,17 +725,24 @@ fun UnifiedLibraryScreen(
                             else item
                     },
                     onListenWithTtsClick = { book ->
-                        val shouldStart = shouldAutoStartTtsAudiobook(book.bookId, ttsPlayback)
-
-                        if (shouldStart) {
-                            viewModel.ttsController.connect()
-                        }
-
+                        // Card tap only opens the player. Playback starts from
+                        // a play button (row or sheet), never from opening.
                         audiobookPlayerItem = book
                             .toTtsAudiobookUiItem(
                                 bookTtsProgress.firstOrNull { it.bookId == book.bookId }
                             )
-                            .copy(autoStart = shouldStart)
+                            .copy(autoStart = false)
+                    },
+                    onPlayTtsClick = { book ->
+                        viewModel.ttsController.connect()
+                        audiobookPlayerItem = book
+                            .toTtsAudiobookUiItem(
+                                bookTtsProgress.firstOrNull { it.bookId == book.bookId }
+                            )
+                            .copy(autoStart = true)
+                    },
+                    onPlayAudiobookClick = { item ->
+                        audiobookPlayerItem = item.copy(autoStart = true)
                     },
                     onAddAudiobookClick = {
                         showAudiobookAddSheet = true

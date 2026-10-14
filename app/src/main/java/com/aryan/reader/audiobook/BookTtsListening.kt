@@ -853,22 +853,22 @@ class BookTtsAudiobookController(
     }
 
     /**
-     * Explicit source choice. Never a fallback: switching stops the other
-     * engine outright, and starting the newly chosen source is the tap that
-     * chose it.
+     * Explicit source choice. Never starts playback: switching stops the other
+     * engine outright and records the pick, and the next play tap starts the
+     * newly chosen source from where it left off.
      */
     fun selectListenSource(source: SharedListenAudioSource) {
         val book = _uiState.value.book ?: return
+        // Guard before persisting: an unavailable source must never pin the
+        // book to a choice that cannot play.
+        if (source.isOverlay() && !book.mediaOverlay.hasNarration) return
         saveListenAudioSource(appContext, book.bookId, source)
         _listenSource.value = source
         if (source.isOverlay()) {
-            if (!_overlayInfo.value.hasNarration) return
             ttsController.stop()
             stopImportedAudiobook()
-            startOverlaySession(_uiState.value.savedProgress?.chapterIndex ?: 0)
         } else {
             overlayHost.stop()
-            start(book.bookId, BookTtsSessionCoordinator.START_RESUME)
         }
     }
 

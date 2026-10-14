@@ -724,12 +724,20 @@ fun SharedMobileUnifiedLibraryScreen(
                     ttsPlayback = ttsListenState,
                     onAddAudiobook = { showAudiobookAddSheet = true },
                     onOpenPlayer = { book ->
-                        if (audiobookPlayback.bookId != book.bookId) onPlayAudiobook(book)
                         playerBook = book
                         showPlayerSheet = true
                     },
-                    onOpenTtsPlayer = { item, autoStart ->
-                        if (autoStart) onStartTtsListen(item.book, SharedTtsListenStartPolicy.RESUME, null)
+                    onPlayAudiobook = { book ->
+                        onPlayAudiobook(book)
+                        playerBook = book
+                        showPlayerSheet = true
+                    },
+                    onOpenTtsPlayer = { item, _ ->
+                        ttsPlayerItem = item
+                        showTtsPlayerSheet = true
+                    },
+                    onPlayTtsPlayer = { item ->
+                        onStartTtsListen(item.book, SharedTtsListenStartPolicy.RESUME, null)
                         ttsPlayerItem = item
                         showTtsPlayerSheet = true
                     },

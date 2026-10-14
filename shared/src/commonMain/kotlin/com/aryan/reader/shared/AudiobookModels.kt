@@ -525,13 +525,6 @@ fun buildSharedTtsListenItems(
 }
 
 /**
- * Mirrors Android's shouldAutoStartTtsAudiobook: a row click auto-starts TTS
- * unless the tapped book is already the active listening session.
- */
-fun sharedShouldAutoStartTtsListen(requestedBookId: String?, state: SharedBookTtsListenState): Boolean =
-    requestedBookId == null || state.bookId != requestedBookId || !state.connected
-
-/**
  * Transcript window centered on the current chunk (2 behind, current, 3 ahead),
  * mirroring Android's resolveTtsTranscriptWindow. Returns an empty range when
  * there are no chunks.

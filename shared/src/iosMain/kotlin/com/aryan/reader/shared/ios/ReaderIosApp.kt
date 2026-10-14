@@ -8201,11 +8201,7 @@ private fun ReaderIosApp(
                                     } else {
                                         listeningArbiter.onListenSessionStarting()
                                     }
-                                    ttsListenController.selectListenSource(
-                                        book,
-                                        source,
-                                        replacements = state.readerTtsReplacementPreferences,
-                                    )
+                                    ttsListenController.selectListenSource(book, source)
                                 },
                                 onStartTtsListen = { book, policy, chapterIndex ->
                                     iosTtsListenLog(
