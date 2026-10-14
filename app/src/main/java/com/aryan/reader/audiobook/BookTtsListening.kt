@@ -745,29 +745,39 @@ class BookTtsAudiobookController(
         if (!source.isOverlay()) return@combine tts
         val book = prepared.book
         if (book == null || !book.mediaOverlay.hasNarration) return@combine tts
-        if (overlay.book?.bookId != book.bookId) return@combine tts
-        val chapter = overlay.progress?.chapterIndex
+        val isLiveOwner = overlay.book?.bookId == book.bookId
+        val transcriptForThisBook = overlay.transcriptBookId == book.bookId
+        // The host prepares one book at a time; a transcript or live session
+        // for another book must never leak into this sheet.
+        if (!isLiveOwner && !transcriptForThisBook) return@combine tts
+        val liveChapter = overlay.progress?.chapterIndex
             ?: overlay.chapterIndex.takeIf { it in book.chapters.indices }
-            ?: prepared.savedProgress?.chapterIndex ?: 0
+        val chapter = if (isLiveOwner && liveChapter != null) {
+            liveChapter
+        } else {
+            overlay.transcriptChapterIndex.takeIf { it in book.chapters.indices }
+                ?: prepared.savedProgress?.chapterIndex ?: 0
+        }
+        val live = isLiveOwner && overlay.playback.hasBook
         tts.copy(
-            connected = overlay.playback.hasBook,
+            connected = live,
             bookId = book.bookId,
-            isPlaying = overlay.playback.isPlaying,
-            isLoading = overlay.playback.isLoading,
+            isPlaying = live && overlay.playback.isPlaying,
+            isLoading = live && overlay.playback.isLoading,
             chapterIndex = chapter.coerceIn(book.chapters.indices),
             chapterCount = book.chapters.size,
             chapterTitle = book.chapters.getOrNull(chapter)?.title,
-            progressPercent = ((overlay.progress?.progressPercent
+            progressPercent = ((overlay.progress?.takeIf { isLiveOwner }?.progressPercent
                 ?: prepared.savedProgress?.progressPercent ?: 0f) / 100f).coerceIn(0f, 1f),
             speechRate = overlay.playback.speed,
             sleepTimerRemainingMs = sleepTimerRemainingMs,
             sessionFinished = false,
             sessionEndedByStop = false,
             error = overlay.playback.error,
-            chunkIndex = -1,
-            chunkCount = 0,
-            transcriptChunks = emptyList(),
-            transcriptStartIndex = 0,
+            chunkIndex = overlay.transcriptChunkIndex.takeIf { transcriptForThisBook } ?: -1,
+            chunkCount = overlay.transcriptChunkCount.takeIf { transcriptForThisBook } ?: 0,
+            transcriptChunks = overlay.transcriptChunks.takeIf { transcriptForThisBook } ?: emptyList(),
+            transcriptStartIndex = overlay.transcriptStartIndex.takeIf { transcriptForThisBook } ?: 0,
         )
     }.stateIn(scope, SharingStarted.Eagerly, SharedBookTtsListenState())
 
@@ -790,6 +800,11 @@ class BookTtsAudiobookController(
                     hasNarration = overlay.hasNarration,
                     savedPreference = loadListenAudioSource(appContext, bookId),
                 )
+                // Idle transcript so the sheet shows text before the first play
+                // tap; starting playback later only moves the highlight.
+                if (overlay.hasNarration) {
+                    overlayHost.ensureTranscript(progress?.chapterIndex ?: 0)
+                }
                 if (autoStart) {
                     if (_listenSource.value.isOverlay() && overlay.hasNarration) {
                         startOverlaySession(progress?.chapterIndex ?: 0)

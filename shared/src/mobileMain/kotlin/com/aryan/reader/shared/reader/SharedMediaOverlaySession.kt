@@ -49,6 +49,26 @@ class SharedMediaOverlaySession(
         private set
 
     /**
+     * The loaded chapter's playable clips in playback order.
+     *
+     * Read by Listen's transcript anchoring: each entry names the text element
+     * it narrates, so the transcript highlight follows the exact line instead
+     * of a fractional estimate. Updated wherever [clipCount] is, and empty
+     * whenever nothing is loaded — never a stale chapter's clips.
+     */
+    var currentPlanEntries: List<SharedMediaOverlayClip> by mutableStateOf(emptyList())
+        private set
+
+    /**
+     * The spine item those clips narrate, or null when nothing is loaded.
+     *
+     * Lets Listen verify a clip table belongs to the chapter it is showing:
+     * entries alone do not say which chapter they came from.
+     */
+    var currentSpineItemIndex: Int? by mutableStateOf(null)
+        private set
+
+    /**
      * Identifies the current run, so one run's band is never read as another's.
      *
      * Only the shared reader screen reads this. Android hands its surfaces the raw
@@ -100,6 +120,8 @@ class SharedMediaOverlaySession(
             ?.takeIf { it >= 0 }
             ?.let { projector.clipIndexForReaderPosition(spineItemIndex, it) }
         clipCount = plan.entries.size
+        currentPlanEntries = plan.entries
+        currentSpineItemIndex = spineItemIndex
         bandSessionId = nextSharedPlaybackBandSessionId()
         // Reinstalled on every start, not just in init: sessions share engines
         // across surfaces now (reader and Listen narration), so the last
@@ -137,6 +159,8 @@ class SharedMediaOverlaySession(
             val plan = sharedMediaOverlayPlaybackPlan(document)
             if (plan.isEmpty) continue
             clipCount = plan.entries.size
+            currentPlanEntries = plan.entries
+            currentSpineItemIndex = candidate
             // A continuation is the same run, not a new one: the reader pressed play once and is
             // listening to a book, so the band keeps the id it started with. Only a fresh `start`
             // gets a new one.
@@ -174,6 +198,8 @@ class SharedMediaOverlaySession(
     fun stop() {
         chapterIndex = null
         clipCount = 0
+        currentPlanEntries = emptyList()
+        currentSpineItemIndex = null
         engine.stop()
     }
 }

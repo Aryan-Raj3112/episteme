@@ -5,6 +5,10 @@ import com.aryan.reader.epubreader.loadTtsPitch
 import com.aryan.reader.epubreader.loadTtsSpeechRate
 import com.aryan.reader.mediaoverlay.AndroidSharedMediaOverlayPlayback
 import com.aryan.reader.shared.SharedListenMediaOverlayInfo
+import com.aryan.reader.shared.SharedOverlayClipChunkSpan
+import com.aryan.reader.shared.sharedOverlayClipChunkSpans
+import com.aryan.reader.shared.sharedOverlayTranscriptChunkIndex
+import com.aryan.reader.shared.sharedTtsTranscriptWindow
 import com.aryan.reader.shared.reader.SharedJvmEpubArchiveReader
 import com.aryan.reader.shared.reader.SharedMediaOverlayDocument
 import com.aryan.reader.shared.reader.SharedMediaOverlayDocumentCache
@@ -17,6 +21,7 @@ import com.aryan.reader.shared.reader.sharedMediaOverlaySpineItemsInReadingOrder
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -57,7 +62,43 @@ class ListenOverlayHost private constructor(context: Context) {
         val progress: BookTtsListeningProgressEntity? = null,
         val chapterIndex: Int = -1,
         val book: ListeningBook? = null,
+        /**
+         * Chapter text for the narration transcript, windowed exactly like TTS
+         * (2 behind, current, 3 ahead). Empty until the chapter's text loads;
+         * the sheet keeps its publisher notice then.
+         */
+        val transcriptChunks: List<String> = emptyList(),
+        val transcriptStartIndex: Int = 0,
+        /** Estimated absolute chunk index, or -1 when there is no transcript. */
+        val transcriptChunkIndex: Int = -1,
+        val transcriptChunkCount: Int = 0,
+        val transcriptBookId: String? = null,
+        val transcriptChapterIndex: Int = -1,
     )
+
+    /**
+     * Narration transcript for one chapter: the same sentence-grouped text TTS
+     * would speak, with the highlight anchored to the exact narrated line.
+     *
+     * [clipSpans] maps each playable clip to its transcript chunks using the
+     * same text-element anchors the reader highlights (see
+     * sharedOverlayClipChunkSpans) — one line at a time, like the reader.
+     * Empty until anchored (or when anchoring is impossible); the highlight
+     * falls back to the fractional estimate then, never to a stale table.
+     */
+    private data class OverlayTranscript(
+        val bookId: String? = null,
+        val chapterIndex: Int = -1,
+        val chunks: List<String> = emptyList(),
+        val chunkIndex: Int = -1,
+        val clipSpans: List<SharedOverlayClipChunkSpan> = emptyList(),
+    ) {
+        val window: IntRange get() = sharedTtsTranscriptWindow(chunkIndex, chunks.size)
+        val windowed: List<String> get() {
+            val range = window
+            return if (range.isEmpty()) emptyList() else range.map { chunks[it] }
+        }
+    }
 
     private val _book = MutableStateFlow<ListeningBook?>(null)
     /** The book owning the live narration session, or null. Drives the mini player. */
@@ -71,17 +112,38 @@ class ListenOverlayHost private constructor(context: Context) {
     val progress: StateFlow<BookTtsListeningProgressEntity?> = _progress.asStateFlow()
     private val _speed = MutableStateFlow(loadListenOverlaySpeed(appContext))
     val speed: StateFlow<Float> = _speed.asStateFlow()
+    private val _transcript = MutableStateFlow(OverlayTranscript())
+    private var transcriptJob: Job? = null
 
     private var session: SharedMediaOverlaySession? = null
     private var sessionBookId: String? = null
     private var archiveReader: SharedJvmEpubArchiveReader? = null
     private var archiveFile: File? = null
     private var chapterIndexBySpine: Map<Int, Int> = emptyMap()
+    private var spineItemIndexByChapter: Map<Int, Int> = emptyMap()
     private var lastSpineItem: Int? = null
     private var baseProgress: BookTtsListeningProgressEntity? = null
 
-    val ui: StateFlow<OverlayUi> = combine(playback, _progress, _chapterIndex, _book) { state, progress, chapter, book ->
-        OverlayUi(state, progress, chapter, book)
+    val ui: StateFlow<OverlayUi> = combine(playback, _progress, _chapterIndex, _book, _transcript) {
+            state: SharedMediaOverlayPlaybackState,
+            progress: BookTtsListeningProgressEntity?,
+            chapter: Int,
+            book: ListeningBook?,
+            transcript: OverlayTranscript,
+        ->
+        val window = transcript.window
+        OverlayUi(
+            playback = state,
+            progress = progress,
+            chapterIndex = chapter,
+            book = book,
+            transcriptChunks = transcript.windowed,
+            transcriptStartIndex = window.firstOrNull() ?: 0,
+            transcriptChunkIndex = transcript.chunkIndex,
+            transcriptChunkCount = transcript.chunks.size,
+            transcriptBookId = transcript.bookId,
+            transcriptChapterIndex = transcript.chapterIndex,
+        )
     }.stateIn(scope, SharingStarted.Eagerly, OverlayUi())
 
     init {
@@ -104,6 +166,8 @@ class ListenOverlayHost private constructor(context: Context) {
      */
     suspend fun prepare(bookId: String): SharedListenMediaOverlayInfo {
         preparedBook?.takeIf { it.bookId == bookId }?.let { return _info.value }
+        transcriptJob?.cancel()
+        _transcript.value = OverlayTranscript()
         val book = repository.loadBook(bookId)
         preparedBook = book
         if (!book.mediaOverlay.hasNarration) {
@@ -148,8 +212,102 @@ class ListenOverlayHost private constructor(context: Context) {
             ?: return false
         live.setSpeed(_speed.value)
         val started = live.start(target, readerOffset = null)
-        if (started) _book.value = book
+        if (started) {
+            _book.value = book
+            ensureTranscript(target)
+        }
         return started
+    }
+
+    /**
+     * Preloads the narration transcript for [chapterIndex] without touching
+     * audio, so the sheet shows text even before the first play tap.
+     *
+     * No-op when the chapter's text is already loaded; otherwise the same
+     * chapter text TTS would speak, with the highlight estimated from the
+     * current clip progress.
+     */
+    fun ensureTranscript(chapterIndex: Int) {
+        val book = preparedBook ?: return
+        val current = _transcript.value
+        if (current.bookId == book.bookId && current.chapterIndex == chapterIndex && current.chunks.isNotEmpty()) {
+            updateTranscriptProgress(playback.value.clipIndex, playback.value.clipProgress)
+            return
+        }
+        loadTranscriptForChapter(book, chapterIndex)
+    }
+
+    private fun loadTranscriptForChapter(book: ListeningBook, chapter: Int) {
+        transcriptJob?.cancel()
+        _transcript.value = OverlayTranscript(bookId = book.bookId, chapterIndex = chapter)
+        // Anchor snapshot: the session's entries only belong to this chapter
+        // when the session is on this book at this chapter's spine item.
+        // Anything else (idle sheet, another book's live session) keeps the
+        // fractional estimate rather than a wrong chapter's anchors.
+        val live = session?.takeIf {
+            sessionBookId == book.bookId && it.currentSpineItemIndex == spineItemIndexByChapter[chapter]
+        }
+        val entries = live?.currentPlanEntries.orEmpty()
+        transcriptJob = scope.launch {
+            val chunks = withContext(Dispatchers.IO) {
+                runCatching {
+                    repository.loadChapter(book.bookId, chapter).chunks
+                        .map { it.text }
+                        .filter { it.isNotBlank() }
+                }.getOrDefault(emptyList())
+            }
+            if (preparedBook?.bookId != book.bookId) return@launch
+            if (_transcript.value.bookId != book.bookId || _transcript.value.chapterIndex != chapter) return@launch
+            val spans = withContext(Dispatchers.IO) {
+                // The session must still be on this chapter's clips: a seek or
+                // book switch mid-load cancels this job first, but a replay of
+                // the same chapter keeps identical entries and stays valid.
+                val current = session?.takeIf {
+                    sessionBookId == book.bookId && it.currentPlanEntries == entries &&
+                        it.currentSpineItemIndex == spineItemIndexByChapter[chapter]
+                } ?: return@withContext emptyList()
+                if (entries.isEmpty() || current.currentPlanEntries.isEmpty()) return@withContext emptyList()
+                val reader = archiveReader ?: return@withContext emptyList()
+                runCatching {
+                    sharedOverlayClipChunkSpans(
+                        clips = entries,
+                        readHtml = { path -> runCatching { reader.readTextOrNull(path) }.getOrNull() },
+                        chunkTexts = chunks,
+                    )
+                }.getOrDefault(emptyList())
+            }
+            if (preparedBook?.bookId != book.bookId) return@launch
+            if (_transcript.value.bookId != book.bookId || _transcript.value.chapterIndex != chapter) return@launch
+            val estimated = sharedOverlayTranscriptChunkIndex(
+                clipPlaybackIndex = playback.value.clipIndex,
+                clipCount = session?.clipCount ?: 0,
+                chunkCount = chunks.size,
+                clipFraction = playback.value.clipProgress,
+                spans = spans,
+            )
+            _transcript.value = OverlayTranscript(
+                bookId = book.bookId,
+                chapterIndex = chapter,
+                chunks = chunks,
+                chunkIndex = estimated,
+                clipSpans = spans,
+            )
+        }
+    }
+
+    private fun updateTranscriptProgress(clipPlaybackIndex: Int, clipFraction: Float = 0f) {
+        val current = _transcript.value
+        if (current.chunks.isEmpty() || current.chapterIndex < 0) return
+        val estimated = sharedOverlayTranscriptChunkIndex(
+            clipPlaybackIndex = clipPlaybackIndex,
+            clipCount = session?.clipCount ?: 0,
+            chunkCount = current.chunks.size,
+            clipFraction = clipFraction,
+            spans = current.clipSpans,
+        )
+        if (estimated != current.chunkIndex) {
+            _transcript.value = current.copy(chunkIndex = estimated)
+        }
     }
 
     private suspend fun buildSession(book: ListeningBook, archive: File): SharedMediaOverlaySession? {
@@ -174,6 +332,7 @@ class ListenOverlayHost private constructor(context: Context) {
             // First writer wins: a spine item split across chapters resolves to its first chapter.
             spineByChapter.entries.sortedBy { it.key }.forEach { (chapter, spine) -> putIfAbsent(spine, chapter) }
         }
+        spineItemIndexByChapter = spineByChapter
         engine.attachBook(archive)
         engine.setSpeed(_speed.value)
         val built = SharedMediaOverlaySession(
@@ -196,6 +355,8 @@ class ListenOverlayHost private constructor(context: Context) {
         _progress.value = null
         _chapterIndex.value = -1
         lastSpineItem = null
+        transcriptJob?.cancel()
+        _transcript.value = OverlayTranscript()
         return built
     }
 
@@ -226,7 +387,14 @@ class ListenOverlayHost private constructor(context: Context) {
             lastSpineItem = null
             return
         }
-        if (spine == lastSpineItem) return
+        // Clip advances within the same chapter only move the transcript
+        // highlight; chapter bookkeeping below runs on chapter changes.
+        // Position polls arrive here too, so the intra-clip fraction keeps
+        // the highlight travelling inside long clips.
+        if (spine == lastSpineItem) {
+            updateTranscriptProgress(state.clipIndex, state.clipProgress)
+            return
+        }
         lastSpineItem = spine
         val book = _book.value ?: return
         val chapter = chapterIndexBySpine[spine] ?: return
@@ -249,15 +417,18 @@ class ListenOverlayHost private constructor(context: Context) {
         baseProgress = next
         _progress.value = next
         scope.launch(Dispatchers.IO) { repository.saveProgress(next) }
+        // Narration crossing into a new chapter carries the transcript with it.
+        loadTranscriptForChapter(book, chapter)
     }
 
     /**
      * Listen-side overlay projector: chapter-level only.
      *
      * The reader resolves every clip to word offsets for highlighting; Listen
-     * has no text surface in narration mode (its transcript panel says so),
-     * so positions resolve to chapters and fragments stay null — audio-first,
-     * with nothing faked for paint.
+     * shows the same chapter text as a transcript instead, with each clip
+     * anchored to its exact line (falling back to clip-progress estimates) —
+     * so positions resolve to chapters and fragments stay null, with nothing
+     * faked for paint.
      */
     private class ListenOverlayProjector(
         private val cache: SharedMediaOverlayDocumentCache,

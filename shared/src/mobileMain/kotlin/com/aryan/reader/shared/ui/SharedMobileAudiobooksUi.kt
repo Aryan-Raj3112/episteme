@@ -2118,10 +2118,19 @@ fun SharedMobileTtsPlayerSheet(
                             },
                         )
                         TtsPlayerPanel.TRANSCRIPT -> if (inOverlayMode) {
-                            OverlayTranscriptNotice(
-                                narrator = item.mediaOverlay.narrator,
-                                modifier = Modifier.fillMaxSize(),
-                            )
+                            // Narration transcript is the chapter text, keyed to
+                            // this sheet's book: a live session for another book
+                            // must never leak its text in here. Empty (idle
+                            // with no text yet, or another book's session) keeps
+                            // the publisher notice.
+                            if (playback.bookId == item.book.id && playback.transcriptChunks.isNotEmpty()) {
+                                TtsTranscriptPanel(playback = playback)
+                            } else {
+                                OverlayTranscriptNotice(
+                                    narrator = item.mediaOverlay.narrator,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
                         } else {
                             TtsTranscriptPanel(playback = playback)
                         }

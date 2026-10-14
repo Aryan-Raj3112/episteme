@@ -275,6 +275,40 @@ class AudiobookModelsTest {
         assertTrue(!empty.hasNarration)
     }
 
+    @Test
+    fun `overlay transcript index maps clip progress onto chunks without word sync claims`() {
+        assertEquals(-1, sharedOverlayTranscriptChunkIndex(0, 10, 0))
+        assertEquals(0, sharedOverlayTranscriptChunkIndex(0, 0, 5))
+        assertEquals(0, sharedOverlayTranscriptChunkIndex(0, 10, 5))
+        assertEquals(4, sharedOverlayTranscriptChunkIndex(9, 10, 5))
+        assertEquals(2, sharedOverlayTranscriptChunkIndex(5, 10, 5))
+        assertEquals(0, sharedOverlayTranscriptChunkIndex(-3, 10, 5))
+        assertEquals(4, sharedOverlayTranscriptChunkIndex(99, 10, 5))
+        // Single-clip chapter still resolves to the only chunk.
+        assertEquals(0, sharedOverlayTranscriptChunkIndex(0, 1, 1))
+    }
+
+    @Test
+    fun `overlay transcript index interpolates within a clip so long pars do not pin the highlight`() {
+        // One clip spanning five chunks: the highlight must travel with the
+        // voice instead of sitting on the clip's first chunk.
+        assertEquals(0, sharedOverlayTranscriptChunkIndex(0, 1, 5, clipFraction = 0f))
+        assertEquals(2, sharedOverlayTranscriptChunkIndex(0, 1, 5, clipFraction = 0.5f))
+        assertEquals(4, sharedOverlayTranscriptChunkIndex(0, 1, 5, clipFraction = 1f))
+        // Clip boundary behavior is unchanged by the fraction default.
+        assertEquals(
+            sharedOverlayTranscriptChunkIndex(2, 10, 5),
+            sharedOverlayTranscriptChunkIndex(2, 10, 5, clipFraction = 0f),
+        )
+        // Mid-clip progress reaches into the next chunk rather than trailing it.
+        assertEquals(1, sharedOverlayTranscriptChunkIndex(2, 10, 5, clipFraction = 0.5f))
+        assertEquals(1, sharedOverlayTranscriptChunkIndex(2, 10, 5, clipFraction = 1f))
+        // Out-of-range fractions clamp rather than escaping the chapter.
+        assertEquals(0, sharedOverlayTranscriptChunkIndex(0, 4, 4, clipFraction = -1f))
+        assertEquals(3, sharedOverlayTranscriptChunkIndex(3, 4, 4, clipFraction = 9f))
+        assertEquals(-1, sharedOverlayTranscriptChunkIndex(0, 4, 0, clipFraction = 0.5f))
+    }
+
     private fun item(id: String, progress: Float, isTts: Boolean = false, updatedAt: Long = 0L) =
         SharedAudiobookLibraryItem(id, progress, isTts, updatedAt)
 }

@@ -714,12 +714,12 @@ private val SharedEpubUnderlineTags = setOf("u", "ins")
 private val SharedEpubStrikeTags = setOf("s", "strike", "del")
 private val SharedEpubCodeTags = setOf("code", "kbd", "samp", "tt")
 
-private sealed interface SharedSemanticDomNode {
+internal sealed interface SharedSemanticDomNode {
     val parent: SharedSemanticDomElement?
     var normalizedStart: Int
 }
 
-private class SharedSemanticDomElement(
+internal class SharedSemanticDomElement(
     val name: String,
     val attributes: Map<String, String>,
     val children: MutableList<SharedSemanticDomNode> = mutableListOf(),
@@ -797,6 +797,47 @@ private class SharedSemanticDomElement(
         return null
     }
 
+    /**
+     * First descendant (or self) whose `id` matches, in document order.
+     *
+     * The transcript anchor lookup for media overlays: a SMIL `par` names the
+     * element it narrates, and this is that element. First match wins because
+     * ids are unique per spec; a duplicate is a broken file, and either copy
+     * carries the same line.
+     */
+    fun findElementById(id: String): SharedSemanticDomElement? {
+        if (id.isBlank()) return null
+        if (elementId() == id) return this
+        val stack = ArrayDeque<SharedSemanticDomNode>()
+        // Reversed so removal from the end visits document order.
+        children.asReversed().forEach { stack.addLast(it) }
+        while (stack.isNotEmpty()) {
+            val node = stack.removeLast()
+            if (node is SharedSemanticDomElement) {
+                if (node.elementId() == id) return node
+                node.children.asReversed().forEach { stack.addLast(it) }
+            }
+        }
+        return null
+    }
+
+    /** This element's own text with descendants, for transcript anchoring. */
+    fun elementTextContent(): String = buildString {
+        fun append(node: SharedSemanticDomNode) {
+            when (node) {
+                is SharedSemanticDomText -> {
+                    if (appendedSinceSpace(node.text)) append(' ')
+                    append(node.text)
+                }
+                is SharedSemanticDomElement -> node.children.forEach(::append)
+            }
+        }
+        children.forEach(::append)
+    }
+
+    private fun StringBuilder.appendedSinceSpace(value: String): Boolean =
+        isNotEmpty() && !last().isWhitespace() && value.isNotEmpty() && !value.first().isWhitespace()
+
     val isBlockElement: Boolean get() = localName in SharedEpubBlockTags
 
     fun hasBlockDescendant(): Boolean {
@@ -843,7 +884,7 @@ private class SharedSemanticDomElement(
     override var normalizedStart: Int = -1
 }
 
-private class SharedSemanticDomText(
+internal class SharedSemanticDomText(
     val text: String,
     override val parent: SharedSemanticDomElement?
 ) : SharedSemanticDomNode {
@@ -852,12 +893,12 @@ private class SharedSemanticDomText(
     override var normalizedStart: Int = -1
 }
 
-private class SharedSemanticHtmlTree(
+internal class SharedSemanticHtmlTree(
     val root: SharedSemanticDomElement,
     val normalizedMapping: IntArray
 )
 
-private object SharedSemanticHtmlDocument {
+internal object SharedSemanticHtmlDocument {
 
     fun parse(html: String): SharedSemanticHtmlTree? {
         val tokens = sharedEpubXmlTokens(html).toList()

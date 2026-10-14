@@ -535,6 +535,60 @@ fun sharedTtsTranscriptWindow(currentChunkIndex: Int, chunkCount: Int): IntRange
     return (center - 2).coerceAtLeast(0)..(center + 3).coerceAtMost(chunkCount - 1)
 }
 
+/**
+ * Approximate transcript position for publisher narration.
+ *
+ * Narration is clip-sequenced (one SMIL par per line) while the transcript is
+ * chunk-sequenced (the same sentence-grouped text TTS would speak), so there
+ * is no exact index to project — only monotonic progress through the same
+ * chapter. Mapping clip fraction onto chunk fraction keeps the highlight
+ * moving with the voice without claiming a word-level sync that does not
+ * exist.
+ *
+ * [clipFraction] is the intra-clip progress (0 at the clip boundary, 1 at its
+ * end), so a long clip that spans several chunks moves the highlight through
+ * them instead of pinning it to the clip's first chunk while the voice runs
+ * ahead. Without it the highlight visibly trails the narration whenever TTS
+ * chunks are finer than SMIL clips — the normal shape of a prose chapter,
+ * where one par holds a whole long sentence that TTS hard-splits at word
+ * boundaries.
+ *
+ * [spans] anchors each clip to its exact chunks (see
+ * [sharedOverlayClipChunkSpans], the Listen equivalent of the reader's
+ * per-line highlight) and always wins when it lines up with this chapter:
+ * same length as the clip list, so a stale table from another chapter can
+ * never leak in. Without spans this is the fractional estimate.
+ *
+ * @param clipPlaybackIndex index into the loaded chapter's playable clips.
+ * @param clipCount playable clips in the loaded chapter; <= 0 means unknown.
+ * @param chunkCount transcript chunks in the chapter; <= 0 means no transcript.
+ * @param clipFraction progress through the active clip, 0..1. Clamped.
+ * @return estimated absolute chunk index, or -1 when there is no transcript.
+ */
+fun sharedOverlayTranscriptChunkIndex(
+    clipPlaybackIndex: Int,
+    clipCount: Int,
+    chunkCount: Int,
+    clipFraction: Float = 0f,
+    spans: List<SharedOverlayClipChunkSpan> = emptyList(),
+): Int {
+    if (chunkCount <= 0) return -1
+    if (spans.size == clipCount && clipCount > 0 && clipPlaybackIndex in spans.indices) {
+        return sharedSpanTranscriptChunkIndex(spans[clipPlaybackIndex], clipFraction, chunkCount)
+    }
+    if (clipCount <= 0) return 0
+    val safeClip = clipPlaybackIndex.coerceIn(0, clipCount - 1)
+    val safeFraction = clipFraction.coerceIn(0f, 1f)
+    // Fractional clip position: clip N at fraction f has spoken past
+    // N + f clips' worth of the chapter. Float precision is ample here
+    // (counts are in the low thousands) and the clamp below absorbs any
+    // rounding at the chapter end.
+    val effective = (safeClip + safeFraction).coerceIn(0f, clipCount.toFloat())
+    return ((effective * chunkCount.toFloat()) / clipCount.toFloat())
+        .toInt()
+        .coerceIn(0, chunkCount - 1)
+}
+
 fun SharedTtsListenItem.toSharedAudiobookLibraryItem(): SharedAudiobookLibraryItem =
     SharedAudiobookLibraryItem(
         id = book.id,
