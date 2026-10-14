@@ -1063,7 +1063,30 @@ data class SharedEpubTtsChapter(
     val id: String,
     val title: String,
     val plainText: String,
+    /** Spine item index this chapter was read from; -1 when unknown. */
+    val spineIndex: Int = -1,
+    /** Archive path of the spine document, for media overlay chapter mapping. */
+    val contentPath: String = "",
 )
+
+/**
+ * Package-level media overlay facts without a full book load.
+ *
+ * Reads the OPF alone — one XML pass, no SMIL bodies — so Listen can answer
+ * "does this book have publisher narration" when preparing a book. Surfaces
+ * without a parsed package (library rows) stay unaware rather than paying
+ * per-book I/O at list time.
+ */
+fun loadSharedEpubMediaOverlayIndex(archive: SharedEpubArchive): SharedMediaOverlayIndex {
+    val parsedPackage = parseMobileEpubPackage(archive)
+    val metaElements = parsedPackage.metadata.androidMetadataChildren("meta", "opf:meta")
+        .map(SharedXmlDocumentNode::toMobileEpubMetaElement)
+    return sharedMediaOverlayIndex(
+        manifest = parsedPackage.manifest,
+        spineIds = parsedPackage.spineIds,
+        metaElements = metaElements,
+    )
+}
 
 /**
  * Lightweight text-only EPUB extraction for text-to-speech. Mirrors the chapter
@@ -1080,7 +1103,6 @@ fun loadSharedEpubTtsChapters(
     val manifest = parsedPackage.manifest
     val spineNode = parsedPackage.spineNode
     val spineIds = parsedPackage.spineIds
-    val chapterItems = spineIds.mapNotNull(manifest::get)
 
     val tocByPath = parseEpubNavigation(
         archiveText = ::text,
@@ -1090,11 +1112,12 @@ fun loadSharedEpubTtsChapters(
         .filter { !it.fragmentId.isNullOrBlank() }
         .groupBy(SharedEpubTocEntry::href)
 
-    val chapters = chapterItems.flatMapIndexed { index, item ->
+    val chapters = spineIds.flatMapIndexed { spineIndex, spineId ->
+        val item = manifest[spineId] ?: return@flatMapIndexed emptyList()
         if (!item.isHtml) return@flatMapIndexed emptyList()
         val raw = text(item.absPath) ?: return@flatMapIndexed emptyList()
         val body = raw.extractEpubBodyOrSelf()
-        val fallbackTitle = resolveMobileEpubSpineChapterTitle(raw.firstEpubHeading(), index)
+        val fallbackTitle = resolveMobileEpubSpineChapterTitle(raw.firstEpubHeading(), spineIndex)
         val sections = materializeEpubTocSections(
             body = body,
             entries = tocByPath[item.absPath].orEmpty()
@@ -1104,9 +1127,11 @@ fun loadSharedEpubTtsChapters(
             if (plainText.isBlank()) return@flatMapIndexed emptyList()
             listOf(
                 SharedEpubTtsChapter(
-                    id = item.id.ifBlank { "chapter_$index" },
+                    id = item.id.ifBlank { "chapter_$spineIndex" },
                     title = fallbackTitle,
                     plainText = plainText,
+                    spineIndex = spineIndex,
+                    contentPath = item.absPath,
                 )
             )
         } else {
@@ -1114,9 +1139,11 @@ fun loadSharedEpubTtsChapters(
                 val plainText = sharedHtmlToPlainText(section.html)
                 if (plainText.isBlank()) return@mapIndexedNotNull null
                 SharedEpubTtsChapter(
-                    id = "${item.id.ifBlank { "chapter_$index" }}#${section.fragmentId}",
+                    id = "${item.id.ifBlank { "chapter_$spineIndex" }}#${section.fragmentId}",
                     title = section.entry.label.ifBlank { fallbackTitle },
                     plainText = plainText,
+                    spineIndex = spineIndex,
+                    contentPath = item.absPath,
                 )
             }
         }

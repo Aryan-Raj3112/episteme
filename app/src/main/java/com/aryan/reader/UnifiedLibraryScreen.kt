@@ -122,6 +122,7 @@ import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.data.AudiobookImporter
 import com.aryan.reader.audiobook.AudiobookController
+import com.aryan.reader.audiobook.ListenOverlayHost
 import com.aryan.reader.shared.AnnotationExportFormat
 import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
@@ -175,6 +176,14 @@ fun UnifiedLibraryScreen(
     val globalAudiobookController = remember(context) { AudiobookController(context) }
     val importedPlayback by globalAudiobookController.state.collectAsStateWithLifecycle()
     val ttsPlayback by viewModel.ttsController.ttsState.collectAsStateWithLifecycle()
+    // Publisher narration outlives the player sheet by design (ListenOverlayHost
+    // is process-wide), so the mini player observes it directly: collapsing the
+    // sheet must leave a way back, exactly like the TTS service state above.
+    val listenOverlayHost = remember(context) { ListenOverlayHost.get(context.applicationContext) }
+    val overlayPlayback by listenOverlayHost.playback.collectAsStateWithLifecycle()
+    val overlayBook by listenOverlayHost.book.collectAsStateWithLifecycle()
+    val overlayChapter by listenOverlayHost.chapterIndex.collectAsStateWithLifecycle()
+    val overlayProgress by listenOverlayHost.progress.collectAsStateWithLifecycle()
     LaunchedEffect(importedAudiobooks.isNotEmpty()) {
         if (importedAudiobooks.isNotEmpty()) globalAudiobookController.connectSession()
     }
@@ -519,7 +528,34 @@ fun UnifiedLibraryScreen(
                     ?.let { id -> uiState.rawLibraryFiles.firstOrNull { it.bookId == id } }
                 val activeImported = importedPlayback.bookId
                     ?.let { id -> importedAudiobooks.firstOrNull { it.bookId == id } }
+                // Narration continues with no TTS service session, so it gets
+                // the first slot: the other branches are necessarily idle then.
+                val activeOverlayBook = overlayBook
+                    ?.takeIf { overlayPlayback.hasBook }
+                    ?.let { listenBook ->
+                        uiState.rawLibraryFiles.firstOrNull { it.bookId == listenBook.bookId }
+                            ?.toTtsAudiobookUiItem(
+                                overlayProgress?.takeIf { it.bookId == listenBook.bookId }
+                                    ?: bookTtsProgress.firstOrNull { it.bookId == listenBook.bookId }
+                            )
+                            ?.copy(
+                                chapter = "Narration · Chapter ${(overlayChapter.takeIf { it >= 0 } ?: 0) + 1}",
+                                narrator = listenBook.mediaOverlay.narrator ?: "Publisher narration",
+                            )
+                    }
                 when {
+                    activeOverlayBook != null -> {
+                        AudiobookMiniPlayer(
+                            item = activeOverlayBook,
+                            isPlaying = overlayPlayback.isPlaying,
+                            progress = activeOverlayBook.progress,
+                            onTogglePlay = { listenOverlayHost.toggle() },
+                            onExpand = {
+                                audiobookPlayerItem = activeOverlayBook
+                            },
+                            onStop = { listenOverlayHost.stop() }
+                        )
+                    }
                     activeTtsBook != null -> {
                         val item = activeTtsBook.toTtsAudiobookUiItem(bookTtsProgress.firstOrNull { it.bookId == activeTtsBook.bookId })
                             .copy(chapter = ttsPlayback.chapterTitle ?: "Listening with TTS")
@@ -557,7 +593,10 @@ fun UnifiedLibraryScreen(
                             progress = liveProgress,
                             onTogglePlay = {
                                 globalAudiobookController.togglePlay(
-                                    viewModel.ttsController::stop
+                                    onBeforePlay = {
+                                        viewModel.ttsController.stop()
+                                        listenOverlayHost.stop()
+                                    }
                                 )
                             },
                             onExpand = {
@@ -889,7 +928,13 @@ fun UnifiedLibraryScreen(
                         com.aryan.reader.shared.SharedListeningTarget.IMPORTED_AUDIOBOOK,
                     )
                 ) {
-                    com.aryan.reader.shared.SharedListeningHandoff.STOP_TTS -> viewModel.ttsController.stop()
+                    // An imported audiobook wins over generated listening of
+                    // either kind: TTS synthesis and publisher narration both
+                    // stop, so two real-audio sources never play at once.
+                    com.aryan.reader.shared.SharedListeningHandoff.STOP_TTS -> {
+                        viewModel.ttsController.stop()
+                        listenOverlayHost.stop()
+                    }
                     com.aryan.reader.shared.SharedListeningHandoff.STOP_AUDIOBOOK -> Unit
                 }
             },

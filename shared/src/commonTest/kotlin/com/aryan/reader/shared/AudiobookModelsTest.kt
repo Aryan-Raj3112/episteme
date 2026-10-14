@@ -213,6 +213,68 @@ class AudiobookModelsTest {
         assertEquals("0:00", formatSharedPlaybackTime(-1L))
     }
 
+    @Test
+    fun `listen source prefers narration when present and respects explicit choice`() {
+        assertEquals(
+            SharedListenAudioSource.MEDIA_OVERLAY,
+            resolveSharedListenAudioSource(hasNarration = true, savedPreference = null),
+        )
+        assertEquals(
+            SharedListenAudioSource.TTS,
+            resolveSharedListenAudioSource(hasNarration = false, savedPreference = null),
+        )
+        // No silent fallback: an explicit TTS pick stays TTS even with narration.
+        assertEquals(
+            SharedListenAudioSource.TTS,
+            resolveSharedListenAudioSource(hasNarration = true, savedPreference = SharedListenAudioSource.TTS),
+        )
+        assertEquals(
+            SharedListenAudioSource.MEDIA_OVERLAY,
+            resolveSharedListenAudioSource(hasNarration = false, savedPreference = SharedListenAudioSource.MEDIA_OVERLAY),
+        )
+    }
+
+    @Test
+    fun `listen items carry overlay info by book`() {
+        val book = BookItem(
+            id = "b1", path = null, type = FileType.EPUB, displayName = "b1.epub",
+            timestamp = 1L,
+        )
+        val overlay = SharedListenMediaOverlayInfo(hasNarration = true, narrator = "Reader", narratedChapterIndices = setOf(0, 2))
+        val items = buildSharedTtsListenItems(listOf(book), emptyList(), mapOf("b1" to overlay))
+        assertEquals(1, items.size)
+        assertTrue(items.first().hasMediaOverlayNarration)
+        assertEquals("Reader", items.first().mediaOverlay.narrator)
+        assertEquals(setOf(0, 2), items.first().mediaOverlay.narratedChapterIndices)
+        val plain = buildSharedTtsListenItems(listOf(book), emptyList())
+        assertTrue(plain.first().mediaOverlay.narratedChapterIndices.isEmpty())
+    }
+
+    @Test
+    fun `listen narrated chapters map spine overlays onto listen chapters`() {
+        val index = com.aryan.reader.shared.reader.SharedMediaOverlayIndex(
+            smilPathBySpineItem = mapOf(0 to "OEBPS/p0.smil", 2 to "OEBPS/p2.smil"),
+            contentPathBySpineItem = mapOf(0 to "OEBPS/p0.xhtml", 1 to "OEBPS/p1.xhtml", 2 to "OEBPS/p2.xhtml"),
+            smilIdBySpineItem = mapOf(0 to "s0", 2 to "s2"),
+            totalDurationMs = null,
+            narrator = "Narrator",
+            activeClass = null,
+            playbackActiveClass = null,
+            declaredDurationMsBySpineItem = emptyMap(),
+        )
+        val paths = listOf("OEBPS/p0.xhtml", "OEBPS/p1.xhtml", "OEBPS/p2.xhtml")
+        assertEquals(setOf(0, 2), sharedListenNarratedChapterIndices(paths, index))
+        val info = sharedListenMediaOverlayInfo(paths, index)
+        assertTrue(info.hasNarration)
+        assertEquals("Narrator", info.narrator)
+        assertEquals(setOf(0, 2), info.narratedChapterIndices)
+        val empty = sharedListenMediaOverlayInfo(
+            paths,
+            com.aryan.reader.shared.reader.SharedMediaOverlayIndex.EMPTY,
+        )
+        assertTrue(!empty.hasNarration)
+    }
+
     private fun item(id: String, progress: Float, isTts: Boolean = false, updatedAt: Long = 0L) =
         SharedAudiobookLibraryItem(id, progress, isTts, updatedAt)
 }

@@ -436,23 +436,92 @@ object SharedTtsListenCapabilities {
 data class SharedTtsListenItem(
     val book: BookItem,
     val progress: SharedBookTtsListeningProgress?,
+    val mediaOverlay: SharedListenMediaOverlayInfo = SharedListenMediaOverlayInfo(),
 ) {
     val title: String
         get() = book.title?.takeIf { it.isNotBlank() }
             ?: book.displayName.substringBeforeLast('.').ifBlank { book.displayName }
     val author: String
         get() = book.author ?: "Unknown author"
+    val hasMediaOverlayNarration: Boolean get() = mediaOverlay.hasNarration
+}
+
+enum class SharedListenAudioSource { TTS, MEDIA_OVERLAY }
+
+/**
+ * Publisher narration available to Listen for one book.
+ *
+ * Cheap by design: [narratedChapterIndices] are Listen chapter indices with a
+ * playable SMIL document, computed once when the book is prepared. Empty when
+ * the book has no overlays or the archive is unreachable.
+ */
+data class SharedListenMediaOverlayInfo(
+    val hasNarration: Boolean = false,
+    val narrator: String? = null,
+    val narratedChapterIndices: Set<Int> = emptySet(),
+)
+
+/**
+ * Initial Listen source. Prefers publisher narration when present; an explicit
+ * saved choice always wins. No silent fallback: once chosen, the session stays
+ * on that source until the user switches.
+ */
+fun resolveSharedListenAudioSource(
+    hasNarration: Boolean,
+    savedPreference: SharedListenAudioSource?,
+): SharedListenAudioSource = when {
+    savedPreference != null -> savedPreference
+    hasNarration -> SharedListenAudioSource.MEDIA_OVERLAY
+    else -> SharedListenAudioSource.TTS
+}
+
+fun SharedListenAudioSource.isOverlay(): Boolean = this == SharedListenAudioSource.MEDIA_OVERLAY
+
+/**
+ * Listen chapters with playable publisher narration.
+ *
+ * Shared-first so Android and iOS map chapters identically: spine items carry
+ * the overlays, Listen chapters are the reader's re-flow. A chapter counts
+ * when its spine item declares a SMIL document.
+ */
+fun sharedListenNarratedChapterIndices(
+    chapterContentPaths: List<String>,
+    overlayIndex: com.aryan.reader.shared.reader.SharedMediaOverlayIndex,
+): Set<Int> {
+    if (chapterContentPaths.isEmpty() || !overlayIndex.hasOverlays) return emptySet()
+    val spineByChapter = com.aryan.reader.shared.reader.sharedMediaOverlaySpineItemIndexByChapter(
+        chapterContentPaths = chapterContentPaths,
+        overlayIndex = overlayIndex,
+    )
+    return spineByChapter
+        .filter { (_, spineItemIndex) -> overlayIndex.smilPathBySpineItem.containsKey(spineItemIndex) }
+        .keys
+        .toSet()
+}
+
+fun sharedListenMediaOverlayInfo(
+    chapterContentPaths: List<String>,
+    overlayIndex: com.aryan.reader.shared.reader.SharedMediaOverlayIndex,
+): SharedListenMediaOverlayInfo {
+    val narrated = sharedListenNarratedChapterIndices(chapterContentPaths, overlayIndex)
+    if (narrated.isEmpty()) return SharedListenMediaOverlayInfo()
+    return SharedListenMediaOverlayInfo(
+        hasNarration = true,
+        narrator = overlayIndex.narrator,
+        narratedChapterIndices = narrated,
+    )
 }
 
 fun buildSharedTtsListenItems(
     books: List<BookItem>,
     progress: List<SharedBookTtsListeningProgress>,
+    overlayInfoByBookId: Map<String, SharedListenMediaOverlayInfo> = emptyMap(),
 ): List<SharedTtsListenItem> {
     val progressByBook = progress.associateBy { it.bookId }
     return books
         .filter { it.type != FileType.AUDIOBOOK && SharedTtsListenCapabilities.supports(it.type) }
         .sortedByDescending { it.dateAddedTimestamp.coerceAtLeast(it.timestamp) }
-        .map { SharedTtsListenItem(it, progressByBook[it.id]) }
+        .map { SharedTtsListenItem(it, progressByBook[it.id], overlayInfoByBookId[it.id] ?: SharedListenMediaOverlayInfo()) }
 }
 
 /**

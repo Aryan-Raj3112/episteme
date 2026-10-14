@@ -47,6 +47,15 @@ class SharedListeningArbiter(
      * aloud — audible, not just a wrong label.
      */
     private val stopMediaOverlay: () -> Unit,
+    /**
+     * Drops Listen's narration bookkeeping when another surface claims the
+     * shared overlay engine.
+     *
+     * The engine stop above silences the audio; without this, Listen's sheet
+     * would still report the session it no longer owns. Defaults to a no-op
+     * for hosts without Listen narration.
+     */
+    private val stopListenOverlay: () -> Unit = {},
 ) {
 
     /**
@@ -67,6 +76,7 @@ class SharedListeningArbiter(
         if (winner == SharedListeningSurface.LISTEN_TTS) return
         stopAudiobook()
         stopMediaOverlay()
+        stopListenOverlay()
         yieldListenTo(winner, engine)
     }
 

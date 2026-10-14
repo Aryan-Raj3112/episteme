@@ -1,6 +1,7 @@
 package com.aryan.reader
 
 import com.aryan.reader.shared.calculateSharedTtsAudiobookProgress
+import com.aryan.reader.shared.isOverlay
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
@@ -108,9 +109,7 @@ import coil.compose.AsyncImage
 import com.aryan.reader.audiobook.AudiobookController
 import com.aryan.reader.audiobook.AudiobookPlaybackRequest
 import com.aryan.reader.audiobook.BookTtsAudiobookController
-import com.aryan.reader.audiobook.BookTtsContentRepository
 import com.aryan.reader.audiobook.BookTtsListeningProgressEntity
-import com.aryan.reader.audiobook.BookTtsSessionCoordinator
 import com.aryan.reader.tts.loadListenNativeVoice
 import com.aryan.reader.tts.loadListenTtsMode
 import com.aryan.reader.tts.loadListenTtsSpeaker
@@ -680,7 +679,11 @@ private fun BookTtsPlayerSheet(
         BookTtsAudiobookController(context, authTokenProvider = getAuthToken)
     }
     val prepared by controller.uiState.collectAsStateWithLifecycle()
-    val playback by controller.sharedPlaybackState.collectAsStateWithLifecycle()
+    val playback by controller.listenPlaybackState.collectAsStateWithLifecycle()
+    val overlayInfo by controller.overlayInfo.collectAsStateWithLifecycle()
+    val listenSource by controller.listenSource.collectAsStateWithLifecycle()
+    val overlaySpeed by controller.overlaySpeed.collectAsStateWithLifecycle()
+    val inOverlayMode = listenSource.isOverlay() && overlayInfo.hasNarration
     // Listen voice is independent from the Reader voice: bound to the Listen
     // prefs, with the full Reader sheet feature set (cloud/device/cache tabs).
     var showListenVoiceSettings by remember { mutableStateOf(false) }
@@ -690,14 +693,14 @@ private fun BookTtsPlayerSheet(
     // paused session keeps old-voice audio queued (and Listen applies voice
     // changes at the next session start), so switching then resuming would
     // keep playing the previous voice.
-    val listenTtsActive = playback.connected && !playback.sessionFinished
+    val listenTtsActive = !inOverlayMode && playback.connected && !playback.sessionFinished
     // Only freeze the voice/engine controls while something is actually being spoken. The
     // Listen player sheet closes on stop, so requiring a full stop would make the voice
     // settings unreachable; pausing is a safe point to change it.
-    val listenTtsVoiceLocked = playback.isPlaying
+    val listenTtsVoiceLocked = !inOverlayMode && playback.isPlaying
     var adapterRate by remember { mutableFloatStateOf(prepared.savedProgress?.speechRate ?: loadTtsSpeechRate(context)) }
     var adapterPitch by remember { mutableFloatStateOf(prepared.savedProgress?.pitch ?: loadTtsPitch(context)) }
-    val sharedItem = remember(sourceBook, prepared.savedProgress) {
+    val sharedItem = remember(sourceBook, prepared.savedProgress, overlayInfo) {
         com.aryan.reader.shared.SharedTtsListenItem(
             book = sourceBook.toSharedBookItem(),
             progress = prepared.savedProgress?.let { progress ->
@@ -715,12 +718,16 @@ private fun BookTtsPlayerSheet(
                     updatedAt = progress.updatedAt,
                 )
             },
+            mediaOverlay = com.aryan.reader.shared.SharedListenMediaOverlayInfo(
+                hasNarration = overlayInfo.hasNarration,
+                narrator = overlayInfo.narrator,
+                narratedChapterIndices = overlayInfo.narratedChapterIndices,
+            ),
         )
     }
     val isThisBookActive = playback.connected && playback.bookId == sourceBook.bookId
     LaunchedEffect(sourceBook.bookId) {
-        controller.connect(sourceBook.bookId)
-        if (item.autoStart) controller.start(sourceBook.bookId, BookTtsSessionCoordinator.START_RESUME)
+        controller.connect(sourceBook.bookId, item.autoStart)
     }
     LaunchedEffect(prepared.savedProgress?.updatedAt) {
         prepared.savedProgress?.let { progress ->
@@ -733,7 +740,7 @@ private fun BookTtsPlayerSheet(
     com.aryan.reader.shared.ui.SharedMobileTtsPlayerSheet(
         item = sharedItem,
         playback = playback.copy(
-            speechRate = adapterRate,
+            speechRate = if (inOverlayMode) overlaySpeed else adapterRate,
             pitch = adapterPitch,
             chapterIndex = adapterChapterIndex,
             chapterCount = prepared.book?.chapters?.size ?: playback.chapterCount,
@@ -742,20 +749,14 @@ private fun BookTtsPlayerSheet(
             error = playback.error ?: prepared.error,
         ),
         chapterTitles = prepared.book?.chapters?.map { it.title },
-        onTogglePlayback = {
-            if (isThisBookActive) controller.togglePlay()
-            else controller.start(sourceBook.bookId, BookTtsSessionCoordinator.START_RESUME)
-        },
+        onTogglePlayback = { controller.toggleListenPlayback(sourceBook.bookId) },
         onSeekChunk = { target ->
             if (target < playback.chunkIndex) controller.previousChunk() else controller.nextChunk()
         },
-        onSeekChapter = { target ->
-            if (isThisBookActive) controller.selectChapter(target)
-            else controller.start(sourceBook.bookId, BookTtsSessionCoordinator.START_CHAPTER, target)
-        },
+        onSeekChapter = { target -> controller.seekListenChapter(sourceBook.bookId, target) },
         onSpeedChange = { selectedSpeed ->
-            adapterRate = selectedSpeed
-            controller.setParameters(rate = selectedSpeed, pitch = adapterPitch)
+            if (!inOverlayMode) adapterRate = selectedSpeed
+            controller.setListenSpeed(selectedSpeed)
         },
         onSleepTimer = { minutes -> controller.startSleepTimer(minutes ?: 0) },
         customSleepTimerMinutes = customSleepTimers,
@@ -766,6 +767,8 @@ private fun BookTtsPlayerSheet(
         onStopPlayback = controller::stop,
         onDismiss = onDismiss,
         onOpenVoiceSettings = { showListenVoiceSettings = true },
+        listenSource = listenSource,
+        onListenSourceChange = { source -> controller.selectListenSource(source) },
     )
     DisposableEffect(controller) { onDispose(controller::release) }
 

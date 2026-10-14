@@ -88,6 +88,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
@@ -112,8 +113,10 @@ import com.aryan.reader.shared.SharedAudiobookPlaybackState
 import com.aryan.reader.shared.SharedAudiobookSort
 import com.aryan.reader.shared.SharedAudiobookStatus
 import com.aryan.reader.shared.SharedBookTtsListenState
+import com.aryan.reader.shared.SharedListenAudioSource
 import com.aryan.reader.shared.SharedTtsListenItem
 import com.aryan.reader.shared.SharedTtsListenCapabilities
+import com.aryan.reader.shared.isOverlay
 import com.aryan.reader.shared.filterSharedAudiobooks
 import com.aryan.reader.shared.addCustomSleepTimer
 import com.aryan.reader.shared.formatSharedPlaybackTime
@@ -507,6 +510,97 @@ fun SharedMobileAudiobooksSection(
     }
 }
 
+@Composable
+private fun ListenAudioSourceSwitcher(
+    selected: SharedListenAudioSource,
+    narrator: String?,
+    onSelected: (SharedListenAudioSource) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier.testTag("ListenAudioSourceSwitcher"),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        Row(Modifier.fillMaxWidth().padding(5.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            ListenAudioSourceOption(
+                selected = selected == SharedListenAudioSource.TTS,
+                label = readerString("listen_source_tts", "TTS"),
+                onClick = { onSelected(SharedListenAudioSource.TTS) },
+            )
+            ListenAudioSourceOption(
+                selected = selected.isOverlay(),
+                label = narrator?.takeIf { it.isNotBlank() }?.let {
+                    readerString("listen_source_narration_by", "Narration · %1\$s", it)
+                } ?: readerString("listen_source_narration", "Narration"),
+                onClick = { onSelected(SharedListenAudioSource.MEDIA_OVERLAY) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun RowScope.ListenAudioSourceOption(
+    selected: Boolean,
+    label: String,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.weight(1f),
+        shape = RoundedCornerShape(20.dp),
+        color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+        contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+    ) {
+        Row(
+            modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (selected) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp).padding(end = 4.dp),
+                )
+            }
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun OverlayTranscriptNotice(narrator: String?, modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            modifier = Modifier.padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                contentDescription = null,
+                modifier = Modifier.size(34.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                text = narrator?.takeIf { it.isNotBlank() }?.let {
+                    readerString("listen_overlay_transcript_by", "Publisher narration by %1\$s", it)
+                } ?: readerString("listen_overlay_transcript", "Publisher narration — no text transcript"),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
 private enum class ListenSource { ALL, AUDIOBOOKS, TTS }
 
 private data class ListenEntry(
@@ -653,6 +747,36 @@ private fun TtsSourceBadge() {
 }
 
 @Composable
+private fun NarrationBadge(narrator: String? = null) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                contentDescription = null,
+                modifier = Modifier.size(13.dp),
+            )
+            Text(
+                text = narrator?.takeIf { it.isNotBlank() }?.let {
+                    readerString("listen_badge_narration_by", "Narration · %1\$s", it)
+                } ?: readerString("listen_badge_narration", "Narration"),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
 private fun SharedMobileTtsRow(
     item: SharedTtsListenItem,
     isActive: Boolean,
@@ -681,6 +805,9 @@ private fun SharedMobileTtsRow(
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TtsSourceBadge()
+                    if (item.hasMediaOverlayNarration) {
+                        NarrationBadge(narrator = item.mediaOverlay.narrator)
+                    }
                     if (isActive) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.VolumeUp,
@@ -772,6 +899,9 @@ private fun SharedMobileTtsContinueCard(
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold,
                 )
+                if (item.hasMediaOverlayNarration) {
+                    NarrationBadge(narrator = item.mediaOverlay.narrator)
+                }
                 Text(item.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(item.author, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
@@ -1838,6 +1968,8 @@ fun SharedMobileTtsPlayerSheet(
     // Platform voice-settings opener (Android TtsSettingsSheet, iOS settings
     // UI). Null hides the menu entry; Listen keeps its own independent voice.
     onOpenVoiceSettings: (() -> Unit)? = null,
+    listenSource: SharedListenAudioSource = SharedListenAudioSource.TTS,
+    onListenSourceChange: ((SharedListenAudioSource) -> Unit)? = null,
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var showSpeedDialog by remember { mutableStateOf(false) }
@@ -1845,6 +1977,9 @@ fun SharedMobileTtsPlayerSheet(
     var panel by remember { mutableStateOf(TtsPlayerPanel.COVER) }
     val isActive = playback.connected && playback.bookId == item.book.id
     val sleepTimerActive = playback.sleepTimerRemainingMs > 0L
+    val hasNarration = item.hasMediaOverlayNarration
+    val inOverlayMode = hasNarration && listenSource.isOverlay()
+    val narratedChapters = item.mediaOverlay.narratedChapterIndices
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1876,7 +2011,11 @@ fun SharedMobileTtsPlayerSheet(
                 }
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = readerString("audiobooks_listening_with_tts", "Listening with TTS").uppercase(),
+                        text = if (inOverlayMode) {
+                            readerString("audiobooks_listening_with_narration", "Listening with Narration").uppercase()
+                        } else {
+                            readerString("audiobooks_listening_with_tts", "Listening with TTS").uppercase()
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
                     )
@@ -1896,7 +2035,7 @@ fun SharedMobileTtsPlayerSheet(
                         Icon(Icons.Default.MoreVert, contentDescription = readerString("content_desc_more_options", "More options"))
                     }
                     SharedDropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                        if (onOpenVoiceSettings != null) {
+                        if (onOpenVoiceSettings != null && !inOverlayMode) {
                             DropdownMenuItem(
                                 text = { Text(readerString("menu_tts_voice_settings", "TTS Voice Settings")) },
                                 leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
@@ -1920,6 +2059,15 @@ fun SharedMobileTtsPlayerSheet(
                 }
             }
 
+            if (hasNarration && onListenSourceChange != null) {
+                ListenAudioSourceSwitcher(
+                    selected = listenSource,
+                    narrator = item.mediaOverlay.narrator,
+                    onSelected = onListenSourceChange,
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                )
+            }
+
             Box(Modifier.fillMaxWidth().weight(1f).padding(top = 12.dp), contentAlignment = Alignment.Center) {
                 AnimatedContent(
                     targetState = panel,
@@ -1936,12 +2084,24 @@ fun SharedMobileTtsPlayerSheet(
                         TtsPlayerPanel.CHAPTERS -> TtsChaptersPanel(
                             playback = playback,
                             chapterTitles = chapterTitles,
+                            narratedChapterIndices = narratedChapters,
+                            // Narration mode plays publisher audio only: chapters
+                            // without it are shown but not selectable — no
+                            // silent switch back to synthesis mid-session.
+                            enabledChapterIndices = if (inOverlayMode) narratedChapters else null,
                             onSeekChapter = { index ->
                                 if (!isActive || index != playback.chapterIndex) onSeekChapter(index)
                                 panel = TtsPlayerPanel.COVER
                             },
                         )
-                        TtsPlayerPanel.TRANSCRIPT -> TtsTranscriptPanel(playback = playback)
+                        TtsPlayerPanel.TRANSCRIPT -> if (inOverlayMode) {
+                            OverlayTranscriptNotice(
+                                narrator = item.mediaOverlay.narrator,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else {
+                            TtsTranscriptPanel(playback = playback)
+                        }
                     }
                 }
             }
@@ -1974,7 +2134,7 @@ fun SharedMobileTtsPlayerSheet(
                 }
                 IconButton(
                     onClick = { onSeekChunk(playback.chunkIndex - 1) },
-                    enabled = isActive && playback.chunkIndex > 0,
+                    enabled = isActive && !inOverlayMode && playback.chunkIndex > 0,
                 ) {
                     Icon(Icons.Default.SkipPrevious, contentDescription = readerString("audiobooks_previous_passage", "Previous spoken passage"), modifier = Modifier.size(27.dp))
                 }
@@ -1993,7 +2153,7 @@ fun SharedMobileTtsPlayerSheet(
                 }
                 IconButton(
                     onClick = { onSeekChunk(playback.chunkIndex + 1) },
-                    enabled = isActive && playback.chunkCount > 0 && playback.chunkIndex in 0 until playback.chunkCount - 1,
+                    enabled = isActive && !inOverlayMode && playback.chunkCount > 0 && playback.chunkIndex in 0 until playback.chunkCount - 1,
                 ) {
                     Icon(Icons.Default.SkipNext, contentDescription = readerString("audiobooks_next_passage", "Next spoken passage"), modifier = Modifier.size(27.dp))
                 }
@@ -2109,6 +2269,8 @@ private fun TtsChaptersPanel(
     chapterTitles: List<String>?,
     onSeekChapter: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    narratedChapterIndices: Set<Int> = emptySet(),
+    enabledChapterIndices: Set<Int>? = null,
 ) {
     when {
         chapterTitles == null && !playback.error.isNullOrBlank() -> {
@@ -2144,6 +2306,7 @@ private fun TtsChaptersPanel(
             ) {
                 itemsIndexed(chapterTitles, key = { index, _ -> index }) { index, title ->
                     val isCurrent = playback.connected && playback.chapterIndex == index
+                    val isEnabled = enabledChapterIndices?.contains(index) ?: true
                     val containerColor by animateColorAsState(
                         if (isCurrent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
                         animationSpec = tween(220),
@@ -2159,8 +2322,9 @@ private fun TtsChaptersPanel(
                             .graphicsLayer { scaleX = scale; scaleY = scale }
                             .clip(RoundedCornerShape(16.dp))
                             .background(containerColor)
-                            .clickable { onSeekChapter(index) }
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                            .clickable(enabled = isEnabled) { onSeekChapter(index) }
+                            .padding(horizontal = 16.dp, vertical = 14.dp)
+                            .alpha(if (isEnabled) 1f else 0.4f),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
@@ -2184,7 +2348,14 @@ private fun TtsChaptersPanel(
                             label = "SelectedChapterIcon",
                         ) { selected ->
                             if (selected) Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null, modifier = Modifier.size(18.dp))
-                            else Spacer(Modifier.size(18.dp))
+                            else if (index in narratedChapterIndices) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                    contentDescription = readerString("media_overlay_title", "Narration"),
+                                    modifier = Modifier.size(18.dp).testTag("ListenNarratedChapter-$index"),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            } else Spacer(Modifier.size(18.dp))
                         }
                     }
                 }

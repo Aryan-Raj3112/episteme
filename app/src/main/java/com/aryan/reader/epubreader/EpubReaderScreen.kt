@@ -5650,6 +5650,10 @@ fun EpubReaderHost(
                                             .setAction(ACTION_AUDIOBOOK_STOP)
                                     )
                                 }
+                                // Listen narration shares the overlay service: starting here
+                                // replaces it, so drop its session rather than leaving
+                                // a mini player pointed at another book's audio.
+                                com.aryan.reader.audiobook.ListenOverlayHost.get(context).stop()
                                 scope.launch {
                                     val started = session.start(
                                         currentChapterIndex,

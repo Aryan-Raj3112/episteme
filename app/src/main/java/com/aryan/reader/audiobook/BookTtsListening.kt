@@ -33,6 +33,10 @@ import com.aryan.reader.data.RecentFileEntity
 import com.aryan.reader.shared.SharedBookTtsListenState
 import com.aryan.reader.shared.toSharedBookTtsListenState
 import com.aryan.reader.shared.calculateSharedTtsAudiobookProgress
+import com.aryan.reader.shared.SharedListenAudioSource
+import com.aryan.reader.shared.SharedListenMediaOverlayInfo
+import com.aryan.reader.shared.isOverlay
+import com.aryan.reader.shared.resolveSharedListenAudioSource
 import com.aryan.reader.shared.SharedListeningHandoff
 import com.aryan.reader.shared.SharedListeningTarget
 import com.aryan.reader.shared.sharedListeningHandoff
@@ -40,6 +44,7 @@ import com.aryan.reader.shared.SharedTtsListenStartPolicy
 import com.aryan.reader.shared.SharedTtsListenStartPolicyWire
 import com.aryan.reader.shared.resolveSharedTtsListenChapter
 import com.aryan.reader.shared.resolveSharedTtsListenChunk
+import com.aryan.reader.shared.reader.SharedMediaOverlayIndex
 import com.aryan.reader.withTtsReplacements
 import java.io.File
 import java.io.InputStream
@@ -51,6 +56,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -143,7 +149,18 @@ data class ListeningBook(
      * the same source as the Reader TTS book title (file metadata, not the
      * possibly user-renamed library title) so identical chunks share cache.
      */
-    val cacheTitle: String = title
+    val cacheTitle: String = title,
+    /**
+     * Publisher narration available to Listen. [SharedListenMediaOverlayInfo.EMPTY]
+     * for books without overlays; [overlayIndex] carries the package facts the
+     * overlay session needs, [chapterContentPaths] the Listen-chapter order it
+     * maps against.
+     */
+    val mediaOverlay: com.aryan.reader.shared.SharedListenMediaOverlayInfo =
+        com.aryan.reader.shared.SharedListenMediaOverlayInfo(),
+    val overlayIndex: com.aryan.reader.shared.reader.SharedMediaOverlayIndex =
+        com.aryan.reader.shared.reader.SharedMediaOverlayIndex.EMPTY,
+    val chapterContentPaths: List<String> = emptyList(),
 )
 
 data class ListeningChapterContent(
@@ -176,6 +193,18 @@ class BookTtsContentRepository(context: Context) {
 
     suspend fun saveProgress(progress: BookTtsListeningProgressEntity) =
         database.bookTtsListeningProgressDao().upsert(progress)
+
+    /**
+     * The seekable archive publisher narration streams from, or null.
+     *
+     * Same gate as the reader screen (`mediaOverlayArchiveFile`): only real
+     * files qualify, so a `content://` book simply has no narration button
+     * rather than a button that fails at first play.
+     */
+    suspend fun loadOverlayArchiveFile(bookId: String): File? = withContext(Dispatchers.IO) {
+        val item = database.recentFileDao().getFileByBookId(bookId) ?: return@withContext null
+        com.aryan.reader.epubreader.mediaOverlayArchiveFile(item.uriString)
+    }
 
     private suspend fun source(bookId: String): ListeningBookSource {
         parsedBooks[bookId]?.let { return it }
@@ -221,9 +250,25 @@ class BookTtsContentRepository(context: Context) {
             )
         }
         require(chapters.isNotEmpty()) { "No readable chapters were found" }
+        // Media overlays are an EPUB-only package fact, parsed cheaply from the
+        // OPF by EpubParser. Other reflow types keep the empty index: no SMIL
+        // means no narration button, exactly like a reader without support.
+        val overlayIndex = if (item.type == FileType.EPUB) {
+            book.mediaOverlays
+        } else {
+            com.aryan.reader.shared.reader.SharedMediaOverlayIndex.EMPTY
+        }
+        val chapterPaths = book.chapters.map { it.absPath }
+        val overlayInfo = com.aryan.reader.shared.sharedListenMediaOverlayInfo(chapterPaths, overlayIndex)
         // Parsed file title, the same string the Reader EPUB TTS path uses.
         return ListeningBookSource.Reflow(
-            item.listeningMetadata(chapters, cacheTitle = book.title),
+            item.listeningMetadata(
+                chapters,
+                cacheTitle = book.title,
+                mediaOverlay = overlayInfo,
+                overlayIndex = overlayIndex,
+                chapterContentPaths = chapterPaths,
+            ),
             book
         )
     }
@@ -312,7 +357,12 @@ class BookTtsContentRepository(context: Context) {
 
     private fun RecentFileEntity.listeningMetadata(
         chapters: List<ListeningChapter>,
-        cacheTitle: String
+        cacheTitle: String,
+        mediaOverlay: com.aryan.reader.shared.SharedListenMediaOverlayInfo =
+            com.aryan.reader.shared.SharedListenMediaOverlayInfo(),
+        overlayIndex: com.aryan.reader.shared.reader.SharedMediaOverlayIndex =
+            com.aryan.reader.shared.reader.SharedMediaOverlayIndex.EMPTY,
+        chapterContentPaths: List<String> = emptyList(),
     ) = ListeningBook(
         bookId = bookId,
         title = title?.takeIf(String::isNotBlank) ?: displayName.substringBeforeLast('.'),
@@ -320,7 +370,10 @@ class BookTtsContentRepository(context: Context) {
         coverPath = coverImagePath,
         type = type,
         chapters = chapters,
-        cacheTitle = cacheTitle
+        cacheTitle = cacheTitle,
+        mediaOverlay = mediaOverlay,
+        overlayIndex = overlayIndex,
+        chapterContentPaths = chapterContentPaths,
     )
 
     companion object {
@@ -660,14 +713,90 @@ class BookTtsAudiobookController(
     }.stateIn(scope, SharingStarted.Eagerly, SharedBookTtsListenState())
     private var sleepTimerJob: Job? = null
 
-    fun connect(bookId: String) {
+    /**
+     * Publisher narration for the prepared book, owned process-wide by
+     * [ListenOverlayHost] so collapsing the sheet never stops playback.
+     * This controller resolves the source, arbitrates the engines, and
+     * projects holder state for the sheet — it never owns audio itself.
+     */
+    private val overlayHost = ListenOverlayHost.get(appContext)
+    private val _overlayInfo = MutableStateFlow(SharedListenMediaOverlayInfo())
+    val overlayInfo = _overlayInfo.asStateFlow()
+    private val _listenSource = MutableStateFlow(SharedListenAudioSource.TTS)
+    val listenSource = _listenSource.asStateFlow()
+    val overlaySpeed: StateFlow<Float> = overlayHost.speed
+
+    /**
+     * The state the Listen sheet renders: the TTS projection, except in
+     * narration mode, where the overlay host owns playback and the TTS
+     * engine is stopped.
+     */
+    val listenPlaybackState = combine(
+        sharedPlaybackState,
+        _uiState,
+        _sleepTimerRemainingMs,
+        _listenSource,
+        overlayHost.ui,
+    ) { tts: SharedBookTtsListenState,
+        prepared: BookTtsAudiobookUiState,
+        sleepTimerRemainingMs: Long,
+        source: SharedListenAudioSource,
+        overlay: ListenOverlayHost.OverlayUi ->
+        if (!source.isOverlay()) return@combine tts
+        val book = prepared.book
+        if (book == null || !book.mediaOverlay.hasNarration) return@combine tts
+        if (overlay.book?.bookId != book.bookId) return@combine tts
+        val chapter = overlay.progress?.chapterIndex
+            ?: overlay.chapterIndex.takeIf { it in book.chapters.indices }
+            ?: prepared.savedProgress?.chapterIndex ?: 0
+        tts.copy(
+            connected = overlay.playback.hasBook,
+            bookId = book.bookId,
+            isPlaying = overlay.playback.isPlaying,
+            isLoading = overlay.playback.isLoading,
+            chapterIndex = chapter.coerceIn(book.chapters.indices),
+            chapterCount = book.chapters.size,
+            chapterTitle = book.chapters.getOrNull(chapter)?.title,
+            progressPercent = ((overlay.progress?.progressPercent
+                ?: prepared.savedProgress?.progressPercent ?: 0f) / 100f).coerceIn(0f, 1f),
+            speechRate = overlay.playback.speed,
+            sleepTimerRemainingMs = sleepTimerRemainingMs,
+            sessionFinished = false,
+            sessionEndedByStop = false,
+            error = overlay.playback.error,
+            chunkIndex = -1,
+            chunkCount = 0,
+            transcriptChunks = emptyList(),
+            transcriptStartIndex = 0,
+        )
+    }.stateIn(scope, SharingStarted.Eagerly, SharedBookTtsListenState())
+
+    fun connect(bookId: String, autoStart: Boolean = false) {
         ttsController.connect()
         _uiState.value = BookTtsAudiobookUiState(loading = true)
+        _overlayInfo.value = SharedListenMediaOverlayInfo()
+        _listenSource.value = SharedListenAudioSource.TTS
         scope.launch {
             runCatching {
                 repository.loadBook(bookId) to repository.loadProgress(bookId)
             }.onSuccess { (book, progress) ->
                 _uiState.value = BookTtsAudiobookUiState(book = book, savedProgress = progress)
+                // The host reuses a live session for the same book, so
+                // reopening mid-narration never interrupts playback.
+                val overlay = withContext(Dispatchers.IO) { overlayHost.prepare(bookId) }
+                _overlayInfo.value = overlay
+                // Prefer narration when present; an explicit saved pick wins.
+                _listenSource.value = resolveSharedListenAudioSource(
+                    hasNarration = overlay.hasNarration,
+                    savedPreference = loadListenAudioSource(appContext, bookId),
+                )
+                if (autoStart) {
+                    if (_listenSource.value.isOverlay() && overlay.hasNarration) {
+                        startOverlaySession(progress?.chapterIndex ?: 0)
+                    } else {
+                        start(bookId, BookTtsSessionCoordinator.START_RESUME)
+                    }
+                }
             }.onFailure { error ->
                 _uiState.value = BookTtsAudiobookUiState(error = error.message ?: "Unable to prepare this book")
             }
@@ -691,6 +820,9 @@ class BookTtsAudiobookController(
             )
             SharedListeningHandoff.STOP_TTS -> Unit
         }
+        // A TTS start always wins over narration: the engines exclude, and the
+        // sheet only calls this in TTS mode, so stopping here cannot surprise.
+        overlayHost.stop()
         scope.launch {
             // Fresh token per session so worker-credited cloud synthesis works
             // for Listen exactly like it does for the Reader path.
@@ -716,7 +848,99 @@ class BookTtsAudiobookController(
         sleepTimerJob = null
         _sleepTimerRemainingMs.value = 0L
         _sleepTimerLabel.value = "Sleep"
+        overlayHost.stop()
         ttsController.stop()
+    }
+
+    /**
+     * Explicit source choice. Never a fallback: switching stops the other
+     * engine outright, and starting the newly chosen source is the tap that
+     * chose it.
+     */
+    fun selectListenSource(source: SharedListenAudioSource) {
+        val book = _uiState.value.book ?: return
+        saveListenAudioSource(appContext, book.bookId, source)
+        _listenSource.value = source
+        if (source.isOverlay()) {
+            if (!_overlayInfo.value.hasNarration) return
+            ttsController.stop()
+            stopImportedAudiobook()
+            startOverlaySession(_uiState.value.savedProgress?.chapterIndex ?: 0)
+        } else {
+            overlayHost.stop()
+            start(book.bookId, BookTtsSessionCoordinator.START_RESUME)
+        }
+    }
+
+    /** Source-aware play/pause for the Listen sheet. */
+    fun toggleListenPlayback(bookId: String) {
+        if (!_listenSource.value.isOverlay()) {
+            val active = playbackState.value
+            if (active.playbackSource == "AUDIOBOOK_TTS" && active.bookId == bookId && !active.sessionFinished) {
+                togglePlay()
+            } else {
+                start(bookId, BookTtsSessionCoordinator.START_RESUME)
+            }
+            return
+        }
+        if (!_overlayInfo.value.hasNarration) return
+        // Toggling pauses only the owning book; anything else is an explicit
+        // switch, which starts this book's narration instead.
+        if (overlayHost.book.value?.bookId == bookId && overlayHost.playback.value.hasBook) {
+            overlayHost.toggle()
+        } else {
+            ttsController.stop()
+            stopImportedAudiobook()
+            startOverlaySession(_uiState.value.savedProgress?.chapterIndex ?: 0)
+        }
+    }
+
+    /** Source-aware chapter seek for the Listen sheet. */
+    fun seekListenChapter(bookId: String, chapterIndex: Int) {
+        if (!_listenSource.value.isOverlay()) {
+            val active = playbackState.value
+            if (active.playbackSource == "AUDIOBOOK_TTS" && active.bookId == bookId && !active.sessionFinished) {
+                selectChapter(chapterIndex)
+            } else {
+                start(bookId, BookTtsSessionCoordinator.START_CHAPTER, chapterIndex)
+            }
+            return
+        }
+        // No TTS fallback: a chapter without narration in narration mode is
+        // unreachable by tapping (the sheet disables it), so reaching here
+        // with one only resolves to the nearest narrated chapter.
+        if (!_overlayInfo.value.hasNarration) return
+        ttsController.stop()
+        stopImportedAudiobook()
+        startOverlaySession(chapterIndex)
+    }
+
+    /** Source-aware speed for the Listen sheet. */
+    fun setListenSpeed(speed: Float) {
+        if (_listenSource.value.isOverlay()) {
+            overlayHost.setSpeed(speed)
+            return
+        }
+        val pitch = _uiState.value.savedProgress?.pitch ?: loadTtsPitch(appContext)
+        setParameters(rate = speed, pitch = pitch)
+    }
+
+    private fun startOverlaySession(chapterIndex: Int) {
+        scope.launch {
+            val started = withContext(Dispatchers.IO) { overlayHost.start(chapterIndex) }
+            if (!started) {
+                _uiState.value = _uiState.value.copy(error = "This chapter has no narration audio")
+            }
+        }
+    }
+
+    private fun stopImportedAudiobook() {
+        when (sharedListeningHandoff(SharedListeningTarget.GENERATED_BOOK_TTS)) {
+            SharedListeningHandoff.STOP_AUDIOBOOK -> appContext.startService(
+                Intent(appContext, AudiobookPlaybackService::class.java).setAction(ACTION_AUDIOBOOK_STOP),
+            )
+            SharedListeningHandoff.STOP_TTS -> Unit
+        }
     }
     fun previousChunk() = ttsController.skipToPreviousChunk()
     fun nextChunk() = ttsController.skipToNextChunk()
@@ -739,21 +963,26 @@ class BookTtsAudiobookController(
             _sleepTimerRemainingMs.value = 0L
             _sleepTimerLabel.value = "Sleep"
 
-            appContext.startService(
-                Intent(appContext, TtsService::class.java)
-                    .setAction(ACTION_BOOK_TTS_CANCEL_SLEEP_TIMER)
-            )
+            if (!_listenSource.value.isOverlay()) {
+                appContext.startService(
+                    Intent(appContext, TtsService::class.java)
+                        .setAction(ACTION_BOOK_TTS_CANCEL_SLEEP_TIMER)
+                )
+            }
             return
         }
 
         sleepTimerJob?.cancel()
 
-        appContext.startService(
-            Intent(appContext, TtsService::class.java).apply {
-                action = ACTION_BOOK_TTS_SLEEP_TIMER
-                putExtra(EXTRA_BOOK_TTS_SLEEP_MINUTES, minutes)
-            }
-        )
+        val overlayMode = _listenSource.value.isOverlay()
+        if (!overlayMode) {
+            appContext.startService(
+                Intent(appContext, TtsService::class.java).apply {
+                    action = ACTION_BOOK_TTS_SLEEP_TIMER
+                    putExtra(EXTRA_BOOK_TTS_SLEEP_MINUTES, minutes)
+                }
+            )
+        }
 
         sleepTimerJob = scope.launch {
             var remaining = minutes * 60
@@ -764,12 +993,16 @@ class BookTtsAudiobookController(
                     "${remaining / 60}:${(remaining % 60).toString().padStart(2, '0')}"
 
                 delay(1_000.milliseconds)
-                remaining = com.aryan.reader.shared.advanceSharedSleepTimer(remaining, playbackState.value.isPlaying)
+                // The countdown follows real speech on either engine: pausing
+                // narration pauses the timer, matching the TTS contract.
+                val speaking = playbackState.value.isPlaying || overlayHost.playback.value.isPlaying
+                remaining = com.aryan.reader.shared.advanceSharedSleepTimer(remaining, speaking)
             }
 
             _sleepTimerRemainingMs.value = 0L
             _sleepTimerLabel.value = "Sleep"
             sleepTimerJob = null
+            if (overlayMode) overlayHost.stop()
         }
     }
 
@@ -786,6 +1019,8 @@ class BookTtsAudiobookController(
 
     fun release() {
         sleepTimerJob?.cancel()
+        // The overlay host outlives the sheet by design: collapsing the player
+        // must not stop narration, so release only drops the TTS binding.
         ttsController.release()
         scope.cancel()
     }

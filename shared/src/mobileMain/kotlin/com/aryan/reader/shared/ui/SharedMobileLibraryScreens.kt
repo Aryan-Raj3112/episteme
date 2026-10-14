@@ -121,7 +121,10 @@ import com.aryan.reader.shared.SharedAudiobook
 import com.aryan.reader.shared.SharedAudiobookPlaybackState
 import com.aryan.reader.shared.SharedBookTtsListenState
 import com.aryan.reader.shared.SharedBookTtsListeningProgress
+import com.aryan.reader.shared.SharedListenAudioSource
+import com.aryan.reader.shared.SharedListenMediaOverlayInfo
 import com.aryan.reader.shared.SharedReaderScreenState
+import com.aryan.reader.shared.resolveSharedListenAudioSource
 import com.aryan.reader.shared.SharedTtsListenItem
 import com.aryan.reader.shared.SharedTtsListenStartPolicy
 import com.aryan.reader.shared.Shelf
@@ -226,6 +229,11 @@ fun SharedMobileUnifiedLibraryScreen(
     ttsListenState: SharedBookTtsListenState = SharedBookTtsListenState(),
     ttsProgress: List<SharedBookTtsListeningProgress> = emptyList(),
     ttsChapterTitles: Map<String, List<String>> = emptyMap(),
+    /** Publisher-narration availability by book, for Listen badges and the source switcher. */
+    ttsOverlayInfoByBook: Map<String, SharedListenMediaOverlayInfo> = emptyMap(),
+    /** Explicit TTS/narration choice by book. Absent means "prefer narration when present". */
+    listenSourceByBook: Map<String, SharedListenAudioSource> = emptyMap(),
+    onListenSourceChange: (BookItem, SharedListenAudioSource) -> Unit = { _, _ -> },
     onStartTtsListen: (BookItem, SharedTtsListenStartPolicy, Int?) -> Unit = { _, _, _ -> },
     onToggleTtsPlayback: () -> Unit = {},
     onSeekTtsChunk: (Int) -> Unit = {},
@@ -331,8 +339,8 @@ fun SharedMobileUnifiedLibraryScreen(
             continueReading = continueReading,
         )
     }
-    val ttsItems = remember(state.rawLibraryBooks, ttsProgress) {
-        buildSharedTtsListenItems(state.rawLibraryBooks, ttsProgress)
+    val ttsItems = remember(state.rawLibraryBooks, ttsProgress, ttsOverlayInfoByBook) {
+        buildSharedTtsListenItems(state.rawLibraryBooks, ttsProgress, ttsOverlayInfoByBook)
     }
     val advancedFilterCount = state.libraryFilters.fileTypes.size +
         state.libraryFilters.sourceFolders.size +
@@ -953,6 +961,11 @@ fun SharedMobileUnifiedLibraryScreen(
                 onStopPlayback = onStopTtsPlayback,
                 onDismiss = { showTtsPlayerSheet = false },
                 onOpenVoiceSettings = onOpenTtsVoiceSettings,
+                // Absent pick resolves here exactly like the controller does:
+                // narration when present, TTS otherwise. Never a silent switch.
+                listenSource = listenSourceByBook[item.book.id]
+                    ?: resolveSharedListenAudioSource(item.hasMediaOverlayNarration, null),
+                onListenSourceChange = { source -> onListenSourceChange(item.book, source) },
             )
         }
     }

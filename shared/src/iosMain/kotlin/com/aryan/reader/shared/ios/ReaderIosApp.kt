@@ -160,6 +160,7 @@ import com.aryan.reader.shared.splitFilesByAudiobookDecodability
 import com.aryan.reader.shared.SharedAudiobookPlaybackRequest
 import com.aryan.reader.shared.SharedAudiobookPlaybackState
 import com.aryan.reader.shared.SharedTtsListenStartPolicy
+import com.aryan.reader.shared.isOverlay
 import com.aryan.reader.shared.sharedAudiobookResumePosition
 import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.UserData
@@ -3639,6 +3640,20 @@ private fun ReaderIosApp(
     // One shared engine for both the in-book reader and audiobook Listen, exactly as
     // Android's BookTtsSessionCoordinator shares the reader's TtsPlaybackManager.
     val readerTtsEngine = rememberSharedMobileEpubLocalTts()
+    // EPUB media overlay narration. App-level, not reader-level, for the same reason the audiobook
+    // player is: the arbiter below has to be able to stop narration from a surface that is not the
+    // reader, and an engine the reader owned could not be stopped from elsewhere. Listen narration
+    // drives this same engine through its own session; last starter owns continuation.
+    val mediaOverlayEngine = remember { IosSharedMediaOverlayPlayback(bridge) }
+    DisposableEffect(mediaOverlayEngine) {
+        // Native reports are delivered through the bridge, and the bridge has to reach *this* engine
+        // — the one the arbiter stops. A lookup instead of a registration would be a second engine.
+        bridge.mediaOverlayEngine = mediaOverlayEngine
+        onDispose {
+            bridge.mediaOverlayEngine = null
+            mediaOverlayEngine.release()
+        }
+    }
     val ttsListenController = remember {
         IosBookTtsListeningController(
             localEngine = readerTtsEngine,
@@ -3660,6 +3675,7 @@ private fun ReaderIosApp(
                     forKey = IOS_LISTEN_TTS_ENGINE_MODE_KEY,
                 )
             },
+            overlayEngine = mediaOverlayEngine,
         )
     }
     // The shared cloud sheet owns the cloud voice; the controller applies it to each new session
@@ -3671,20 +3687,6 @@ private fun ReaderIosApp(
     }
 
     DisposableEffect(ttsListenController) { onDispose(ttsListenController::release) }
-
-    // EPUB media overlay narration. App-level, not reader-level, for the same reason the audiobook
-    // player is: the arbiter below has to be able to stop narration from a surface that is not the
-    // reader, and an engine the reader owned could not be stopped from elsewhere.
-    val mediaOverlayEngine = remember { IosSharedMediaOverlayPlayback(bridge) }
-    DisposableEffect(mediaOverlayEngine) {
-        // Native reports are delivered through the bridge, and the bridge has to reach *this* engine
-        // — the one the arbiter stops. A lookup instead of a registration would be a second engine.
-        bridge.mediaOverlayEngine = mediaOverlayEngine
-        onDispose {
-            bridge.mediaOverlayEngine = null
-            mediaOverlayEngine.release()
-        }
-    }
 
     // Single arbiter for every "one surface claimed the audio output" decision. Callers below
     // state intent and never name an engine to stop; the decision itself is
@@ -3704,6 +3706,7 @@ private fun ReaderIosApp(
             stopReaderLocal = { readerTtsEngine.stop() },
             stopReaderCloud = { readerCloudTts.stop() },
             stopMediaOverlay = { mediaOverlayEngine.stop() },
+            stopListenOverlay = { ttsListenController.stopOverlayForHandoff() },
         )
     }
     // Android parity (sharedListeningHandoff): cloud read-aloud wins the audio output — stop
@@ -8190,6 +8193,20 @@ private fun ReaderIosApp(
                                 ttsListenState = ttsListenController.state,
                                 ttsProgress = ttsListenController.progressByBook.values.toList(),
                                 ttsChapterTitles = ttsListenController.chapterTitlesByBook,
+                                ttsOverlayInfoByBook = ttsListenController.overlayInfoByBook,
+                                listenSourceByBook = ttsListenController.listenSourceByBook,
+                                onListenSourceChange = { book, source ->
+                                    if (source.isOverlay()) {
+                                        listeningArbiter.onMediaOverlayStarting()
+                                    } else {
+                                        listeningArbiter.onListenSessionStarting()
+                                    }
+                                    ttsListenController.selectListenSource(
+                                        book,
+                                        source,
+                                        replacements = state.readerTtsReplacementPreferences,
+                                    )
+                                },
                                 onStartTtsListen = { book, policy, chapterIndex ->
                                     iosTtsListenLog(
                                         "onStartTtsListen ENTRY bookId=${book.id} name=${book.displayName} " +
@@ -8208,7 +8225,7 @@ private fun ReaderIosApp(
                                 onSeekTtsChunk = ttsListenController::seekToChunk,
                                 onSeekTtsChapter = ttsListenController::selectChapter,
                                 onTtsSpeedChange = { rate ->
-                                    ttsListenController.setParameters(rate, ttsListenController.state.pitch)
+                                    ttsListenController.setListenSpeed(rate)
                                 },
                                 onTtsSleepTimer = { minutes ->
                                     if (minutes == null) {
