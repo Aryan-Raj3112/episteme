@@ -28,7 +28,14 @@ import platform.posix.memcpy
 import kotlin.math.roundToInt
 
 internal fun extractIosPdfPresentation(book: BookItem): IosBookPresentation {
-    val path = book.path.resolveIosEpubSourcePath() ?: return IosBookPresentation()
+    // Scope spans the whole open/render/close; early returns inside must not
+    // leak it — withResolvedIosBookPath balances on every path.
+    return withResolvedIosBookPath(book.path) { path ->
+        extractIosPdfPresentationAtPath(book, path)
+    } ?: IosBookPresentation()
+}
+
+private fun extractIosPdfPresentationAtPath(book: BookItem, path: String): IosBookPresentation {
     IosPdfiumRuntime.ensureInitialized()
     val document = FPDF_LoadDocument(path, null) ?: return IosBookPresentation()
     try {

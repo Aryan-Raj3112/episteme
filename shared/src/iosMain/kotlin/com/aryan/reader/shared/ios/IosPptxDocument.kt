@@ -37,9 +37,8 @@ import kotlin.math.roundToInt
 
 /** iOS PPTX loading entry point. The resulting chapters are intentionally one slide each. */
 internal fun loadIosPptxBook(book: BookItem): SharedEpubBook {
-    val path = book.path.resolveIosEpubSourcePath() ?: error("PPTX path is unavailable")
     val startedAt = currentTimestamp()
-    val archive = IosZipEpubArchive(path)
+    val archive = openIosZipArchive(book.path) ?: error("PPTX path is unavailable")
     var slideCount = 0
     var elementCount = 0
     var imageBytes = 0L

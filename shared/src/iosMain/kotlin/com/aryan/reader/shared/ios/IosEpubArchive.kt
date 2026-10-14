@@ -261,8 +261,7 @@ internal fun extractIosBookPresentation(book: BookItem): IosBookPresentation = r
         FileType.FODT -> extractIosFlatDocumentPresentation(book)
         FileType.FB2 -> extractIosFb2Presentation(book)
         FileType.CBZ -> {
-            val path = book.path.resolveIosEpubSourcePath() ?: return@runCatching IosBookPresentation()
-            val archive = IosZipEpubArchive(path)
+            val archive = openIosZipArchive(book.path) ?: return@runCatching IosBookPresentation()
             val firstImage = archive.entryPaths
                 .filter { it.substringAfterLast('.', "").lowercase() in setOf("jpg", "jpeg", "png", "gif", "webp") }
                 .sortedWith(String.CASE_INSENSITIVE_ORDER)
@@ -277,8 +276,7 @@ internal fun extractIosBookPresentation(book: BookItem): IosBookPresentation = r
 }
 
 private fun extractIosEpubPresentation(book: BookItem): IosBookPresentation {
-    val path = book.path.resolveIosEpubSourcePath() ?: return IosBookPresentation()
-    val archive = IosZipEpubArchive(path)
+    val archive = openIosZipArchive(book.path) ?: return IosBookPresentation()
     val container = archive.readText("META-INF/container.xml").orEmpty()
     val opfPath = Regex("""<rootfile\b[^>]*\bfull-path\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
         .find(container)?.groupValues?.getOrNull(1)
@@ -314,7 +312,12 @@ private fun extractIosEpubPresentation(book: BookItem): IosBookPresentation {
 }
 
 private fun extractIosMobiPresentation(book: BookItem): IosBookPresentation {
-    val path = book.path.resolveIosEpubSourcePath() ?: return IosBookPresentation()
+    return withResolvedIosBookPath(book.path) { path ->
+        extractIosMobiPresentationAtPath(book, path)
+    } ?: IosBookPresentation()
+}
+
+private fun extractIosMobiPresentationAtPath(book: BookItem, path: String): IosBookPresentation {
     val file = fopen(path, "rb") ?: return IosBookPresentation()
     val mobi = mobi_init() ?: run {
         fclose(file)
@@ -403,8 +406,11 @@ internal fun loadIosEpubBook(book: BookItem): SharedEpubBook {
     // streaming loader keeps only one slide's decoded bytes alive while doing so.
     val cacheKey = book.iosBookLoadCacheKey().takeUnless { book.type == FileType.PPTX }
     if (book.type == FileType.EPUB) {
-        book.path.resolveIosEpubSourcePath()?.let { path ->
-            IosEpubResourceStore.register(book.id, path)
+        // Store the stable ref (not a scope-dead resolved path) so the lazy
+        // reopen in archivePathFor can re-acquire scope. Mirrors Android, where
+        // the stored content:// URI is itself the grant.
+        book.path?.takeIf { it.isNotBlank() }?.let { stablePath ->
+            IosEpubResourceStore.register(book.id, stablePath)
         }
     }
     if (cacheKey != null) {
@@ -445,16 +451,17 @@ internal fun loadIosEpubBook(book: BookItem): SharedEpubBook {
     if (book.type in IOS_SINGLE_DOCUMENT_READER_TYPES) {
         return loadIosSingleDocumentBook(book).also { book.iosBookLoadCacheSave(cacheKey, it) }
     }
-    val path = book.path.resolveIosEpubSourcePath()
+    val archive = openIosZipArchive(book.path)
         ?: error("EPUB path is unavailable")
-    val archive = IosZipEpubArchive(path)
-    IosEpubResourceStore.register(book.id, path, archive)
-    iosEpubLoadLog { "Archive opened path=$path entries=${archive.entryPaths.size} elapsed=${currentTimestamp() - startedAt}ms" }
+    // Register under the stable stored path (ref for linked folders) so later
+    // borrows resolve through scope rather than a dead absolute path.
+    IosEpubResourceStore.register(book.id, book.path ?: "<null>", archive)
+    iosEpubLoadLog { "Archive opened entries=${archive.entryPaths.size} elapsed=${currentTimestamp() - startedAt}ms" }
     val loadMark = sharedEpubOpenTraceMark()
     val loaded = SharedEpubPackageLoader.load(
         archive = archive,
         sourceId = book.id,
-        fileName = book.displayName.ifBlank { path.substringAfterLast('/') }
+        fileName = book.displayName.ifBlank { (book.path ?: "").substringAfterLast('/') }
     )
     val parseMs = sharedEpubOpenTraceElapsedMs(loadMark)
     sharedEpubOpenTrace { "iosLoad packageLoaderDone ms=${sharedEpubOpenTraceMs(parseMs)} totalMs=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(traceMark))}" }
@@ -470,14 +477,19 @@ private val iosBookLoadDiskCache = SharedBookLoadCache()
 private val iosBookLoadLock = NSLock()
 
 private fun BookItem.iosBookLoadCacheKey(): SharedBookLoadCacheKey? {
-    val path = path.resolveIosEpubSourcePath() ?: return null
-    val attributes = NSFileManager.defaultManager.attributesOfItemAtPath(path, error = null) ?: return null
+    // Scope must be held across resolve+stat; the short resolver alone dies on
+    // device before attributesOfItemAtPath runs. Stable canonical path is the
+    // stored ref for linked folders (container-independent, Android parity).
+    val resolved = withResolvedIosBookPath(path) { it } ?: return null
+    val attributes = withResolvedIosBookPath(path) {
+        NSFileManager.defaultManager.attributesOfItemAtPath(it, error = null)
+    } ?: return null
     val length = (attributes[NSFileSize] as? NSNumber)?.longLongValue ?: 0L
     if (length <= 0L) return null
     val lastModified = ((attributes[NSFileModificationDate] as? NSDate)?.timeIntervalSince1970 ?: 0.0)
         .let { (it * 1000.0).roundToLong() }
     return SharedBookLoadCacheKey(
-        canonicalPath = path,
+        canonicalPath = path ?: resolved,
         type = type,
         length = length,
         lastModified = lastModified,
@@ -542,20 +554,26 @@ private val IOS_SINGLE_DOCUMENT_READER_TYPES = setOf(
 )
 
 private fun loadIosSingleDocumentBook(book: BookItem): SharedEpubBook {
-    val path = book.path.resolveIosEpubSourcePath()
+    val bytes = readIosBookBytes(book.path)
         ?: error("${book.type.name} path is unavailable")
-    val source = path.readIosFileBytes().decodeEpubText()
+    val source = bytes.decodeEpubText()
+    // baseHref needs a filesystem path for relative resources (HTML with
+    // subresources). Resolve scoped; fall back to the stored value for refs
+    // whose folder is currently unreachable (content itself is inline).
+    val baseHrefPath = withResolvedIosBookPath(book.path) { it }
+        ?: book.path?.takeUnless { SharedIosBookSourceRef.isProviderRef(it) }
+        ?: book.displayName
     val title = book.title?.takeIf { it.isNotBlank() }
         ?: book.displayName.substringBeforeLast('.').ifBlank { book.displayName }
     val chapters: List<SharedEpubChapter> = when (book.type) {
-        FileType.HTML -> listOf(singleIosDocumentChapter(book, path, title, source))
+        FileType.HTML -> listOf(singleIosDocumentChapter(book, baseHrefPath, title, source))
         FileType.FB2 -> loadIosFb2Chapters(book, source, fallbackTitle = title)
         FileType.FODT -> loadIosFodtChapters(book, source, fallbackTitle = title)
         FileType.MD -> loadIosMarkdownChapters(book, source, fallbackTitle = title)
         else -> listOf(
             singleIosDocumentChapter(
                 book,
-                path,
+                baseHrefPath,
                 title,
                 "<pre>${source.escapeIosReaderHtml()}</pre>",
             )
@@ -563,7 +581,7 @@ private fun loadIosSingleDocumentBook(book: BookItem): SharedEpubBook {
     }
     return SharedEpubBook(
         id = book.id,
-        fileName = book.displayName.ifBlank { path.substringAfterLast('/') },
+        fileName = book.displayName.ifBlank { baseHrefPath.substringAfterLast('/') },
         title = title,
         author = book.author,
         chapters = chapters,
@@ -739,8 +757,7 @@ private fun loadIosCbzBook(book: BookItem): SharedEpubBook {
             },
         )
     }
-    val path = book.path.resolveIosEpubSourcePath() ?: error("CBZ path is unavailable")
-    val archive = IosZipEpubArchive(path)
+    val archive = openIosZipArchive(book.path) ?: error("CBZ path is unavailable")
     val imagePaths = archive.entryPaths
         .filter { it.isIosComicImagePath() }
         .sortedWith(String.CASE_INSENSITIVE_ORDER)
@@ -751,8 +768,8 @@ private fun loadIosCbzBook(book: BookItem): SharedEpubBook {
 }
 
 private fun loadIosCbtBook(book: BookItem): SharedEpubBook {
-    val path = book.path.resolveIosEpubSourcePath() ?: error("CBT path is unavailable")
-    val entries = path.readIosFileBytes()
+    val bytes = readIosBookBytes(book.path) ?: error("CBT path is unavailable")
+    val entries = bytes
         .readComicTarEntries()
         .filter { it.first.isIosComicImagePath() }
         .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.first })
@@ -761,7 +778,15 @@ private fun loadIosCbtBook(book: BookItem): SharedEpubBook {
 }
 
 private fun loadIosLibarchiveComicBook(book: BookItem): SharedEpubBook {
-    val path = book.path.resolveIosEpubSourcePath() ?: error("${book.type.name} path is unavailable")
+    // Scope must span the native open+read; resolving first then opening
+    // after stop is the device-only failure. Android holds its SAF grant for
+    // the whole Worker, same effect.
+    return withResolvedIosBookPath(book.path) { path ->
+        loadIosLibarchiveComicBookAtPath(book, path)
+    } ?: error("${book.type.name} path is unavailable")
+}
+
+private fun loadIosLibarchiveComicBookAtPath(book: BookItem, path: String): SharedEpubBook {
     val archive = archive_read_new() ?: error("Could not initialize archive reader")
     try {
         archive_read_support_filter_all(archive)
@@ -827,7 +852,18 @@ private fun loadIosMobiBook(book: BookItem): SharedEpubBook {
         iosMobiLog {
             "Load requested id=${book.id} file=${book.displayName} storedPathPresent=${!book.path.isNullOrBlank()}"
         }
-        val path = book.path.resolveIosEpubSourcePath() ?: error("MOBI path is unavailable")
+        return withResolvedIosBookPath(book.path) { path ->
+            loadIosMobiBookAtPath(book, path)
+        } ?: error("MOBI path is unavailable")
+    } catch (throwable: Throwable) {
+        iosMobiLog {
+            "Load failed type=${throwable::class.simpleName} message=${throwable.message ?: "<none>"}"
+        }
+        throw throwable
+    }
+}
+
+private fun loadIosMobiBookAtPath(book: BookItem, path: String): SharedEpubBook {
         iosMobiLog {
             "Resolved source file=${path.substringAfterLast('/')} exists=${NSFileManager.defaultManager.fileExistsAtPath(path)}"
         }
@@ -983,12 +1019,6 @@ private fun loadIosMobiBook(book: BookItem): SharedEpubBook {
             mobi_free(mobi)
             iosMobiLog { "Released native MOBI parser" }
         }
-    } catch (throwable: Throwable) {
-        iosMobiLog {
-            "Load failed type=${throwable::class.simpleName} message=${throwable.message ?: "<none>"}"
-        }
-        throw throwable
-    }
 }
 
 private fun ByteArray.iosImageMimeType(): String? = when {
@@ -1065,8 +1095,7 @@ private fun loadIosZipDocumentBook(book: BookItem): SharedEpubBook {
     if (book.type == FileType.PPTX) {
         return loadIosPptxBook(book)
     }
-    val path = book.path.resolveIosEpubSourcePath() ?: error("${book.type.name} path is unavailable")
-    val archive = IosZipEpubArchive(path)
+    val archive = openIosZipArchive(book.path) ?: error("${book.type.name} path is unavailable")
     val title = book.title?.takeIf { it.isNotBlank() }
         ?: book.displayName.substringBeforeLast('.').ifBlank { book.displayName }
     val chapters = when (book.type) {
@@ -1093,8 +1122,7 @@ private fun loadIosZipDocumentBook(book: BookItem): SharedEpubBook {
 private fun loadIosDocBook(book: BookItem): SharedEpubBook {
     val title = book.title?.takeIf { it.isNotBlank() }
         ?: book.displayName.substringBeforeLast('.').ifBlank { book.displayName }
-    val path = book.path.resolveIosEpubSourcePath() ?: error("DOC path is unavailable")
-    val bytes = path.readIosFileBytes()
+    val bytes = readIosBookBytes(book.path) ?: error("DOC path is unavailable")
     require(bytes.size <= MAX_IOS_DOCX_ARCHIVE_BYTES) {
         "This DOC file is too large to open safely on this device."
     }
@@ -1295,23 +1323,27 @@ private fun String.escapeIosReaderHtml(): String {
         .replace("\"", "&quot;")
 }
 
-internal class IosZipEpubArchive(path: String) : SharedEpubArchive {
+internal class IosZipEpubArchive private constructor(
+    bytes: ByteArray,
+    debugName: String,
+    fromBytes: Boolean,
+) : SharedEpubArchive {
     private val openMark = sharedEpubOpenTraceMark()
-    private val archiveBytes: ByteArray
-    private val entries: Map<String, IosZipEntry>
-
-    init {
-        val readMark = sharedEpubOpenTraceMark()
-        archiveBytes = path.readIosFileBytes()
-        val readMs = sharedEpubOpenTraceElapsedMs(readMark)
-        val parseMark = sharedEpubOpenTraceMark()
-        entries = parseZipEntries(archiveBytes)
-        val parseMs = sharedEpubOpenTraceElapsedMs(parseMark)
+    private val archiveBytes: ByteArray = bytes
+    private val entries: Map<String, IosZipEntry> = parseZipEntries(bytes).also {
         sharedEpubOpenTrace {
-            "zip open path=$path sizeBytes=${archiveBytes.size} entryCount=${entries.size} " +
-                "fileReadMs=${sharedEpubOpenTraceMs(readMs)} centralDirParseMs=${sharedEpubOpenTraceMs(parseMs)} " +
+            "zip open path=$debugName sizeBytes=${bytes.size} entryCount=${it.size} " +
                 "totalMs=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(openMark))}"
         }
+    }
+
+    /** Direct path open for app-managed files that need no scope. */
+    constructor(path: String) : this(bytes = path.readIosFileBytes(), debugName = path, fromBytes = true)
+
+    companion object {
+        /** Scoped-bytes open; caller already holds scope and read bytes. */
+        fun fromBytes(bytes: ByteArray, debugName: String = "<bytes>"): IosZipEpubArchive =
+            IosZipEpubArchive(bytes = bytes, debugName = debugName, fromBytes = true)
     }
 
     override val entryPaths: Set<String> = entries.values.mapTo(linkedSetOf()) { it.path }
@@ -1895,11 +1927,32 @@ internal fun String?.resolveIosEpubSourcePath(): String? {
 internal fun String.readIosFileBytes(): ByteArray {
     val data = NSFileManager.defaultManager.contentsAtPath(this) ?: error("Could not read EPUB file: $this")
     require(data.length <= ZipMaximumArchiveBytes.toULong()) { "EPUB file is too large" }
-    val output = ByteArray(data.length.toInt())
-    if (output.isNotEmpty()) {
-        output.usePinned { pinned -> memcpy(pinned.addressOf(0), data.bytes, output.size.convert()) }
+    return data.toIosByteArray()
+}
+
+/**
+ * Scoped byte read for either a provider ref or a plain path. Provider refs
+ * hold Swift scope for the whole read (SAF parity); plain paths read direct.
+ * Null when unreachable — callers report "unavailable" and keep the row.
+ */
+internal fun readIosBookBytes(pathOrRef: String?): ByteArray? {
+    val value = pathOrRef?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    if (SharedIosBookSourceRef.isProviderRef(value)) {
+        return readIosFolderBookBytes(value)?.also {
+            require(it.size.toULong() <= ZipMaximumArchiveBytes.toULong()) { "EPUB file is too large" }
+        }
     }
-    return output
+    return runCatching { value.readIosFileBytes() }.getOrNull()
+}
+
+/**
+ * Opens a zip archive holding scope for the whole byte read. Replaces the
+ * resolve-then-read split that died on device between `stopAccessing` and
+ * `contentsAtPath`.
+ */
+internal fun openIosZipArchive(pathOrRef: String?): IosZipEpubArchive? {
+    val bytes = readIosBookBytes(pathOrRef) ?: return null
+    return IosZipEpubArchive.fromBytes(bytes, debugName = pathOrRef ?: "<bytes>")
 }
 
 internal fun ByteArray.decodeEpubText(): String = SharedTextDecoding.decode(this)
@@ -1980,12 +2033,16 @@ internal object IosEpubResourceStore {
      *
      * Cached under the same [MaxArchives] bound and the same staleness check as the read path, so a
      * caller arriving by path cannot leave a second copy of a large book resident.
+     *
+     * Opens via [openIosZipArchive] so linked-folder refs re-acquire scope;
+     * a bare `IosZipEpubArchive(path)` on a scope-dead resolved path is the
+     * device-only failure this store exists to avoid.
      */
     private fun archivePathFor(bookId: String): IosZipEpubArchive? {
         // Read the cache directly rather than through registeredArchive, which resolves here.
         lock.lockWithResult { archives[bookId] }?.let { return it }
         val path = lock.lockWithResult { paths[bookId] } ?: return null
-        val archive = runCatching { IosZipEpubArchive(path) }.getOrNull() ?: return null
+        val archive = runCatching { openIosZipArchive(path) }.getOrNull() ?: return null
         lock.lock()
         try {
             if (paths[bookId] == path) {

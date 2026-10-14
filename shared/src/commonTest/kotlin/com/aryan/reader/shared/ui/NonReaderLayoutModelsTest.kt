@@ -128,7 +128,7 @@ class NonReaderLayoutModelsTest {
     }
 
     @Test
-    fun `content-only books follow relevance, not recency`() {
+    fun `content-only books follow relevance instead of recency`() {
         val best = book(id = "best", displayName = "Best.epub")
         val recent = book(id = "recent", displayName = "Recent.epub", positionModified = 99_000L)
         val ordered = mobileUnifiedLibraryBooks(

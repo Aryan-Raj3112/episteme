@@ -1260,6 +1260,47 @@ class ReaderIosBridge internal constructor(
         )
     }
 
+    /**
+     * Installs the Swift-owned scope driver that holds the bookmark-resolved
+     * `NSURL` across an acquire/release pair. Android needs nothing here (its
+     * SAF grant is process-wide); iOS needs it for every byte read through a
+     * File Provider or sandboxed location. Without it, a path resolved by
+     * [setFolderBookmarkResolver] is dead by the time the caller reads.
+     *
+     * Split into two setters (rather than one two-closure method) to match
+     * the existing single-closure handler pattern Swift already uses.
+     */
+    fun setFolderScopeAcquireHandler(handler: ((String) -> String?)?) {
+        val release = currentScopeReleaseHandler
+        installScopeDriver(acquire = handler, release = release)
+    }
+
+    fun setFolderScopeReleaseHandler(handler: ((String) -> Unit)?) {
+        val acquire = currentScopeAcquireHandler
+        installScopeDriver(acquire = acquire, release = handler)
+    }
+
+    private var currentScopeAcquireHandler: ((String) -> String?)? = null
+    private var currentScopeReleaseHandler: ((String) -> Unit)? = null
+
+    private fun installScopeDriver(
+        acquire: ((String) -> String?)?,
+        release: ((String) -> Unit)?,
+    ) {
+        currentScopeAcquireHandler = acquire
+        currentScopeReleaseHandler = release
+        if (acquire == null || release == null) {
+            IosFolderBookScope.installDriver(null)
+            return
+        }
+        IosFolderBookScope.installDriver(
+            object : IosFolderScopeDriver {
+                override fun acquire(folderName: String): String? = acquire(folderName)
+                override fun release(folderName: String) = release(folderName)
+            }
+        )
+    }
+
     internal fun addFolderManagedFile(folderName: String, sourcePath: String, fileName: String): String? {
         return folderFileAdditionHandler?.invoke(folderName, sourcePath, fileName)
     }
@@ -3230,15 +3271,19 @@ private fun persistIosFolderSidecar(book: BookItem) {
     val folderName = book.sourceFolder?.takeIf { it.isNotBlank() } ?: return
     if (!SharedIosBookSourceRef.isProviderRef(book.path)) return
     val metadata = book.toSharedFolderBookMetadata() ?: return
-    val folderRoot = IosFolderBookScope.current().resolveFolderPath(folderName)
-    if (folderRoot == null) {
+    // Hold scope across the write; resolving first then writing after stop is
+    // the device-only failure. Android writes through its held SAF grant.
+    val written = withIosFolderScope(folderName) { folderRoot ->
+        IosFolderSidecarStore.writeMetadata(folderRoot, metadata)
+    }
+    if (written == null) {
         IosDiagnosticLogStore.record(
             LOCAL_FOLDER_SCAN_LOG_TAG,
             "sidecar.skip folder=$folderName id=${book.id} reason=unresolved",
         )
         return
     }
-    if (IosFolderSidecarStore.writeMetadata(folderRoot, metadata)) {
+    if (written) {
         IosDiagnosticLogStore.record(
             LOCAL_FOLDER_SCAN_LOG_TAG,
             "sidecar.written folder=$folderName id=${book.id}",
@@ -5562,10 +5607,11 @@ private fun ReaderIosApp(
             // for folder books, so they survive a rescan, a device change and a
             // reinstall. Android reads them here too; iOS previously hardcoded
             // an empty map, which is why a folder book's state was lost.
-            val folderRoot = IosFolderBookScope.current().resolveFolderPath(scan.folderName)
-            val remoteMetadata = folderRoot
-                ?.let { root -> IosFolderSidecarStore.readAllMetadata(root) }
-                .orEmpty()
+            // Scope spans the whole batch read; short-resolve then read dies on
+            // device after stop.
+            val remoteMetadata = withIosFolderScope(scan.folderName) { root ->
+                IosFolderSidecarStore.readAllMetadata(root)
+            }.orEmpty()
             if (remoteMetadata.isNotEmpty()) {
                 IosDiagnosticLogStore.record(
                     LOCAL_FOLDER_SCAN_LOG_TAG,

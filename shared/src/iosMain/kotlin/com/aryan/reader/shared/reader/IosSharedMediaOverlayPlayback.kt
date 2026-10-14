@@ -76,7 +76,10 @@ class IosSharedMediaOverlayPlayback(
      * range rather than the wrong recording's bytes.
      */
     override fun attachArchive(book: BookItem?) {
-        archivePath = book?.path?.resolveIosEpubSourcePath()
+        // Store the stable ref, not a scope-dead resolved path. The store
+        // re-opens scoped via openIosZipArchive, so a resolved absolute dies on
+        // device while the ref survives — Android parity (content:// URI).
+        archivePath = book?.path?.takeIf { it.isNotBlank() }
         bridge.setMediaOverlayAudioSource(
             readEntryRange = { entryPath, offset, length -> readEntryRange(entryPath, offset, length) },
             entryLength = { entryPath -> entryLengthOrNull(entryPath) }

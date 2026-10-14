@@ -49,19 +49,19 @@ internal data class PresentationAttemptKey(
 }
 
 internal fun extractIosZipDocumentPresentation(book: BookItem, metadataPath: String): IosBookPresentation {
-    val path = book.path.resolveIosEpubSourcePath() ?: return IosBookPresentation()
-    val xml = IosZipEpubArchive(path).readText(metadataPath) ?: return IosBookPresentation()
+    val archive = openIosZipArchive(book.path) ?: return IosBookPresentation()
+    val xml = archive.readText(metadataPath) ?: return IosBookPresentation()
     return parseSharedDocumentXmlMetadata(xml).toIosBookPresentation()
 }
 
 internal fun extractIosFlatDocumentPresentation(book: BookItem): IosBookPresentation {
-    val path = book.path.resolveIosEpubSourcePath() ?: return IosBookPresentation()
-    return parseSharedDocumentXmlMetadata(path.readIosFileBytes().decodeEpubText()).toIosBookPresentation()
+    val bytes = readIosBookBytes(book.path) ?: return IosBookPresentation()
+    return parseSharedDocumentXmlMetadata(bytes.decodeEpubText()).toIosBookPresentation()
 }
 
 internal fun extractIosFb2Presentation(book: BookItem): IosBookPresentation {
-    val path = book.path.resolveIosEpubSourcePath() ?: return IosBookPresentation()
-    return parseSharedFb2Metadata(path.readIosFileBytes().decodeEpubText()).toIosBookPresentation()
+    val bytes = readIosBookBytes(book.path) ?: return IosBookPresentation()
+    return parseSharedFb2Metadata(bytes.decodeEpubText()).toIosBookPresentation()
 }
 
 private fun SharedDocumentMetadata.toIosBookPresentation() = IosBookPresentation(

@@ -1225,13 +1225,13 @@ internal class IosBookTtsListeningController(
         book: BookItem,
         replacements: ReaderTtsReplacementPreferences,
     ): List<IosTtsListenChapter> {
-        val path = book.path.resolveIosEpubSourcePath()
+        val archive = openIosZipArchive(book.path)
             ?: error("EPUB path is unavailable")
         val spineChapters = loadSharedEpubTtsChapters(
-            archive = IosZipEpubArchive(path),
-            fileName = book.displayName.ifBlank { path.substringAfterLast('/') },
+            archive = archive,
+            fileName = book.displayName.ifBlank { (book.path ?: "").substringAfterLast('/') },
         )
-        iosTtsListenLog("buildIosEpubListenChapters spineDocs=${spineChapters.size} path=$path")
+        iosTtsListenLog("buildIosEpubListenChapters spineDocs=${spineChapters.size} ref=${book.path}")
         return spineChapters.mapIndexed { index, spineChapter ->
             // Same stable-CFI contract as the shared-book path above: real
             // offsets, no `headless/...`, so progress survives into the reader.
@@ -1314,6 +1314,17 @@ internal class IosBookTtsListeningController(
     }
 
     private suspend fun extractIosPdfPageTexts(path: String): List<String> {
+        // Scoped resolve: folder-book refs need held scope across FPDF open.
+        // `resolveIosReadablePath` alone dies on device before FPDF reads.
+        val scope = acquireScopeForBookPath(path)
+        try {
+            return extractIosPdfPageTextsScoped(path)
+        } finally {
+            scope?.close()
+        }
+    }
+
+    private suspend fun extractIosPdfPageTextsScoped(path: String): List<String> {
         // `resolveIosReadablePath` is the single resolver for the three shapes a book path can
         // take. This used to be a local file://-only copy, so a folder-book ref
         // (`ios-folder-book://...`) was handed to PDFium verbatim and every PDF failed with

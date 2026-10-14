@@ -235,6 +235,12 @@ struct ContentView: View {
             bridge.setFolderBookmarkResolver { folderName in
                 resolveImportedFolderPath(folderName)
             }
+            // Lets Kotlin hold scope across a byte read, SAF-style. The
+            // resolver above stops scope on return (resolve+stat only); every
+            // actual file read must go through acquire/release instead, or it
+            // fails on device while passing in the simulator.
+            bridge.setFolderScopeAcquireHandler { folderName in acquireImportedFolderScope(folderName) }
+            bridge.setFolderScopeReleaseHandler { folderName in releaseImportedFolderScope(folderName) }
             audiobookPlayer.onPlaybackUpdate = { isPlaying, isLoading, positionMs, durationMs, speed, sleepTimerRemainingMs, error in
                 bridge.updateAudiobookPlaybackState(
                     isPlaying: isPlaying,
@@ -523,9 +529,12 @@ struct ContentView: View {
 /// `NSURLBookmarkCreationWithoutImplicitSecurityScope` documents as valid
 /// "until reboot at the latest", which is what makes an in-place read survive
 /// relaunch without the macOS-only option.
-private let importedFolderBookmarkOptions: URL.BookmarkCreationOptions = [
-    .minimalBookmark
-]
+///
+/// Full-fidelity bookmarks (no `.minimalBookmark`): minimal bookmarks drop
+/// metadata the resolver needs after a reboot / provider eviction on device.
+/// The bytes are small (one per folder); durability beats size here, matching
+/// Android's indefinite SAF grant.
+private let importedFolderBookmarkOptions: URL.BookmarkCreationOptions = []
 
 private let importedFolderBookmarksKey = "reader.ios.importedFolderBookmarks.v1"
 
@@ -560,6 +569,95 @@ private func resolveImportedFolderBookmark(
 private func storedImportedFolderBookmark(folderName: String) -> Data? {
     let bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
     return bookmarks[folderName]
+}
+
+/// Swift-owned scope holds for SAF-like in-place reads.
+///
+/// Android's SAF grant is process-wide; iOS scope is per-URL and dies with
+/// `stopAccessingSecurityScopedResource`. Kotlin cannot hold the
+/// bookmark-resolved `NSURL` (it only ever sees a `String` path — and a
+/// `fileURLWithPath` rebuilt from that path carries no entitlement), so Swift
+/// retains the resolved URL here across an acquire/release pair. Refcounted:
+/// nested acquires on the same folder reuse the live scope.
+private let importedFolderScopeLock = NSLock()
+private var importedFolderScopeHolds: [String: (url: URL, count: Int)] = [:]
+
+/// Acquires scope for `folderName` and returns its root path. The scope stays
+/// held until a matching `releaseImportedFolderScope` — unlike
+/// `resolveImportedFolderPath`, which stops scope on return and is only safe
+/// for resolve+stat, never for byte reads on device.
+nonisolated func acquireImportedFolderScope(_ folderName: String) -> String? {
+    guard let bookmark = UserDefaults.standard
+        .dictionary(forKey: importedFolderBookmarksKey)?[folderName] as? Data else {
+        return nil
+    }
+    importedFolderScopeLock.lock()
+    if let held = importedFolderScopeHolds[folderName] {
+        importedFolderScopeHolds[folderName] = (held.url, held.count + 1)
+        let path = held.url.standardizedFileURL.path
+        importedFolderScopeLock.unlock()
+        return path
+    }
+    importedFolderScopeLock.unlock()
+    var isStale = false
+    guard let url = try? URL(
+        resolvingBookmarkData: bookmark,
+        options: [.withoutUI, .withoutImplicitStartAccessing],
+        relativeTo: nil,
+        bookmarkDataIsStale: &isStale
+    ) else {
+        return nil
+    }
+    if isStale {
+        updateImportedFolderBookmark(url, folderName: folderName)
+    }
+    guard url.startAccessingSecurityScopedResource() else {
+        localFolderScanLogger.error("scope.acquire_denied folder=\(folderName, privacy: .public)")
+        return nil
+    }
+    importedFolderScopeLock.lock()
+    // Re-check under lock: a concurrent acquire may have won while we resolved.
+    if let held = importedFolderScopeHolds[folderName] {
+        // Balance the start we just took; reuse the live hold.
+        url.stopAccessingSecurityScopedResource()
+        importedFolderScopeHolds[folderName] = (held.url, held.count + 1)
+        let path = held.url.standardizedFileURL.path
+        importedFolderScopeLock.unlock()
+        return path
+    }
+    importedFolderScopeHolds[folderName] = (url, 1)
+    let path = url.standardizedFileURL.path
+    importedFolderScopeLock.unlock()
+    return path
+}
+
+/// Balances one `acquireImportedFolderScope`. Stops scope when the last holder
+/// releases, mirroring Android's `releasePersistableUriPermission` on unlink.
+nonisolated func releaseImportedFolderScope(_ folderName: String) {
+    importedFolderScopeLock.lock()
+    guard let held = importedFolderScopeHolds[folderName] else {
+        importedFolderScopeLock.unlock()
+        return
+    }
+    if held.count <= 1 {
+        importedFolderScopeHolds.removeValue(forKey: folderName)
+        importedFolderScopeLock.unlock()
+        held.url.stopAccessingSecurityScopedResource()
+    } else {
+        importedFolderScopeHolds[folderName] = (held.url, held.count - 1)
+        importedFolderScopeLock.unlock()
+    }
+}
+
+/// Drops any held scope for `folderName`; used when unlinking a folder.
+nonisolated func releaseAllImportedFolderScopes(_ folderName: String) {
+    importedFolderScopeLock.lock()
+    guard let held = importedFolderScopeHolds.removeValue(forKey: folderName) else {
+        importedFolderScopeLock.unlock()
+        return
+    }
+    importedFolderScopeLock.unlock()
+    held.url.stopAccessingSecurityScopedResource()
 }
 
 /// Shared diagnostics tag with Kotlin's `LOCAL_FOLDER_SCAN_LOG_TAG`. Filter
@@ -609,9 +707,12 @@ private func rememberImportedFolder(_ url: URL, bridge: ReaderIosBridge) -> Stri
         var shouldRefreshMatch = false
         for (folderName, existingBookmark) in bookmarks {
             var isStale = false
+            // NB: `.withoutImplicitStartAccessing` — the main resolve path
+            // defers scope start to the caller. Resolving here without it
+            // would implicitly start access and never stop it (leak).
             if existingBookmark == bookmark || (try? URL(
                 resolvingBookmarkData: existingBookmark,
-                options: [.withoutUI],
+                options: [.withoutUI, .withoutImplicitStartAccessing],
                 relativeTo: nil,
                 bookmarkDataIsStale: &isStale
             ).standardizedFileURL) == url.standardizedFileURL {
@@ -793,6 +894,7 @@ private func removeImportedFolder(named folderName: String) {
             _ = await pendingTask.value
         }
         importedFolderScanTasks.removeValue(forKey: folderName)
+        releaseAllImportedFolderScopes(folderName)
         var bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
         bookmarks.removeValue(forKey: folderName)
         UserDefaults.standard.set(bookmarks, forKey: importedFolderBookmarksKey)
@@ -1043,13 +1145,31 @@ nonisolated private func scanImportedFolderInPlace(
         .isRegularFileKey,
         .isDirectoryKey,
         .fileSizeKey,
-        .contentModificationDateKey
+        .contentModificationDateKey,
+        .ubiquitousItemDownloadingStatusKey,
+        .ubiquitousItemIsDownloadingKey,
     ]
     // Android skips dotfiles and the sidecar directory during recursion
     // (FolderSyncWorker.kt:927). The enumerator cannot prune a directory it
     // has already descended into, so the check is applied to the path.
     let sidecarDirectoryName = "EpistemeSyncData"
-    let sourcePrefix = sourceURL.standardizedFileURL.path
+
+    // Coordinate the enumeration so File Provider / iCloud materialises the
+    // directory listing, mirroring Android's ContentResolver query which
+    // forces the provider to publish entries. Scope is already held above and
+    // stays held for the whole coordinated block.
+    var coordError: NSError?
+    var coordinatedSource: URL = sourceURL
+    NSFileCoordinator().coordinate(readingItemAt: sourceURL, options: [], error: &coordError) { url in
+        coordinatedSource = url
+    }
+    if let coordError {
+        localFolderScanLogger.error("scan.coordinate_failed folder=\(folderName, privacy: .public) \(folderScanErrorDetail(coordError), privacy: .public)")
+        // Fall through to direct enumeration: local On-My-iPhone folders need
+        // no coordination, and failing the whole scan on a coordination miss
+        // would regress them.
+    }
+    let sourcePrefix = coordinatedSource.standardizedFileURL.path
 
     var sawChildError = false
     var skippedCount = 0
@@ -1060,7 +1180,7 @@ nonisolated private func scanImportedFolderInPlace(
     }
 
     guard let enumerator = fileManager.enumerator(
-        at: sourceURL,
+        at: coordinatedSource,
         includingPropertiesForKeys: resourceKeys,
         options: [.skipsHiddenFiles, .skipsPackageDescendants],
         errorHandler: { url, error in
@@ -1104,6 +1224,18 @@ nonisolated private func scanImportedFolderInPlace(
             // the way Android does so they never become books.
             guard !itemURL.lastPathComponent.hasPrefix(".") else { continue }
             guard !itemURL.lastPathComponent.lowercased().hasSuffix(".json") else { continue }
+            // iCloud / File Provider stub: entry listed but bytes not local
+            // yet. Trigger download and mark PARTIAL (Android parity: never
+            // infer deletions from a view it could not see). Next foreground
+            // rescan picks the file up once materialised.
+            if let status = try? itemURL.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey]).ubiquitousItemDownloadingStatus,
+               status != .current {
+                try? fileManager.startDownloadingUbiquitousItem(at: itemURL)
+                sawChildError = true
+                noteSkipped("not_downloaded relative=\(relativePath) status=\(status.rawValue)")
+                localFolderScanLogger.info("scan.not_downloaded folder=\(folderName, privacy: .public) relative=\(relativePath, privacy: .public)")
+                continue
+            }
             scanned.append(
                 ImportedReaderFile(
                     name: itemURL.lastPathComponent,

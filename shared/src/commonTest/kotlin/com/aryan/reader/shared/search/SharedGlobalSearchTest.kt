@@ -135,7 +135,7 @@ class SharedGlobalSearchIndexTest {
     }
 
     @Test
-    fun `snippet highlights every query term, not just the winning one`() {
+    fun `snippet highlights every query term and not just the winning one`() {
         val text = "a history of the roman window opening onto the old forum"
         val (snippet, ranges) = SharedGlobalSearchSnippet.build(text, parseSharedSearchQuery("roman history"))
         assertTrue("roman" in snippet.lowercase())

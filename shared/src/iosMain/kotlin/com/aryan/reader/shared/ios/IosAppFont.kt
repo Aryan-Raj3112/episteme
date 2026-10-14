@@ -41,7 +41,7 @@ fun AppFontPreference.toIosAppFontFamily(customFonts: List<CustomFontItem>): Fon
     }.getOrNull()
 }
 
-private fun NSData.toIosByteArray(): ByteArray {
+internal fun NSData.toIosByteArray(): ByteArray {
     val size = length.toInt()
     if (size <= 0) return ByteArray(0)
     val result = ByteArray(size)

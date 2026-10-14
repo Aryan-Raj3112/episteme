@@ -57,6 +57,7 @@ import platform.posix.memcpy
 import kotlin.math.roundToInt
 import kotlin.time.TimeSource
 import kotlin.coroutines.coroutineContext
+import com.aryan.reader.shared.ios.acquireScopeForBookPath
 import com.aryan.reader.shared.ios.resolveIosReadablePath
 
 @Composable
@@ -315,28 +316,37 @@ private object IosPdfiumRenderer {
         password: String?,
         reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
         preserveImageColors: Boolean = false,
-    ): List<SharedMobilePdfTileRender> = IosPdfiumRuntime.withPdfium {
-        val resolvedPath = path.resolveIosReadablePath() ?: return@withPdfium emptyList()
-        if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return@withPdfium emptyList()
-        val document = FPDF_LoadDocument(resolvedPath, password) ?: return@withPdfium emptyList()
+    ): List<SharedMobilePdfTileRender> {
+        // Scope must span resolve+stat+FPDF_LoadDocument+render+close. Resolving
+        // first then rendering after stop is the device-only failure.
+        val scope = acquireScopeForBookPath(path)
         try {
-            val count = FPDF_GetPageCount(document)
-            if (count <= 0) return@withPdfium emptyList()
-            val page = FPDF_LoadPage(document, pageIndex.coerceIn(0, count - 1)) ?: return@withPdfium emptyList()
-            try {
-                val pageWidth = FPDF_GetPageWidthF(page).coerceAtLeast(1f)
-                val pageHeight = FPDF_GetPageHeightF(page).coerceAtLeast(1f)
-                val imageRects = if (preserveImageColors) {
-                    extractIosPdfImageRects(page, pageWidth, pageHeight, requests.firstOrNull()?.fullWidthPx ?: 0, requests.firstOrNull()?.fullHeightPx ?: 0)
-                } else {
-                    emptyList()
+            return IosPdfiumRuntime.withPdfium {
+                val resolvedPath = path.resolveIosReadablePath() ?: return@withPdfium emptyList()
+                if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return@withPdfium emptyList()
+                val document = FPDF_LoadDocument(resolvedPath, password) ?: return@withPdfium emptyList()
+                try {
+                    val count = FPDF_GetPageCount(document)
+                    if (count <= 0) return@withPdfium emptyList()
+                    val page = FPDF_LoadPage(document, pageIndex.coerceIn(0, count - 1)) ?: return@withPdfium emptyList()
+                    try {
+                        val pageWidth = FPDF_GetPageWidthF(page).coerceAtLeast(1f)
+                        val pageHeight = FPDF_GetPageHeightF(page).coerceAtLeast(1f)
+                        val imageRects = if (preserveImageColors) {
+                            extractIosPdfImageRects(page, pageWidth, pageHeight, requests.firstOrNull()?.fullWidthPx ?: 0, requests.firstOrNull()?.fullHeightPx ?: 0)
+                        } else {
+                            emptyList()
+                        }
+                        requests.mapNotNull { request -> renderTile(page, request, reverseColorMode, imageRects) }
+                    } finally {
+                        FPDF_ClosePage(page)
+                    }
+                } finally {
+                    FPDF_CloseDocument(document)
                 }
-                requests.mapNotNull { request -> renderTile(page, request, reverseColorMode, imageRects) }
-            } finally {
-                FPDF_ClosePage(page)
             }
         } finally {
-            FPDF_CloseDocument(document)
+            scope?.close()
         }
     }
 
@@ -408,21 +418,23 @@ private object IosPdfiumRenderer {
         password: String?,
         reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
         preserveImageColors: Boolean = false,
-    ): SharedMobilePdfPageRender =
-        IosPdfiumRuntime.withPdfium {
-        val resolvedPath = path.resolveIosReadablePath()
-        if (resolvedPath.isNullOrBlank()) {
-            return@withPdfium SharedMobilePdfPageRender(errorMessage = "PDF path is unavailable")
-        }
-        if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) {
-            return@withPdfium SharedMobilePdfPageRender(errorMessage = "PDF file is missing: $resolvedPath")
-        }
+    ): SharedMobilePdfPageRender {
+        val scope = acquireScopeForBookPath(path)
+        try {
+            return IosPdfiumRuntime.withPdfium {
+                val resolvedPath = path.resolveIosReadablePath()
+                if (resolvedPath.isNullOrBlank()) {
+                    return@withPdfium SharedMobilePdfPageRender(errorMessage = "PDF path is unavailable")
+                }
+                if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) {
+                    return@withPdfium SharedMobilePdfPageRender(errorMessage = "PDF file is missing: $resolvedPath")
+                }
 
-        val document = FPDF_LoadDocument(resolvedPath, password)
-            ?: return@withPdfium SharedMobilePdfPageRender(
-                errorMessage = "Pdfium could not open this PDF",
-                openError = sharedMobilePdfOpenErrorForPdfiumCode(FPDF_GetLastError().toLong()),
-            )
+                val document = FPDF_LoadDocument(resolvedPath, password)
+                    ?: return@withPdfium SharedMobilePdfPageRender(
+                        errorMessage = "Pdfium could not open this PDF",
+                        openError = sharedMobilePdfOpenErrorForPdfiumCode(FPDF_GetLastError().toLong()),
+                    )
         try {
                 val pageCount = FPDF_GetPageCount(document)
                 if (pageCount <= 0) {
@@ -525,7 +537,11 @@ private object IosPdfiumRenderer {
             } finally {
                 FPDF_CloseDocument(document)
             }
+            }
+        } finally {
+            scope?.close()
         }
+    }
 
     suspend fun renderThumbnail(
         path: String?,
@@ -533,8 +549,10 @@ private object IosPdfiumRenderer {
         password: String?,
         reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
         preserveImageColors: Boolean = false,
-    ): SharedMobilePdfPageThumbnail? =
-        IosPdfiumRuntime.withPdfium {
+    ): SharedMobilePdfPageThumbnail? {
+        val scope = acquireScopeForBookPath(path)
+        try {
+            return IosPdfiumRuntime.withPdfium {
             val resolvedPath = path.resolveIosReadablePath() ?: return@withPdfium null
             if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return@withPdfium null
             val document = FPDF_LoadDocument(resolvedPath, password) ?: return@withPdfium null
@@ -615,7 +633,11 @@ private object IosPdfiumRenderer {
             } finally {
                 FPDF_CloseDocument(document)
             }
+            }
+        } finally {
+            scope?.close()
         }
+    }
 }
 
 internal actual suspend fun sharedMobilePdfOcrTextBounds(
