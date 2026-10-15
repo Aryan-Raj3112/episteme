@@ -90,12 +90,20 @@ internal fun SharedMobileEpubSearchOverlay(
     onShowResultsChange: (Boolean) -> Unit,
     onResultClick: (SharedMobileEpubSearchResult) -> Unit,
     onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /**
+     * Library deep-links open search with the query pre-loaded; popping the
+     * keyboard unprompted on open is wrong, so hosts pass false there.
+     * Manual opens keep the default. Keyed on Unit: a consumed deep-link
+     * flipping the flag later does not refocus a composed field.
+     */
+    autoFocus: Boolean = true,
 ) {
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     LaunchedEffect(Unit) {
+        if (!autoFocus) return@LaunchedEffect
         delay(ReaderSearchFocusDelayMillis)
         focusRequester.requestFocus()
     }

@@ -15,6 +15,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import com.aryan.reader.shared.search.SharedGlobalSearchHit
+
+/**
+ * Where a content hit lives, shared so every shell labels the same
+ * location the same way ("Chapter N", "Page N", both, or blank when
+ * neither axis is known). Indices are 0-based in the model, 1-based
+ * for people. Android keeps its own localized formatter as the
+ * benchmark; this is the shared fallback iOS renders.
+ */
+fun sharedContentSearchLocationLabel(hit: SharedGlobalSearchHit): String {
+    val chapter = hit.chapterIndex?.takeIf { it >= 0 }?.let { "Chapter ${it + 1}" }
+    val page = hit.pageIndex?.takeIf { it >= 0 }?.let { "Page ${it + 1}" }
+    return listOfNotNull(chapter, page).joinToString(" · ")
+}
 
 /**
  * One inside-file match line: the chunk of book text the query hit, with every

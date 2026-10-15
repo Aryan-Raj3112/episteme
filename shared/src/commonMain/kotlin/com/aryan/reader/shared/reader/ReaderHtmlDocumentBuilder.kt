@@ -178,6 +178,13 @@ object ReaderHtmlDocumentBuilder {
                     var snapshot = window.readerCurrentHighlightsSnapshot && window.readerCurrentHighlightsSnapshot();
                     if (snapshot && snapshot.length) window.readerApplyHighlights(snapshot);
                 }
+                // Same for the reader search highlight-all: a fresh chunk has
+                // no search marks. Scoped to this host so scrolling through a
+                // long chapter repaints one chunk, not the whole document.
+                if (window.readerApplySearchHighlights) {
+                    var searchSnapshot = window.readerCurrentSearchSnapshot && window.readerCurrentSearchSnapshot();
+                    if (searchSnapshot && searchSnapshot.query) window.readerApplySearchHighlights(searchSnapshot, host);
+                }
                 // Fresh chunks carry verbatim author colors; re-run the contrast pass
                 // with the last theme args (MutationObserver also covers this).
                 // Image-heavy chapters provide dozens of chunks while scrolling,

@@ -144,6 +144,7 @@ import com.aryan.reader.shared.opds.OpdsEntry
 import com.aryan.reader.shared.opds.SharedOpdsDownloadLocation
 import com.aryan.reader.shared.opds.SharedOpdsScreenState
 import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
+import com.aryan.reader.shared.search.SharedGlobalSearchHit
 import com.aryan.reader.shared.sortBooks
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -270,6 +271,12 @@ fun SharedMobileUnifiedLibraryScreen(
     contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
     /** Mirrors library keystrokes to the host (content-index search); local filtering is unchanged. */
     onLibrarySearchQueryChange: (String) -> Unit = {},
+    /**
+     * Inside-file hit tap: the book, the chunk hit, and the query at tap time.
+     * The host deep-links into the reader (chapter/page + preloaded query).
+     * Header/cover taps keep resuming via [onOpenBook].
+     */
+    onContentHitClick: (BookItem, SharedGlobalSearchHit, String) -> Unit = { _, _, _ -> },
     // Android benchmark: readable file types differ per platform (FileCapabilities.kt).
     // Defaults to IOS to preserve current iOS callers; Android must pass ANDROID on adoption.
     platform: ReaderPlatform = ReaderPlatform.IOS,
@@ -535,7 +542,13 @@ fun SharedMobileUnifiedLibraryScreen(
         sectionContent = { displayedSection, padding ->
             when (displayedSection) {
                 MobileUnifiedLibrarySection.HOME -> {
-                    if (unifiedLibraryModel.showSearchResults) {
+                    // Inside-files mode replaces the plain search grid with one
+                    // row per book (Android benchmark:
+                    // SharedAndroidUnifiedLibraryHome contentSearchActive).
+                    // Metadata-only books still render as list items; books
+                    // with chunk hits render snippets with deep-link taps.
+                    val contentSearchActive = state.searchInsideFiles && query.isNotBlank()
+                    if (unifiedLibraryModel.showSearchResults && !contentSearchActive) {
                         BoxWithConstraints(Modifier.padding(padding)) {
                             SharedAndroidUnifiedLibrarySearch(
                                 books = unifiedLibraryModel.visibleBooks,
@@ -581,7 +594,11 @@ fun SharedMobileUnifiedLibraryScreen(
                                 advancedFilterCount = advancedFilterCount,
                                 useListView = useListView,
                                 strings = SharedAndroidUnifiedHomeStrings(
-                                    noBooks = readerString("unified_library_no_books", "No books in this view"),
+                                    noBooks = if (contentSearchActive) {
+                                        readerString("no_results_found", "No results found for %1\$s", query)
+                                    } else {
+                                        readerString("unified_library_no_books", "No books in this view")
+                                    },
                                     filterBooks = readerString("content_desc_filter", "Filter"),
                                     gridView = readerString("unified_library_grid_view", "Grid view"),
                                     listView = readerString("unified_library_list_view", "List view"),
@@ -652,6 +669,19 @@ fun SharedMobileUnifiedLibraryScreen(
                             },
                             widthClass = sharedMobileWidthClassForWidth(maxWidth),
                             modifier = Modifier.fillMaxSize(),
+                            contentSearchActive = contentSearchActive,
+                            contentSearchResults = contentSearchResults,
+                            contentResultRow = { book, result, expanded, onToggleExpand ->
+                                SharedMobileLibraryContentRow(
+                                    book = book,
+                                    result = result,
+                                    expanded = expanded,
+                                    onToggleExpanded = onToggleExpand,
+                                    onOpenBook = { if (selectedIds.isEmpty()) onOpenBook(book) else onLongPressBook(book) },
+                                    onLongPressBook = { if (shouldSelectBookOnLongPress(book.id, selectedIds)) onLongPressBook(book) },
+                                    onHitClick = { hit -> onContentHitClick(book, hit, query) },
+                                )
+                            },
                         )
                         }
                     }

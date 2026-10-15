@@ -135,6 +135,7 @@ import com.aryan.reader.shared.reader.ReaderJumpHistory
 import com.aryan.reader.shared.reader.PaginatedReaderState
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SharedEpubBook
+import com.aryan.reader.shared.reader.sharedEpubSearchHighlightsApplyScript
 import com.aryan.reader.shared.reader.SharedMediaOverlayDocumentCache
 import com.aryan.reader.shared.reader.SharedMediaOverlayEngine
 import com.aryan.reader.shared.reader.SharedMediaOverlayIndex
@@ -151,6 +152,9 @@ import com.aryan.reader.shared.reader.sharedMediaOverlaySpineItemIndexByChapter
 import com.aryan.reader.shared.reader.sharedMediaOverlaySpineItemsInReadingOrder
 import com.aryan.reader.shared.reader.sharedMediaOverlayTextQuote
 import com.aryan.reader.shared.reader.captureReaderJumpHistoryOrigin
+import com.aryan.reader.shared.search.SharedLibrarySearchDeepLink
+import com.aryan.reader.shared.search.bestReaderResultForLibraryHit
+import com.aryan.reader.shared.search.navigationQuote
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.sharedReaderPageInfo
@@ -342,6 +346,16 @@ fun SharedMobileEpubReaderScreen(
     onMediaOverlayStopped: () -> Unit = {},
     /** Reports mini-bar state to an app-level host (global TTS bar). */
     onReaderTtsSessionChange: (SharedReaderTtsMiniBarState?) -> Unit = {},
+    /**
+     * Library inside-files hit to land on. The reader opens at the hit's
+     * chapter (the host passes a book copy positioned there), pre-loads
+     * [query] in its own search UI, seeds jump history with [epubOrigin] so
+     * Back returns to the saved position, then auto-steps once to the
+     * quote-matched occurrence without recording a second history entry.
+     * Consumed once via [onLibrarySearchDeepLinkConsumed].
+     */
+    librarySearchDeepLink: SharedLibrarySearchDeepLink? = null,
+    onLibrarySearchDeepLinkConsumed: () -> Unit = {},
 ) {
     val motionPolicy = rememberReaderMotionPolicy()
     remember(book.id) {
@@ -614,6 +628,11 @@ fun SharedMobileEpubReaderScreen(
     var searchResults by remember(book.id) { mutableStateOf<List<SharedMobileEpubSearchResult>>(emptyList()) }
     var isSearchInProgress by remember(book.id) { mutableStateOf(false) }
     var searchResultIndex by remember(book.id) { mutableIntStateOf(-1) }
+    // Library inside-files deep-link for this book (null for normal opens).
+    // Consumed once the auto-step lands; the host clears its copy via
+    // onLibrarySearchDeepLinkConsumed.
+    val librarySearchLink = librarySearchDeepLink?.takeIf { it.bookId == book.id }
+    var librarySearchAutoStepDone by remember(book.id) { mutableStateOf(false) }
     var pullDirection by remember(book.id) { mutableStateOf<String?>(null) }
     var pullProgress by remember(book.id) { mutableStateOf(0f) }
     var showSlider by remember(book.id) { mutableStateOf(initialPageSliderVisible) }
@@ -1025,6 +1044,12 @@ fun SharedMobileEpubReaderScreen(
             isSearchInProgress = false
         }
     }
+
+    // Library inside-files deep-link: mirror a manual search open (search UI
+    // with the query, results panel, no field focus) so the landing uses the
+    // real reader search instead of a blind jump.
+    // (Auto-step lives after navigateSearchResult below: local funs are not
+    // hoisted, so the effect cannot sit with the search effect above.)
 
     val pageCount = pages.size.coerceAtLeast(1)
 
@@ -1747,11 +1772,33 @@ fun SharedMobileEpubReaderScreen(
         if (refreshNavigation) navigationRequestId++
     }
 
-    fun navigateSearchResult(result: SharedMobileEpubSearchResult) {
+    fun navigateSearchResult(result: SharedMobileEpubSearchResult, recordHistory: Boolean = true) {
         val epub = loadedBook ?: return
         val chapter = epub.chapters.getOrNull(result.chapterIndex) ?: return
         clearRestoreAnchor("search")
         detachVerticalReaderFromTts()
+        // Library deep-links seed origin -> landing themselves, so the
+        // auto-step must not record a second entry (Back goes straight to
+        // the origin). Manual taps keep recording.
+        if (!recordHistory) {
+            val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(epub, result.chapterIndex)
+            currentChapterIndex = result.chapterIndex
+            currentLocator = result.locator
+            result.locator.pageIndex?.let { currentPageIndex = it.coerceIn(0, pageCount - 1) }
+            explicitNavigationLocator = result.locator.takeIf {
+                settings.readingMode == ReaderReadingMode.PAGINATED || useNativeVerticalRenderer
+            }
+            explicitNavigationChunkIndex = result.chunkIndex
+            explicitNavigationChunkHtml = chunks.getOrNull(result.chunkIndex)
+            commandScript = if (settings.readingMode == ReaderReadingMode.VERTICAL && !useNativeVerticalRenderer) {
+                sharedMobileEpubSearchNavigationScript(result, searchQuery, chunks.getOrNull(result.chunkIndex))
+            } else {
+                null
+            }
+            navigationRequestId++
+            showSearchResultsPanel = false
+            return
+        }
         captureCurrentEpubLocator { current ->
             jumpHistory = jumpHistory.record(
                 currentLocator = current,
@@ -1795,6 +1842,49 @@ fun SharedMobileEpubReaderScreen(
             jumpHistory = refreshedHistory.stepForward()
             navigate(target)
         }
+    }
+
+    // Library inside-files deep-link: mirror a manual search open (search UI
+    // with the query, results panel, no field focus) so the landing uses the
+    // real reader search instead of a blind jump.
+    LaunchedEffect(librarySearchLink, loadedBook?.id) {
+        val link = librarySearchLink ?: return@LaunchedEffect
+        if (librarySearchAutoStepDone) return@LaunchedEffect
+        if (searchQuery.trim() != link.query.trim()) {
+            searchQuery = link.query
+            immediateSearchRequestId = searchRequestId + 1L
+            searchRequestId++
+        }
+        showSearch = true
+        showSearchResultsPanel = true
+    }
+    // Auto-step once to the occurrence matching the library hit, seeding
+    // origin -> landing in jump history with recordHistory = false so Back
+    // returns straight to the origin.
+    LaunchedEffect(librarySearchLink, searchResults) {
+        val link = librarySearchLink ?: return@LaunchedEffect
+        if (librarySearchAutoStepDone) return@LaunchedEffect
+        val epub = loadedBook ?: return@LaunchedEffect
+        if (searchQuery.trim() != link.query.trim()) return@LaunchedEffect
+        val results = searchResults
+        if (results.isEmpty()) return@LaunchedEffect
+        val index = bestReaderResultForLibraryHit(
+            link.hit.navigationQuote(),
+            results.map { it.snippet },
+        ) ?: results.indexOfFirst { it.chapterIndex == link.hit.chapterIndex }.takeIf { it >= 0 }
+            ?: return@LaunchedEffect
+        val result = results[index]
+        link.epubOrigin?.let { origin ->
+            jumpHistory = jumpHistory.record(
+                currentLocator = origin,
+                targetLocator = result.locator,
+                chapterCount = epub.chapters.size,
+            )
+        }
+        searchResultIndex = index
+        navigateSearchResult(result, recordHistory = false)
+        librarySearchAutoStepDone = true
+        onLibrarySearchDeepLinkConsumed()
     }
 
     fun speakSelectedText(text: String, locator: ReaderLocator) {
@@ -2768,8 +2858,14 @@ fun SharedMobileEpubReaderScreen(
                         // Android parity: the authoritative highlight list is pushed into the
                         // live document (never baked into the HTML), so creating a highlight
                         // keeps the painted selection and the scroll position untouched.
-                        val highlightsApplyScript = remember(highlights) {
-                            sharedMobileEpubHighlightsApplyScript(highlights)
+                        // The reader search query rides the same reload-safe
+                        // channel: typing paints every occurrence in the
+                        // chapter (highlight-all), clearing the query clears
+                        // the marks, and chapter loads repaint from the
+                        // document-side snapshot.
+                        val highlightsApplyScript = remember(highlights, searchQuery, settings.darkMode) {
+                            sharedMobileEpubHighlightsApplyScript(highlights) + "\n" +
+                                sharedEpubSearchHighlightsApplyScript(searchQuery, settings.darkMode)
                         }
                         // The live playback band, in the same precedence the native surfaces use in
                         // `playbackHighlights` above: media overlay first, then local read-aloud, then
@@ -3680,6 +3776,16 @@ fun SharedMobileEpubReaderScreen(
                         onQueryChange = {
                             searchQuery = it
                             searchRequestId++
+                            // The user took over before the auto-step landed:
+                            // drop the pending deep-link so it can neither
+                            // navigate over their keystrokes nor suppress
+                            // focus for the rest of the session.
+                            if (!librarySearchAutoStepDone && librarySearchLink != null &&
+                                it.trim() != librarySearchLink.query.trim()
+                            ) {
+                                librarySearchAutoStepDone = true
+                                onLibrarySearchDeepLinkConsumed()
+                            }
                         },
                         onForceSearch = {
                             immediateSearchRequestId = searchRequestId + 1L
@@ -3700,7 +3806,14 @@ fun SharedMobileEpubReaderScreen(
                             searchResults = emptyList()
                             searchResultIndex = -1
                             searchRequestId++
+                            if (!librarySearchAutoStepDone && librarySearchLink != null) {
+                                librarySearchAutoStepDone = true
+                                onLibrarySearchDeepLinkConsumed()
+                            }
                         },
+                        // Deep-link opens land with the query pre-loaded; no
+                        // unprompted keyboard (manual opens keep autofocus).
+                        autoFocus = librarySearchLink == null,
                         modifier = Modifier.fillMaxSize()
                     )
                     }

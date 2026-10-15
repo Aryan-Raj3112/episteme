@@ -1221,6 +1221,73 @@ internal fun readerHtmlAnnotationScript(): String = """
                   if (window.readerApplyHighlights) window.readerApplyHighlights(readerCurrentHighlights);
                 }, 1200);
               }
+              window.readerCurrentSearchQuery = null;
+              window.readerCurrentSearchSnapshot = function () {
+                return window.readerCurrentSearchQuery;
+              };
+              // Reader search highlight-all (Android highlightAllOccurrences
+              // parity): wraps every occurrence of the query in translucent
+              // marks. Substring-based like the benchmark (not word-start),
+              // theme-tinted from the payload, and scoped to [root] when
+              // provided so freshly loaded virtual chunks repaint only
+              // themselves. Queries shorter than 2 chars only clear, also
+              // like the benchmark.
+              window.readerApplySearchHighlights = function (payload, root) {
+                var query = payload && payload.query ? String(payload.query) : '';
+                var dark = !!(payload && payload.dark);
+                window.readerCurrentSearchQuery = query ? { query: query, dark: dark } : null;
+                var scope = root || document.body;
+                if (!scope || !scope.querySelectorAll) return 0;
+                var stale = scope.querySelectorAll('mark.reader-search-all, mark.reader-ios-search-hit');
+                for (var s = 0; s < stale.length; s++) {
+                  var el = stale[s], parent = el.parentNode;
+                  if (!parent) continue;
+                  while (el.firstChild) parent.insertBefore(el.firstChild, el);
+                  parent.removeChild(el);
+                  parent.normalize();
+                }
+                if (!query || query.trim().length < 2) return 0;
+                var needle = query.trim().toLowerCase();
+                var bg = dark ? 'rgba(0, 90, 156, 0.8)' : 'rgba(160, 207, 241, 0.8)';
+                var fg = dark ? '#E0E0E0' : 'black';
+                var walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT, null, false);
+                var node, pending = [];
+                while ((node = walker.nextNode())) {
+                  if (String(node.nodeValue || '').toLowerCase().indexOf(needle) < 0) continue;
+                  var ancestor = node.parentNode, skip = false;
+                  while (ancestor && ancestor !== scope) {
+                    var tag = ancestor.tagName || '';
+                    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'MARK') { skip = true; break; }
+                    ancestor = ancestor.parentNode;
+                  }
+                  if (!skip) pending.push(node);
+                }
+                var painted = 0, previousY = window.scrollY;
+                pending.forEach(function (textNode) {
+                  var current = textNode;
+                  while (current && current.nodeValue) {
+                    var value = current.nodeValue;
+                    var found = value.toLowerCase().indexOf(needle);
+                    if (found < 0) break;
+                    var after = current.splitText(found);
+                    var rest = after.splitText(needle.length);
+                    var mark = document.createElement('mark');
+                    mark.className = 'reader-search-all';
+                    mark.style.background = bg;
+                    mark.style.color = fg;
+                    mark.style.borderRadius = '3px';
+                    mark.style.display = 'inline';
+                    mark.style.padding = '0';
+                    mark.style.margin = '0';
+                    after.parentNode.replaceChild(mark, after);
+                    mark.appendChild(after);
+                    painted++;
+                    current = rest;
+                  }
+                });
+                window.scrollTo({ top: previousY, behavior: 'auto' });
+                return painted;
+              };
               var readerTtsLocator = null;
               var readerTtsOverlayTimer = null;
               function ensureTtsLayer() {

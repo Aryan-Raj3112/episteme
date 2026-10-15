@@ -228,6 +228,7 @@ import com.aryan.reader.shared.withMobileBookClosed
 import com.aryan.reader.shared.withMobileTabsEnabled
 import com.aryan.reader.shared.withReconciledMobilePdfTabs
 import com.aryan.reader.shared.withMobileLibrarySearchActive
+import com.aryan.reader.shared.withMobileLibrarySearchInsideFiles
 import com.aryan.reader.shared.withMobileLibrarySearchQuery
 import com.aryan.reader.shared.withMobileFolderFileTypes
 import com.aryan.reader.shared.withMobileTemporaryBookClosed
@@ -269,6 +270,10 @@ import com.aryan.reader.shared.opds.SharedOpdsStreamUri
 import com.aryan.reader.shared.opds.opdsStreamBooksForCatalog
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import com.aryan.reader.shared.pdf.SharedPdfExportSnapshot
+import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
+import com.aryan.reader.shared.search.SharedGlobalSearchHit
+import com.aryan.reader.shared.search.SharedGlobalSearchPolicy
+import com.aryan.reader.shared.search.SharedLibrarySearchDeepLink
 import com.aryan.reader.shared.pdf.SharedPdfReaderStateSerializer
 import com.aryan.reader.shared.pdf.SharedPdfCloudSidecarCodec
 import com.aryan.reader.shared.pdf.SharedPdfCloudSidecarSnapshot
@@ -2392,6 +2397,8 @@ private const val IosAddingBooksToShelfDefaultsKey = "reader_ios_adding_books_to
 private const val IosAddBooksSourceDefaultsKey = "reader_ios_add_books_source_v1"
 private const val IosUnifiedLibrarySectionDefaultsKey = "reader_ios_unified_library_section_v1"
 private const val IosSyncEnabledDefaultsKey = "reader_ios_sync_enabled_v1"
+/** Library "search inside files" toggle. False preserves metadata-only search (Android parity). */
+private const val IosSearchInsideFilesDefaultsKey = "reader_ios_search_inside_files_v1"
 
 private fun loadPendingIosExternalFileRemoval(): IosPendingExternalFileRemoval? {
     val defaults = NSUserDefaults.standardUserDefaults
@@ -4011,6 +4018,84 @@ private fun ReaderIosApp(
     var opdsState by remember { mutableStateOf(opdsController.state) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    // Library inside-files search (Android `GlobalSearchSession` parity).
+    // The toggle lives in shared state; content results stay host-local and
+    // ride the screen params (shared state has no results slot). Indexing is
+    // in-process on Default (no WorkManager on iOS): bulk reconcile on
+    // enable, single books on import, GC of departed ids below.
+    val iosGlobalSearchSession = remember { IosGlobalSearchSession() }
+    var iosContentSearchResults by remember { mutableStateOf<List<SharedGlobalSearchBookResult>>(emptyList()) }
+    var iosLibrarySearchQuery by remember { mutableStateOf("") }
+    var iosPendingLibrarySearchDeepLink by remember { mutableStateOf<SharedLibrarySearchDeepLink?>(null) }
+    // Guards the debounced query effect: a slow index scan must not publish
+    // over a newer keystroke's results (Android generation guard parity).
+    // Plain array cell, not state: bumping it must not recompose.
+    val iosGlobalSearchGeneration = remember { intArrayOf(0) }
+    fun iosGlobalSearchEntries(): List<IosGlobalSearchSession.Entry> =
+        state.rawLibraryBooks
+            .filter { SharedGlobalSearchPolicy.isContentSearchable(it.type) }
+            .map { IosGlobalSearchSession.Entry(it.id, IosGlobalSearchSession.contentHashFor(it)) }
+    fun iosReconcileGlobalSearchIndex() {
+        scope.launch(Dispatchers.Default) {
+            val booksById = state.rawLibraryBooks.associateBy { it.id }
+            // Sequential, one book at a time: bounds memory/CPU on large
+            // libraries (Android throttles via worker parallelism instead).
+            iosGlobalSearchSession.syncLibrary(iosGlobalSearchEntries()).forEach { entry ->
+                val book = booksById[entry.bookId] ?: return@forEach
+                iosGlobalSearchSession.indexBook(book, entry.contentHash)
+            }
+        }
+    }
+    fun setIosSearchInsideFiles(enabled: Boolean) {
+        if (state.searchInsideFiles == enabled) return
+        NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = IosSearchInsideFilesDefaultsKey)
+        state = state.withMobileLibrarySearchInsideFiles(enabled)
+        iosGlobalSearchGeneration[0]++
+        iosContentSearchResults = emptyList()
+        if (enabled) iosReconcileGlobalSearchIndex()
+    }
+    // Toggle survives restart via its own pref (the library snapshot does
+    // not persist transient search UI state).
+    LaunchedEffect(Unit) {
+        if (NSUserDefaults.standardUserDefaults.boolForKey(IosSearchInsideFilesDefaultsKey) &&
+            !state.searchInsideFiles
+        ) {
+            state = state.withMobileLibrarySearchInsideFiles(true)
+        }
+    }
+    // Bulk-index on enable (and on the restore above); imports hook in
+    // addBooksToLibrary with single-book indexing.
+    LaunchedEffect(state.searchInsideFiles) {
+        if (state.searchInsideFiles) iosReconcileGlobalSearchIndex()
+    }
+    // Debounced content query, mirroring Android's 300ms debouncedQuery.
+    LaunchedEffect(iosLibrarySearchQuery, state.searchInsideFiles) {
+        val query = iosLibrarySearchQuery.trim()
+        if (!state.searchInsideFiles || query.isBlank()) {
+            iosContentSearchResults = emptyList()
+            return@LaunchedEffect
+        }
+        delay(300)
+        val generation = ++iosGlobalSearchGeneration[0]
+        val results = iosGlobalSearchSession.query(iosGlobalSearchEntries(), query)
+        if (generation == iosGlobalSearchGeneration[0]) {
+            iosContentSearchResults = results
+        }
+    }
+    // GC: drop persisted payloads for books that left the library (Android
+    // GlobalSearchIndexer.cancel parity; the delete sheet has many call
+    // sites, so membership diffing covers them all).
+    val iosLibraryBookIds = remember(state.rawLibraryBooks) {
+        state.rawLibraryBooks.mapTo(HashSet()) { it.id }
+    }
+    LaunchedEffect(iosLibraryBookIds) {
+        val stored = withContext(Dispatchers.Default) {
+            iosGlobalSearchSession.storedBookIds()
+        }
+        (stored - iosLibraryBookIds).forEach { departedId ->
+            iosGlobalSearchSession.remove(departedId)
+        }
+    }
     val pdfSidecarWriteJobs = remember { mutableMapOf<String, Job>() }
     val latestPdfStates = remember { mutableStateMapOf<String, SharedPdfReaderState>() }
     val latestPdfBooks = remember { mutableStateMapOf<String, BookItem>() }
@@ -4456,6 +4541,31 @@ private fun ReaderIosApp(
         activeReaderBook = openedBook
     }
 
+    /**
+     * Library inside-files hit tap (Android `MainViewModel.openLibrarySearchHit`
+     * parity). Row header/cover taps keep resuming via [openLibraryBook]; only
+     * snippet taps land here. Selection mode takes precedence and toggles.
+     *
+     * The reader opens at the hit (chapter copy for EPUB-likes, page copy for
+     * PDF — the hosts position from those), pre-loads [query] in its own
+     * search UI, and seeds jump history with the saved position so Back
+     * returns to it. Consumed once by the reader.
+     */
+    fun openIosLibrarySearchHit(book: BookItem, hit: SharedGlobalSearchHit, query: String) {
+        if (state.selectedBookIds.isNotEmpty()) {
+            state = state.toggleBookSelection(book.id)
+            return
+        }
+        iosPendingLibrarySearchDeepLink = SharedLibrarySearchDeepLink(
+            bookId = book.id,
+            query = query,
+            hit = hit,
+            epubOrigin = book.readerPosition,
+            pdfOriginPage = book.lastPageIndex,
+        )
+        openLibraryBook(book)
+    }
+
     fun focusIosPdfSplitPane(pane: PdfSplitPane, sessionId: Long) {
         val current = pdfSplitWorkspace.pane(pane) ?: return
         if (current.sessionId != sessionId) return
@@ -4590,6 +4700,22 @@ private fun ReaderIosApp(
         state = result.state
             .copy(syncedFolders = result.state.syncedFolders + newLocalFolders)
             .withIosImportsFolder(result.addedBooks)
+        // New books join the inside-files index without a full rescan
+        // (Android addFileToRecent parity); freshness is hash-checked.
+        if (state.searchInsideFiles) {
+            val added = result.addedBooks.filter { SharedGlobalSearchPolicy.isContentSearchable(it.type) }
+            if (added.isNotEmpty()) {
+                scope.launch(Dispatchers.Default) {
+                    added.forEach { book ->
+                        val hash = IosGlobalSearchSession.contentHashFor(book)
+                        val entry = IosGlobalSearchSession.Entry(book.id, hash)
+                        if (!iosGlobalSearchSession.isFresh(entry)) {
+                            iosGlobalSearchSession.indexBook(book, hash)
+                        }
+                    }
+                }
+            }
+        }
         selectMainPage(SharedMobileMainDestination.LIBRARY)
         selectLibraryTab(SharedMobileLibraryTab.BOOKS)
     }
@@ -5159,6 +5285,13 @@ private fun ReaderIosApp(
         bridge.restoreReaderBrightness()
         bridge.setKeepScreenOn(false)
         activeReaderBook = null
+        // A deep-link that never consumed (book failed to load, effect
+        // bailed) must not fire on a later normal open of the same book:
+        // readers latch the link per session, so dropping the pending copy
+        // here is safe for live sessions.
+        if (iosPendingLibrarySearchDeepLink?.bookId == book.id) {
+            iosPendingLibrarySearchDeepLink = null
+        }
         if (activeTemporaryBookId == book.id) {
             val requestId = activeExternalRequestId
             val temporaryPath = activeTemporaryBookPath
@@ -5862,6 +5995,31 @@ private fun ReaderIosApp(
         val initialPdfReaderState = remember(effectiveHostConfig.sessionKey) {
             loadPersistedIosPdfReaderState(paneBook)
         }
+        // Inside-files deep-link (fullscreen opens only; split panes never
+        // carry one). The host positions from the book copy + persisted-state
+        // override below, pre-loads the query, and seeds jump history.
+        // Latched per session: the host clears its pending copy on consume,
+        // which must not reset the live reader (its remember keys on the
+        // initial state value).
+        val librarySearchLink = remember(effectiveHostConfig.sessionKey) {
+            iosPendingLibrarySearchDeepLink?.takeIf { it.bookId == paneBook.id && !isSplitPane }
+        }
+        val positionedPaneBook = remember(paneBook, librarySearchLink) {
+            val target = librarySearchLink?.let { link ->
+                link.hit.pageIndex ?: link.hit.chapterIndex
+            }
+            if (target != null && target >= 0) paneBook.copy(lastPageIndex = target) else paneBook
+        }
+        val initialPdfReaderStateForLink = remember(initialPdfReaderState, librarySearchLink) {
+            val target = librarySearchLink?.let { link ->
+                link.hit.pageIndex ?: link.hit.chapterIndex
+            }
+            if (initialPdfReaderState != null && target != null && target >= 0) {
+                initialPdfReaderState.copy(pageIndex = target)
+            } else {
+                initialPdfReaderState
+            }
+        }
         fun acceptsCurrentHostCallback(): Boolean {
             val key = effectiveHostConfig.sessionKey
             if (!key.isValid) return false
@@ -5886,7 +6044,7 @@ private fun ReaderIosApp(
             }
         }
         SharedMobilePdfReaderHost(
-            book = paneBook,
+            book = positionedPaneBook,
             onBack = onBack,
             onOpenSplit = onOpenSplit,
             readerAiAvailable = readerAiAvailable,
@@ -6136,7 +6294,13 @@ private fun ReaderIosApp(
                 if (!acceptsCurrentHostCallback()) return@SharedMobilePdfReaderHost
                 state = state.reduce(AppAction.BannerShown(BannerMessage(message, isError = true)))
             },
-            initialReaderState = initialPdfReaderState,
+            initialReaderState = initialPdfReaderStateForLink,
+            librarySearchDeepLink = librarySearchLink,
+            onLibrarySearchDeepLinkConsumed = {
+                if (iosPendingLibrarySearchDeepLink?.bookId == paneBook.id) {
+                    iosPendingLibrarySearchDeepLink = null
+                }
+            },
             readerDefaultSettings = state.pdfReaderDefaultSettings,
             onReaderDefaultSettingsChange = { defaults ->
                 state = state.reduce(AppAction.PdfReaderDefaultSettingsChanged(defaults))
@@ -6460,6 +6624,23 @@ private fun ReaderIosApp(
                     FileType.ODT,
                     FileType.PPTX -> {
                         val readerBook = remember(book.id) { loadPersistedIosEpubBookState(book) }
+                        // Inside-files deep-link positions the reader at the
+                        // hit's chapter. Transient copy only: the reader's own
+                        // state reports persist the landing like a normal open,
+                        // while jump history keeps the true origin for Back.
+                        // Latched per book open: the host clears its pending
+                        // copy on consume, which must not move the live reader.
+                        val librarySearchLink = remember(book.id) {
+                            iosPendingLibrarySearchDeepLink?.takeIf { it.bookId == book.id }
+                        }
+                        val positionedReaderBook = remember(readerBook, librarySearchLink) {
+                            val targetChapter = librarySearchLink?.hit?.chapterIndex
+                            if (targetChapter != null && targetChapter >= 0) {
+                                readerBook.copy(readerPosition = ReaderLocator(chapterIndex = targetChapter))
+                            } else {
+                                readerBook
+                            }
+                        }
                         LaunchedEffect(readerBook.id, readerBrightness) {
                             if (book.type == FileType.MOBI) {
                                 iosMobiLog {
@@ -6469,10 +6650,16 @@ private fun ReaderIosApp(
                             bridge.setReaderBrightness(readerBrightness)
                         }
                         SharedMobileEpubReaderScreen(
-                            book = readerBook,
+                            book = positionedReaderBook,
                             streamPageLoader = opdsStreamPageLoader,
                             onBack = {
                                 closeActiveReader(book)
+                            },
+                            librarySearchDeepLink = librarySearchLink,
+                            onLibrarySearchDeepLinkConsumed = {
+                                if (iosPendingLibrarySearchDeepLink?.bookId == book.id) {
+                                    iosPendingLibrarySearchDeepLink = null
+                                }
                             },
                             onReaderStateChange = { snapshot ->
                                 val currentBook = activeReaderBook?.takeIf { it.id == book.id } ?: readerBook
@@ -7881,6 +8068,15 @@ private fun ReaderIosApp(
                                 onTogglePinned = { book -> state = state.toggleLibraryPinned(book.id) },
                                 onUpdateBook = { book -> updateIosBookMetadata(book) },
                                 selectionCapabilities = iosUnifiedLibrarySelectionCapabilities(),
+                                // Inside-files search: toggle + results +
+                                // keystroke mirror ride the shared screen;
+                                // snippet taps deep-link, header/cover resume.
+                                onSearchInsideFilesChange = ::setIosSearchInsideFiles,
+                                contentSearchResults = iosContentSearchResults,
+                                onLibrarySearchQueryChange = { iosLibrarySearchQuery = it },
+                                onContentHitClick = { book, hit, hitQuery ->
+                                    openIosLibrarySearchHit(book, hit, hitQuery)
+                                },
                                 onRefreshLibrary = {
                                     refreshFolders()
                                     if (state.isSyncEnabled) {

@@ -316,6 +316,7 @@ import com.aryan.reader.shared.pdf.SharedPdfExportSnapshot
 import com.aryan.reader.shared.pdf.sharedPdfOriginalExportSnapshot
 import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
+import com.aryan.reader.shared.search.SharedLibrarySearchDeepLink
 import com.aryan.reader.shared.pdf.SharedPdfVirtualPage
 import com.aryan.reader.shared.pdf.buildSharedPdfVirtualPageLayout
 import com.aryan.reader.shared.pdf.sharedPdfPdfPageIndexAt
@@ -675,6 +676,15 @@ fun SharedMobilePdfReaderHost(
      * debug builds expose the "Try Episteme" demo artwork action.
      */
     isDebugBuild: Boolean = false,
+    /**
+     * Library inside-files hit to land on. The host opens at the hit's page
+     * (via a book copy carrying it in `lastPageIndex`), pre-loads [query] in
+     * its own search UI, and seeds jump history with [pdfOriginPage] so Back
+     * returns to the saved position. Page hits need no auto-step.
+     * Consumed once via [onLibrarySearchDeepLinkConsumed].
+     */
+    librarySearchDeepLink: SharedLibrarySearchDeepLink? = null,
+    onLibrarySearchDeepLinkConsumed: () -> Unit = {},
 ) {
     val readerSessionKey = hostConfig.sessionKey
     val ownsSystemUi = hostConfig.owns(SharedPdfReaderGlobalResource.SYSTEM_UI)
@@ -2234,6 +2244,35 @@ fun SharedMobilePdfReaderHost(
             searchSharedMobilePdf(book, query, pdfPassword)
         }
         isSearchInProgress = false
+    }
+
+    // Library inside-files deep-link: seed origin -> landing in jump history
+    // and pre-load the query in the reader's own search UI. Page hits land
+    // via lastPageIndex, so no auto-step is needed.
+    val librarySearchLink = librarySearchDeepLink?.takeIf { it.bookId == book.id }
+    var librarySearchDeepLinkDone by remember(readerSessionKey) { mutableStateOf(false) }
+    LaunchedEffect(librarySearchLink, displayPageCount) {
+        val link = librarySearchLink ?: return@LaunchedEffect
+        if (librarySearchDeepLinkDone) return@LaunchedEffect
+        if (displayPageCount <= 0) return@LaunchedEffect
+        val target = (link.hit.pageIndex ?: link.hit.chapterIndex)
+            ?.coerceIn(0, displayPageCount - 1)
+        if (target != null) {
+            link.pdfOriginPage?.let { origin ->
+                jumpHistory = jumpHistory.record(
+                    normalizedPdfHistoryPage(origin.coerceIn(0, displayPageCount - 1)),
+                    normalizedPdfHistoryPage(target),
+                    displayPageCount,
+                )
+            }
+        }
+        if (readerState.searchQuery.trim() != link.query.trim()) {
+            dispatch(SharedPdfReaderAction.SearchChanged(link.query))
+        } else if (!readerState.isSearchActive) {
+            dispatch(SharedPdfReaderAction.SearchOpened)
+        }
+        librarySearchDeepLinkDone = true
+        onLibrarySearchDeepLinkConsumed()
     }
 
     LaunchedEffect(readerSessionKey, book.path, pdfPassword, documentRender.openError) {
