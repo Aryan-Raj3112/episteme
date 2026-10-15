@@ -6388,6 +6388,11 @@ private fun ReaderIosApp(
                 state = state.withUpdatedIosBook(updated)
                 if (activeReaderBook?.id == paneBook.id) activeReaderBook = updated
             },
+            onPdfThemeBookChange = { updated ->
+                if (!acceptsCurrentHostCallback()) return@SharedMobilePdfReaderHost
+                state = state.withUpdatedIosBook(updated)
+                if (activeReaderBook?.id == paneBook.id) activeReaderBook = updated
+            },
             onKeepScreenOnChange = bridge::setKeepScreenOn,
             onSystemUiAppearanceChange = { hidden, lightContent, backgroundArgb, _ ->
                 bridge.updateReaderSystemUi(hidden, hidden, lightContent, backgroundArgb)
@@ -6675,6 +6680,8 @@ private fun ReaderIosApp(
                                     readerSettings = snapshot.settings,
                                     readerFormatIsLocal = snapshot.formatIsLocal,
                                     readerLocalFormatSettings = snapshot.localFormatSettings,
+                                    readerThemeIsLocal = snapshot.themeIsLocal,
+                                    readerLocalThemeSettings = snapshot.localThemeSettings,
                                     readerAutoScrollIsLocal = snapshot.autoScrollIsLocal,
                                     readerAutoScrollLocalSpeed = snapshot.autoScrollLocalSpeed,
                                     readerAutoScrollLocalMinSpeed = snapshot.autoScrollLocalMinSpeed,

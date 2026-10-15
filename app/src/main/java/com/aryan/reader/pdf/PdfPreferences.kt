@@ -377,6 +377,66 @@ internal fun loadPdfThemeId(context: Context): String {
     return prefs.getString(PDF_THEME_KEY, "no_theme") ?: "no_theme"
 }
 
+private const val PDF_THEME_IS_LOCAL_PREFIX = "pdf_theme_is_local_"
+private const val PDF_LOCAL_THEME_ID_PREFIX = "pdf_local_theme_id_"
+private const val PDF_LOCAL_THEME_TRANSPARENCY_PREFIX = "pdf_local_theme_transparency_"
+private const val PDF_LOCAL_REVERSE_MODE_PREFIX = "pdf_local_reverse_mode_"
+private const val PDF_LOCAL_EXCLUDE_IMAGES_PREFIX = "pdf_local_exclude_images_"
+
+internal fun loadPdfThemeIsLocal(context: Context, bookId: String): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(PDF_THEME_IS_LOCAL_PREFIX + bookId, false)
+}
+
+internal fun savePdfThemeIsLocal(context: Context, bookId: String, isLocal: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PDF_THEME_IS_LOCAL_PREFIX + bookId, isLocal) }
+}
+
+internal fun loadPdfLocalThemeId(context: Context, bookId: String): String? {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getString(PDF_LOCAL_THEME_ID_PREFIX + bookId, null)
+}
+
+internal fun savePdfLocalThemeId(context: Context, bookId: String, themeId: String) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putString(PDF_LOCAL_THEME_ID_PREFIX + bookId, themeId) }
+}
+
+internal fun loadPdfLocalTextureTransparency(context: Context, bookId: String): Float? {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return if (prefs.contains(PDF_LOCAL_THEME_TRANSPARENCY_PREFIX + bookId)) {
+        prefs.getFloat(PDF_LOCAL_THEME_TRANSPARENCY_PREFIX + bookId, 0f)
+    } else null
+}
+
+internal fun savePdfLocalTextureTransparency(context: Context, bookId: String, transparency: Float) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putFloat(PDF_LOCAL_THEME_TRANSPARENCY_PREFIX + bookId, transparency) }
+}
+
+internal fun loadPdfLocalReverseColorMode(context: Context, bookId: String): String? {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getString(PDF_LOCAL_REVERSE_MODE_PREFIX + bookId, null)
+}
+
+internal fun savePdfLocalReverseColorMode(context: Context, bookId: String, modeId: String) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putString(PDF_LOCAL_REVERSE_MODE_PREFIX + bookId, modeId) }
+}
+
+internal fun loadPdfLocalExcludeImages(context: Context, bookId: String): Boolean? {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return if (prefs.contains(PDF_LOCAL_EXCLUDE_IMAGES_PREFIX + bookId)) {
+        prefs.getBoolean(PDF_LOCAL_EXCLUDE_IMAGES_PREFIX + bookId, false)
+    } else null
+}
+
+internal fun savePdfLocalExcludeImages(context: Context, bookId: String, exclude: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PDF_LOCAL_EXCLUDE_IMAGES_PREFIX + bookId, exclude) }
+}
+
 internal fun loadUseOnlineDict(context: Context): Boolean {
     @Suppress("KotlinConstantConditions") if (BuildConfig.FLAVOR == "oss" && BuildConfig.IS_OFFLINE) return false
     // Android benchmark: Smart AI is the default engine. The shared module owns

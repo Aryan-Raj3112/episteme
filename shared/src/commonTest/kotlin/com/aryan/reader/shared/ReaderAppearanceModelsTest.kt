@@ -142,6 +142,40 @@ class ReaderAppearanceModelsTest {
         assertEquals(SystemUiMode.HIDDEN, result.systemUiMode)
     }
 
+    @Test
+    fun `reader theme replacement preserves format and visual settings`() {
+        val base = ReaderSettings(
+            fontSize = 26,
+            fontFamily = "Lora",
+            textAlign = SharedReaderTextAlign.LEFT,
+            readingMode = ReaderReadingMode.PAGINATED,
+            themeId = "sepia",
+            textureAlpha = 0.3f,
+        )
+        val theme = ReaderSettings(
+            fontSize = 12,
+            fontFamily = "Mono",
+            textAlign = SharedReaderTextAlign.RIGHT,
+            themeId = "dark",
+            textureAlpha = 0.8f,
+            darkMode = true,
+            backgroundColorArgb = 1L,
+            textColorArgb = 2L,
+        )
+
+        val result = base.withReaderThemeFrom(theme)
+
+        assertEquals(26, result.fontSize)
+        assertEquals("Lora", result.fontFamily)
+        assertEquals(SharedReaderTextAlign.LEFT, result.textAlign)
+        assertEquals(ReaderReadingMode.PAGINATED, result.readingMode)
+        assertEquals("dark", result.themeId)
+        assertEquals(0.8f, result.textureAlpha)
+        assertTrue(result.darkMode)
+        assertEquals(1L, result.backgroundColorArgb)
+        assertEquals(2L, result.textColorArgb)
+    }
+
 
     @Test
     fun `pdf built in themes include android pdf defaults and textured presets`() {

@@ -4651,6 +4651,26 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
     val canShowPdfTabs = surfaceState.canShowPdfTabs
     var currentThemeId by surfaceState.currentThemeId
     var customThemes by surfaceState.customThemes
+    var isPdfThemeLocal by androidx.compose.runtime.remember(bookId) {
+        androidx.compose.runtime.mutableStateOf(loadPdfThemeIsLocal(context, bookId))
+    }
+    androidx.compose.runtime.LaunchedEffect(bookId) {
+        val local = loadPdfThemeIsLocal(context, bookId)
+        isPdfThemeLocal = local
+        if (local) {
+            loadPdfLocalThemeId(context, bookId)?.let { currentThemeId = it }
+            loadPdfLocalTextureTransparency(context, bookId)?.let { globalTextureTransparency = it }
+            loadPdfLocalReverseColorMode(context, bookId)?.let {
+                reverseColorMode = com.aryan.reader.shared.pdf.PdfReverseColorMode.fromId(it)
+            }
+            loadPdfLocalExcludeImages(context, bookId)?.let { excludeImages = it }
+        } else {
+            currentThemeId = loadPdfThemeId(context)
+            globalTextureTransparency = com.aryan.reader.loadGlobalTextureTransparency(context)
+            reverseColorMode = com.aryan.reader.loadPdfReverseColorMode(context)
+            excludeImages = com.aryan.reader.loadExcludeImages(context)
+        }
+    }
     var documentPassword by surfaceState.documentPassword
     val effectiveReaderBookTitle = surfaceState.effectiveReaderBookTitle
     var flatTableOfContents by surfaceState.flatTableOfContents
@@ -5404,11 +5424,19 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
             reverseColorMode = reverseColorMode,
             onExcludeImagesChange = {
                 excludeImages = it
-                com.aryan.reader.saveExcludeImages(context, it)
+                if (isPdfThemeLocal) {
+                    savePdfLocalExcludeImages(context, bookId, it)
+                } else {
+                    com.aryan.reader.saveExcludeImages(context, it)
+                }
             },
             onReverseColorModeChange = {
                 reverseColorMode = it
-                com.aryan.reader.savePdfReverseColorMode(context, it)
+                if (isPdfThemeLocal) {
+                    savePdfLocalReverseColorMode(context, bookId, it.id)
+                } else {
+                    com.aryan.reader.savePdfReverseColorMode(context, it)
+                }
             },
             showReverseColorOption = true,
             showExcludeImagesOption = true,
@@ -5416,11 +5444,19 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
             globalTextureTransparency = globalTextureTransparency,
             onGlobalTextureTransparencyChange = {
                 globalTextureTransparency = it
-                saveGlobalTextureTransparency(context, it)
+                if (isPdfThemeLocal) {
+                    savePdfLocalTextureTransparency(context, bookId, it)
+                } else {
+                    saveGlobalTextureTransparency(context, it)
+                }
             },
             onThemeSelected = {
                 currentThemeId = it
-                savePdfThemeId(context, it)
+                if (isPdfThemeLocal) {
+                    savePdfLocalThemeId(context, bookId, it)
+                } else {
+                    savePdfThemeId(context, it)
+                }
                 showThemePanel = false
             },
             onDismiss = { showThemePanel = false },
@@ -5428,7 +5464,48 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
             onCustomThemesUpdated = {
                 customThemes = it
                 saveCustomThemes(context, it)
-            }
+            },
+            isLocalMode = isPdfThemeLocal,
+            onLocalModeChange = {
+                if (it != isPdfThemeLocal) {
+                    if (it) {
+                        if (loadPdfLocalThemeId(context, bookId) == null) {
+                            savePdfLocalThemeId(context, bookId, currentThemeId)
+                        } else {
+                            currentThemeId = loadPdfLocalThemeId(context, bookId) ?: currentThemeId
+                        }
+                        if (loadPdfLocalTextureTransparency(context, bookId) == null) {
+                            savePdfLocalTextureTransparency(context, bookId, globalTextureTransparency)
+                        } else {
+                            globalTextureTransparency = loadPdfLocalTextureTransparency(context, bookId) ?: globalTextureTransparency
+                        }
+                        if (loadPdfLocalReverseColorMode(context, bookId) == null) {
+                            savePdfLocalReverseColorMode(context, bookId, reverseColorMode.id)
+                        } else {
+                            reverseColorMode = com.aryan.reader.shared.pdf.PdfReverseColorMode.fromId(
+                                loadPdfLocalReverseColorMode(context, bookId)
+                            )
+                        }
+                        if (loadPdfLocalExcludeImages(context, bookId) == null) {
+                            savePdfLocalExcludeImages(context, bookId, excludeImages)
+                        } else {
+                            excludeImages = loadPdfLocalExcludeImages(context, bookId) ?: excludeImages
+                        }
+                    } else {
+                        currentThemeId = loadPdfThemeId(context)
+                        globalTextureTransparency = com.aryan.reader.loadGlobalTextureTransparency(context)
+                        reverseColorMode = com.aryan.reader.loadPdfReverseColorMode(context)
+                        excludeImages = com.aryan.reader.loadExcludeImages(context)
+                    }
+                    isPdfThemeLocal = it
+                    savePdfThemeIsLocal(context, bookId, it)
+                }
+            },
+            localLabel = stringResource(R.string.theme_local),
+            globalLabel = stringResource(R.string.theme_global),
+            localDescription = stringResource(R.string.auto_scroll_saved_for_file),
+            globalDescription = stringResource(R.string.auto_scroll_applies_all_files),
+            selectModeLabel = stringResource(R.string.content_desc_select_mode)
         )
     }
 

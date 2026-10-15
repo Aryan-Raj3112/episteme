@@ -1219,9 +1219,26 @@ fun EpubReaderHost(
         bookReplacementPreferences.signatureForFile(bookId)
     }
 
-    var currentThemeId by remember { mutableStateOf(loadReaderThemeId(context)) }
+    var isThemeLocal by remember { mutableStateOf(loadThemeIsLocal(context, bookId)) }
+    var currentThemeId by remember {
+        mutableStateOf(
+            if (loadThemeIsLocal(context, bookId)) {
+                loadLocalThemeId(context, bookId) ?: loadReaderThemeId(context)
+            } else {
+                loadReaderThemeId(context)
+            }
+        )
+    }
     var customThemes by remember { mutableStateOf(loadCustomThemes(context)) }
-    var globalTextureTransparency by remember { mutableFloatStateOf(loadGlobalTextureTransparency(context)) }
+    var globalTextureTransparency by remember {
+        mutableFloatStateOf(
+            if (loadThemeIsLocal(context, bookId)) {
+                loadLocalThemeTransparency(context, bookId) ?: loadGlobalTextureTransparency(context)
+            } else {
+                loadGlobalTextureTransparency(context)
+            }
+        )
+    }
 
     val activeTheme = remember(currentThemeId, customThemes) {
         BuiltInThemes.find { it.id == currentThemeId }
@@ -6741,16 +6758,51 @@ fun EpubReaderHost(
                 globalTextureTransparency = globalTextureTransparency,
                 onGlobalTextureTransparencyChange = {
                     globalTextureTransparency = it
-                    saveGlobalTextureTransparency(context, it)
+                    if (isThemeLocal) {
+                        saveLocalThemeTransparency(context, bookId, it)
+                    } else {
+                        saveGlobalTextureTransparency(context, it)
+                    }
                 },
                 onThemeSelected = {
                     currentThemeId = it
-                    saveReaderThemeId(context, it)
+                    if (isThemeLocal) {
+                        saveLocalThemeId(context, bookId, it)
+                    } else {
+                        saveReaderThemeId(context, it)
+                    }
                     showThemePanel = false
                 },
                 onDismiss = { showThemePanel = false },
                 customThemes = customThemes,
-                onCustomThemesUpdated = { customThemes = it; saveCustomThemes(context, it) }
+                onCustomThemesUpdated = { customThemes = it; saveCustomThemes(context, it) },
+                isLocalMode = isThemeLocal,
+                onLocalModeChange = {
+                    if (it != isThemeLocal) {
+                        if (it) {
+                            if (loadLocalThemeId(context, bookId) == null) {
+                                saveLocalThemeId(context, bookId, currentThemeId)
+                            } else {
+                                currentThemeId = loadLocalThemeId(context, bookId) ?: currentThemeId
+                            }
+                            if (loadLocalThemeTransparency(context, bookId) == null) {
+                                saveLocalThemeTransparency(context, bookId, globalTextureTransparency)
+                            } else {
+                                globalTextureTransparency = loadLocalThemeTransparency(context, bookId) ?: globalTextureTransparency
+                            }
+                        } else {
+                            currentThemeId = loadReaderThemeId(context)
+                            globalTextureTransparency = loadGlobalTextureTransparency(context)
+                        }
+                        isThemeLocal = it
+                        saveThemeIsLocal(context, bookId, it)
+                    }
+                },
+                localLabel = stringResource(R.string.theme_local),
+                globalLabel = stringResource(R.string.theme_global),
+                localDescription = stringResource(R.string.auto_scroll_saved_for_file),
+                globalDescription = stringResource(R.string.auto_scroll_applies_all_files),
+                selectModeLabel = stringResource(R.string.content_desc_select_mode)
             )
         }
 

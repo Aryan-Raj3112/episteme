@@ -67,6 +67,7 @@ import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Ai
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bookmark
@@ -451,6 +452,7 @@ fun SharedMobilePdfReaderScreen(
     initialPdfAutoScrollUseSlider: Boolean = false,
     onPdfAutoScrollUseSliderChange: (Boolean) -> Unit = {},
     onPdfAutoScrollBookChange: (BookItem) -> Unit = {},
+    onPdfThemeBookChange: (BookItem) -> Unit = {},
     onKeepScreenOnChange: (Boolean) -> Unit = {},
     onSystemUiAppearanceChange: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit = { _, _, _, _ -> },
     onSystemUiRelease: () -> Unit = {},
@@ -553,6 +555,7 @@ fun SharedMobilePdfReaderScreen(
         initialPdfAutoScrollUseSlider = initialPdfAutoScrollUseSlider,
         onPdfAutoScrollUseSliderChange = onPdfAutoScrollUseSliderChange,
         onPdfAutoScrollBookChange = onPdfAutoScrollBookChange,
+        onPdfThemeBookChange = onPdfThemeBookChange,
         onKeepScreenOnChange = onKeepScreenOnChange,
         onSystemUiAppearanceChange = onSystemUiAppearanceChange,
         onSystemUiRelease = onSystemUiRelease,
@@ -655,6 +658,7 @@ fun SharedMobilePdfReaderHost(
     initialPdfAutoScrollUseSlider: Boolean = false,
     onPdfAutoScrollUseSliderChange: (Boolean) -> Unit = {},
     onPdfAutoScrollBookChange: (BookItem) -> Unit = {},
+    onPdfThemeBookChange: (BookItem) -> Unit = {},
     onKeepScreenOnChange: (Boolean) -> Unit = {},
     onSystemUiAppearanceChange: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit = { _, _, _, _ -> },
     onSystemUiRelease: () -> Unit = {},
@@ -699,6 +703,8 @@ fun SharedMobilePdfReaderHost(
     key(readerSessionKey) {
         val pdfCardTitle = book.cardTitle(LocalUsePdfFileNameAsDisplayName.current)
         val initialPage = book.lastPageIndex?.coerceAtLeast(0) ?: 0
+    var isLocalThemeMode by remember(readerSessionKey) { mutableStateOf(book.pdfThemeIsLocal) }
+    var localThemeSettings by remember(readerSessionKey) { mutableStateOf(book.pdfLocalThemeSettings) }
     var readerState by remember(readerSessionKey, initialReaderState) {
         mutableStateOf(
             initialSharedPdfReaderState(
@@ -707,6 +713,8 @@ fun SharedMobilePdfReaderHost(
                 initialPageIndex = initialPage,
                 highlighterPalette = pdfHighlighterPalette,
                 isHighlighterSnapEnabled = pdfHighlighterSnapEnabled,
+                isLocalTheme = book.pdfThemeIsLocal,
+                localThemeSettings = book.pdfLocalThemeSettings,
             )
         )
     }
@@ -786,7 +794,10 @@ fun SharedMobilePdfReaderHost(
         mutableStateOf(readerDefaultSettings.pdfFirstPageStandaloneInSpread)
     }
     var globalTextureTransparency by remember(readerSessionKey) {
-        mutableStateOf(1f - readerDefaultSettings.textureAlpha.coerceIn(0f, 1f))
+        mutableStateOf(
+            if (book.pdfThemeIsLocal) 1f - (book.pdfLocalThemeSettings?.textureAlpha ?: readerDefaultSettings.textureAlpha).coerceIn(0f, 1f)
+            else 1f - readerDefaultSettings.textureAlpha.coerceIn(0f, 1f)
+        )
     }
     var keepScreenOn by remember(readerSessionKey) { mutableStateOf(initialKeepScreenOn) }
     var isStylusOnlyMode by remember(readerSessionKey) { mutableStateOf(initialStylusOnlyMode) }
@@ -4780,9 +4791,57 @@ fun SharedMobilePdfReaderHost(
                     if (settings.pdfPreserveImageColors != readerState.preserveImageColors) {
                         dispatch(SharedPdfReaderAction.PreserveImageColorsChanged(settings.pdfPreserveImageColors))
                     }
-                    onReaderDefaultSettingsChange(settings)
+                    if (isLocalThemeMode) {
+                        localThemeSettings = settings
+                        onPdfThemeBookChange(book.copy(pdfThemeIsLocal = true, pdfLocalThemeSettings = settings))
+                    } else {
+                        onReaderDefaultSettingsChange(settings)
+                    }
                 },
-                onDismiss = { showThemePanel = false }
+                onDismiss = { showThemePanel = false },
+                isLocalMode = isLocalThemeMode,
+                onLocalModeChange = { useLocal ->
+                    if (useLocal != isLocalThemeMode) {
+                        if (useLocal) {
+                            val local = localThemeSettings ?: readerDefaultSettings.copy(
+                                themeId = readerState.themeId,
+                                textureAlpha = 1f - globalTextureTransparency,
+                                pdfReverseColorMode = readerState.reverseColorMode,
+                                pdfPreserveImageColors = readerState.preserveImageColors,
+                            )
+                            localThemeSettings = local
+                            local.themeId?.let { if (it != readerState.themeId) dispatch(SharedPdfReaderAction.ThemeChanged(it)) }
+                            if (local.pdfReverseColorMode != readerState.reverseColorMode) {
+                                dispatch(SharedPdfReaderAction.ReverseColorModeChanged(local.pdfReverseColorMode))
+                            }
+                            if (local.pdfPreserveImageColors != readerState.preserveImageColors) {
+                                dispatch(SharedPdfReaderAction.PreserveImageColorsChanged(local.pdfPreserveImageColors))
+                            }
+                            globalTextureTransparency = 1f - local.textureAlpha.coerceIn(0f, 1f)
+                            isLocalThemeMode = true
+                            onPdfThemeBookChange(book.copy(pdfThemeIsLocal = true, pdfLocalThemeSettings = local))
+                        } else {
+                            val currentLocal = readerDefaultSettings.copy(
+                                themeId = readerState.themeId,
+                                textureAlpha = 1f - globalTextureTransparency,
+                                pdfReverseColorMode = readerState.reverseColorMode,
+                                pdfPreserveImageColors = readerState.preserveImageColors,
+                            )
+                            localThemeSettings = currentLocal
+                            val global = readerDefaultSettings
+                            global.themeId?.let { if (it != readerState.themeId) dispatch(SharedPdfReaderAction.ThemeChanged(it)) }
+                            if (global.pdfReverseColorMode != readerState.reverseColorMode) {
+                                dispatch(SharedPdfReaderAction.ReverseColorModeChanged(global.pdfReverseColorMode))
+                            }
+                            if (global.pdfPreserveImageColors != readerState.preserveImageColors) {
+                                dispatch(SharedPdfReaderAction.PreserveImageColorsChanged(global.pdfPreserveImageColors))
+                            }
+                            globalTextureTransparency = 1f - global.textureAlpha.coerceIn(0f, 1f)
+                            isLocalThemeMode = false
+                            onPdfThemeBookChange(book.copy(pdfThemeIsLocal = false, pdfLocalThemeSettings = currentLocal))
+                        }
+                    }
+                }
             )
         }
         if (showReaderOptions) {
@@ -7023,7 +7082,9 @@ private fun SharedMobilePdfThemePanel(
     customThemes: List<ReaderTheme>,
     onCustomThemesChange: (List<ReaderTheme>) -> Unit,
     onSettingsChange: (ReaderSettings) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    isLocalMode: Boolean = false,
+    onLocalModeChange: (Boolean) -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -7040,6 +7101,37 @@ private fun SharedMobilePdfThemePanel(
             contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
         ) {
             item {
+                var showModeMenu by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+                Box {
+                    androidx.compose.foundation.layout.Row(
+                        Modifier.clickable { showModeMenu = true }.padding(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            if (isLocalMode) readerString("theme_local", "Local Theme") else readerString("theme_global", "Global Theme"),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Icon(
+                            Icons.Default.ArrowDropDown,
+                            contentDescription = readerString("format_select_mode", "Select format mode"),
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    SharedDropdownMenu(expanded = showModeMenu, onDismissRequest = { showModeMenu = false }) {
+                        DropdownMenuItem(text = { Column { Text(readerString("theme_global", "Global Theme"), fontWeight = FontWeight.Bold); Text(
+                                    readerString("auto_scroll_desc_global", "Applies to all files"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                ) } }, onClick = { onLocalModeChange(false); showModeMenu = false })
+                        HorizontalDivider()
+                        DropdownMenuItem(text = { Column { Text(readerString("theme_local", "Local Theme"), fontWeight = FontWeight.Bold); Text(
+                                    readerString("format_saved_for_this_file", "Saved for this file"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                ) } }, onClick = { onLocalModeChange(true); showModeMenu = false })
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
                 SharedReaderThemeControls(
                     settings = settings,
                     builtInThemes = BuiltInPdfReaderThemes,

@@ -1033,6 +1033,8 @@
     <string name="format_local">Local Format</string>
     <!-- "Global Format" = text formatting settings that apply to all books. -->
     <string name="format_global">Global Format</string>
+    <string name="theme_local">Local Theme</string>
+    <string name="theme_global">Global Theme</string>
     <string name="action_reset">Reset</string>
     <string name="label_size">Size</string>
     <string name="label_spacing">Spacing</string>

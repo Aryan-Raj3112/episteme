@@ -462,4 +462,38 @@ class SharedLibrarySnapshotJsonTest {
             SharedLibrarySnapshotJson.decodeOrEmpty(raw).pdfReaderDefaultSettings,
         )
     }
+
+    @Test
+    fun `theme locality survives snapshot round trip and defaults to global`() {
+        val snapshot = SharedLibrarySnapshot(
+            books = listOf(
+                BookItem(
+                    id = "book",
+                    path = null,
+                    type = FileType.EPUB,
+                    displayName = "book.epub",
+                    timestamp = 10L,
+                    readerThemeIsLocal = true,
+                    readerLocalThemeSettings = ReaderSettings(themeId = "dark"),
+                    pdfThemeIsLocal = true,
+                    pdfLocalThemeSettings = ReaderSettings(themeId = "reverse"),
+                )
+            )
+        )
+
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(SharedLibrarySnapshotJson.encode(snapshot))
+        val book = decoded.books.single()
+
+        assertTrue(book.readerThemeIsLocal)
+        assertEquals("dark", book.readerLocalThemeSettings?.themeId)
+        assertTrue(book.pdfThemeIsLocal)
+        assertEquals("reverse", book.pdfLocalThemeSettings?.themeId)
+
+        val legacy = SharedLibrarySnapshotJson.decodeOrEmpty("""{"books":[{"id":"b","displayName":"b","type":"EPUB","timestamp":0}]}""")
+        val legacyBook = legacy.books.single()
+        assertFalse(legacyBook.readerThemeIsLocal)
+        assertEquals(null, legacyBook.readerLocalThemeSettings)
+        assertFalse(legacyBook.pdfThemeIsLocal)
+        assertEquals(null, legacyBook.pdfLocalThemeSettings)
+    }
 }

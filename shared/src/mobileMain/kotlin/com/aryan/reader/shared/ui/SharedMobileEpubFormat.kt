@@ -685,20 +685,45 @@ internal fun SharedMobileEpubThemeSheet(
     customReaderThemes: List<ReaderTheme>,
     onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit,
     onSettingsChange: (ReaderSettings) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    isLocalMode: Boolean = false,
+    onLocalModeChange: (Boolean) -> Unit = {},
 ) {
     val allThemes = BuiltInReaderThemes + customReaderThemes
     val selectedTheme = allThemes.firstOrNull { it.id == settings.themeId }
     var selectedTab by remember(settings.themeId) { mutableIntStateOf(if (selectedTheme?.textureId != null) 1 else 0) }
     var editingTheme by remember { mutableStateOf<ReaderTheme?>(null) }
     var showBuilder by remember { mutableStateOf(false) }
+    var showModeMenu by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val builtIns = BuiltInReaderThemes.filter { (it.textureId != null) == (selectedTab == 1) }
     val customThemes = customReaderThemes.filter { (it.textureId != null) == (selectedTab == 1) }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(horizontal = 16.dp)) {
-            Text(readerString("reading_themes", "Reading Themes"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp, bottom = 16.dp))
+            Text(readerString("reading_themes", "Reading Themes"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp))
+            Box {
+                Row(Modifier.clickable { showModeMenu = true }.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (isLocalMode) readerString("theme_local", "Local Theme") else readerString("theme_global", "Global Theme"),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Icon(Icons.Default.ArrowDropDown, contentDescription = readerString("format_select_mode", "Select format mode"), tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                }
+                SharedDropdownMenu(expanded = showModeMenu, onDismissRequest = { showModeMenu = false }) {
+                    DropdownMenuItem(text = { Column { Text(readerString("theme_global", "Global Theme"), fontWeight = FontWeight.Bold); Text(
+                                readerString("auto_scroll_desc_global", "Applies to all files"),
+                                style = MaterialTheme.typography.bodySmall,
+                            ) } }, onClick = { onLocalModeChange(false); showModeMenu = false })
+                    HorizontalDivider()
+                    DropdownMenuItem(text = { Column { Text(readerString("theme_local", "Local Theme"), fontWeight = FontWeight.Bold); Text(
+                                readerString("format_saved_for_this_file", "Saved for this file"),
+                                style = MaterialTheme.typography.bodySmall,
+                            ) } }, onClick = { onLocalModeChange(true); showModeMenu = false })
+                }
+            }
+            Spacer(Modifier.height(8.dp))
             TabRow(selectedTabIndex = selectedTab, containerColor = Color.Transparent, divider = {}) {
                 Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }) { Text(readerString("theme_solid_colors", "Solid Colors"), modifier = Modifier.padding(12.dp)) }
                 Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }) { Text(readerString("theme_textured", "Textured"), modifier = Modifier.padding(12.dp)) }

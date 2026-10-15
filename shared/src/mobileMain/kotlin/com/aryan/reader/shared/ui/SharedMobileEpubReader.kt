@@ -129,6 +129,7 @@ import com.aryan.reader.shared.shouldReserveEpubPageInfoBarSpace
 import com.aryan.reader.shared.shouldShowEpubPageInfoBar
 import com.aryan.reader.shared.withTtsReplacements
 import com.aryan.reader.shared.withReaderFormatFrom
+import com.aryan.reader.shared.withReaderThemeFrom
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderJumpHistory
@@ -213,6 +214,8 @@ data class SharedMobileEpubReaderSnapshot(
     val pageCount: Int,
     val formatIsLocal: Boolean,
     val localFormatSettings: ReaderSettings?,
+    val themeIsLocal: Boolean,
+    val localThemeSettings: ReaderSettings?,
     val autoScrollIsLocal: Boolean,
     val autoScrollLocalSpeed: Float?,
     val autoScrollLocalMinSpeed: Float?,
@@ -440,12 +443,20 @@ fun SharedMobileEpubReaderScreen(
     val migratedLocalFormatSettings = book.readerLocalFormatSettings?.migrateAndroidEpubFormatSettings()
     var isLocalFormatMode by remember(book.id) { mutableStateOf(book.readerFormatIsLocal) }
     var localFormatSettings by remember(book.id) { mutableStateOf(migratedLocalFormatSettings) }
+    var isLocalThemeMode by remember(book.id) { mutableStateOf(book.readerThemeIsLocal) }
+    var localThemeSettings by remember(book.id) { mutableStateOf(book.readerLocalThemeSettings) }
     var settings by remember(book.id) {
         mutableStateOf(
-            if (book.readerFormatIsLocal) {
+            (if (book.readerFormatIsLocal) {
                 storedBookSettings.withReaderFormatFrom(migratedLocalFormatSettings ?: storedBookSettings)
             } else {
                 storedBookSettings.withReaderFormatFrom(migratedReaderDefaults)
+            }).let { withFormat ->
+                if (book.readerThemeIsLocal) {
+                    withFormat.withReaderThemeFrom(book.readerLocalThemeSettings ?: withFormat)
+                } else {
+                    withFormat.withReaderThemeFrom(migratedReaderDefaults)
+                }
             }
         )
     }
@@ -1134,6 +1145,8 @@ fun SharedMobileEpubReaderScreen(
             pageCount = pageCount,
             formatIsLocal = isLocalFormatMode,
             localFormatSettings = localFormatSettings,
+            themeIsLocal = isLocalThemeMode,
+            localThemeSettings = localThemeSettings,
             autoScrollIsLocal = autoScrollIsLocal,
             autoScrollLocalSpeed = autoScrollLocalProfile?.speed,
             autoScrollLocalMinSpeed = autoScrollLocalProfile?.minSpeed,
@@ -1141,7 +1154,7 @@ fun SharedMobileEpubReaderScreen(
         )
     }
 
-    LaunchedEffect(currentLocator, settings, bookmarks, highlights, currentPageIndex, pageCount, isLocalFormatMode, localFormatSettings, autoScrollIsLocal, autoScrollLocalProfile) {
+    LaunchedEffect(currentLocator, settings, bookmarks, highlights, currentPageIndex, pageCount, isLocalFormatMode, localFormatSettings, isLocalThemeMode, localThemeSettings, autoScrollIsLocal, autoScrollLocalProfile) {
         delay(220)
         val snapshot = currentReaderSnapshot()
         if (snapshot == null) {
@@ -3974,7 +3987,7 @@ fun SharedMobileEpubReaderScreen(
                 if (isLocalFormatMode) {
                     localFormatSettings = next
                 } else {
-                    onReaderDefaultSettingsChange(next)
+                    onReaderDefaultSettingsChange(migratedReaderDefaults.withReaderFormatFrom(next))
                 }
             },
             onDismiss = { showFormatSheet = false }
@@ -4004,8 +4017,29 @@ fun SharedMobileEpubReaderScreen(
             settings = settings,
             customReaderThemes = customReaderThemes,
             onCustomReaderThemesChange = onCustomReaderThemesChange,
-            onSettingsChange = { settings = it },
-            onDismiss = { showThemeSheet = false }
+            onSettingsChange = { next ->
+                settings = next
+                if (isLocalThemeMode) {
+                    localThemeSettings = next
+                } else {
+                    onReaderDefaultSettingsChange(migratedReaderDefaults.withReaderThemeFrom(next))
+                }
+            },
+            onDismiss = { showThemeSheet = false },
+            isLocalMode = isLocalThemeMode,
+            onLocalModeChange = { useLocal ->
+                if (useLocal != isLocalThemeMode) {
+                    if (useLocal) {
+                        val local = localThemeSettings ?: settings
+                        localThemeSettings = local
+                        settings = settings.withReaderThemeFrom(local)
+                    } else {
+                        localThemeSettings = settings
+                        settings = settings.withReaderThemeFrom(migratedReaderDefaults)
+                    }
+                    isLocalThemeMode = useLocal
+                }
+            }
         )
     }
     if (showVisualOptionsSheet) {
