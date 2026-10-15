@@ -1,6 +1,8 @@
 package com.aryan.reader
 
 import com.aryan.reader.shared.calculateSharedTtsAudiobookProgress
+import com.aryan.reader.shared.compareByNatural
+import com.aryan.reader.shared.compareNatural
 import com.aryan.reader.shared.isOverlay
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
@@ -236,17 +238,14 @@ private fun sortListenItems(
         }
 
         ListenSort.TITLE -> {
-            items.sortedBy {
-                it.title.lowercase()
-            }
+            items.sortedWith(compareByNatural { it.title })
         }
 
         ListenSort.AUTHOR -> {
             items.sortedWith(
-                compareBy<AudiobookUiItem> {
-                    it.author.lowercase()
-                }.thenBy {
-                    it.title.lowercase()
+                Comparator { a, b ->
+                    val authorCmp = compareNatural(a.author, b.author)
+                    if (authorCmp != 0) authorCmp else compareNatural(a.title, b.title)
                 }
             )
         }

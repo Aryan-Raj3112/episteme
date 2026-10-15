@@ -11,6 +11,7 @@ import com.aryan.reader.cloudFolderOperationId
 import com.aryan.reader.cloudFolderSafeId
 import com.aryan.reader.cloudFolderSyncCorrelationId
 import com.aryan.reader.shared.CloudFolderDeviceBinding
+import com.aryan.reader.shared.compareNatural
 import com.aryan.reader.shared.CloudFolderConflict
 import com.aryan.reader.shared.CloudFolderConflictRecord
 import com.aryan.reader.shared.CloudFolderConflictResolution
@@ -866,9 +867,12 @@ class CloudFolderSyncRepository(
             }
         }
         return items.sortedWith(
-            compareBy<CloudFolderConflictUiItem> { it.normalizedFolderName.lowercase() }
-                .thenBy { it.normalizedPath.lowercase() }
-                .thenBy { it.conflictId },
+            Comparator { a, b ->
+                val nameCmp = compareNatural(a.normalizedFolderName, b.normalizedFolderName)
+                if (nameCmp != 0) return@Comparator nameCmp
+                val pathCmp = compareNatural(a.normalizedPath, b.normalizedPath)
+                if (pathCmp != 0) pathCmp else a.conflictId.compareTo(b.conflictId)
+            },
         )
     }
 

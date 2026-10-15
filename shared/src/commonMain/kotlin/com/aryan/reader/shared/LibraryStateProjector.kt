@@ -232,7 +232,12 @@ class SharedLibraryStateProjector(
         val unshelvedBooks = allLibraryBooks.filter { it.id !in shelvedBookIds }
         shelves.add(Shelf("unshelved", "Unshelved", ShelfType.MANUAL, sortBooks(unshelvedBooks, sortOrder)))
 
-        shelves.sortWith(compareBy({ it.type.ordinal }, { it.sortKey }))
+        shelves.sortWith(
+            Comparator { a, b ->
+                val typeCmp = a.type.ordinal.compareTo(b.type.ordinal)
+                if (typeCmp != 0) typeCmp else compareNatural(a.sortKey, b.sortKey)
+            }
+        )
         return ShelfProjection(shelves = shelves, unshelvedBooks = unshelvedBooks)
     }
 
@@ -292,12 +297,16 @@ class SharedLibraryStateProjector(
                     type = ShelfType.FOLDER,
                     books = sortBooks(books, sortOrder),
                     directBooks = sortBooks(rootAccumulator.directBooks, sortOrder),
-                    childShelfIds = rootAccumulator.childShelfIds.sortedBy { it.substringAfterLast("::").lowercase() },
+                    childShelfIds = rootAccumulator.childShelfIds.sortedWith(
+                        Comparator { a, b ->
+                            compareNatural(a.substringAfterLast("::"), b.substringAfterLast("::"))
+                        }
+                    ),
                     depth = 0,
                     sortKey = "folder:${rootName.lowercase()}:"
                 )
 
-                val childShelves = nestedShelves.values.sortedBy { it.sortPath }.map { shelf ->
+                val childShelves = nestedShelves.values.sortedWith(compareByNatural { it.sortPath }).map { shelf ->
                     Shelf(
                         id = shelf.id,
                         name = shelf.name,
@@ -305,7 +314,11 @@ class SharedLibraryStateProjector(
                         books = sortBooks(shelf.books, sortOrder),
                         directBooks = sortBooks(shelf.directBooks, sortOrder),
                         parentShelfId = shelf.parentShelfId,
-                        childShelfIds = shelf.childShelfIds.sortedBy { it.substringAfterLast("::").lowercase() },
+                        childShelfIds = shelf.childShelfIds.sortedWith(
+                            Comparator { a, b ->
+                                compareNatural(a.substringAfterLast("::"), b.substringAfterLast("::"))
+                            }
+                        ),
                         depth = shelf.depth,
                         sortKey = "folder:${rootName.lowercase()}:${shelf.sortPath}"
                     )
@@ -424,10 +437,15 @@ fun sortBooks(books: List<BookItem>, sortOrder: SortOrder): List<BookItem> {
         SortOrder.RECENT -> books.sortedByDescending { it.timestamp }
         SortOrder.DATE_ADDED_NEWEST -> books.sortedByDescending { it.libraryFileDateTimestamp() }
         SortOrder.DATE_ADDED_OLDEST -> books.sortedBy { it.libraryFileDateTimestamp() }
-        SortOrder.TITLE_ASC -> books.sortedBy {
-            it.titleSortKey?.lowercase() ?: it.title?.lowercase() ?: it.displayName.lowercase()
-        }
-        SortOrder.AUTHOR_ASC -> books.sortedWith(compareBy(nullsLast()) { it.author?.lowercase() })
+        SortOrder.TITLE_ASC -> books.sortedWith(
+            Comparator { a, b ->
+                compareNatural(
+                    a.titleSortKey ?: a.title ?: a.displayName,
+                    b.titleSortKey ?: b.title ?: b.displayName,
+                )
+            }
+        )
+        SortOrder.AUTHOR_ASC -> books.sortedWith(compareBy(nullsLast(::compareNatural)) { it.author })
         SortOrder.PERCENT_ASC -> books.sortedBy { it.progressPercentage ?: 0f }
         SortOrder.PERCENT_DESC -> books.sortedByDescending { it.progressPercentage ?: 0f }
         SortOrder.SIZE_ASC -> books.sortedBy { it.fileSize }

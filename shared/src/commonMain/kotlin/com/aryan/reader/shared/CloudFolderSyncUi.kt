@@ -125,7 +125,7 @@ data class CloudFolderSyncSettingsUiState(
         get() = folders
             .map { it.sanitized() }
             .distinctBy { it.normalizedRootId }
-            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.normalizedDisplayName })
+            .sortedWith(compareByNatural { it.normalizedDisplayName })
 
     val selectedFolderCount: Int
         get() = normalizedFolders.count {
@@ -156,7 +156,7 @@ data class CloudFolderSyncSettingsUiState(
             conflicts = conflicts
                 .map { it.copy(rootId = it.normalizedRootId, folderName = it.normalizedFolderName) }
                 .distinctBy { it.conflictId }
-                .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.normalizedPath }),
+                .sortedWith(compareByNatural { it.normalizedPath }),
         )
     }
 

@@ -477,7 +477,7 @@ object LocalFolderSyncEngine {
         val shouldRecordScan = !metadataOnly && scanStatus == LocalFolderScanStatus.COMPLETE
         val syncedFolder = if (shouldRecordScan) folder.copy(lastScanTime = nowMillis) else folder
         val syncedFolders = (state.syncedFolders.filterNot { it.uriString == folderRoot } + syncedFolder)
-            .sortedBy { it.name.lowercase() }
+            .sortedWith(compareByNatural { it.name })
         val migratedState = state
             .withMigratedBookIds(idMigrations)
         val nextState = migratedState

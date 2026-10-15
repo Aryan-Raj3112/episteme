@@ -3,6 +3,7 @@
 package com.aryan.reader.shared.ios
 
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.compareNatural
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.docparse.SharedDocxDocumentParser
@@ -264,7 +265,7 @@ internal fun extractIosBookPresentation(book: BookItem): IosBookPresentation = r
             val archive = openIosZipArchive(book.path) ?: return@runCatching IosBookPresentation()
             val firstImage = archive.entryPaths
                 .filter { it.substringAfterLast('.', "").lowercase() in setOf("jpg", "jpeg", "png", "gif", "webp") }
-                .sortedWith(String.CASE_INSENSITIVE_ORDER)
+                .sortedWith(::compareNatural)
                 .firstOrNull()
             IosBookPresentation(coverBytes = firstImage?.let(archive::readBytes))
         }
@@ -760,7 +761,7 @@ private fun loadIosCbzBook(book: BookItem): SharedEpubBook {
     val archive = openIosZipArchive(book.path) ?: error("CBZ path is unavailable")
     val imagePaths = archive.entryPaths
         .filter { it.isIosComicImagePath() }
-        .sortedWith(String.CASE_INSENSITIVE_ORDER)
+        .sortedWith(::compareNatural)
     require(imagePaths.isNotEmpty()) { "This CBZ archive contains no readable images" }
     return buildIosComicBook(book, imagePaths.mapNotNull { path ->
         archive.readBytes(path)?.let { path to it }
@@ -772,7 +773,7 @@ private fun loadIosCbtBook(book: BookItem): SharedEpubBook {
     val entries = bytes
         .readComicTarEntries()
         .filter { it.first.isIosComicImagePath() }
-        .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.first })
+        .sortedWith(Comparator { a, b -> compareNatural(a.first, b.first) })
     require(entries.isNotEmpty()) { "This CBT archive contains no readable images" }
     return buildIosComicBook(book, entries)
 }
@@ -837,7 +838,7 @@ private fun loadIosLibarchiveComicBookAtPath(book: BookItem, path: String): Shar
                     if (offset > 0) add(entryPath to bytes.copyOf(offset))
                 }
             }
-        }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.first })
+        }.sortedWith(Comparator { a, b -> compareNatural(a.first, b.first) })
         require(images.isNotEmpty()) {
             "This ${book.type.name} archive contains no readable images"
         }

@@ -135,7 +135,12 @@ fun selectCloudFolderIncomingPrompt(
         .asSequence()
         .filterNot { it.isDeleted }
         .filter { it.rootId in pendingRootIds }
-        .sortedWith(compareBy({ it.name.lowercase() }, { it.rootId }))
+        .sortedWith(
+            Comparator { a, b ->
+                val nameCmp = compareNatural(a.name, b.name)
+                if (nameCmp != 0) nameCmp else a.rootId.compareTo(b.rootId)
+            }
+        )
         .firstOrNull() ?: return null
     return CloudFolderIncomingFolderPrompt(
         root = promptRoot,

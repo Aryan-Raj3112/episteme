@@ -132,6 +132,7 @@ import com.aryan.reader.shared.AnnotationExportFormatter
 import com.aryan.reader.shared.AndroidShareArtifactManager
 import com.aryan.reader.shared.CloudBookTombstone
 import com.aryan.reader.shared.CloudFolderDeviceBinding
+import com.aryan.reader.shared.compareNatural
 import com.aryan.reader.shared.CloudFolderConflictResolution
 import com.aryan.reader.shared.CloudFolderConflictUiItem
 import com.aryan.reader.shared.CloudFolderIncomingChoice
@@ -4324,7 +4325,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     // choice write (binding saved, preference write failed)
                     // so the global prompt remains retryable.
                     .filter { it.rootId in pendingRootIds }
-                    .sortedWith(compareBy({ it.name.lowercase() }, { it.rootId }))
+                    .sortedWith(
+                        Comparator { a, b ->
+                            val nameCmp = compareNatural(a.name, b.name)
+                            if (nameCmp != 0) nameCmp else a.rootId.compareTo(b.rootId)
+                        }
+                    )
                     .firstOrNull()
                 val stats = roots.associate { it.rootId to it.stats }
                 // A sign-in transition can race this refresh. Never publish
@@ -4396,7 +4402,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 _cloudFolderRootStats.value = stats
                 _cloudFolderLocalInventories.value = localInventories
                 _cloudFolderRoots.value = roots.sortedWith(
-                    compareBy<CloudFolderRoot> { it.name.lowercase() }.thenBy { it.rootId },
+                    Comparator { a, b ->
+                        val nameCmp = compareNatural(a.name, b.name)
+                        if (nameCmp != 0) nameCmp else a.rootId.compareTo(b.rootId)
+                    },
                 )
                 _cloudFolderBindings.value = bindings
                 _cloudFolderSyncProgress.value = syncProgress

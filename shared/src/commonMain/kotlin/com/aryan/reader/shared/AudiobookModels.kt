@@ -199,9 +199,12 @@ fun sortSharedAudiobooks(
         compareByDescending<SharedAudiobook> { it.lastListenedAt }.thenByDescending { it.addedAt }
     )
     SharedAudiobookSort.RECENTLY_ADDED -> items.sortedByDescending { it.addedAt }
-    SharedAudiobookSort.TITLE -> items.sortedBy { it.title.lowercase() }
+    SharedAudiobookSort.TITLE -> items.sortedWith(compareByNatural { it.title })
     SharedAudiobookSort.AUTHOR -> items.sortedWith(
-        compareBy<SharedAudiobook> { it.author?.lowercase().orEmpty() }.thenBy { it.title.lowercase() }
+        Comparator { a, b ->
+            val authorCmp = compareNatural(a.author.orEmpty(), b.author.orEmpty())
+            if (authorCmp != 0) authorCmp else compareNatural(a.title, b.title)
+        }
     )
     SharedAudiobookSort.PROGRESS -> items.sortedByDescending { it.progressFraction }
 }

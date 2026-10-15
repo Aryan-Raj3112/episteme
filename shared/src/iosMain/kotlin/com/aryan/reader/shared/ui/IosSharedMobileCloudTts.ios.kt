@@ -34,6 +34,7 @@ import com.aryan.reader.shared.hasSpendableBalance
 import com.aryan.reader.shared.parseSpendGuardError
 import com.aryan.reader.shared.parseSpendGuardSentinel
 import com.aryan.reader.shared.spendGuardSentinel
+import com.aryan.reader.shared.compareByNatural
 import com.aryan.reader.shared.ios.IOS_TTS_WORKER_URL
 import com.aryan.reader.shared.ios.IosReaderAiHttpClient
 import com.aryan.reader.shared.reduce
@@ -400,7 +401,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
                     entryKey = "${dirs.first}/${dirs.second}",
                 )
             }
-            .sortedBy { it.chapterTitle.lowercase() }
+            .sortedWith(compareByNatural { it.chapterTitle })
     }
 
     override fun deleteCachedChapter(chapter: ReaderTtsCacheChapter) {

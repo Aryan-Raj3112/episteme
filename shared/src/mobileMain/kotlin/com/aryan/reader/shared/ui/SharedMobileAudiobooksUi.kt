@@ -128,6 +128,8 @@ import com.aryan.reader.shared.progressFraction
 import com.aryan.reader.shared.sharedAudiobookRemainingLabel
 import com.aryan.reader.shared.sortSharedAudiobooks
 import com.aryan.reader.shared.toSharedAudiobookLibraryItem
+import com.aryan.reader.shared.compareByNatural
+import com.aryan.reader.shared.compareNatural
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -227,7 +229,7 @@ fun SharedMobileTtsBookPickerSheet(
                     value?.contains(query, ignoreCase = true) == true
                 }
             }
-            .sortedBy { it.sharedListenTitle().lowercase() }
+            .sortedWith(compareByNatural { it.sharedListenTitle() })
             .toList()
     }
     ModalBottomSheet(
@@ -636,9 +638,12 @@ private fun compareListenEntries(sort: SharedAudiobookSort): Comparator<ListenEn
     SharedAudiobookSort.RECENTLY_LISTENED ->
         compareByDescending<ListenEntry> { it.lastListenedAt }.thenByDescending { it.addedAt }
     SharedAudiobookSort.RECENTLY_ADDED -> compareByDescending<ListenEntry> { it.addedAt }
-    SharedAudiobookSort.TITLE -> compareBy<ListenEntry> { it.title.lowercase() }
+    SharedAudiobookSort.TITLE -> compareByNatural<ListenEntry> { it.title }
     SharedAudiobookSort.AUTHOR ->
-        compareBy<ListenEntry> { it.author?.lowercase().orEmpty() }.thenBy { it.title.lowercase() }
+        Comparator { a, b ->
+            val authorCmp = compareNatural(a.author.orEmpty(), b.author.orEmpty())
+            if (authorCmp != 0) authorCmp else compareNatural(a.title, b.title)
+        }
     SharedAudiobookSort.PROGRESS -> compareByDescending<ListenEntry> { it.progress }
 }
 

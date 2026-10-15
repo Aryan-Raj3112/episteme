@@ -336,7 +336,7 @@ private fun mergeCloudTags(
     return (local + remote)
         .associateBy(Tag::id)
         .values
-        .sortedBy { it.name.lowercase() }
+        .sortedWith(compareByNatural { it.name })
 }
 
 private fun mergeCloudCustomFonts(

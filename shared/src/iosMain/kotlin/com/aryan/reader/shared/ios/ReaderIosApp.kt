@@ -358,6 +358,8 @@ import com.aryan.reader.shared.reader.sharedEpubOpenTraceMark
 import com.aryan.reader.shared.reader.sharedEpubOpenTraceMs
 import com.aryan.reader.shared.ui.SharedMobilePdfNativeAction
 import com.aryan.reader.shared.CloudFolderConflictResolution
+import com.aryan.reader.shared.compareByNatural
+import com.aryan.reader.shared.compareNatural
 import com.aryan.reader.shared.CloudFolderConflictUiItem
 import com.aryan.reader.shared.CloudFolderDeviceBinding
 import com.aryan.reader.shared.CloudFolderIncomingChoice
@@ -2057,9 +2059,12 @@ class ReaderIosBridge internal constructor(
         }.map { record ->
             cloudFolderConflictUiItem(record, folderNames[record.rootId] ?: record.rootId)
         }.sortedWith(
-            compareBy<CloudFolderConflictUiItem> { it.normalizedFolderName.lowercase() }
-                .thenBy { it.normalizedPath.lowercase() }
-                .thenBy { it.conflictId },
+            Comparator { a, b ->
+                val nameCmp = compareNatural(a.normalizedFolderName, b.normalizedFolderName)
+                if (nameCmp != 0) return@Comparator nameCmp
+                val pathCmp = compareNatural(a.normalizedPath, b.normalizedPath)
+                if (pathCmp != 0) pathCmp else a.conflictId.compareTo(b.conflictId)
+            },
         )
     }
 
@@ -4673,7 +4678,7 @@ private fun ReaderIosApp(
                     candidateState.samePdfDocument(currentBook?.let(::iosPdfSplitPaneState))
                 !isOtherPane && !isCurrentFullScreenBook
             }
-            .sortedBy { it.displayName.lowercase() }
+            .sortedWith(compareByNatural { it.displayName })
             .toList()
     }
 
@@ -5789,7 +5794,7 @@ private fun ReaderIosApp(
             state = syncResult.state.copy(
                 syncedFolders = (
                     state.syncedFolders.filterNot { it.name == scan.folderName } + syncedFolder
-                ).sortedBy { it.name.lowercase() },
+                ).sortedWith(compareByNatural { it.name }),
             )
             // Completes a deferred BIND_LOCAL_FOLDER incoming choice once the
             // picker folder has been indexed locally. Mirrors Android, where
@@ -10199,7 +10204,7 @@ private fun SharedReaderScreenState.withUpdatedIosBook(book: BookItem): SharedRe
                 directBooks = shelf.directBooks.updated(),
             )
         },
-        allTags = (allTags + book.tags).distinctBy { it.id }.sortedBy { it.name.lowercase() },
+        allTags = (allTags + book.tags).distinctBy { it.id }.sortedWith(compareByNatural { it.name }),
     )
 }
 

@@ -545,7 +545,7 @@ object SharedLibraryEditor {
             )
         return setTagAssignmentInState(
             state = state.copy(
-                allTags = (state.allTags + tag).distinctBy { it.id }.sortedBy { it.name.lowercase() }
+                allTags = (state.allTags + tag).distinctBy { it.id }.sortedWith(compareByNatural { it.name })
             ),
             tag = tag,
             bookIds = selectedIds,
@@ -629,7 +629,7 @@ object SharedLibraryEditor {
         fun BookItem.updated(): BookItem {
             if (id !in bookIds) return this
             val nextTags = if (assign) {
-                (tags + tag).distinctBy { it.id }.sortedBy { it.name.lowercase() }
+                (tags + tag).distinctBy { it.id }.sortedWith(compareByNatural { it.name })
             } else {
                 tags.filterNot { it.id == tag.id }
             }
@@ -746,10 +746,10 @@ object SharedLibraryEditor {
             name = trimmed,
             color = 0xFF64B5F6.toInt()
         )
-        val allTags = (state.allTags + tag).distinctBy { it.id }.sortedBy { it.name.lowercase() }
+        val allTags = (state.allTags + tag).distinctBy { it.id }.sortedWith(compareByNatural { it.name })
         val books = state.rawLibraryBooks.map { book ->
             if (book.id in selected && book.tags.none { it.id == tag.id }) {
-                book.copy(tags = (book.tags + tag).sortedBy { it.name.lowercase() })
+                book.copy(tags = (book.tags + tag).sortedWith(compareByNatural { it.name }))
             } else {
                 book
             }
@@ -783,7 +783,7 @@ object SharedLibraryEditor {
         return SharedLibraryMutationResult(
             state = state.copy(
                 rawLibraryBooks = state.rawLibraryBooks.map { if (it.id == updated.id) updated.copy(timestamp = nowMillis) else it },
-                allTags = (state.allTags + updated.tags).distinctBy { it.id }.sortedBy { it.name.lowercase() },
+                allTags = (state.allTags + updated.tags).distinctBy { it.id }.sortedWith(compareByNatural { it.name }),
                 bannerMessage = BannerMessage.string(
                     "banner_book_updated",
                     "Updated \"%1\$s\".",
