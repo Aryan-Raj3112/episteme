@@ -17,12 +17,37 @@ internal const val CLOUD_FOLDER_SYNC_LOG_TAG = "EpistemeCloudFolderSync"
 private val CLOUD_FOLDER_OPERATION_TOKEN_REGEX = Regex("op_[0-9a-f]{16}")
 private val CLOUD_FOLDER_CORRELATION_TOKEN_REGEX = Regex("[0-9a-f]{16}")
 
+private val CLOUD_FOLDER_HEX_DIGITS = "0123456789abcdef".toCharArray()
+
+/**
+ * Lowercase hex without the per-byte `String.format` formatter.
+ *
+ * `String.format` builds a `java.util.Formatter` (and its `StringBuilder`) for
+ * every call, so hex-formatting a 32-byte SHA-256 digest one byte at a time
+ * allocated ~32 formatters plus their buffers per safe-id. The first
+ * `StringBuilder` of one such call was the failing allocation in
+ * crashlytics-triage #72. These tokens are generated per book/sidecar in folder
+ * sync and on the main thread during reader close, so the churn landed exactly
+ * in the memory-pressure paths it worsened. Bytes are formatted unsigned (two
+ * digits for every value 0x00..0xFF), matching what the formatter produced.
+ */
+private fun ByteArray.toLowercaseHex(): String {
+    val chars = CharArray(size * 2)
+    var index = 0
+    for (byte in this) {
+        val value = byte.toInt() and 0xFF
+        chars[index++] = CLOUD_FOLDER_HEX_DIGITS[value ushr 4]
+        chars[index++] = CLOUD_FOLDER_HEX_DIGITS[value and 0x0F]
+    }
+    return chars.concatToString()
+}
+
 internal fun cloudFolderSafeId(value: String?, length: Int = 12): String {
     val normalized = value?.trim().orEmpty()
     if (normalized.isBlank()) return "none"
     val digest = MessageDigest.getInstance("SHA-256")
         .digest(normalized.toByteArray(StandardCharsets.UTF_8))
-        .joinToString("") { byte -> "%02x".format(Locale.US, byte) }
+        .toLowercaseHex()
     return digest.take(length.coerceIn(8, digest.length))
 }
 
@@ -136,7 +161,7 @@ internal fun cloudFolderSidecarPayloadInfo(payload: String?): CloudFolderSidecar
     val bytes = value.toByteArray(StandardCharsets.UTF_8)
     val digest = MessageDigest.getInstance("SHA-256")
         .digest(bytes)
-        .joinToString("") { byte -> "%02x".format(Locale.US, byte) }
+        .toLowercaseHex()
     val schema = runCatching {
         JSONObject(value).let { root ->
             when {

@@ -96,6 +96,8 @@ fun SharedMobileReaderRecoveryGate(
     isError: Boolean,
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         if (onBack != null) {
@@ -122,6 +124,11 @@ fun SharedMobileReaderRecoveryGate(
                 color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
+            if (actionLabel != null && onAction != null) {
+                Button(onClick = onAction) {
+                    Text(actionLabel)
+                }
+            }
             if (onBack != null && isError && !recovering) {
                 Button(onClick = onBack) {
                     Text(readerString("action_go_back", "Go Back"))

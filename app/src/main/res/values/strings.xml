@@ -999,6 +999,10 @@
     <string name="banner_original_pdf_not_found">Original PDF not found.</string>
     <!-- Error state shown in the reader. %1$s = the file path that could not be found. Example: "Error: Book content not found. Path: /books/Dracula.epub". -->
     <string name="error_book_content_not_found">Error: Book content not found. Path: %1$s</string>
+    <!-- Error state shown in the reader when the device has no usable WebView provider (Android System WebView is missing or disabled), so the scrolling reader mode cannot be used. Android System WebView = product name — do not translate. -->
+    <string name="error_webview_unavailable">Android System WebView is missing or disabled on this device, so scrolling mode is unavailable. You can keep reading in paginated mode.</string>
+    <!-- Button in the reader that switches to the natively rendered paginated mode when Android System WebView is missing or disabled. -->
+    <string name="action_use_paginated_mode">Use paginated mode</string>
     <string name="toast_select_dictionary_first">Please select a dictionary app first.</string>
     <string name="toast_select_translate_first">Please select a translate app first.</string>
     <string name="toast_select_search_first">Please select a search app first.</string>
