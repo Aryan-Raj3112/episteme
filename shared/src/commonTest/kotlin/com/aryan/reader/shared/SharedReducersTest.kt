@@ -45,6 +45,32 @@ class SharedReducersTest {
     }
 
     @Test
+    fun `sort order changes re-order shelf contents for hosts without reprojection`() {
+        val alpha = BookItem("alpha", "/books/alpha.epub", FileType.EPUB, "alpha.epub", timestamp = 1L)
+        val zeta = BookItem("zeta", "/books/zeta.epub", FileType.EPUB, "zeta.epub", timestamp = 3L)
+        val state = SharedReaderScreenState(
+            shelves = listOf(
+                Shelf(
+                    id = "manual",
+                    name = "Manual",
+                    type = ShelfType.MANUAL,
+                    books = listOf(alpha, zeta),
+                    directBooks = listOf(alpha, zeta),
+                )
+            )
+        )
+
+        val recent = state.reduce(LibraryAction.SortChanged(SortOrder.RECENT))
+        val byTitle = recent.reduce(LibraryAction.SortChanged(SortOrder.TITLE_ASC))
+
+        val recentShelf = recent.shelves.single()
+        assertEquals(SortOrder.RECENT, recent.sortOrder)
+        assertEquals(listOf("zeta", "alpha"), recentShelf.books.map { it.id })
+        assertEquals(listOf("zeta", "alpha"), recentShelf.directBooks.map { it.id })
+        assertEquals(listOf("alpha", "zeta"), byTitle.shelves.single().directBooks.map { it.id })
+    }
+
+    @Test
     fun `custom font imports enter shared application state`() {
         val font = CustomFontItem(
             id = "font-1",

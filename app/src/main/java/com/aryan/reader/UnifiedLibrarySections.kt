@@ -364,8 +364,10 @@ internal fun UnifiedShelvesSection(
     downloadingBookIds: Set<String>,
     usePdfFileNameAsDisplayName: Boolean,
     widthSizeClass: WindowWidthSizeClass,
+    sortOrder: SortOrder,
     onShelfSelected: (Shelf) -> Unit,
     onBreadcrumbNavigate: (String?) -> Unit,
+    onSortOrderChange: (SortOrder) -> Unit,
     onRenameShelf: (String) -> Unit,
     onDeleteShelf: (String) -> Unit,
     onAddBooks: (String) -> Unit,
@@ -437,6 +439,11 @@ internal fun UnifiedShelvesSection(
                 usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
             )
         },
+        sortOrder = sortOrder,
+        sortLabels = SortOrder.entries.associateWith { stringResource(it.labelRes) },
+        sortDescription = stringResource(R.string.content_desc_sort),
+        selectedSortDescription = stringResource(R.string.content_desc_selected),
+        onSortOrderChange = onSortOrderChange,
     )
 }
 

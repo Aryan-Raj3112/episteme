@@ -738,6 +738,11 @@ fun SharedMobileUnifiedLibraryScreen(
                                     )
                                 }
                             },
+                            sortOrder = state.sortOrder,
+                            sortLabels = SortOrder.entries.associateWith { order -> order.sharedMobileLabel() },
+                            sortDescription = readerString("content_desc_sort", "Sort"),
+                            selectedSortDescription = readerString("content_desc_selected", "Selected"),
+                            onSortOrderChange = onSortOrderChange,
                         )
                     }
                 }

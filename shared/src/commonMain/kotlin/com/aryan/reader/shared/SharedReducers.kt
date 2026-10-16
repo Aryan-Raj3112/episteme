@@ -136,6 +136,25 @@ fun SharedReaderScreenState.reduce(action: LibraryAction): SharedReaderScreenSta
         selectedShelfIds = reduced.selectedShelfIds,
         libraryScreenStartPage = reduced.libraryPage,
         recentFilesLimit = reduced.recentLimit,
+        // Hosts that apply actions straight onto the projected state (iOS) do not run
+        // the projector again, so shelf contents have to be re-ordered here or the
+        // shelf screens would keep rendering the previous order. Android re-projects
+        // and never takes this path.
+        shelves = if (action is LibraryAction.SortChanged) {
+            shelves.map { shelf -> shelf.resortedFor(reduced.sortOrder) }
+        } else {
+            shelves
+        },
+    )
+}
+
+/** Restores the order the shared projector would produce for [sortOrder]. */
+private fun Shelf.resortedFor(sortOrder: SortOrder): Shelf = when (type) {
+    // The projector orders series shelves by series index, not by the library sort.
+    ShelfType.SERIES -> this
+    else -> copy(
+        books = sortBooks(books, sortOrder),
+        directBooks = sortBooks(directBooks, sortOrder),
     )
 }
 

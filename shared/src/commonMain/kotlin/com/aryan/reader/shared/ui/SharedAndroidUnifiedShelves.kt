@@ -19,17 +19,28 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.aryan.reader.shared.SortOrder
 
 @Composable
 fun <S, B> SharedAndroidUnifiedShelves(
@@ -59,6 +70,17 @@ fun <S, B> SharedAndroidUnifiedShelves(
     emptyShelfLabel: String = noShelvesLabel,
     /** File-manager breadcrumb rendered above the selected shelf content. */
     breadcrumbContent: @Composable () -> Unit = {},
+    /**
+     * Sort control for the selected shelf's books, matching the retired shelf screens.
+     * Hidden while [onSortOrderChange] is null so hosts without shelf sorting are unchanged.
+     * The shared library's current sort order drives the projection, so hosts only need to
+     * pass their current [SortOrder] and reducer.
+     */
+    sortOrder: SortOrder = SortOrder.RECENT,
+    sortLabels: Map<SortOrder, String> = emptyMap(),
+    sortDescription: String = "",
+    selectedSortDescription: String = "",
+    onSortOrderChange: ((SortOrder) -> Unit)? = null,
 ) {
     if (selectedShelf == null) {
         if (visibleShelves.isEmpty()) {
@@ -88,6 +110,15 @@ fun <S, B> SharedAndroidUnifiedShelves(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(Modifier.weight(1f)) { breadcrumbContent() }
+                if (onSortOrderChange != null) {
+                    SharedUnifiedShelfSortControl(
+                        sortOrder = sortOrder,
+                        labels = sortLabels,
+                        sortDescription = sortDescription,
+                        selectedDescription = selectedSortDescription,
+                        onSortOrderChange = onSortOrderChange,
+                    )
+                }
                 selectedShelfActions(selectedShelf)
             }
             if (childShelves.isEmpty() && selectedBooks.isEmpty()) {
@@ -159,4 +190,51 @@ private fun UnifiedShelfSectionLabel(text: String) {
         fontWeight = FontWeight.SemiBold,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+/**
+ * Sort picker for the selected shelf's books.
+ *
+ * Mirrors the retired shelf screens: the current order stays visible in the button
+ * label and the menu marks the active choice, so the control always answers both
+ * "how is this sorted?" and "what can I switch to?".
+ */
+@Composable
+private fun SharedUnifiedShelfSortControl(
+    sortOrder: SortOrder,
+    labels: Map<SortOrder, String>,
+    sortDescription: String,
+    selectedDescription: String,
+    onSortOrderChange: (SortOrder) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier) {
+        TextButton(
+            onClick = { expanded = true },
+            modifier = Modifier.testTag("ShelfSortButton"),
+        ) {
+            Icon(
+                Icons.AutoMirrored.Filled.Sort,
+                contentDescription = sortDescription,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(labels[sortOrder].orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        SharedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            SortOrder.entries.forEach { order ->
+                DropdownMenuItem(
+                    text = { Text(labels[order].orEmpty()) },
+                    onClick = {
+                        expanded = false
+                        onSortOrderChange(order)
+                    },
+                    trailingIcon = {
+                        if (order == sortOrder) Icon(Icons.Default.Check, selectedDescription)
+                    },
+                )
+            }
+        }
+    }
 }
