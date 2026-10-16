@@ -17,14 +17,18 @@ package com.aryan.reader.shared.pdf
  * `/Resources` dictionary. `FPDFAnnot_SetAP` builds the appearance's resources from
  * the annotation dictionary: when the annotation has `/CA < 1` it installs
  * `/Resources /ExtGState /GS` whose `CA`/`ca` both come from `/CA`, and otherwise it
- * installs no resources at all. `/CA` is written by `FPDFAnnot_SetColor`, which the
- * exporters call before installing the appearance.
+ * installs no resources at all — and Apple's PDFKit drops the colour operators of an
+ * appearance stream without `/Resources` and paints a black `/InkList` fallback. The
+ * exporters therefore write `/C` + `/CA` from [sharedPdfInkAnnotationDictColorArgb]
+ * (which keeps `/CA` strictly below 1) before installing this stream; the annotation
+ * dictionary is frozen afterwards, because `FPDFAnnot_SetColor` refuses to update an
+ * annotation that already has an appearance.
  *
  * So a translucent stroke is expressed by referencing that graphics state with
- * `/GS gs` — and only when [colorArgb]'s alpha is below 255, because PDFium skips the
- * resource dictionary for a fully opaque `/CA` and the name would then be undefined.
- * Callers must therefore install the appearance for exactly the colour they passed to
- * `FPDFAnnot_SetColor` (see [sharedPdfInkExportColorArgb]).
+ * `/GS gs` — and only when [colorArgb]'s alpha is below 255, because the name must
+ * resolve. Callers install the appearance for the exact colour
+ * [sharedPdfInkExportColorArgb] produced; the dictionary colour differs from it by at
+ * most one alpha step.
  *
  * Blend mode is out of reach: `FPDFAnnot_SetAP` always writes `/BM /Normal`. Multiply
  * over white paper is numerically identical to source-over at the same alpha, which is

@@ -34,6 +34,7 @@ import com.aryan.reader.shared.pdf.sharedPdfDisplayPointToMediabox
 import com.aryan.reader.shared.pdf.sharedPdfDisplayRectToMediabox
 import com.aryan.reader.shared.pdf.sharedPdfHighlightExportColorArgb
 import com.aryan.reader.shared.pdf.sharedPdfInkAppearanceContent
+import com.aryan.reader.shared.pdf.sharedPdfInkAnnotationDictColorArgb
 import com.aryan.reader.shared.pdf.sharedPdfInkExportColorArgb
 import com.aryan.reader.shared.pdf.sharedPdfInkStrokeWidthPdfUnits
 import com.aryan.reader.shared.pdf.sharedPdfRasterImageMatrix
@@ -1671,13 +1672,14 @@ object DesktopPdfium {
                     maxY = maxOf(maxY, y)
                 }
                 val strokeWidth = sharedPdfInkStrokeWidthPdfUnits(annotation.strokeWidth, pageWidth)
-                // Keep the annotation colour and the /AP stroke colour identical:
-                // FPDFAnnot_SetAP only attaches the /GS opacity resource while /CA < 1.
+                // The dict colour is the /AP stroke colour with its alpha clamped so PDFium
+                // attaches the appearance /Resources Apple renderers need; the /AP stream itself
+                // keeps the true export colour (see sharedPdfInkAnnotationDictColorArgb).
                 val inkColorArgb = sharedPdfInkExportColorArgb(annotation.tool, annotation.colorArgb)
                 val annot = api.FPDFPage_CreateAnnot(page, FPDF_ANNOT_INK) ?: return@usePointer false
                 try {
                     api.FPDFAnnot_SetRect(annot, pdfRect(minX, maxY, maxX, minY, strokeWidth * 1.5f))
-                    val color = inkColorArgb.toPdfiumRgba()
+                    val color = sharedPdfInkAnnotationDictColorArgb(inkColorArgb).toPdfiumRgba()
                     api.FPDFAnnot_SetColor(annot, FPDF_ANNOT_COLOR, color.r, color.g, color.b, color.a)
                     api.FPDFAnnot_SetBorder(annot, 0f, 0f, strokeWidth)
                     runCatching { api.FPDFAnnot_SetFlags(annot, FPDF_ANNOT_FLAG_PRINT) }

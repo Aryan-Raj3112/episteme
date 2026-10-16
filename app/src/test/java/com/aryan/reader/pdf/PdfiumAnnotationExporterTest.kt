@@ -59,7 +59,9 @@ class PdfiumAnnotationExporterTest {
 
         assertArrayEquals(intArrayOf(2), payload.inkPageIndices)
         assertArrayEquals(intArrayOf(InkType.PEN.ordinal), payload.inkTypes)
-        assertArrayEquals(intArrayOf(Color(0xFF336699).toArgb()), payload.inkColors)
+        // Opaque ink lands one alpha step down: pdfium only attaches the /AP /Resources while
+        // /CA < 1 (sharedPdfInkAnnotationDictColorArgb).
+        assertArrayEquals(intArrayOf(0xFE336699.toInt()), payload.inkColors)
         assertArrayEquals(floatArrayOf(0.0125f), payload.inkStrokeWidths, 0.0001f)
         assertArrayEquals(intArrayOf(0), payload.inkPointOffsets)
         assertArrayEquals(intArrayOf(2), payload.inkPointCounts)
@@ -159,13 +161,15 @@ class PdfiumAnnotationExporterTest {
             pageSizes = listOf(PdfiumPageSize(width = 100, height = 100))
         )
 
-        assertArrayEquals(intArrayOf(0x8CFFEB3B.toInt(), 0xFF336699.toInt()), payload.inkColors)
-        // FPDFAnnot_SetAP only attaches /GS while the annotation /CA is below 1, so only the
-        // translucent stroke may reference it or the name resolves to nothing.
+        assertArrayEquals(intArrayOf(0x8CFFEB3B.toInt(), 0xFE336699.toInt()), payload.inkColors)
+        // FPDFAnnot_SetAP only attaches /Resources while the annotation /CA is below 1, so the
+        // dict colour is clamped one step below opaque; only the translucent stroke may
+        // reference the /GS name it installs or it resolves to nothing.
         assertTrue(
             payload.inkAppearances[0],
             payload.inkAppearances[0].startsWith("q\n/GS gs\n")
         )
+        assertTrue(payload.inkAppearances[1], payload.inkAppearances[1].contains("0.2 0.4 0.6 RG"))
         assertFalse(payload.inkAppearances[1], payload.inkAppearances[1].contains("gs"))
     }
 

@@ -37,6 +37,21 @@ class SharedPdfAnnotationExportAppearanceTest {
     }
 
     @Test
+    fun `ink dict colour keeps the alpha strictly below one`() {
+        // FPDFAnnot_SetAP only writes the appearance /Resources while /CA < 1, and Apple's
+        // PDFKit paints a resource-less appearance stream black, so an opaque stroke exports
+        // one alpha step down while keeping its RGB.
+        assertEquals(0xFEFF0000.toInt(), sharedPdfInkAnnotationDictColorArgb(0xFFFF0000.toInt()))
+        assertEquals(0xFE336699.toInt(), sharedPdfInkAnnotationDictColorArgb(0xFF336699.toInt()))
+    }
+
+    @Test
+    fun `ink dict colour preserves translucent and transparent alphas`() {
+        assertEquals(0x8CFFEB3B.toInt(), sharedPdfInkAnnotationDictColorArgb(0x8CFFEB3B.toInt()))
+        assertEquals(0x00FF0000, sharedPdfInkAnnotationDictColorArgb(0x00FF0000))
+    }
+
+    @Test
     fun `stroke width scales by page width with a 0_25pt floor`() {
         assertEquals(21.42f, sharedPdfInkStrokeWidthPdfUnits(0.035f, 612f), 0.0001f)
         assertEquals(0.25f, sharedPdfInkStrokeWidthPdfUnits(0.0001f, 100f), 0.0001f)

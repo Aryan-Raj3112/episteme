@@ -49,6 +49,7 @@ import com.aryan.reader.shared.pdf.pdfInkAppearancePoints
 import com.aryan.reader.shared.pdf.sharedPdfDisplayPointToMediabox
 import com.aryan.reader.shared.pdf.sharedPdfHighlightExportColorArgb
 import com.aryan.reader.shared.pdf.sharedPdfInkAppearanceContent
+import com.aryan.reader.shared.pdf.sharedPdfInkAnnotationDictColorArgb
 import com.aryan.reader.shared.pdf.sharedPdfInkExportColorArgb
 import com.aryan.reader.shared.pdf.sharedPdfInkStrokeWidthPdfUnits
 import java.io.File
@@ -294,11 +295,12 @@ internal object PdfiumAnnotationExporter {
             val pageHeight = pageSize.height.toFloat()
             inkPageIndices[index] = annotation.pageIndex
             inkTypes[index] = annotation.tool.toAndroidInkTypeOrdinal()
-            // The native bridge writes this same value into the annotation /CA and derives
-            // /InkList from it, and FPDFAnnot_SetAP only attaches the /GS opacity resource
-            // while /CA < 1, so the dict colour and the /AP stroke must come from one value.
             val inkColorArgb = sharedPdfInkExportColorArgb(annotation.tool, annotation.colorArgb)
-            inkColors[index] = inkColorArgb
+            // The native bridge writes this into the annotation /C + /CA; clamping the alpha
+            // below 1 is what makes PDFium attach the appearance /Resources Apple renderers
+            // need (see sharedPdfInkAnnotationDictColorArgb). The RGB is untouched, so the
+            // /InkList fallback still matches the /AP stream below.
+            inkColors[index] = sharedPdfInkAnnotationDictColorArgb(inkColorArgb)
             inkStrokeWidths[index] = annotation.strokeWidth
             inkPointOffsets[index] = inkPointCursor / 2
             inkPointCounts[index] = points.size

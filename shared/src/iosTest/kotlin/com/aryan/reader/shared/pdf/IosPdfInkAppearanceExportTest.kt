@@ -23,15 +23,24 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.usePinned
 import kotlinx.coroutines.test.runTest
+import platform.CoreGraphics.CGBitmapContextCreate
+import platform.CoreGraphics.CGColorSpaceCreateDeviceRGB
+import platform.CoreGraphics.CGContextFillRect
+import platform.CoreGraphics.CGContextSetRGBFillColor
+import platform.CoreGraphics.CGImageAlphaInfo
+import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSData
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSMutableData
 import platform.Foundation.NSString
 import platform.Foundation.NSTemporaryDirectory
+import platform.Foundation.NSURL
 import platform.Foundation.create
 import platform.Foundation.dataWithContentsOfFile
 import platform.Foundation.dataWithLength
 import platform.Foundation.writeToFile
+import platform.PDFKit.PDFDocument
+import platform.PDFKit.kPDFDisplayBoxMediaBox
 import platform.posix.memcpy
 import kotlin.test.Test
 import kotlin.test.assertFalse
@@ -89,17 +98,51 @@ class IosPdfInkAppearanceExportTest {
     }
 
     @Test
-    fun opaquePenExportOmitsTheOpacityGraphicsState() = runTest {
+    fun opaquePenExportAttachesAppearanceResourcesForAppleRenderers() = runTest {
         val destination = exportInk(
             tool = PdfInkTool.PEN,
             colorArgb = 0xFFFF0000.toInt(),
             points = listOf(PdfPagePoint(0.2f, 0.3f), PdfPagePoint(0.8f, 0.3f)),
         )
 
+        // FPDFAnnot_SetAP only attaches /Resources while the annotation /CA is below 1, and
+        // Apple's PDFKit paints an appearance stream without /Resources black instead of
+        // honouring its colour operators (sharedPdfInkAnnotationDictColorArgb clamps the
+        // opaque dict alpha to 254/255 for exactly this reason). The opaque stroke itself
+        // must still stay /GS-free: it has no opacity to apply.
+        val text = readDocumentText(destination)
+        assertTrue(
+            Regex("/ExtGState\\s*<<\\s*/GS\\b").containsMatchIn(text),
+            "Exported PDF has no appearance /Resources entry: $text",
+        )
+        assertTrue(
+            Regex("/CA\\s*0?\\.99").containsMatchIn(text),
+            "Exported /CA is not clamped below 1: $text",
+        )
         val appearance = readInkAppearance(destination)
         assertTrue(appearance.startsWith("q\n"), appearance)
+        assertTrue(appearance.contains("1 0 0 RG"), appearance)
         assertFalse(appearance.contains("gs"), appearance)
-        assertFalse("/ExtGState" in readDocumentText(destination), "Opaque stroke needs no ExtGState")
+
+        cleanup(destination)
+    }
+
+    /**
+     * End-to-end guard for the same bug: PDFKit is what Preview, Quick Look and Books use,
+     * and it must rasterize the exported red pen as red, not as a black `/InkList` fallback.
+     */
+    @Test
+    fun opaquePenExportRasterizesRedThroughPdfKit() = runTest {
+        val destination = exportInk(
+            tool = PdfInkTool.PEN,
+            colorArgb = 0xFFFF0000.toInt(),
+            points = listOf(PdfPagePoint(0.2f, 0.3f), PdfPagePoint(0.8f, 0.3f)),
+        )
+
+        assertTrue(
+            countPdfKitRedPixels(destination) > 100,
+            "PDFKit did not paint the exported red pen stroke in red",
+        )
 
         cleanup(destination)
     }
@@ -154,7 +197,7 @@ class IosPdfInkAppearanceExportTest {
         assertTrue(appearance.contains(" m"), "Exported AP missing moveto operator: $appearance")
         assertTrue(appearance.contains(" l"), "Exported AP missing lineto operator: $appearance")
         assertTrue(appearance.contains("S"), "Exported AP missing stroke operator: $appearance")
-        assertTrue(appearance.contains("RG"), "Exported AP missing stroke color: $appearance")
+        assertTrue(appearance.contains("1 0 0 RG"), "Exported AP missing the red stroke colour: $appearance")
         assertTrue(appearance.contains("1 J"), "Exported AP missing round line cap: $appearance")
 
         cleanup(destination)
@@ -280,6 +323,41 @@ class IosPdfInkAppearanceExportTest {
             FPDF_CloseDocument(document)
         }
         error("Exported PDF has no ink annotation rect")
+    }
+
+    /**
+     * Red pixels PDFKit rasterizes for the decorated page; `0` means the stroke came out
+     * black (or was not drawn at all).
+     */
+    private fun countPdfKitRedPixels(path: String): Int {
+        val document = PDFDocument(NSURL.fileURLWithPath(path))
+        val page = document.pageAtIndex(0uL) ?: error("Exported PDF has no PDFKit page")
+        val width = 612
+        val height = 792
+        val pixels = ByteArray(width * height * 4)
+        val colorSpace = CGColorSpaceCreateDeviceRGB()
+        pixels.usePinned { pinned ->
+            val context = CGBitmapContextCreate(
+                pinned.addressOf(0),
+                width.toULong(),
+                height.toULong(),
+                8.toULong(),
+                (width * 4).toULong(),
+                colorSpace,
+                CGImageAlphaInfo.kCGImageAlphaPremultipliedLast.value,
+            ) ?: error("Failed to create the PDFKit bitmap context")
+            CGContextSetRGBFillColor(context, 1.0, 1.0, 1.0, 1.0)
+            CGContextFillRect(context, CGRectMake(0.0, 0.0, width.toDouble(), height.toDouble()))
+            page.drawWithBox(kPDFDisplayBoxMediaBox, context)
+        }
+        var red = 0
+        for (index in pixels.indices step 4) {
+            val r = pixels[index].toInt() and 0xFF
+            val g = pixels[index + 1].toInt() and 0xFF
+            val b = pixels[index + 2].toInt() and 0xFF
+            if (r > 180 && g < 80 && b < 80) red++
+        }
+        return red
     }
 
     private fun temporaryPath(suffix: String): String =

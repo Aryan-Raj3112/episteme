@@ -312,7 +312,9 @@ private fun addIosPdfInkAnnotation(
             if (FPDFAnnot_AddInkStroke(annotation, nativePoints, pagePoints.size.toULong()) < 0) return@memScoped false
             // Android benchmark (pdfium_bridge.cpp ink path + DesktopPdfium): stroke width has a
             // 0.25pt floor, the annot rect pads by 1.5x stroke, and the annotation colour carries
-            // the same alpha as the on-screen highlighter so /AP renders translucent.
+            // the same alpha as the on-screen highlighter so /AP renders translucent. The dict
+            // colour is the export colour with its alpha clamped so PDFium attaches the appearance
+            // /Resources Apple renderers need (see sharedPdfInkAnnotationDictColorArgb).
             val strokeWidth = sharedPdfInkStrokeWidthPdfUnits(ink.strokeWidth, pageWidth)
             val inkColorArgb = sharedPdfInkExportColorArgb(ink.tool, ink.colorArgb)
             val padding = strokeWidth * 1.5f
@@ -328,7 +330,7 @@ private fun addIosPdfInkAnnotation(
             }
             FPDFAnnot_SetRect(annotation, bounds.ptr)
             FPDFAnnot_SetBorder(annotation, 0f, 0f, strokeWidth)
-            setIosPdfAnnotationColor(annotation, inkColorArgb)
+            setIosPdfAnnotationColor(annotation, sharedPdfInkAnnotationDictColorArgb(inkColorArgb))
             FPDFAnnot_SetFlags(annotation, IOS_PDF_ANNOTATION_FLAG_PRINT)
             setIosPdfAnnotationMetadata(annotation, ink.id, ink.contents)
             // Preview.app draws the annotation border rectangle when /AP is missing

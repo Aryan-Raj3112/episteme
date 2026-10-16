@@ -19,6 +19,12 @@ internal const val SHARED_PDF_MARKUP_RENDER_ALPHA = 0.92f
 private const val MIN_PDF_STROKE_WIDTH_UNITS = 0.25f
 
 /**
+ * Highest annotation `/CA` (alpha byte) pdfium still attaches an appearance `/Resources`
+ * entry for: `FPDFAnnot_SetAP` checks `CA < 1` before writing one.
+ */
+private const val MAX_PDF_ANNOTATION_DICT_ALPHA = 254
+
+/**
  * ARGB used for an ink annotation in the exported PDF and in its `/AP` stream.
  *
  * On-screen highlighter strokes paint at their stored alpha with a Multiply blend
@@ -38,6 +44,24 @@ fun sharedPdfInkExportColorArgb(tool: PdfInkTool, colorArgb: Int): Int {
         else -> minOf(storedAlpha, SharedPdfHighlighterPalette.DefaultAlpha)
     }
     return (alpha shl 24) or (colorArgb and 0x00FFFFFF)
+}
+
+/**
+ * ARGB written to an ink annotation's dictionary (`/C` + `/CA`) before its `/AP` stream
+ * is installed; the same RGB as [sharedPdfInkExportColorArgb] with the alpha clamped.
+ *
+ * Keep the RGB from [sharedPdfInkExportColorArgb] so the `/InkList` fallback colour and
+ * the appearance stroke agree, and keep the alpha below 255: `FPDFAnnot_SetAP` only
+ * attaches `/Resources` to the appearance while `/CA < 1`, and Apple's PDFKit (Preview,
+ * Quick Look, Books) drops the colour operators of an appearance stream without
+ * `/Resources` and paints a black `/InkList` fallback instead. `FPDFAnnot_SetColor`
+ * refuses to update `/CA` once an appearance exists, so the value supplied here *is*
+ * the exported opacity: 254/255 is imperceptible on screen and in print, while 255/255
+ * exports a red pen stroke as black in every Apple renderer.
+ */
+fun sharedPdfInkAnnotationDictColorArgb(colorArgb: Int): Int {
+    val alpha = (colorArgb ushr 24) and 0xFF
+    return (minOf(alpha, MAX_PDF_ANNOTATION_DICT_ALPHA) shl 24) or (colorArgb and 0x00FFFFFF)
 }
 
 /**

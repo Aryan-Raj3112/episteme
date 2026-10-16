@@ -1561,8 +1561,9 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
         FS_RECTF_BRIDGE rect = make_pdf_rect(minX, maxY, maxX, minY, strokeWidth * 1.5f);
         set_annot_rect_func(annot, &rect);
 
-        // Kotlin already resolved the export colour (sharedPdfInkExportColorArgb), so the
-        // annotation /CA and the /AP /GS opacity stay in sync.
+        // Kotlin resolved the dict colour (sharedPdfInkAnnotationDictColorArgb): the alpha
+        // always lands below 1 so PDFium attaches the appearance /Resources Apple
+        // renderers need; the /AP stream carries the true export colour.
         unsigned int r, g, b, a;
         argb_to_rgba(inkColors[i], &r, &g, &b, &a);
         set_annot_color_func(annot, kAnnotColor, r, g, b, a);

@@ -60,7 +60,8 @@ class SharedPdfInkAppearanceTest {
         )
 
         // FPDFAnnot_SetAP only installs /Resources/ExtGState/GS while the annotation's
-        // /CA (from the same colour) is below 1, so the stream must select it explicitly.
+        // /CA is below 1, so the stream must select it explicitly; exporters write /CA
+        // from sharedPdfInkAnnotationDictColorArgb, which keeps this colour unchanged.
         assertTrue(content.startsWith("q\n/GS gs\n"), content)
         assertTrue(content.contains("1 0.921 0.231 RG"), content)
     }
