@@ -69,6 +69,11 @@ data class SharedMobileFolderScanResult(
     val files: List<SharedFolderScannedFile>,
     val succeeded: Boolean = true,
     val scanStatus: LocalFolderScanStatus = LocalFolderScanStatus.COMPLETE,
+    /**
+     * Native failure detail (`access_denied`, `bookmark_failed`, …). Used only
+     * to pick the user-facing message; the scan itself never acts on it.
+     */
+    val scanDetail: String = "",
 )
 
 /**
@@ -129,6 +134,42 @@ fun enqueueMobileFolderScan(
  */
 fun shouldApplyMobileFolderScan(configuredFolder: SyncedFolder?): Boolean =
     configuredFolder?.localSyncEnabled != false
+
+/**
+ * Banner text for a folder scan that could not be applied.
+ *
+ * A folder whose access grant is gone (link lost, permission refused — iOS
+ * reports both through the security-scope pipeline) needs the user to re-link
+ * it; telling them to try again would be a dead end. Everything else keeps the
+ * existing "try again later" wording.
+ */
+fun mobileFolderScanFailureMessage(folderName: String, scanDetail: String): String {
+    val detail = scanDetail.lowercase()
+    val linkLost = LINK_FAILURE_MARKERS.any { it in detail }
+    return if (linkLost) {
+        "$folderName is no longer accessible. Remove the folder and add it again to restore access."
+    } else {
+        "Could not refresh $folderName; keeping the previous scan"
+    }
+}
+
+private val LINK_FAILURE_MARKERS = listOf("access_denied", "bookmark_failed", "no_bookmark", "bookmark.reissue_failed")
+
+/**
+ * Whether a linked folder whose access grant is gone should be reported to the
+ * user as needing a re-link.
+ *
+ * Only when the folder still holds books and none of them is readable: a
+ * legacy folder still served by its app-managed copy (or one whose books were
+ * all deleted) has nothing to warn about. The grant is what makes in-place
+ * reading possible, so an unlinked folder with unreadable books is a dead end
+ * until the user picks it again.
+ */
+fun mobileFolderNeedsRelink(
+    isLinked: Boolean,
+    bookPaths: List<String?>,
+    isReadable: (String?) -> Boolean,
+): Boolean = !isLinked && bookPaths.isNotEmpty() && bookPaths.none(isReadable)
 
 data class SharedMobileFolderFileTypesUpdate(
     val state: SharedReaderScreenState,

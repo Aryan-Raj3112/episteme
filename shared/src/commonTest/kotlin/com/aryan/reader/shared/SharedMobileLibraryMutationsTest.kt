@@ -799,6 +799,42 @@ class SharedMobileLibraryMutationsTest {
         assertEquals(second.id, reconciled.activeTabBookId)
     }
 
+    @Test
+    fun `folder scan failure text tells the user to re-link only when the grant is gone`() {
+        // Device-reported failure: every book was "not found" because the
+        // folder's access grant was never created. That has to say what to do
+        // about it; a transient scan failure must keep the retry wording.
+        assertEquals(
+            "Books is no longer accessible. Remove the folder and add it again to restore access.",
+            mobileFolderScanFailureMessage(
+                "Books",
+                "access_denied startAccessingSecurityScopedResource=false",
+            ),
+        )
+        assertEquals(
+            "Library is no longer accessible. Remove the folder and add it again to restore access.",
+            mobileFolderScanFailureMessage("Library", "no_bookmark: access was never granted"),
+        )
+        assertEquals(
+            "Could not refresh Books; keeping the previous scan",
+            mobileFolderScanFailureMessage("Books", "enumerator_nil"),
+        )
+    }
+
+    @Test
+    fun `only an unlinked folder whose books are unreadable needs a relink`() {
+        val readable: (String?) -> Boolean = { path -> path == "/im/Books/Book.epub" }
+        val refPath = "ios-folder-book://Books/Book.epub"
+
+        assertTrue(mobileFolderNeedsRelink(isLinked = false, bookPaths = listOf(refPath), isReadable = readable))
+        assertFalse(mobileFolderNeedsRelink(isLinked = true, bookPaths = listOf(refPath), isReadable = readable))
+        // A legacy folder still served by its managed copy is not broken.
+        assertFalse(
+            mobileFolderNeedsRelink(isLinked = false, bookPaths = listOf("/im/Books/Book.epub"), isReadable = readable),
+        )
+        assertFalse(mobileFolderNeedsRelink(isLinked = false, bookPaths = emptyList(), isReadable = readable))
+    }
+
     private fun book(id: String, timestamp: Long = 0L): BookItem {
         return BookItem(
             id = id,

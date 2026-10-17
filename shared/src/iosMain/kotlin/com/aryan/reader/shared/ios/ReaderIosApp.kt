@@ -203,6 +203,8 @@ import com.aryan.reader.shared.cloudSnapshotHasLocalUpdates
 import com.aryan.reader.shared.booksRemovedByCloudTombstones
 import com.aryan.reader.shared.mergeCloudLibrarySnapshotWithDownloadedBooks
 import com.aryan.reader.shared.enqueueMobileFolderScan
+import com.aryan.reader.shared.mobileFolderNeedsRelink
+import com.aryan.reader.shared.mobileFolderScanFailureMessage
 import com.aryan.reader.shared.LOCAL_FOLDER_SCAN_LOG_TAG
 import com.aryan.reader.shared.LIBRARY_COVER_LOG_TAG
 import com.aryan.reader.shared.LocalFolderRescanPolicy
@@ -910,6 +912,7 @@ class ReaderIosBridge internal constructor(
                 files = scannedFiles,
                 succeeded = scanSucceeded,
                 scanStatus = reportedStatus,
+                scanDetail = scanDetail,
             ),
         )
         IosDiagnosticLogStore.record(
@@ -919,7 +922,7 @@ class ReaderIosBridge internal constructor(
                 "detail=${scanDetail.take(300).replace('\n', ' ')}",
         )
         latestNativeEvent = if (!scanSucceeded) {
-            "Could not refresh $folderName; keeping the previous scan"
+            mobileFolderScanFailureMessage(folderName, scanDetail)
         } else if (imported.isEmpty()) {
             "No supported files found in $folderName"
         } else {
@@ -931,6 +934,33 @@ class ReaderIosBridge internal constructor(
         preferredName: String,
         existingNames: List<String>,
     ): String = availableMobileFolderName(preferredName, existingNames)
+
+    /**
+     * Folders the library should ask the user to re-link, given the folder
+     * names Swift still has a usable bookmark for.
+     *
+     * iOS keeps the access grant in Swift (a security-scoped bookmark), so a
+     * folder that has none can never be scanned or read in place. Counting the
+     * links here keeps the decision next to the book state that actually
+     * depends on it: a folder whose books are still served by an app-managed
+     * copy is not "broken" and must not be reported as such.
+     */
+    fun foldersNeedingRelink(linkedFolderNames: List<String>): List<String> {
+        val linked = linkedFolderNames.toSet()
+        val snapshot = loadIosLibrarySnapshot()
+        return snapshot.syncedFolders
+            .map { folder -> folder.name }
+            .distinct()
+            .filter { folderName ->
+                mobileFolderNeedsRelink(
+                    isLinked = folderName in linked,
+                    bookPaths = snapshot.books
+                        .filter { book -> book.sourceFolder == folderName }
+                        .map { book -> book.path },
+                    isReadable = { path -> path.isIosReadableBookPath() },
+                )
+            }
+    }
 
     fun recordImportedFonts(fileNames: List<String>, filePaths: List<String> = fileNames) {
         if (fileNames.isEmpty()) {
@@ -4733,8 +4763,9 @@ private fun ReaderIosApp(
             return
         }
         if (pdfReflowProgress != null) return
-        val pdfPath = pdfBook.path?.takeIf(NSFileManager.defaultManager::fileExistsAtPath)
-        if (pdfPath == null) {
+        // Ref-aware and scope-held: a linked-folder PDF stores an
+        // `ios-folder-book://` ref, which is never a filesystem path.
+        if (!pdfBook.path.isIosReadableBookPath()) {
             showMessage("Could not find ${pdfBook.displayName}.")
             return
         }
@@ -4748,12 +4779,17 @@ private fun ReaderIosApp(
         val destPath = "$importsPath/$reflowBookId.html"
         pdfReflowProgress = 0f
         scope.launch {
-            val success = generateIosPdfReflowHtml(
-                pdfPath = pdfPath,
-                destPath = destPath,
-                password = password,
-                onProgress = { progress -> pdfReflowProgress = progress },
-            )
+            // Scope must stay held for the whole generation: the PDFium
+            // document stays open across pages, so a resolve-then-read split
+            // dies on device once the folder scope is released.
+            val success = withResolvedIosBookPathSuspend(pdfBook.path) { pdfPath ->
+                generateIosPdfReflowHtml(
+                    pdfPath = pdfPath,
+                    destPath = destPath,
+                    password = password,
+                    onProgress = { progress -> pdfReflowProgress = progress },
+                )
+            } ?: false
             if (!success) {
                 pdfReflowProgress = null
                 showMessage("Text View generation failed.")
@@ -5716,7 +5752,7 @@ private fun ReaderIosApp(
                     "status=$effectiveStatus files=${scan.files.size}",
             )
             if (!scan.succeeded) {
-                showMessage("Could not refresh ${scan.folderName}; keeping the previous scan")
+                showMessage(mobileFolderScanFailureMessage(scan.folderName, scan.scanDetail))
                 bridge.consumeFolderScan()
                 state = state.copy(isRefreshing = bridge.pendingFolderScans.isNotEmpty())
                 return@LaunchedEffect

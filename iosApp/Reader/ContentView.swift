@@ -116,7 +116,24 @@ struct ContentView: View {
                     return
                 }
                 if importKind == .folder, let folderURL = urls.first {
-                    let folderName = rememberImportedFolder(folderURL, bridge: bridge)
+                    guard let folderName = rememberImportedFolder(folderURL, bridge: bridge) else {
+                        // No bookmark means no durable access. Report the link as
+                        // failed instead of importing books whose refs die with
+                        // the picker callback.
+                        bridge.recordImportedFolder(
+                            folderName: folderURL.lastPathComponent,
+                            fileNames: [],
+                            filePaths: [],
+                            contentIds: [],
+                            relativePaths: [],
+                            fileSizes: [],
+                            lastModifiedTimestamps: [],
+                            scanSucceeded: false,
+                            scanStatusRaw: ImportedFolderScanStatus.unavailable.rawValue,
+                            scanDetail: "bookmark_failed: the folder could not be linked. Remove it and add it again."
+                        )
+                        return
+                    }
                     scheduleImportedFolderScan(
                         bridge: bridge,
                         folderName: folderName,
@@ -693,29 +710,70 @@ private var importedFolderScanTasks: [String: Task<Void, Never>] = [:]
 @MainActor
 private var importedFolderScanGenerations: [String: Int] = [:]
 
-@discardableResult
-private func rememberImportedFolder(_ url: URL, bridge: ReaderIosBridge) -> String {
+/// Creates bookmark data while the URL's security scope is started.
+///
+/// This is the durable half of Android's persisted SAF grant, and the reason a
+/// linked folder used to die on device but not in the simulator. A picker URL
+/// is security-scoped, and iOS only embeds the provider's access grant in the
+/// bookmark when the scope is active. Creating it without starting access
+/// succeeds on the simulator (which does not enforce the app sandbox) and
+/// fails on device with `NSCocoaErrorDomain` 257 — which left the folder with
+/// no bookmark at all, so every book in it resolved to nothing once the
+/// picker URL went away.
+///
+/// `startAccessingSecurityScopedResource` returns false for URLs that are not
+/// security-scoped (an app-container folder, a resolved bookmark that already
+/// carries no scope). That is not an error for bookmarking: the call is only
+/// needed to keep an existing grant active. Only the bookmark call itself can
+/// fail, and its error is what callers report.
+private func scopedBookmarkData(for url: URL) throws -> Data {
+    let didStartAccessing = url.startAccessingSecurityScopedResource()
+    defer {
+        if didStartAccessing {
+            url.stopAccessingSecurityScopedResource()
+        }
+    }
+    return try url.bookmarkData(
+        options: importedFolderBookmarkOptions,
+        includingResourceValuesForKeys: nil,
+        relativeTo: nil
+    )
+}
+
+private func normalizedFolderPath(_ url: URL) -> String {
+    // `/private/var/...` and `/var/...` name the same container entry; the
+    // picker and a resolved bookmark disagree on the prefix.
+    let path = url.standardizedFileURL.path
+    return path.hasPrefix("/private/") ? String(path.dropFirst("/private".count)) : path
+}
+
+/// Links `url` (a folder the picker just returned) and returns the name it is
+/// stored under, or nil when no durable bookmark could be created.
+///
+/// A nil return is deliberate and must not fall back to a name anyway: the
+/// scan would still succeed from the picker URL, adding books whose refs can
+/// never be resolved after the callback returns. That is exactly the
+/// "path not found for every book" state this replaces.
+private func rememberImportedFolder(_ url: URL, bridge: ReaderIosBridge) -> String? {
     let baseName = url.lastPathComponent
     var bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
     do {
-        let bookmark = try url.bookmarkData(
-            options: importedFolderBookmarkOptions,
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil
-        )
+        let bookmark = try scopedBookmarkData(for: url)
         var matchedFolderName: String?
         var shouldRefreshMatch = false
+        let pickedPath = normalizedFolderPath(url)
         for (folderName, existingBookmark) in bookmarks {
             var isStale = false
             // NB: `.withoutImplicitStartAccessing` — the main resolve path
             // defers scope start to the caller. Resolving here without it
             // would implicitly start access and never stop it (leak).
-            if existingBookmark == bookmark || (try? URL(
+            let resolvedExisting = try? URL(
                 resolvingBookmarkData: existingBookmark,
                 options: [.withoutUI, .withoutImplicitStartAccessing],
                 relativeTo: nil,
                 bookmarkDataIsStale: &isStale
-            ).standardizedFileURL) == url.standardizedFileURL {
+            )
+            if existingBookmark == bookmark || (resolvedExisting.map(normalizedFolderPath) == pickedPath) {
                 matchedFolderName = folderName
                 shouldRefreshMatch = isStale
                 break
@@ -739,24 +797,33 @@ private func rememberImportedFolder(_ url: URL, bridge: ReaderIosBridge) -> Stri
         logFolderScan("remember created folder=\(folderName) bookmarks=\(bookmarks.count)", bridge: bridge)
         return folderName
     } catch {
-        // The managed copy remains usable if a document provider cannot issue a bookmark.
         logFolderScan(
             "remember bookmark_failed folder=\(baseName) \(folderScanErrorDetail(error))",
             bridge: bridge
         )
-        return bridge.availableImportedFolderName(
-            preferredName: baseName,
-            existingNames: Array(bookmarks.keys)
-        )
+        // The bookmark was not created, but an earlier link to the same folder
+        // may still be valid (a re-pick of a working folder). Reuse it instead
+        // of linking a second, unusable folder name.
+        let resolvedPath = normalizedFolderPath(url)
+        for (folderName, existingBookmark) in bookmarks {
+            var isStale = false
+            guard let existingURL = try? URL(
+                resolvingBookmarkData: existingBookmark,
+                options: [.withoutUI, .withoutImplicitStartAccessing],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ) else { continue }
+            if normalizedFolderPath(existingURL) == resolvedPath {
+                logFolderScan("remember reusing folder=\(folderName) after bookmark_failed", bridge: bridge)
+                return folderName
+            }
+        }
+        return nil
     }
 }
 
 private func updateImportedFolderBookmark(_ url: URL, folderName: String, bridge: ReaderIosBridge? = nil) {
-    guard let bookmark = try? url.bookmarkData(
-        options: importedFolderBookmarkOptions,
-        includingResourceValuesForKeys: nil,
-        relativeTo: nil
-    ) else {
+    guard let bookmark = try? scopedBookmarkData(for: url) else {
         logFolderScan("bookmark.reissue_failed folder=\(folderName)", bridge: bridge)
         return
     }
@@ -818,6 +885,23 @@ private func refreshImportedFolders(bridge: ReaderIosBridge) {
             bridge: bridge,
             folderName: folderName,
             sourceURL: folderURL
+        )
+    }
+
+    // A folder the library still references but that has no bookmark cannot be
+    // linked at all. Skipping it left the user with books that only ever said
+    // "not found"; reporting it lets the UI tell them to add the folder again.
+    for folderName in bridge.foldersNeedingRelink(linkedFolderNames: Array(bookmarks.keys)) {
+        logFolderScan("refresh.no_bookmark folder=\(folderName)", bridge: bridge)
+        recordImportedFolderScan(
+            bridge: bridge,
+            folderName: folderName,
+            scan: ImportedFolderScan(
+                files: [],
+                succeeded: false,
+                status: .unavailable,
+                detail: "no_bookmark: access was never granted; remove and re-add the folder"
+            )
         )
     }
 }

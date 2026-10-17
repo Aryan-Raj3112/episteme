@@ -10,8 +10,10 @@ import platform.posix.fwrite
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.usePinned
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -69,6 +71,78 @@ class IosFolderScopeDriverTest {
             assertNull(withResolvedIosBookPath(ref) { it })
         } finally {
             IosFolderBookScope.installDriver(null)
+        }
+    }
+
+    @Test
+    fun `provider refs are stat'ed inside the held scope`() {
+        // Device-shaped regression: iOS reports "not found" for both an
+        // unreachable path and a missing file, so the existence check has to
+        // run while the folder scope is still held. A present file must read
+        // as available and a missing file as unavailable — never the reverse.
+        val root = NSTemporaryDirectory() + "scope-stat-" + NSUUID().UUIDString
+        NSFileManager.defaultManager.createDirectoryAtPath(root, true, null, null)
+        val present = root + "/Present.pdf"
+        assertTrue(writeProbe(present, "pdf"))
+        var held = 0
+        IosFolderBookScope.installDriver(object : IosFolderScopeDriver {
+            override fun acquire(folderName: String): String? {
+                if (folderName != "Books") return null
+                held++
+                return root
+            }
+
+            override fun release(folderName: String) {
+                held--
+            }
+        })
+        try {
+            val presentRef = SharedIosBookSourceRef.encode("Books", "Present.pdf")
+            assertTrue(presentRef.isIosReadableBookPath())
+            assertEquals(0, held, "every acquire must balance before the next check")
+            assertEquals(present, resolveIosFolderBookPath(presentRef))
+            assertEquals(0, held)
+
+            val missingRef = SharedIosBookSourceRef.encode("Books", "Missing.pdf")
+            assertFalse(missingRef.isIosReadableBookPath())
+            assertNull(resolveIosFolderBookPath(missingRef))
+            assertEquals(0, held)
+        } finally {
+            IosFolderBookScope.installDriver(null)
+            NSFileManager.defaultManager.removeItemAtPath(root, error = null)
+        }
+    }
+
+    @Test
+    fun `suspend resolution holds scope across the whole block`() = runTest {
+        // Long PDF work stays inside one held scope; releasing it early is the
+        // device-only failure this guards.
+        val root = NSTemporaryDirectory() + "scope-suspend-" + NSUUID().UUIDString
+        NSFileManager.defaultManager.createDirectoryAtPath(root, true, null, null)
+        val file = root + "/Book.epub"
+        assertTrue(writeProbe(file, "held"))
+        var held = 0
+        var releasedInsideBlock = -1
+        IosFolderBookScope.installDriver(object : IosFolderScopeDriver {
+            override fun acquire(folderName: String): String? = root.also { held++ }
+            override fun release(folderName: String) {
+                held--
+            }
+        })
+        try {
+            val ref = SharedIosBookSourceRef.encode("Books", "Book.epub")
+            val read = withResolvedIosBookPathSuspend(ref) { resolved ->
+                assertEquals(file, resolved)
+                releasedInsideBlock = held
+                NSFileManager.defaultManager.contentsAtPath(resolved)?.toIosByteArray()
+            }
+            assertNotNull(read)
+            assertEquals("held", read.decodeToString())
+            assertEquals(1, releasedInsideBlock, "the scope must still be held inside the block")
+            assertEquals(0, held, "the block's scope must be released afterwards")
+        } finally {
+            IosFolderBookScope.installDriver(null)
+            NSFileManager.defaultManager.removeItemAtPath(root, error = null)
         }
     }
 

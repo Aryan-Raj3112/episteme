@@ -68,8 +68,10 @@ internal object IosFolderBookScope {
     fun driver(): IosFolderScopeDriver? = installedDriver
 
     /**
-     * Resolves a `ios-folder-book://` ref to a readable path, or null when the
-     * folder is no longer reachable.
+     * Resolves a `ios-folder-book://` ref to a path without holding scope.
+     *
+     * Only valid for callers that stat/read while they already hold a token;
+     * [resolveIosFolderBookPath] is the scope-safe entry point.
      */
     fun resolvePath(ref: String?): String? {
         val decoded = SharedIosBookSourceRef.decode(ref) ?: return null
@@ -111,7 +113,9 @@ internal class IosFolderScopeToken internal constructor(
 @OptIn(ExperimentalForeignApi::class)
 internal object IosFolderScopeRegistry {
     private val lock = NSLock()
-    private val held = mutableMapOf<String, Pair<NSURL, Int>>()
+    private val held = mutableMapOf<String, HeldScope>()
+
+    private class HeldScope(val url: NSURL, var count: Int)
 
     /**
      * Takes a scope on [folderName], or returns null when the folder cannot be
@@ -138,54 +142,45 @@ internal object IosFolderScopeRegistry {
         }
         val folderPath = IosFolderBookScope.current().resolveFolderPath(folderName) ?: return null
         val url = NSURL.fileURLWithPath(folderPath)
+        // No driver (tests, simulator harnesses): the resolver already proved
+        // the path is reachable for the app. Do not gate on
+        // `startAccessingSecurityScopedResource` here — a plain file URL is not
+        // security-scoped, so it legitimately returns false, and a URL rebuilt
+        // from a path string never carries the provider's entitlement anyway.
+        // Device reads always go through the installed Swift driver above.
         lock.lock()
         val existing = held[folderName]
-        lock.unlock()
         if (existing != null) {
-            // Another holder already has the scope; take a reference on it
-            // rather than starting a second one.
-            lock.lock()
-            held[folderName] = existing.first to (existing.second + 1)
+            // Another holder already has the scope; take a reference on it.
+            existing.count += 1
             lock.unlock()
         } else {
-            if (!url.startAccessingSecurityScopedResource()) {
-                return null
-            }
-            lock.lock()
-            held[folderName] = url to 1
+            held[folderName] = HeldScope(url, 1)
             lock.unlock()
         }
         return IosFolderScopeToken(folderName).also { token ->
             token.scopeURL = url
-            token.release = { releaseOnce(folderName, url) }
+            token.release = { releaseOnce(folderName) }
         }
     }
 
-    private fun releaseOnce(folderName: String, url: NSURL) {
-        var shouldStop = false
+    private fun releaseOnce(folderName: String) {
         lock.lock()
         val entry = held[folderName]
         when {
-            entry == null -> shouldStop = false
-            entry.second <= 1 -> {
-                held.remove(folderName)
-                shouldStop = true
-            }
-            else -> held[folderName] = entry.first to (entry.second - 1)
+            entry == null -> Unit
+            entry.count <= 1 -> held.remove(folderName)
+            else -> entry.count -= 1
         }
         lock.unlock()
-        if (shouldStop) {
-            url.stopAccessingSecurityScopedResource()
-        }
     }
 
     /** Releases any scope still held for [folderName]; used when unlinking a folder. */
     fun releaseAll(folderName: String) {
         IosFolderBookScope.driver()?.release(folderName)
         lock.lock()
-        val entry = held.remove(folderName)
+        held.remove(folderName)
         lock.unlock()
-        entry?.first?.stopAccessingSecurityScopedResource()
     }
 }
 
@@ -249,6 +244,22 @@ internal fun <T> withResolvedIosBookPath(pathOrRef: String?, block: (resolvedPat
     return block(direct)
 }
 
+/** Suspend variant of [withResolvedIosBookPath] for PDF work inside a coroutine. */
+internal suspend fun <T> withResolvedIosBookPathSuspend(
+    pathOrRef: String?,
+    block: suspend (resolvedPath: String) -> T,
+): T? {
+    val value = pathOrRef?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    if (SharedIosBookSourceRef.isProviderRef(value)) {
+        val decoded = SharedIosBookSourceRef.decode(value) ?: return null
+        return withIosFolderScopeSuspend(decoded.folderName) { root ->
+            block(decoded.resolveAgainst(root))
+        }
+    }
+    val direct = value.resolveIosReadablePath() ?: return null
+    return block(direct)
+}
+
 /** Scoped byte read for a provider ref; null when unreachable or unreadable. */
 internal fun readIosFolderBookBytes(ref: String?): ByteArray? {
     return withIosFolderBookPath(ref) { resolved ->
@@ -256,9 +267,20 @@ internal fun readIosFolderBookBytes(ref: String?): ByteArray? {
     }
 }
 
-/** Resolves a book ref or a plain path to something readable right now. */
+/**
+ * Resolves a book ref to a path that is readable right now, or null.
+ *
+ * The existence check runs *inside* the held scope. On device, a path from a
+ * provider ref is not usable once `stopAccessingSecurityScopedResource` runs:
+ * `fileExistsAtPath` then reports false for a file that is present, which made
+ * every linked-folder book look missing in the simulator-passing build. The
+ * returned path is only valid while the caller holds a scope token, which is
+ * why every read site goes through [withResolvedIosBookPath] or
+ * [acquireScopeForBookPath] rather than using this to read later.
+ */
 internal fun resolveIosFolderBookPath(ref: String?): String? {
     if (!SharedIosBookSourceRef.isProviderRef(ref)) return null
-    return IosFolderBookScope.resolvePath(ref)
-        ?.takeIf { NSFileManager.defaultManager.fileExistsAtPath(it) }
+    return withIosFolderBookPath(ref) { resolved ->
+        resolved.takeIf { NSFileManager.defaultManager.fileExistsAtPath(it) }
+    }
 }

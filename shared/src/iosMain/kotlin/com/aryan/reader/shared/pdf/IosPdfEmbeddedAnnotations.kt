@@ -2,6 +2,7 @@
 
 package com.aryan.reader.shared.pdf
 
+import com.aryan.reader.shared.ios.withResolvedIosBookPathSuspend
 import com.aryan.reader.shared.pdfium.c.FPDFAnnot_GetLinkedAnnot
 import com.aryan.reader.shared.pdfium.c.FPDFAnnot_GetRect
 import com.aryan.reader.shared.pdfium.c.FPDFAnnot_GetStringValue
@@ -31,8 +32,19 @@ internal suspend fun loadIosPdfEmbeddedAnnotations(
     path: String?,
     pageIndex: Int,
     password: String?,
+): List<SharedPdfEmbeddedAnnotation> =
+    // Scope spans resolve + stat + the FPDF read: a folder book's provider ref
+    // has no readable path once its scope is released.
+    withResolvedIosBookPathSuspend(path) { source ->
+        loadIosPdfEmbeddedAnnotationsAtPath(source, pageIndex, password)
+    } ?: emptyList()
+
+private suspend fun loadIosPdfEmbeddedAnnotationsAtPath(
+    source: String,
+    pageIndex: Int,
+    password: String?,
 ): List<SharedPdfEmbeddedAnnotation> = withContext(Dispatchers.Default) {
-    val source = path?.takeIf(NSFileManager.defaultManager::fileExistsAtPath) ?: return@withContext emptyList()
+    if (!NSFileManager.defaultManager.fileExistsAtPath(source)) return@withContext emptyList()
     IosPdfiumRuntime.mutex.withLock {
         IosPdfiumRuntime.ensureInitialized()
         val document = FPDF_LoadDocument(source, password) ?: return@withLock emptyList()
