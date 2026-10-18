@@ -420,6 +420,7 @@ import platform.UIKit.UIViewController
 import platform.UIKit.UIApplication
 import platform.UIKit.UIActivityViewController
 import platform.UIKit.UIDocumentPickerViewController
+import platform.UIKit.UIDevice
 import platform.UIKit.UIModalPresentationFullScreen
 import platform.UIKit.UIPrintInteractionController
 import platform.UIKit.UIWindow
@@ -659,6 +660,13 @@ class ReaderIosBridge internal constructor(
      * target is `logcat -d -t 5000`.
      */
     internal var unifiedDiagnosticsProvider: (() -> String?)? = null
+
+    /**
+     * Swift-owned "Linked folders" section for the diagnostics export: every
+     * stored bookmark re-verified (resolve, scope, root) at export time. The
+     * bookmarks live in Swift, so the verdict has to come from there.
+     */
+    internal var folderDiagnosticsProvider: (() -> String?)? = null
     internal var audiobookPlaybackSnapshot by mutableStateOf(SharedAudiobookPlaybackState())
         private set
     internal var pendingCloudSync by mutableStateOf<IosPendingCloudSync?>(null)
@@ -1347,6 +1355,10 @@ class ReaderIosBridge internal constructor(
         unifiedDiagnosticsProvider = handler
     }
 
+    fun setFolderDiagnosticsProvider(handler: (() -> String?)?) {
+        folderDiagnosticsProvider = handler
+    }
+
     fun setAudiobookPlayHandler(handler: (filePath: String, positionMs: Double, speed: Double) -> Unit) {
         audiobookPlayHandler = handler
     }
@@ -1529,19 +1541,34 @@ class ReaderIosBridge internal constructor(
      * Shares the bounded, app-owned iOS diagnostic stream. Android can dump
      * logcat; iOS cannot safely read the system log, so this export contains
      * recent reader/native events collected in-process.
+     *
+     * Two sections exist specifically for linked-folder regressions: the app
+     * build/OS line ties the file to one TestFlight build, and "Linked
+     * folders" re-verifies every bookmark (resolve, scope, root) at export
+     * time so one user-triggered share separates a broken link from a broken
+     * read.
      */
     fun exportDiagnosticLogs(): Boolean {
         val entries = IosDiagnosticLogStore.snapshot()
         val unifiedEntries = IosDiagnosticLogStore.unifiedLogSnapshot(unifiedDiagnosticsProvider)
+        val folderEntries = folderDiagnosticsProvider?.invoke()?.trim().orEmpty()
         val content = buildString {
             appendLine("Episteme iOS diagnostics")
             appendLine("Generated at: ${currentTimestamp()}")
+            appendLine("Build: ${iosDiagnosticsBuildDescription()}")
             appendLine("Entries: ${entries.size}")
             appendLine()
             if (entries.isEmpty()) {
                 appendLine("No in-process diagnostic events have been collected yet.")
             } else {
                 entries.forEach(::appendLine)
+            }
+            appendLine()
+            appendLine("=== Linked folders ===")
+            if (folderEntries.isEmpty()) {
+                appendLine("No linked-folder diagnostics available.")
+            } else {
+                folderEntries.lineSequence().forEach(::appendLine)
             }
             appendLine()
             appendLine("=== Unified log (last 24h, process scope) ===")
@@ -1563,6 +1590,17 @@ class ReaderIosBridge internal constructor(
             NSURL.fileURLWithPath(path),
             iosFileTransferPresentation(IosFileTransferIntent.DIAGNOSTIC_EXPORT),
         )
+    }
+
+    private fun iosDiagnosticsBuildDescription(): String {
+        val version = (NSBundle.mainBundle.objectForInfoDictionaryKey("CFBundleShortVersionString") as? String)
+            ?.takeIf(String::isNotBlank)
+            ?: "unknown"
+        val build = (NSBundle.mainBundle.objectForInfoDictionaryKey("CFBundleVersion") as? String)
+            ?.takeIf(String::isNotBlank)
+            ?: "unknown"
+        val device = UIDevice.currentDevice
+        return "app=$version($build) system=${device.systemName} ${device.systemVersion} model=${device.model}"
     }
 
     fun setKeepScreenOn(enabled: Boolean) {
@@ -4470,6 +4508,10 @@ private fun ReaderIosApp(
     fun openLibraryBook(book: BookItem, temporary: Boolean = false) {
         val openMark = sharedEpubOpenTraceMark()
         sharedEpubOpenTrace { "library openBook start bookId=${book.id} type=${book.type} temporary=$temporary" }
+        // A linked-folder ref is reported "present" by the preflight below even
+        // when it cannot resolve, so the failure that used to surface only as a
+        // reader error now leaves a folder-tagged trace at the open moment.
+        logIosFolderBookOpenProbe(bookId = book.id, displayName = book.displayName, pathOrRef = book.path)
         val canDownload = cloudSyncEligible()
         // A linked-folder ref only resolves while its scope is held, and this
         // runs outside any held scope. Treat "cannot prove it is gone" as

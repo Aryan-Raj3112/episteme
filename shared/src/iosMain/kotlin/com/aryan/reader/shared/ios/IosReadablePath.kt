@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.ios
 
+import com.aryan.reader.shared.LOCAL_FOLDER_SCAN_LOG_TAG
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSURL
 
@@ -63,4 +64,36 @@ internal fun String?.isIosReadableBookPath(): Boolean {
     }
     val resolved = value.resolveIosReadablePath() ?: return false
     return NSFileManager.defaultManager.fileExistsAtPath(resolved)
+}
+
+/**
+ * Records what happened when the user opened a linked-folder book.
+ *
+ * The library preflight treats an unresolvable ref as "present" on purpose —
+ * `mobileBookOpenPreflightAction` must not remove a book it cannot prove is
+ * gone — so before this probe the open-time failure (bookmark gone, scope
+ * denied, file missing) left no trace in the exported diagnostics. One line
+ * per open, under the folder-scan tag; plain paths and non-provider refs are
+ * ignored so this stays a linked-folder diagnostic.
+ */
+internal fun logIosFolderBookOpenProbe(bookId: String, displayName: String, pathOrRef: String?) {
+    val value = pathOrRef?.trim()?.takeIf { it.isNotBlank() } ?: return
+    if (!SharedIosBookSourceRef.isProviderRef(value)) return
+    val name = displayName.replace('\n', ' ').take(80)
+    val decoded = SharedIosBookSourceRef.decode(value)
+    if (decoded == null) {
+        IosDiagnosticLogStore.record(
+            LOCAL_FOLDER_SCAN_LOG_TAG,
+            "open.probe id=$bookId name=$name decode_failed ref=$value",
+        )
+        return
+    }
+    val outcome = withIosFolderBookPath(value) { resolved ->
+        "resolved=$resolved exists=${NSFileManager.defaultManager.fileExistsAtPath(resolved)}"
+    }
+    val detail = outcome ?: "scope_or_resolve_failed ref=$value"
+    IosDiagnosticLogStore.record(
+        LOCAL_FOLDER_SCAN_LOG_TAG,
+        "open.probe id=$bookId name=$name folder=${decoded.folderName} $detail",
+    )
 }

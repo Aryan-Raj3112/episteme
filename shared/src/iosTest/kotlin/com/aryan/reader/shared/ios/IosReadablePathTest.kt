@@ -13,6 +13,7 @@ import platform.posix.fwrite
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -128,6 +129,47 @@ class IosReadablePathTest {
         // Guards the default resolver: with nothing installed, acquiring must
         // fail cleanly rather than hand back an unscoped token.
         assertNull(IosFolderScopeRegistry.acquire("NoSuchFolder"))
+    }
+
+    @Test
+    fun `opening a linked-folder book records a resolution probe`() {
+        // The preflight treats an unresolvable ref as present on purpose, so
+        // the open-time failure has to leave a trace somewhere: this is it.
+        val root = NSTemporaryDirectory() + "open-probe-" + NSUUID().UUIDString
+        val file = root + "/Book.epub"
+        NSFileManager.defaultManager.createDirectoryAtPath(
+            path = root,
+            withIntermediateDirectories = true,
+            attributes = null,
+            error = null
+        )
+        assertTrue(writeProbe(file))
+        val previous = IosFolderBookScope.current()
+        try {
+            IosFolderBookScope.install { folderName -> if (folderName == "Books") root else null }
+            val ref = SharedIosBookSourceRef.encode("Books", "Book.epub")
+
+            logIosFolderBookOpenProbe(bookId = "probe-book", displayName = "Book", pathOrRef = ref)
+
+            val probe = IosDiagnosticLogStore.snapshot()
+                .firstOrNull { it.contains("open.probe id=probe-book") }
+            assertNotNull(probe, "opening a linked-folder book must leave a diagnostic trace")
+            assertTrue(probe.contains("folder=Books"), "probe must name the folder: $probe")
+            assertTrue(probe.contains("exists=true"), "probe must prove the file resolves: $probe")
+        } finally {
+            IosFolderBookScope.install(previous)
+            NSFileManager.defaultManager.removeItemAtPath(root, error = null)
+        }
+    }
+
+    @Test
+    fun `opening an app-managed book records no probe`() {
+        logIosFolderBookOpenProbe(bookId = "plain-book", displayName = "Book", pathOrRef = "/tmp/Book.epub")
+
+        assertTrue(
+            IosDiagnosticLogStore.snapshot().none { it.contains("plain-book") },
+            "a plain path is not a linked-folder open",
+        )
     }
 
     private fun writeProbe(path: String): Boolean {
