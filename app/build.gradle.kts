@@ -64,7 +64,7 @@ android {
         applicationId = "com.aryan.reader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 64
+        versionCode = 65
         versionName = "1.0.58"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -202,7 +202,7 @@ androidComponents {
             include("*.apk")
             into(layout.buildDirectory.dir("outputs/renamed-apk/${variant.name}"))
             rename {
-                "Episteme-$flavor-v${versionName.get()}-$buildType.apk"
+                "MyShelf-$flavor-v${versionName.get()}-$buildType.apk"
             }
         }
 

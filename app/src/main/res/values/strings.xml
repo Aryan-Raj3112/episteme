@@ -19,7 +19,7 @@
          exactly as in the source when editing.
     -->
     <!-- App name — brand name, must not be translated. -->
-    <string name="app_name" translatable="false">Episteme</string>
+    <string name="app_name" translatable="false">MyShelf</string>
 
     <!-- General Actions & Words -->
     <string name="action_cancel">Cancel</string>
@@ -566,8 +566,8 @@
     <string name="action_select">Select</string>
     <!-- Footer combining Privacy Policy, Terms of Service, and Licenses links separated by bullet points. "•" is punctuation — keep as-is or adapt spacing to your language. -->
     <string name="legal_footer_combined">Privacy Policy  •  Terms of Service  •  Licenses</string>
-    <!-- OSS = Open Source Software. "Episteme" is the app brand name — do not translate. -->
-    <string name="app_name_oss" translatable="false">Episteme OSS</string>
+    <!-- MyShelf display name for the OSS build — do not translate. -->
+    <string name="app_name_oss" translatable="false">MyShelf</string>
     <!-- Debug-only menu item, not shown to regular users. -->
     <string name="debug_show_device_management" translatable="false">[Debug] Show Device Management</string>
     <!-- Debug-only menu item, not shown to regular users. -->
@@ -1081,8 +1081,8 @@
     <string name="error_opening_search">Error opening search app</string>
 
     <!-- About Section -->
-    <!-- "Episteme" is the app brand name — do not translate. -->
-    <string name="about_app_name" translatable="false">Episteme</string>
+    <!-- "MyShelf" is the app brand name — do not translate. -->
+    <string name="about_app_name" translatable="false">MyShelf</string>
     <!-- OSS = Open Source Software. -->
     <string name="about_oss_version">Open Source Version</string>
     <string name="about_play_version">Playstore Version</string>
