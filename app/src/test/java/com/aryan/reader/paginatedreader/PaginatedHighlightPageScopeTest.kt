@@ -332,6 +332,94 @@ class PaginatedHighlightPageScopeTest {
     }
 
     /**
+     * The paginator gives every fragment of a split paragraph the same block index and CFI.
+     *
+     * A highlight resolved against the whole paragraph is relative to the paragraph, not to the
+     * fragment showing it. Without shifting by the fragment's start, the first page paints correctly
+     * and the continuation page paints the same range over unrelated text.
+     */
+    @Test
+    fun `continuation fragment does not paint a highlight from the start of the paragraph`() {
+        val text = "alpha beta gamma delta epsilon zeta"
+        val full = paragraph(text, "/4/0", startOffset = 0, blockIndex = 0)
+        // The paginator trims the space at the split, so part two begins at "delta".
+        val head = paragraph(text.substring(0, 16), "/4/0", startOffset = 0, blockIndex = 0)
+        val tail = paragraph(text.substring(17), "/4/0", startOffset = 17, blockIndex = 0)
+        val index = EpubChapterTextIndex.of(0, listOf(full).toSemanticTextBlocks())
+        val highlight = quoteOnlyHighlight("beta gamma")
+
+        val firstPage = resolvePaginatedPageHighlights(
+            scope = PaginatedPageScope(chapterIndex = 0, textBlocks = listOf(head)),
+            highlights = listOf(highlight),
+            chapterTextIndex = index
+        )
+        val continuation = resolvePaginatedPageHighlights(
+            scope = PaginatedPageScope(chapterIndex = 0, textBlocks = listOf(tail)),
+            highlights = listOf(highlight),
+            chapterTextIndex = index
+        )
+
+        assertEquals(listOf(6 until 16), firstPage.rangesForBlock(0).getValue("h"))
+        assertTrue("phantom highlight on continuation page", continuation.highlights.isEmpty())
+        assertTrue(continuation.rangesForBlock(0).isEmpty())
+    }
+
+    /**
+     * A highlight wholly inside a later fragment must be shifted into that fragment's coordinates.
+     *
+     * The old clamp-only arithmetic asked for offsets past the fragment's end and produced nothing,
+     * so the highlight vanished instead of painting.
+     */
+    @Test
+    fun `later fragment paints a highlight using that fragment's own offsets`() {
+        val text = "alpha beta gamma delta epsilon zeta"
+        val full = paragraph(text, "/4/0", startOffset = 0, blockIndex = 0)
+        val head = paragraph(text.substring(0, 16), "/4/0", startOffset = 0, blockIndex = 0)
+        val tail = paragraph(text.substring(17), "/4/0", startOffset = 17, blockIndex = 0)
+        val index = EpubChapterTextIndex.of(0, listOf(full).toSemanticTextBlocks())
+        val highlight = quoteOnlyHighlight("epsilon zeta")
+
+        val firstPage = resolvePaginatedPageHighlights(
+            scope = PaginatedPageScope(chapterIndex = 0, textBlocks = listOf(head)),
+            highlights = listOf(highlight),
+            chapterTextIndex = index
+        )
+        val continuation = resolvePaginatedPageHighlights(
+            scope = PaginatedPageScope(chapterIndex = 0, textBlocks = listOf(tail)),
+            highlights = listOf(highlight),
+            chapterTextIndex = index
+        )
+
+        assertTrue(firstPage.highlights.isEmpty())
+        // "delta epsilon zeta": epsilon starts at 6 and zeta ends the fragment at 18.
+        assertEquals(listOf(6 until 18), continuation.rangesForBlock(0).getValue("h"))
+    }
+
+    @Test
+    fun `highlight spanning a split paints the correct clipped range on both fragments`() {
+        val text = "alpha beta gamma delta epsilon zeta"
+        val full = paragraph(text, "/4/0", startOffset = 0, blockIndex = 0)
+        val head = paragraph(text.substring(0, 16), "/4/0", startOffset = 0, blockIndex = 0)
+        val tail = paragraph(text.substring(17), "/4/0", startOffset = 17, blockIndex = 0)
+        val index = EpubChapterTextIndex.of(0, listOf(full).toSemanticTextBlocks())
+        val highlight = quoteOnlyHighlight("gamma delta")
+
+        val firstPage = resolvePaginatedPageHighlights(
+            scope = PaginatedPageScope(chapterIndex = 0, textBlocks = listOf(head)),
+            highlights = listOf(highlight),
+            chapterTextIndex = index
+        )
+        val continuation = resolvePaginatedPageHighlights(
+            scope = PaginatedPageScope(chapterIndex = 0, textBlocks = listOf(tail)),
+            highlights = listOf(highlight),
+            chapterTextIndex = index
+        )
+
+        assertEquals(listOf(11 until 16), firstPage.rangesForBlock(0).getValue("h"))
+        assertEquals(listOf(0 until 5), continuation.rangesForBlock(0).getValue("h"))
+    }
+
+    /**
      * A chapter index covering only this page must not be able to place a repeated sentence on both.
      *
      * The resolver needs the whole chapter to choose one occurrence. Handing it a page's worth of blocks

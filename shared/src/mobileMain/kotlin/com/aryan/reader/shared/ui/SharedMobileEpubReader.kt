@@ -1177,7 +1177,7 @@ fun SharedMobileEpubReaderScreen(
     // Android does the same thing through `onGetChapterTextBlocks`; this is the iOS equivalent, kept
     // here so both platforms repair the same way.
     val chapterTextIndexes = remember { mutableStateOf(emptyMap<Int, EpubChapterTextIndex>()) }
-    LaunchedEffect(highlights, pages) {
+    LaunchedEffect(highlights, pages, loadedBook) {
         // Every chapter that holds a highlight, not only the ones whose highlights lack offsets: a
         // legacy highlight has offsets and they are wrong, which is exactly what the repair fixes.
         val chaptersWithHighlights = highlights
@@ -1185,7 +1185,18 @@ fun SharedMobileEpubReaderScreen(
             .distinct()
         for (chapterIndex in chaptersWithHighlights) {
             if (chapterTextIndexes.value.containsKey(chapterIndex)) continue
-            val blocks = pages
+            // Index the whole chapter, not the concatenation of its pages. Page fragments repeat the
+            // block index they were split from, and those fragments change on every repagination, so
+            // an index built from them gives the same block several identities and stores offsets in
+            // a coordinate space that moves with the layout. The chapter's blocks are stable and are
+            // what Android indexes too. Pages remain the fallback for a chapter the parser exposed
+            // only as paginated content.
+            val chapterBlocks = loadedBook
+                ?.chapters
+                ?.getOrNull(chapterIndex)
+                ?.semanticBlocks
+                ?.takeIf { it.isNotEmpty() }
+            val blocks = chapterBlocks ?: pages
                 .filter { it.chapterIndex == chapterIndex }
                 .flatMap { it.semanticBlocks }
             val index = EpubChapterTextIndex.of(chapterIndex, blocks) ?: continue

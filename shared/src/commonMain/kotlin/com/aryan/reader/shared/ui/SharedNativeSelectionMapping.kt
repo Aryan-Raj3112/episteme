@@ -96,14 +96,13 @@ private fun ReaderPage.ownsResolvedHighlight(
     val blocks = semanticBlocks.flattenNativeSemanticBlocks().filterIsInstance<SemanticTextBlock>()
     if (blocks.isEmpty()) return containsNativeHighlightLocator(locator, fallbackCfi)
     return blocks.any { block ->
-        val segment = chapterTextIndex.rangeInBlock(
+        chapterTextIndex.rangeInBlockFragment(
             highlight = highlight,
             blockIndex = block.blockIndex,
-            blockCfi = block.cfi
-        ) ?: return@any false
-        val from = segment.localStart.coerceIn(0, block.text.length)
-        val to = segment.localEnd.coerceIn(from, block.text.length)
-        to > from
+            blockCfi = block.cfi,
+            fragmentSourceStart = block.startCharOffsetInSource,
+            fragmentTextLength = block.text.length
+        ) != null
     }
 }
 
@@ -699,14 +698,16 @@ internal fun sharedNativeHighlightRangeForBlock(
     // matches text per block, which paints a repeated sentence on every block holding a copy. Both
     // are kept only as a fallback for surfaces with no index, such as desktop.
     if (chapterTextIndex != null) {
-        val segment = chapterTextIndex.rangeInBlock(
+        val range = chapterTextIndex.rangeInBlockFragment(
             highlight = highlight,
             blockIndex = blockIndex,
-            blockCfi = blockCfi
+            blockCfi = blockCfi,
+            // On the indexed path textStartOffset is the fragment's startCharOffsetInSource, the
+            // coordinate the resolver's segments are mapped into.
+            fragmentSourceStart = textStartOffset,
+            fragmentTextLength = textLength
         ) ?: return null
-        val from = segment.localStart.coerceIn(0, textLength)
-        val to = segment.localEnd.coerceIn(from, textLength)
-        return if (to > from) SharedNativeReaderTextRange(from, to) else null
+        return SharedNativeReaderTextRange(range.first, range.last + 1)
     }
     sharedNativeBlockLocatorHighlightRangeInBlock(
         highlight = highlight,

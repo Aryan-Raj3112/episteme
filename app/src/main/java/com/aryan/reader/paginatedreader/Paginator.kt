@@ -2081,6 +2081,11 @@ private suspend fun splitParagraphBlock(
 
     val originalStartOffset = block.startCharOffsetInSource
     val part1EndOffset = originalStartOffset + splitOffset
+    // part 2 starts after the whitespace trimmed from the split point. It has to report where its
+    // text actually begins: a highlight range is mapped into the fragment by subtracting this
+    // offset, so reporting the untrimmed split point would shift every range on the continuation
+    // page by the trimmed character count.
+    val part2StartOffset = part1EndOffset + trimStartIndex
 
     val part1 = block.copy(
         content = part1Text,
@@ -2091,7 +2096,7 @@ private suspend fun splitParagraphBlock(
     val part2 = block.copy(
         content = part2TextWithoutIndent,
         style = part2Style,
-        startCharOffsetInSource = part1EndOffset,
+        startCharOffsetInSource = part2StartOffset,
         endCharOffsetInSource = block.endCharOffsetInSource,
         rubies = part2Rubies
     )
