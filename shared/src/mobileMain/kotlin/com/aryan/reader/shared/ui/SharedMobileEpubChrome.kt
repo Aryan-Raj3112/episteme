@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,7 +29,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -115,6 +113,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.ReaderTool
 import com.aryan.reader.shared.ReaderToolbarPreferences
@@ -310,6 +309,15 @@ fun SharedMobileEpubTopBar(
      */
     isSearchActive: Boolean = false,
     searchContent: (@Composable RowScope.() -> Unit)? = null,
+    /**
+     * How much system-bar space the bar must paint above its 55.dp tool row.
+     *
+     * The inset is *content* of the surface, not padding outside it: the bar has to cover the
+     * status-bar strip with its own colour, otherwise the reader background shows through above
+     * the chrome. Android passes its chrome-stable status-bar height; the shared host passes
+     * `safeDrawing`'s top inset.
+     */
+    topInset: Dp = 0.dp,
     modifier: Modifier = Modifier
 ) {
     // The overflow sections dismiss themselves through this shared state, so the host's `showMore`
@@ -489,10 +497,10 @@ fun SharedMobileEpubTopBar(
         },
     )
     SharedReaderToolbarSurface(
-        height = 55.dp,
+        height = SharedReaderEpubTopBarHeight + topInset,
         modifier = modifier.testTag(SharedMobileEpubAxTags.TOP_BAR)
     ) {
-        SharedEpubTopToolbarRow {
+        SharedEpubTopToolbarRow(topInset = topInset) {
             if (isSearchActive && searchContent != null) {
                 searchContent()
             } else {
@@ -839,9 +847,9 @@ internal fun SharedMobileEpubSwitchMenuItem(
  *
  * Same contract as [SharedMobileEpubTopBar]: the host owns visibility, this owns the tool row, its
  * order (the host passes [tools], already filtered by `sharedEpubToolbarTools`), the Android
- * tooltips/accessibility labels and the read-aloud entry's state. [applyBottomSafeInset] paints the
- * system-bar inset *inside* the Surface so the tonal background reaches the screen edge; Android's
- * reader instead pads the bar at its call site, which is why it defaults to false.
+ * tooltips/accessibility labels and the read-aloud entry's state. [bottomInset] paints the
+ * system-bar inset *inside* the Surface so the tonal background reaches the screen edge; the host
+ * only has to hand over the platform's navigation-bar height (or `safeDrawing`'s bottom inset).
  */
 @Composable
 fun SharedMobileEpubBottomBar(
@@ -866,7 +874,8 @@ fun SharedMobileEpubBottomBar(
     cloudTtsAvailable: Boolean = false,
     onCloudTtsToggle: () -> Unit = {},
     onCloudTtsStop: () -> Unit = {},
-    applyBottomSafeInset: Boolean = false,
+    /** System-bar space the bar must paint below its 45.dp tool row; 0.dp when bars are hidden. */
+    bottomInset: Dp = 0.dp,
     /** Android benchmark: the slider tool turns primary while the page slider is up. */
     isSliderActive: Boolean = false,
     modifier: Modifier = Modifier
@@ -944,10 +953,8 @@ fun SharedMobileEpubBottomBar(
     } else {
         readerString("content_desc_start_tts", "Start TTS")
     }
-    // The Surface cannot fix its own height while it also paints the bottom inset (see
-    // SharedEpubBottomToolbarRow), so the fixed height applies only when there is no inset to add.
     SharedReaderToolbarSurface(
-        height = if (applyBottomSafeInset) null else SharedReaderEpubBottomBarHeight,
+        height = SharedReaderEpubBottomBarHeight + bottomInset,
         modifier = modifier.testTag(SharedMobileEpubAxTags.BOTTOM_BAR)
     ) {
         Column(Modifier.fillMaxWidth()) {
@@ -1079,8 +1086,8 @@ fun SharedMobileEpubBottomBar(
                     }
                 }
             }
-            if (applyBottomSafeInset) {
-                Spacer(Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)))
+            if (bottomInset > 0.dp) {
+                Spacer(Modifier.height(bottomInset))
             }
         }
     }

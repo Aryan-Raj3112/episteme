@@ -39,7 +39,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -49,6 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -125,20 +125,13 @@ fun SharedAndroidFolderSyncScreen(
     var disablingFolder by remember { mutableStateOf<SyncedFolder?>(null) }
     val hasEnabledFolders = folders.any { it.localSyncEnabled && !it.isCloudPlaceholder }
     val canAddFolder = folders.count { !it.isAppManaged && !it.isCloudPlaceholder } < 10
-    Scaffold(
-        modifier = modifier,
-        floatingActionButton = {
-            if (canAddFolder) {
-                ExtendedFloatingActionButton(
-                    text = { Text(strings.addFolder) },
-                    icon = { Icon(Icons.Default.Add, strings.addDescription) },
-                    onClick = onAddFolder,
-                )
-            }
-        },
-    ) { padding ->
+    // This screen is a section inside the unified library Scaffold, so it must not
+    // apply window insets itself: the host already converts them into content padding.
+    // A nested Scaffold would consume the system bars twice and lift this FAB above
+    // the one used by the other tabs.
+    Box(modifier = modifier.fillMaxSize()) {
         Column(
-            Modifier.fillMaxSize().padding(padding).padding(16.dp),
+            Modifier.fillMaxSize().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             if (folders.isNotEmpty()) {
@@ -209,6 +202,17 @@ fun SharedAndroidFolderSyncScreen(
                     )
                 }
             }
+        }
+        if (canAddFolder) {
+            ExtendedFloatingActionButton(
+                text = { Text(strings.addFolder) },
+                icon = { Icon(Icons.Default.Add, strings.addDescription) },
+                onClick = onAddFolder,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(16.dp)
+                    .testTag("UnifiedLibraryAddFolder"),
+            )
         }
     }
     editingFolder?.let { folder ->

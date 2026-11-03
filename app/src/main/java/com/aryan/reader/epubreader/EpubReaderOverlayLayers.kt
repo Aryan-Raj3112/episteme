@@ -12,29 +12,54 @@ import android.webkit.WebView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.layout.windowInsetsEndWidth
+import androidx.compose.foundation.layout.windowInsetsStartWidth
 import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
@@ -389,4 +414,208 @@ internal fun EpubReaderPageSliderLayer(
             totalPages = totalPages
         )
     }
+}
+
+/**
+ * Musician mode's auto-scroll temp-pause overlay: left/right regions that jump to the
+ * chapter's top/bottom on tap, or pause auto-scroll for a second while held. Extracted from
+ * `EpubReaderHost`'s scaffold content closure to bound that closure's generated method size;
+ * the overlay owns only the gesture ring/pulse, the scrolling itself stays with the host.
+ */
+@Composable
+internal fun EpubReaderMusicianAutoScrollOverlay(
+    scope: CoroutineScope,
+    webViewRefForTts: WebView?,
+    motionPolicy: ReaderMotionPolicy,
+    currentClientHeightValue: Int,
+    triggerAutoScrollTempPause: (Long) -> Unit
+) {
+    var leftPulseTrigger by remember { mutableLongStateOf(0L) }
+    var rightPulseTrigger by remember { mutableLongStateOf(0L) }
+
+    var leftHoldProgress by remember { mutableFloatStateOf(0f) }
+    var rightHoldProgress by remember { mutableFloatStateOf(0f) }
+
+    val leftPulseAlpha by animateFloatAsState(
+        targetValue = if (System.currentTimeMillis() - leftPulseTrigger < 150) 0.3f else 0f,
+        animationSpec = tween(motionPolicy.durationMillis(150)), label = "leftPulse"
+    )
+    val rightPulseAlpha by animateFloatAsState(
+        targetValue = if (System.currentTimeMillis() - rightPulseTrigger < 150) 0.3f else 0f,
+        animationSpec = tween(motionPolicy.durationMillis(150)), label = "rightPulse"
+    )
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        val regionHeight = Modifier.fillMaxHeight(0.4f)
+        val regionWidth = Modifier.fillMaxWidth(0.25f)
+        val topOffset = 100.dp
+
+        // Left Region
+        Box(
+            modifier = regionWidth
+                .then(regionHeight)
+                .align(Alignment.TopStart)
+                .offset(y = topOffset)
+                .padding(start = 8.dp)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = leftPulseAlpha), RoundedCornerShape(12.dp))
+                .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown()
+                        var isLongPress = false
+                        val job = scope.launch {
+                            val startTime = System.currentTimeMillis()
+                            while (isActive) {
+                                val elapsed = System.currentTimeMillis() - startTime
+                                if (elapsed >= 1000) {
+                                    leftHoldProgress = 0f
+                                    isLongPress = true
+                                    leftPulseTrigger = System.currentTimeMillis()
+                                    triggerAutoScrollTempPause(1000L)
+
+                                    scope.launch {
+                                        webViewRefForTts?.evaluateJavascript(
+                                            "window.scrollTo({ top: 0, behavior: 'auto' });", null
+                                        )
+                                    }
+                                    break
+                                }
+                                leftHoldProgress = elapsed / 1000f
+                                delay(16)
+                            }
+                        }
+
+                        val up = waitForUpOrCancellation()
+                        job.cancel()
+                        leftHoldProgress = 0f
+
+                        if (!isLongPress && up != null) {
+                            up.consume()
+                            leftPulseTrigger = System.currentTimeMillis()
+                            triggerAutoScrollTempPause(600L)
+                            val amount = (currentClientHeightValue * 0.75f).toInt()
+                            webViewRefForTts?.evaluateJavascript(
+                                "window.scrollBy({ top: -${amount}, behavior: '${motionPolicy.webViewScrollBehavior()}' });", null
+                            )
+                        }
+                    }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            if (leftHoldProgress > 0f) {
+                CircularProgressIndicator(
+                    progress = { leftHoldProgress },
+                    modifier = Modifier.size(48.dp).alpha(0.6f),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    trackColor = Color.Transparent,
+                    strokeWidth = 4.dp
+                )
+                Icon(
+                    imageVector = Icons.Default.ArrowUpward,
+                    contentDescription = null,
+                    modifier = Modifier.size(24.dp).alpha(0.6f),
+                    tint = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+
+        // Right Region
+        Box(
+            modifier = regionWidth
+                .then(regionHeight)
+                .align(Alignment.TopEnd)
+                .offset(y = topOffset)
+                .padding(end = 8.dp)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = rightPulseAlpha), RoundedCornerShape(12.dp))
+                .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown()
+                        var isLongPress = false
+                        val job = scope.launch {
+                            val startTime = System.currentTimeMillis()
+                            while (isActive) {
+                                val elapsed = System.currentTimeMillis() - startTime
+                                if (elapsed >= 1000) {
+                                    rightHoldProgress = 0f
+                                    isLongPress = true
+                                    rightPulseTrigger = System.currentTimeMillis()
+                                    triggerAutoScrollTempPause(1000L)
+
+                                    scope.launch {
+                                        webViewRefForTts?.evaluateJavascript(
+                                            "window.scrollTo({ top: document.body.scrollHeight, behavior: 'auto' });", null
+                                        )
+                                    }
+                                    break
+                                }
+                                rightHoldProgress = elapsed / 1000f
+                                delay(16)
+                            }
+                        }
+
+                        val up = waitForUpOrCancellation()
+                        job.cancel()
+                        rightHoldProgress = 0f
+
+                        if (!isLongPress && up != null) {
+                            up.consume()
+                            rightPulseTrigger = System.currentTimeMillis()
+                            triggerAutoScrollTempPause(600L)
+                            val amount = (currentClientHeightValue * 0.75f).toInt()
+                            webViewRefForTts?.evaluateJavascript(
+                                "window.scrollBy({ top: ${amount}, behavior: '${motionPolicy.webViewScrollBehavior()}' });", null
+                            )
+                        }
+                    }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            if (rightHoldProgress > 0f) {
+                CircularProgressIndicator(
+                    progress = { rightHoldProgress },
+                    modifier = Modifier.size(48.dp).alpha(0.6f),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    trackColor = Color.Transparent,
+                    strokeWidth = 4.dp
+                )
+                Icon(
+                    imageVector = Icons.Default.ArrowDownward,
+                    contentDescription = null,
+                    modifier = Modifier.size(24.dp).alpha(0.6f),
+                    tint = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Solid scrims that fill the system-bar strips while the reader chrome is hidden, extracted from
+ * `EpubReaderHost`'s scaffold content closure to bound that closure's generated method size.
+ * Call from the same `Box` as the bars so the alignment modifiers resolve there.
+ */
+@Composable
+internal fun BoxScope.EpubReaderNavBarScrims(color: Color) {
+    Box(
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .fillMaxWidth()
+            .windowInsetsBottomHeight(WindowInsets.navigationBars)
+            .background(color)
+    )
+    Box(
+        modifier = Modifier
+            .align(Alignment.CenterStart)
+            .fillMaxHeight()
+            .windowInsetsStartWidth(WindowInsets.navigationBars)
+            .background(color)
+    )
+    Box(
+        modifier = Modifier
+            .align(Alignment.CenterEnd)
+            .fillMaxHeight()
+            .windowInsetsEndWidth(WindowInsets.navigationBars)
+            .background(color)
+    )
 }

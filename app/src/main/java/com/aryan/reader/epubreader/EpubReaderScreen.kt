@@ -52,12 +52,8 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -66,7 +62,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -77,18 +72,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsBottomHeight
-import androidx.compose.foundation.layout.windowInsetsEndWidth
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.layout.windowInsetsStartWidth
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -131,7 +119,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -1285,7 +1272,9 @@ fun EpubReaderHost(
         val outR = overlayColor.red * overlayAlpha + effectiveBg.red * (1 - overlayAlpha)
         val outG = overlayColor.green * overlayAlpha + effectiveBg.green * (1 - overlayAlpha)
         val outB = overlayColor.blue * overlayAlpha + effectiveBg.blue * (1 - overlayAlpha)
-        Color(outR, outG, outB).copy(alpha = 0.95f)
+        // Opaque: the bar is chrome, not an overlay. A translucent fill let the WebView's text
+        // show through the bottom stack, unlike the PDF reader's solid bars.
+        Color(outR, outG, outB)
     }
 
     val currentChapterInPaginatedMode by remember {
@@ -5503,166 +5492,13 @@ fun EpubReaderHost(
                 }
 
                 if (isMusicianMode && isAutoScrollModeActive) {
-                    val density = LocalDensity.current
-
-                    var leftPulseTrigger by remember { mutableLongStateOf(0L) }
-                    var rightPulseTrigger by remember { mutableLongStateOf(0L) }
-
-                    var leftHoldProgress by remember { mutableFloatStateOf(0f) }
-                    var rightHoldProgress by remember { mutableFloatStateOf(0f) }
-
-                    val leftPulseAlpha by animateFloatAsState(
-                        targetValue = if (System.currentTimeMillis() - leftPulseTrigger < 150) 0.3f else 0f,
-                        animationSpec = tween(motionPolicy.durationMillis(150)), label = "leftPulse"
+                    EpubReaderMusicianAutoScrollOverlay(
+                        scope = scope,
+                        webViewRefForTts = webViewRefForTts,
+                        motionPolicy = motionPolicy,
+                        currentClientHeightValue = currentClientHeightValue,
+                        triggerAutoScrollTempPause = { triggerAutoScrollTempPause(it) }
                     )
-                    val rightPulseAlpha by animateFloatAsState(
-                        targetValue = if (System.currentTimeMillis() - rightPulseTrigger < 150) 0.3f else 0f,
-                        animationSpec = tween(motionPolicy.durationMillis(150)), label = "rightPulse"
-                    )
-
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        val regionHeight = Modifier.fillMaxHeight(0.4f)
-                        val regionWidth = Modifier.fillMaxWidth(0.25f)
-                        val topOffset = 100.dp
-
-                        // Left Region
-                        Box(
-                            modifier = regionWidth
-                                .then(regionHeight)
-                                .align(Alignment.TopStart)
-                                .offset(y = topOffset)
-                                .padding(start = 8.dp)
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = leftPulseAlpha), RoundedCornerShape(12.dp))
-                                .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                                .pointerInput(Unit) {
-                                    awaitEachGesture {
-                                        val down = awaitFirstDown()
-                                        var isLongPress = false
-                                        val job = scope.launch {
-                                            val startTime = System.currentTimeMillis()
-                                            while (isActive) {
-                                                val elapsed = System.currentTimeMillis() - startTime
-                                                if (elapsed >= 1000) {
-                                                    leftHoldProgress = 0f
-                                                    isLongPress = true
-                                                    leftPulseTrigger = System.currentTimeMillis()
-                                                    triggerAutoScrollTempPause(1000L)
-
-                                                    scope.launch {
-                                                        webViewRefForTts?.evaluateJavascript(
-                                                            "window.scrollTo({ top: 0, behavior: 'auto' });", null
-                                                        )
-                                                    }
-                                                    break
-                                                }
-                                                leftHoldProgress = elapsed / 1000f
-                                                delay(16)
-                                            }
-                                        }
-
-                                        val up = waitForUpOrCancellation()
-                                        job.cancel()
-                                        leftHoldProgress = 0f
-
-                                        if (!isLongPress && up != null) {
-                                            up.consume()
-                                            leftPulseTrigger = System.currentTimeMillis()
-                                            triggerAutoScrollTempPause(600L)
-                                            val amount = (currentClientHeightValue * 0.75f).toInt()
-                                            webViewRefForTts?.evaluateJavascript(
-                                                "window.scrollBy({ top: -${amount}, behavior: '${motionPolicy.webViewScrollBehavior()}' });", null
-                                            )
-                                        }
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (leftHoldProgress > 0f) {
-                                CircularProgressIndicator(
-                                    progress = { leftHoldProgress },
-                                    modifier = Modifier.size(48.dp).alpha(0.6f),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    trackColor = Color.Transparent,
-                                    strokeWidth = 4.dp
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.ArrowUpward,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(24.dp).alpha(0.6f),
-                                    tint = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-
-                        // Right Region
-                        Box(
-                            modifier = regionWidth
-                                .then(regionHeight)
-                                .align(Alignment.TopEnd)
-                                .offset(y = topOffset)
-                                .padding(end = 8.dp)
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = rightPulseAlpha), RoundedCornerShape(12.dp))
-                                .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                                .pointerInput(Unit) {
-                                    awaitEachGesture {
-                                        val down = awaitFirstDown()
-                                        var isLongPress = false
-                                        val job = scope.launch {
-                                            val startTime = System.currentTimeMillis()
-                                            while (isActive) {
-                                                val elapsed = System.currentTimeMillis() - startTime
-                                                if (elapsed >= 1000) {
-                                                    rightHoldProgress = 0f
-                                                    isLongPress = true
-                                                    rightPulseTrigger = System.currentTimeMillis()
-                                                    triggerAutoScrollTempPause(1000L)
-
-                                                    scope.launch {
-                                                        webViewRefForTts?.evaluateJavascript(
-                                                            "window.scrollTo({ top: document.body.scrollHeight, behavior: 'auto' });", null
-                                                        )
-                                                    }
-                                                    break
-                                                }
-                                                rightHoldProgress = elapsed / 1000f
-                                                delay(16)
-                                            }
-                                        }
-
-                                        val up = waitForUpOrCancellation()
-                                        job.cancel()
-                                        rightHoldProgress = 0f
-
-                                        if (!isLongPress && up != null) {
-                                            up.consume()
-                                            rightPulseTrigger = System.currentTimeMillis()
-                                            triggerAutoScrollTempPause(600L)
-                                            val amount = (currentClientHeightValue * 0.75f).toInt()
-                                            webViewRefForTts?.evaluateJavascript(
-                                                "window.scrollBy({ top: ${amount}, behavior: '${motionPolicy.webViewScrollBehavior()}' });", null
-                                            )
-                                        }
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (rightHoldProgress > 0f) {
-                                CircularProgressIndicator(
-                                    progress = { rightHoldProgress },
-                                    modifier = Modifier.size(48.dp).alpha(0.6f),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    trackColor = Color.Transparent,
-                                    strokeWidth = 4.dp
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.ArrowDownward,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(24.dp).alpha(0.6f),
-                                    tint = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-                    }
                 }
 
                 Box(modifier = Modifier.fillMaxSize()) {
@@ -5670,32 +5506,10 @@ fun EpubReaderHost(
                         searchState = searchState,
                         onNavigateResult = { index -> navigateToSearchResult(index) },
                         bottomPadding = bottomPadding,
-                        topInset = stableChromeTopPadding,
                     )
                 }
 
-                val navBarScrimColor = MaterialTheme.colorScheme.surface
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .windowInsetsBottomHeight(WindowInsets.navigationBars)
-                        .background(navBarScrimColor)
-                )
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .fillMaxHeight()
-                        .windowInsetsStartWidth(WindowInsets.navigationBars)
-                        .background(navBarScrimColor)
-                )
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .fillMaxHeight()
-                        .windowInsetsEndWidth(WindowInsets.navigationBars)
-                        .background(navBarScrimColor)
-                )
+                EpubReaderNavBarScrims(MaterialTheme.colorScheme.surface)
 
                 // Animated Top Bar
                 EpubReaderTopBar(
@@ -5897,11 +5711,13 @@ fun EpubReaderHost(
                         showBars = !isMusicianMode
                     },
                     searchFocusRequester = searchFocusRequester,
-                    // Chrome sits outside the inset-padded content layer, so the
-                    // top bar pads for the status bar itself (ignoring-visibility
-                    // insets keep it stable when bars transiently appear).
-                    modifier = Modifier.align(Alignment.TopCenter)
-                        .padding(top = stableChromeTopPadding),
+                    // This layer is inset by `effectiveTopPadding`; the bar lifts itself back to
+                    // the screen edge (see `hostTopInset`) and paints the status-bar strip inside
+                    // its own Surface, the way the PDF reader does. The ignoring-visibility inset
+                    // keeps the tool row put while transient system bars swipe in.
+                    topInset = stableChromeTopPadding,
+                    hostTopInset = effectiveTopPadding,
+                    modifier = Modifier.align(Alignment.TopCenter),
                     onOpenTtsSettings = { showTtsSettingsSheet = true },
                     onOpenTtsReplacements = { showTtsReplacementsSheet = true },
                     onOpenBookReplacements = { showBookReplacementsSheet = true },
@@ -6289,9 +6105,11 @@ fun EpubReaderHost(
                             }
                         }
                     },
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = bottomPadding),
+                    // Paint the navigation-bar strip inside the toolbar surface so
+                    // the bar's colour reaches the screen edge; the nav-bar scrims
+                    // below remain for the chrome-hidden state.
+                    bottomInset = bottomPadding,
+                    modifier = Modifier.align(Alignment.BottomCenter),
                     readerMotionPolicy = motionPolicy
                 )
 

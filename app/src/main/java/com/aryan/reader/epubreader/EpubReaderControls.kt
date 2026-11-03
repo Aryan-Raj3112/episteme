@@ -99,6 +99,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -310,6 +311,19 @@ fun EpubReaderTopBar(
     toolOrder: List<ReaderTool>,
     bottomTools: Set<String>,
     onCustomizeTools: () -> Unit,
+    /**
+     * Chrome-stable status-bar height the bar paints inside its own surface. The reader computes
+     * it (and keeps it stable while transient bars show/hide); the shared bar must not apply it as
+     * outer padding or the strip above the toolbar stays reader-coloured.
+     */
+    topInset: Dp = 0.dp,
+    /**
+     * Top inset of the layer hosting this bar. The reader insets its chrome layer by the status-bar
+     * height so controls clear the system bar, which would leave the bar's surface starting below
+     * the screen edge; the bar lifts itself by the same amount so the surface reaches the edge and
+     * [topInset] paints the strip. Hosts that already place bars at the edge pass 0.dp.
+     */
+    hostTopInset: Dp = 0.dp,
     modifier: Modifier = Modifier,
     onToggleReflow: (() -> Unit)? = null,
     onDeleteReflow: (() -> Unit)? = null,
@@ -341,7 +355,10 @@ fun EpubReaderTopBar(
         visible = isVisible,
         edge = SharedReaderBarEdge.TOP,
         motionPolicy = readerMotionPolicy,
-        modifier = modifier
+        // The host layer insets the chrome so its controls clear the status bar; undoing that
+        // inset here lets the bar's own surface start at the screen edge (topInset then paints
+        // the strip behind the status bar).
+        modifier = modifier.offset(y = -hostTopInset)
     ) {
         CompositionLocalProvider(
             LocalSharedStringResolver provides androidSharedStringResolver(context)
@@ -350,6 +367,7 @@ fun EpubReaderTopBar(
                 title = bookTitle,
                 isBookmarked = isBookmarked,
                 topTools = topTools,
+                topInset = topInset,
                 showMore = showMore,
                 onShowMoreChange = { showMore = it },
                 onBack = onNavigateBack,
@@ -517,6 +535,8 @@ fun EpubReaderBottomBar(
     hiddenTools: Set<String>,
     toolOrder: List<ReaderTool>,
     bottomTools: Set<String>,
+    /** Navigation-bar height painted by the bar's own surface; 0.dp when the bars are hidden. */
+    bottomInset: Dp = 0.dp,
     modifier: Modifier = Modifier,
     readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
@@ -564,6 +584,7 @@ fun EpubReaderBottomBar(
                 localTtsState = epubChromeReadAloudState(isTtsSessionActive),
                 onLocalTtsToggle = onToggleTts,
                 onLocalTtsStop = onToggleTts,
+                bottomInset = bottomInset,
                 isSliderActive = isSliderActive,
             )
         }

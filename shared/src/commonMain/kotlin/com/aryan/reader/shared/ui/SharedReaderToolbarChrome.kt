@@ -159,10 +159,16 @@ fun SharedReaderToolbarSurface(
 }
 
 @Composable
-fun SharedEpubTopToolbarRow(content: @Composable RowScope.() -> Unit) {
+fun SharedEpubTopToolbarRow(
+    topInset: Dp = 0.dp,
+    content: @Composable RowScope.() -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxSize()
+            // The inset lives inside the toolbar's Surface so the bar's colour reaches the
+            // screen edge behind the status bar instead of leaving an unpainted strip.
+            .padding(top = topInset)
             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -248,6 +254,7 @@ fun <T> SharedReaderOverflowSectionList(
  * jump bar. Keeping the heights and stacking in one place guarantees the
  * slider can never overlap the jump bar in any chrome/safe-area state.
  */
+val SharedReaderEpubTopBarHeight = 55.dp
 val SharedReaderEpubBottomBarHeight = 45.dp
 val SharedReaderPdfBottomBarHeight = 56.dp
 val SharedReaderJumpBarHeight = 40.dp

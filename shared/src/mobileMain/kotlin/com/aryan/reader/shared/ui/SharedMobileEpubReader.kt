@@ -3244,15 +3244,7 @@ fun SharedMobileEpubReaderScreen(
                     visible = showChrome,
                     edge = SharedReaderBarEdge.TOP,
                     motionPolicy = motionPolicy,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .then(
-                            if (!systemUiHidden) {
-                                Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
-                            } else {
-                                Modifier
-                            }
-                        )
+                    modifier = Modifier.align(Alignment.TopCenter)
                 ) {
                     SharedMobileEpubTopBar(
                         title = loadedBook?.title ?: book.displayName,
@@ -3260,6 +3252,13 @@ fun SharedMobileEpubReaderScreen(
                         topTools = topToolbarTools,
                         showMore = showMore,
                         onShowMoreChange = { showMore = it },
+                        // Paint the status-bar strip with the bar's own surface instead of leaving
+                        // the reader background (or page content) visible above the chrome.
+                        topInset = if (!systemUiHidden) {
+                            WindowInsets.safeDrawing.asPaddingValues().calculateTopPadding()
+                        } else {
+                            0.dp
+                        },
                         onBack = ::closeReader,
                         onTheme = { showThemeSheet = true },
                         onFormat = { showFormatSheet = true },
@@ -3386,9 +3385,8 @@ fun SharedMobileEpubReaderScreen(
                         }
                     }
                     // The toolbar paints its own bottom safe filler inside its
-                    // Surface (see applyBottomSafeInset): keeping the inset
-                    // outside would leave a transparent strip where the WebView
-                    // shows through below the toolbar.
+                    // Surface: keeping the inset outside would leave a transparent
+                    // strip where the WebView shows through below the toolbar.
                     SharedReaderBarVisibility(
                         visible = showChrome,
                         edge = SharedReaderBarEdge.BOTTOM,
@@ -3397,7 +3395,11 @@ fun SharedMobileEpubReaderScreen(
                         SharedMobileEpubBottomBar(
                             tools = bottomToolbarTools,
                             isBookmarked = isBookmarked,
-                            applyBottomSafeInset = !navigationUiHidden,
+                            bottomInset = if (!navigationUiHidden) {
+                                WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
+                            } else {
+                                0.dp
+                            },
                             onToc = { openReaderDrawer() },
                             onFormat = { showFormatSheet = true },
                             onSearch = { showSearchResultsPanel = true; showSearch = true },

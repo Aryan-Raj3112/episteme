@@ -416,10 +416,6 @@ fun EpubReaderSearchOverlay(
     searchState: SearchState,
     onNavigateResult: (Int) -> Unit,
     bottomPadding: Dp,
-    // Status-bar inset of the host chrome layer (the overlay sits outside the
-    // inset-padded content, like the top bar). Added to the fixed drop-down
-    // offset so results never start under the status bar.
-    topInset: Dp = 0.dp,
 ) {
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -442,7 +438,10 @@ fun EpubReaderSearchOverlay(
                     searchState.showSearchResultsPanel = false
                     keyboardController?.hide()
                 },
-                modifier = Modifier.padding(top = topInset + 50.dp)
+                // The drop-down hangs off the tool row's top edge (the host layer
+                // already sits at the reader's chrome origin, same as the top bar),
+                // so the fixed offset needs no inset of its own.
+                modifier = Modifier.padding(top = 50.dp)
             )
         }
 
