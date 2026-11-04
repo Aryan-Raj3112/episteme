@@ -125,6 +125,7 @@ import coil.imageLoader
 import coil.request.ImageRequest.Builder
 import com.aryan.reader.R
 import com.aryan.reader.countWords
+import com.aryan.reader.shouldOfferSmartDictionaryUpsell
 import com.aryan.reader.epubreader.HighlightColor
 import com.aryan.reader.epubreader.PaginatedTextSelectionMenu
 import com.aryan.reader.epubreader.PaletteManagerDialog
@@ -2167,7 +2168,7 @@ internal fun PaginatedReaderContent(
                                 },
                                 onSelectAll = null,
                                 onDictionary = {
-                                    if (isProUser || countWords(sel.text) <= 1) {
+                                    if (!shouldOfferSmartDictionaryUpsell(isProUser, isOss, countWords(sel.text))) {
                                         onWordSelectedForAiDefinition(sel.text)
                                     } else {
                                         onShowDictionaryUpsellDialog()

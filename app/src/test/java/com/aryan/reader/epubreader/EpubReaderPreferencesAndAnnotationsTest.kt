@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import com.aryan.reader.countWords
+import com.aryan.reader.shouldOfferSmartDictionaryUpsell
 import com.aryan.reader.epub.EpubChapter
 import io.mockk.every
 import io.mockk.mockk
@@ -324,6 +325,19 @@ class EpubReaderPreferencesAndAnnotationsTest {
             .takeIf { it.isFile }
             ?: java.io.File("src/main/java/com/aryan/reader/AndroidAiClient.kt")
         assertFalse(source.readText().contains("split(Regex("))
+    }
+
+    @Test
+    fun `smart dictionary upsell is never offered by an oss build`() {
+        assertFalse(shouldOfferSmartDictionaryUpsell(isProUser = false, isOss = true, wordCount = 4))
+        assertFalse(shouldOfferSmartDictionaryUpsell(isProUser = false, isOss = true, wordCount = 1))
+    }
+
+    @Test
+    fun `smart dictionary upsell applies only to multi word selections without pro`() {
+        assertTrue(shouldOfferSmartDictionaryUpsell(isProUser = false, isOss = false, wordCount = 4))
+        assertFalse(shouldOfferSmartDictionaryUpsell(isProUser = true, isOss = false, wordCount = 4))
+        assertFalse(shouldOfferSmartDictionaryUpsell(isProUser = false, isOss = false, wordCount = 1))
     }
 
     @Test
