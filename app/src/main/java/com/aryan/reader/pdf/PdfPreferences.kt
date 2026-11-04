@@ -577,16 +577,48 @@ internal fun loadPdfAutoScrollSpeed(context: Context): Float {
     return prefs.getFloat(PDF_AUTO_SCROLL_SPEED_KEY, 3.0f)
 }
 
-internal fun savePdfLockedState(context: Context, bookId: String, scale: Float, offsetX: Float, offsetY: Float) {
+/**
+ * The camera panning was locked at, per book *and per view*.
+ *
+ * A paginated camera (scale plus a translation inside the page) and a vertical camera (scale plus a
+document scroll offset) are different quantities. Keyed on the book alone, a vertical reader could
+restore a paginated pan - or nothing at all - and snapped the document to its first page.
+ */
+internal fun savePdfLockedState(
+    context: Context,
+    bookId: String,
+    scale: Float,
+    offsetX: Float,
+    offsetY: Float,
+    displayMode: String,
+) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit {
-        putFloat("pdf_locked_scale_$bookId", scale)
-        putFloat("pdf_locked_offset_x_$bookId", offsetX)
-        putFloat("pdf_locked_offset_y_$bookId", offsetY)
+        putFloat(pdfLockedScaleKey(bookId, displayMode), scale)
+        putFloat(pdfLockedOffsetXKey(bookId, displayMode), offsetX)
+        putFloat(pdfLockedOffsetYKey(bookId, displayMode), offsetY)
     }
 }
 
-internal fun loadPdfLockedState(context: Context, bookId: String): Triple<Float, Float, Float>? {
+internal fun loadPdfLockedState(context: Context, bookId: String, displayMode: String): Triple<Float, Float, Float>? {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    val scaleKey = pdfLockedScaleKey(bookId, displayMode)
+    if (!prefs.contains(scaleKey)) return null
+    return Triple(
+        prefs.getFloat(scaleKey, 1f),
+        prefs.getFloat(pdfLockedOffsetXKey(bookId, displayMode), 0f),
+        prefs.getFloat(pdfLockedOffsetYKey(bookId, displayMode), 0f)
+    )
+}
+
+/**
+ * A camera stored before cameras were kept per view.
+ *
+ * Only the paginated reader may adopt one: it was written from the paginated camera, and a vertical
+ * reader applying that offset lands on the first page. Left readable so upgrading does not lose the
+ * zoom paginated readers already had; the next camera change rewrites it under the new key.
+ */
+internal fun loadLegacyPdfLockedState(context: Context, bookId: String): Triple<Float, Float, Float>? {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     if (!prefs.contains("pdf_locked_scale_$bookId")) return null
     return Triple(
@@ -595,6 +627,12 @@ internal fun loadPdfLockedState(context: Context, bookId: String): Triple<Float,
         prefs.getFloat("pdf_locked_offset_y_$bookId", 0f)
     )
 }
+
+private fun pdfLockedScaleKey(bookId: String, displayMode: String) = "pdf_locked_scale_${bookId}_$displayMode"
+
+private fun pdfLockedOffsetXKey(bookId: String, displayMode: String) = "pdf_locked_offset_x_${bookId}_$displayMode"
+
+private fun pdfLockedOffsetYKey(bookId: String, displayMode: String) = "pdf_locked_offset_y_${bookId}_$displayMode"
 
 internal fun saveOcrLanguage(context: Context, language: OcrLanguage) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)

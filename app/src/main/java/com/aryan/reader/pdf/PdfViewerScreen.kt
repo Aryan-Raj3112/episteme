@@ -5860,18 +5860,35 @@ private fun PdfViewerDocumentSetup(
 
     LaunchedEffect(bookId) {
         showBars = false
+    }
+
+    // Per view: a paginated camera and a vertical scroll camera are not the same quantity, and
+    // applying one as the other is what put a scroll-locked document on its first page.
+    LaunchedEffect(bookId, displayMode) {
         val savedIsScrollLocked = loadPdfScrollLocked(context, bookId)
-        val savedLockedState = loadPdfLockedState(context, bookId)
-        val activeCamera = activePdfCameraAfterLockPreferenceLoad(
-            isScrollLocked = savedIsScrollLocked,
-            lockedState = savedLockedState
-        )
+        val savedLockedState = loadPdfLockedState(context, bookId, displayMode.name)
+            ?: if (displayMode == DisplayMode.PAGINATION) {
+                // Cameras saved before they were kept per view were always the paginated camera.
+                loadLegacyPdfLockedState(context, bookId)
+            } else {
+                null
+            }
+        // The vertical reader restores its own camera from `lockedState`; priming the paginated
+        // camera with a scroll offset only gave the lock saver a wrong value to write back.
+        val activeCamera = if (displayMode == DisplayMode.PAGINATION) {
+            activePdfCameraAfterLockPreferenceLoad(
+                isScrollLocked = savedIsScrollLocked,
+                lockedState = savedLockedState
+            )
+        } else {
+            1f to Offset.Zero
+        }
         isScrollLocked = savedIsScrollLocked
         lockedState = savedLockedState
         currentActiveScale = activeCamera.first
         currentActiveOffset = activeCamera.second
         pdfSplitZoomDiag(
-            "cam.restoreLock bookId=$bookId locked=$savedIsScrollLocked " +
+            "cam.restoreLock bookId=$bookId view=${displayMode.name} locked=$savedIsScrollLocked " +
                 "scale=${activeCamera.first.diagF()} offset=(${activeCamera.second.x.diagF()},${activeCamera.second.y.diagF()})"
         )
     }
@@ -6274,14 +6291,24 @@ private fun PdfViewerDocumentSetup(
 
     LaunchedEffect(displayMode) { saveDisplayMode(context, displayMode) }
 
-    LaunchedEffect(bookId, currentActiveScale, currentActiveOffset, isScrollLocked) {
+    // Persists the camera panning is locked at, once it settles. Both readers report into
+    // currentActiveScale/Offset while the lock is on, so this is the camera actually on screen -
+    // the vertical reader only mirrors it when it owns the lock, and paginated pages report theirs.
+    LaunchedEffect(bookId, currentActiveScale, currentActiveOffset, isScrollLocked, displayMode) {
         if (isScrollLocked) {
             val requestedCamera = currentActiveScale to currentActiveOffset
             delay(500)
-            Timber.tag("PdfLockDiagnostic").d("SAVING: BookId=$bookId | Scale=${requestedCamera.first} | X=${requestedCamera.second.x} | Y=${requestedCamera.second.y}")
+            Timber.tag("PdfLockDiagnostic").d("SAVING: BookId=$bookId | View=${displayMode.name} | Scale=${requestedCamera.first} | X=${requestedCamera.second.x} | Y=${requestedCamera.second.y}")
 
             lockedState = Triple(requestedCamera.first, requestedCamera.second.x, requestedCamera.second.y)
-            savePdfLockedState(context, bookId, requestedCamera.first, requestedCamera.second.x, requestedCamera.second.y)
+            savePdfLockedState(
+                context,
+                bookId,
+                requestedCamera.first,
+                requestedCamera.second.x,
+                requestedCamera.second.y,
+                displayMode.name
+            )
         }
     }
 
@@ -8339,10 +8366,15 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 lockedState = lockedState,
                                 showPageGap = showVerticalPageGap,
                                 showPageNumberOverlay = showPageNumberOverlay,
-                                // Vertical mode owns its own camera; nothing in this branch reads the
-                                // host mirror back, so do not pay two screen-scope state writes per
-                                // frame for it. The pagination branch below still reports.
-                                reportsCameraToHost = false,
+                                // Only while the lock is on: that is when the host needs the vertical
+                                // camera, to persist where a reopen resumes. Unlocked reading has no
+                                // consumer for the mirror, and paying two screen-scope writes a frame
+                                // for it invalidated the screen composition on every drag.
+                                reportsCameraToHost = isScrollLocked,
+                                onZoomAndPanChanged = { newScale, newOffset ->
+                                    currentActiveScale = newScale
+                                    currentActiveOffset = newOffset
+                                },
                                 resetZoomTrigger = resetZoomTrigger,
                                 isBubbleZoomModeActive = isBubbleZoomModeActive,
                                 onDetectBubbles = { sourcePageIndex, bitmap ->
@@ -8734,7 +8766,6 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         var virtualPages by surfaceState.virtualPages
         var searchHighlightMode by surfaceState.searchHighlightMode
         var showAllTextHighlights by surfaceState.showAllTextHighlights
-        var lockedState by surfaceState.lockedState
         var isAutoScrollPlaying by surfaceState.isAutoScrollPlaying
         var showDictionaryUpsellDialog by surfaceState.showDictionaryUpsellDialog
         val undoStack = surfaceState.undoStack
@@ -8991,11 +9022,9 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
             val nextLocked = !isScrollLocked
             isScrollLocked = nextLocked
             savePdfScrollLocked(context, bookId, nextLocked)
-            if (nextLocked) {
-                currentPageScale = currentActiveScale
-                savePdfLockedState(context, bookId, currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
-                lockedState = Triple(currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
-            }
+            // The camera is recorded by the debounced lock saver once the locked view has reported
+            // it. Saving here captured the host mirror a frame before the vertical reader started
+            // reporting, so locking itself moved the document to page one.
         }
     }
     val showPdfSlider = {
@@ -9613,7 +9642,6 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         var currentActiveScale by surfaceState.currentActiveScale
         var currentActiveOffset by surfaceState.currentActiveOffset
         var currentPageScale by surfaceState.currentPageScale
-        var lockedState by surfaceState.lockedState
         var displayMode by surfaceState.displayMode
         val verticalReaderState = surfaceState.verticalReaderState
         val currentPaginationDisplayPage = surfaceState.currentPaginationDisplayPage
@@ -9632,11 +9660,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                 val nextLocked = !isScrollLocked
                 isScrollLocked = nextLocked
                 savePdfScrollLocked(context, bookId, nextLocked)
-                if (nextLocked) {
-                    currentPageScale = currentActiveScale
-                    savePdfLockedState(context, bookId, currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
-                    lockedState = Triple(currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
-                }
+                // See the reader's toggle: the debounced lock saver records the camera once the
+                // locked view reports it, and locking must not move the document.
             }
         }
         val showPdfSlider = {

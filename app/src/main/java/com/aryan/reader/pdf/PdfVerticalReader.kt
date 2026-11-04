@@ -706,13 +706,15 @@ internal fun PdfVerticalReader(
             }
         }
 
-        // Vertical mode does not use onZoomAndPanChanged at all: its only consumer is the pagination
-        // branch's spread/page camera (PdfViewerScreen.kt), which reads currentActiveScale and
-        // currentActiveOffset - both declared at the top of the screen composable. Calling it per
-        // camera frame therefore wrote two screen-scope snapshot states on every frame of every
-        // drag and fling, invalidating the screen composition to keep two values nobody read.
+        // Reported only when the host asks for it. The consumer is the screen's camera mirror, which
+        // persists the position panning was locked at (PdfViewerScreen.kt). Reporting per camera
+        // frame while unlocked wrote two screen-scope snapshot states on every frame of every drag
+        // and fling, invalidating the screen composition to keep two values nobody read.
         val latestOnZoomAndPanChanged by rememberUpdatedState(onZoomAndPanChanged)
-        LaunchedEffect(Unit) {
+        // Keyed on the flag so turning the lock on subscribes now: snapshotFlow emits the current
+        // camera on subscription, so the host learns the camera the lock starts from rather than
+        // waiting for the next move - which would have persisted the previous view's camera.
+        LaunchedEffect(reportsCameraToHost) {
             snapshotFlow {
                 Triple(cameraZoom, cameraPanX, cameraPanY)
             }.collect { (zoom, panX, panY) ->
@@ -853,6 +855,20 @@ internal fun PdfVerticalReader(
                         "vert.lockedReanchor.deferredRestore zoom=${cameraZoom.diagF()} " +
                             "layoutChanged=true restorePending=true"
                     )
+                    return@LaunchedEffect
+                }
+                // A re-fit snaps to `fitZoom`, so it may only answer a change in the space the
+                // camera lives in. Refining the page layout (real page sizes, more virtual pages)
+                // leaves the viewport alone, and re-fitting there threw away the zoom a reopen had
+                // just restored - which read as the document zooming back out to 100%.
+                val viewportChanged = anchoredCameraLayout.widthPx != screenWidth ||
+                    anchoredCameraLayout.heightPx != screenHeight
+                if (!viewportChanged) {
+                    pdfSplitZoomDiag(
+                        "vert.lockedReanchor.skipped zoom=${cameraZoom.diagF()} " +
+                            "layoutChanged=true viewport=(${screenWidth.diagF()}x${screenHeight.diagF()})"
+                    )
+                    anchoredCameraLayout = currentAnchor
                     return@LaunchedEffect
                 }
                 val targetPageIdx = if (targetPageDuringResize.intValue != -1) {
