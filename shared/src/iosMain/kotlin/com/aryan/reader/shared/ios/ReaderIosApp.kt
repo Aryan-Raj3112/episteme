@@ -174,6 +174,7 @@ import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderTtsEngineOverride
 import com.aryan.reader.shared.SharedListeningArbiter
+import com.aryan.reader.shared.reader.IosMediaOverlayNarrationProgressStore
 import com.aryan.reader.shared.reader.IosSharedMediaOverlayPlayback
 import com.aryan.reader.shared.reader.SharedMediaOverlayClip
 import com.aryan.reader.shared.SharedListeningSurface
@@ -6877,6 +6878,10 @@ private fun ReaderIosApp(
                             walletMigrated = state.walletMigrated,
                             externalLocalTts = readerTtsEngine,
                             mediaOverlayEngine = mediaOverlayEngine,
+                            // Same store Listen narration records into, so the two surfaces resume at
+                            // the same sentence.
+                            mediaOverlayNarrationProgressStore =
+                                IosMediaOverlayNarrationProgressStore.shared,
             // Arbitration is the host's decision: it owns the audiobook and both TTS engines, and the
             // reader screen only states the intent that narration is about to claim the output.
             onMediaOverlayStarting = { listeningArbiter.onMediaOverlayStarting() },

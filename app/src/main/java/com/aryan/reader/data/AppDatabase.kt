@@ -28,6 +28,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.aryan.reader.audiobook.BookTtsListeningProgressDao
 import com.aryan.reader.audiobook.BookTtsListeningProgressEntity
+import com.aryan.reader.mediaoverlay.MediaOverlayNarrationProgressDao
+import com.aryan.reader.mediaoverlay.MediaOverlayNarrationProgressEntity
 
 @Database(
     entities =[
@@ -39,6 +41,7 @@ import com.aryan.reader.audiobook.BookTtsListeningProgressEntity
         BookTagCrossRef::class,
         AudiobookEntity::class,
         BookTtsListeningProgressEntity::class,
+        MediaOverlayNarrationProgressEntity::class,
         PendingFolderAnnotationExportEntity::class,
         CloudFolderRootEntity::class,
         CloudFolderDeviceBindingEntity::class,
@@ -52,7 +55,7 @@ import com.aryan.reader.audiobook.BookTtsListeningProgressEntity
         CloudFolderMetadataOutboxEntity::class,
         CloudBookDeleteIntentEntity::class,
     ],
-    version = 39,
+    version = 40,
     exportSchema = false
 )
 @TypeConverters(FileTypeConverter::class)
@@ -63,6 +66,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun tagDao(): TagDao
     abstract fun audiobookDao(): AudiobookDao
     abstract fun bookTtsListeningProgressDao(): BookTtsListeningProgressDao
+    abstract fun mediaOverlayNarrationProgressDao(): MediaOverlayNarrationProgressDao
     abstract fun pendingFolderAnnotationExportDao(): PendingFolderAnnotationExportDao
     abstract fun cloudFolderSyncDao(): CloudFolderSyncDao
     abstract fun cloudBookDeleteDao(): CloudBookDeleteDao
@@ -984,6 +988,28 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * The narration position a book resumes at, kept beside the TTS listening progress it is
+         * deliberately not stored with.
+         */
+        val MIGRATION_39_40 = object : Migration(39, 40) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `media_overlay_narration_progress` (
+                        `bookId` TEXT NOT NULL,
+                        `spineItemIndex` INTEGER NOT NULL,
+                        `chapterIndex` INTEGER,
+                        `clipIndex` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`bookId`),
+                        FOREIGN KEY(`bookId`) REFERENCES `recent_files`(`bookId`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 CloudFolderPrivateStateMigrator.importLegacyState(context.applicationContext)
@@ -1002,7 +1028,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28,
                         MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32,
                         MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36,
-                        MIGRATION_36_37, MIGRATION_37_38, MIGRATION_38_39
+                        MIGRATION_36_37, MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40
                     )
                     .fallbackToDestructiveMigration(false)
                     .build()

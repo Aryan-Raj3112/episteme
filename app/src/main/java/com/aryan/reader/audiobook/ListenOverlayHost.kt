@@ -3,6 +3,7 @@ package com.aryan.reader.audiobook
 import android.content.Context
 import com.aryan.reader.epubreader.loadTtsPitch
 import com.aryan.reader.epubreader.loadTtsSpeechRate
+import com.aryan.reader.mediaoverlay.AndroidMediaOverlayNarrationProgressStore
 import com.aryan.reader.mediaoverlay.AndroidSharedMediaOverlayPlayback
 import com.aryan.reader.shared.SharedListenMediaOverlayInfo
 import com.aryan.reader.shared.SharedOverlayClipChunkSpan
@@ -54,6 +55,12 @@ class ListenOverlayHost private constructor(context: Context) {
     private val repository = BookTtsContentRepository(appContext)
 
     val engine = AndroidSharedMediaOverlayPlayback(appContext)
+    /**
+     * Same narration position the reader resumes at. Listen narrates the same clips, so a listener
+     * who stops here and opens the book (or the reverse) continues at the sentence they last heard
+     * instead of the top of the chapter.
+     */
+    private val narrationProgressStore = AndroidMediaOverlayNarrationProgressStore(appContext)
     val playback: StateFlow<SharedMediaOverlayPlaybackState> = engine.state
 
     /** Snapshot of the holder's book-scoped state for sheet projection. */
@@ -345,6 +352,7 @@ class ListenOverlayHost private constructor(context: Context) {
             overlayIndex = book.overlayIndex,
             spineItemIndexByChapter = spineByChapter,
             spineItemsInReadingOrder = sharedMediaOverlaySpineItemsInReadingOrder(book.chapters.size, spineByChapter),
+            narrationProgressStore = narrationProgressStore,
         )
         session = built
         sessionBookId = book.bookId

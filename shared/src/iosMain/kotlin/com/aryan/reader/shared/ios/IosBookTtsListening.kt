@@ -28,6 +28,7 @@ import com.aryan.reader.shared.reader.SharedMediaOverlayPlaybackState
 import com.aryan.reader.shared.reader.SharedMediaOverlayProjection
 import com.aryan.reader.shared.reader.SharedMediaOverlayProjectionSource
 import com.aryan.reader.shared.reader.SharedMediaOverlaySession
+import com.aryan.reader.shared.reader.IosMediaOverlayNarrationProgressStore
 import com.aryan.reader.shared.reader.IosSharedMediaOverlayPlayback
 import com.aryan.reader.shared.reader.iosMediaOverlaySmilReaderFor
 import com.aryan.reader.shared.reader.loadSharedEpubMediaOverlayIndex
@@ -931,6 +932,9 @@ internal class IosBookTtsListeningController(
                 content.chapters.size,
                 spineByChapter,
             ),
+            // The reader's store: a listener who stops in Listen resumes at the same sentence when
+            // they open the book, and the reverse.
+            narrationProgressStore = IosMediaOverlayNarrationProgressStore.shared,
         )
         overlaySession = session
         overlaySessionBookId = book.id

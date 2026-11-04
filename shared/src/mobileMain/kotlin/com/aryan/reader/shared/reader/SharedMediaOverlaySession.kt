@@ -3,6 +3,7 @@ package com.aryan.reader.shared.reader
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.aryan.reader.shared.currentTimestamp
 
 /**
  * The reader-side half of media overlay narration: one engine, one projector, and the decisions that
@@ -39,6 +40,14 @@ class SharedMediaOverlaySession(
      * spine item appears once however many chapters reference it.
      */
     private val spineItemsInReadingOrder: List<Int>,
+    /**
+     * Where narration positions are kept between opens, or null when this surface does not keep them.
+     *
+     * Not optional by accident: the store is the difference between "reopening resumes at the last
+     * sentence" and "reopening starts at the top of the section", so a surface without one narrates
+     * exactly as it did before this existed.
+     */
+    private val narrationProgressStore: SharedMediaOverlayNarrationProgressStore? = null,
 ) {
     /** The chapter narration is currently in, or null. Follow compares this with the visible one. */
     var chapterIndex: Int? by mutableStateOf(null)
@@ -84,12 +93,34 @@ class SharedMediaOverlaySession(
     var bandSessionId: Long by mutableStateOf(nextSharedPlaybackBandSessionId())
         private set
 
+    /**
+     * The spine item [chapterIndex] was projected from, so a chapter is never recorded against another
+     * spine item's clip.
+     *
+     * Needed because a content document split at TOC fragments gives several chapters one spine item:
+     * the spine item alone cannot say whether a held-over chapter still describes the loaded chapter.
+     */
+    private var projectedSpineItemIndex: Int? = null
+
+    /**
+     * The chapter a spine item narrates as, for a position recorded before its first projection.
+     *
+     * Lowest chapter wins where several chapters share the document, which is the same answer Listen's
+     * chapter table gives — so a position recorded at a chapter's first clip and one recorded a clip
+     * later describe the book the same way.
+     */
+    private val firstChapterBySpineItem: Map<Int, Int> = buildMap {
+        spineItemIndexByChapter.entries
+            .sortedBy { it.key }
+            .forEach { (chapter, spine) -> if (spine !in this) put(spine, chapter) }
+    }
+
     init {
         // Running off the end of a chapter continues into the next narrated one. Installed here
         // rather than by the screen because the decision needs the book's reading order and the
         // overlay index, both of which the session already holds — and because it is the session,
         // not the screen, that owns the engine's lifetime.
-        engine.onChapterFinished = { finished -> continueAfter(finished) }
+        installPlaybackHooks()
     }
 
     /**
@@ -101,6 +132,7 @@ class SharedMediaOverlaySession(
     suspend fun project(spineItemIndex: Int, clipIndex: Int): SharedMediaOverlayProjection? {
         val projection = projector.project(spineItemIndex, clipIndex)
         chapterIndex = projection?.chapterIndex
+        projectedSpineItemIndex = spineItemIndex.takeIf { projection?.chapterIndex != null }
         return projection
     }
 
@@ -110,8 +142,18 @@ class SharedMediaOverlaySession(
      * Returns false when the chapter has nothing to narrate — which is a normal outcome, not an
      * error: a book can narrate some chapters and not others, and `epub:type` can mark a chapter
      * as skippable. The reader gets a message rather than a button that does nothing.
+     *
+     * @param resumeSavedNarration whether this book's stored narration position wins over
+     *   [readerOffset]. True for a play press after opening the book, because the stored position is
+     *   the last thing actually heard and the reading position may be a page — or a whole background
+     *   session — behind it. False when the reader moved deliberately, where their position is the
+     *   intent. See [sharedMediaOverlayStartClipIndex].
      */
-    suspend fun start(chapterIndex: Int?, readerOffset: Int?): Boolean {
+    suspend fun start(
+        chapterIndex: Int?,
+        readerOffset: Int?,
+        resumeSavedNarration: Boolean = true,
+    ): Boolean {
         val spineItemIndex = chapterIndex?.let(spineItemIndexByChapter::get) ?: return false
         val document = projector.document(spineItemIndex) ?: return false
         val plan = sharedMediaOverlayPlaybackPlan(document)
@@ -119,6 +161,14 @@ class SharedMediaOverlaySession(
         val readerClipIndex = readerOffset
             ?.takeIf { it >= 0 }
             ?.let { projector.clipIndexForReaderPosition(spineItemIndex, it) }
+        val savedProgress = if (resumeSavedNarration) narrationProgressStore?.load(bookId) else null
+        val startClipIndex = sharedMediaOverlayStartClipIndex(
+            saved = savedProgress,
+            spineItemIndex = spineItemIndex,
+            chapterIndex = chapterIndex,
+            readerClipIndex = readerClipIndex,
+            resumeSavedNarration = resumeSavedNarration,
+        )
         clipCount = plan.entries.size
         currentPlanEntries = plan.entries
         currentSpineItemIndex = spineItemIndex
@@ -128,9 +178,51 @@ class SharedMediaOverlaySession(
         // starter must own continuation. Whoever stopped last never fires —
         // only a genuine finish calls the hook — so reinstalling cannot
         // resurrect a session its owner ended.
-        engine.onChapterFinished = { finished -> continueAfter(finished) }
-        engine.play(requestFor(spineItemIndex, plan, sharedMediaOverlayStartPlaybackIndex(plan, readerClipIndex)))
+        installPlaybackHooks()
+        engine.play(requestFor(spineItemIndex, plan, sharedMediaOverlayStartPlaybackIndex(plan, startClipIndex)))
         return true
+    }
+
+    /**
+     * Records where narration is, against the position that just started.
+     *
+     * Called from the engine's clip hook rather than from a screen's state collector so it keeps
+     * firing while the reader is backgrounded — the case where the text position stops moving and the
+     * narration does not. A session with no store records nothing.
+     */
+    private fun recordNarrationProgress(spineItemIndex: Int, playbackIndex: Int) {
+        val store = narrationProgressStore ?: return
+        // An engine that loads asynchronously can announce the previous request's first clip after this
+        // session has already moved on; only the loaded chapter's own clips describe this position.
+        if (spineItemIndex != currentSpineItemIndex) return
+        val clip = currentPlanEntries.getOrNull(playbackIndex) ?: return
+        store.record(
+            SharedMediaOverlayNarrationProgress(
+                bookId = bookId,
+                spineItemIndex = spineItemIndex,
+                // Only a chapter resolved for *this* spine item describes this clip. A projection
+                // left over from the previous chapter would label the clip with the wrong one, and a
+                // position recorded before this chapter's first projection still needs a chapter, so
+                // the mapping answers when the projection has not.
+                chapterIndex = chapterIndex.takeIf { projectedSpineItemIndex == spineItemIndex }
+                    ?: firstChapterBySpineItem[spineItemIndex],
+                clipIndex = clip.clipIndex,
+                updatedAt = currentTimestamp(),
+            )
+        )
+    }
+
+    /**
+     * Installs the session's engine hooks.
+     *
+     * Both hooks are reinstalled on every start because sessions share engines across surfaces (reader
+     * and Listen narration), so the last starter owns continuation and recording.
+     */
+    private fun installPlaybackHooks() {
+        engine.onChapterFinished = { finished -> continueAfter(finished) }
+        engine.onClipEntered = { spineItemIndex, playbackIndex ->
+            recordNarrationProgress(spineItemIndex, playbackIndex)
+        }
     }
 
     /**
@@ -197,6 +289,7 @@ class SharedMediaOverlaySession(
 
     fun stop() {
         chapterIndex = null
+        projectedSpineItemIndex = null
         clipCount = 0
         currentPlanEntries = emptyList()
         currentSpineItemIndex = null

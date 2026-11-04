@@ -140,6 +140,7 @@ import com.aryan.reader.shared.reader.sharedEpubSearchHighlightsApplyScript
 import com.aryan.reader.shared.reader.SharedMediaOverlayDocumentCache
 import com.aryan.reader.shared.reader.SharedMediaOverlayEngine
 import com.aryan.reader.shared.reader.SharedMediaOverlayIndex
+import com.aryan.reader.shared.reader.SharedMediaOverlayNarrationProgressStore
 import com.aryan.reader.shared.reader.SharedMediaOverlayPlaybackState
 import com.aryan.reader.shared.reader.SharedMediaOverlayPlaybackBand
 import com.aryan.reader.shared.reader.SharedMediaOverlayProjection
@@ -337,6 +338,15 @@ fun SharedMobileEpubReaderScreen(
      * and the answer `RS §9` asks for from a reader that cannot support overlays.
      */
     mediaOverlayEngine: SharedMediaOverlayEngine? = null,
+    /**
+     * Where narration positions are kept between opens, or null when the host keeps none.
+     *
+     * Supplied by the platform because the storage is platform-specific (NSUserDefaults on iOS, Room on
+     * Android) while *what* is stored and when it is resumed is shared — see
+     * [SharedMediaOverlayNarrationProgressStore]. Without one, narration restarts at the visible
+     * position exactly as it did before the store existed.
+     */
+    mediaOverlayNarrationProgressStore: SharedMediaOverlayNarrationProgressStore? = null,
     /**
      * Claims the audio output before narration starts, and reports when narration gives it up.
      *
@@ -1577,7 +1587,8 @@ fun SharedMobileEpubReaderScreen(
                 spineItemsInReadingOrder = sharedMediaOverlaySpineItemsInReadingOrder(
                     mediaOverlayChapters.size,
                     mediaOverlaySpineItemsByChapter
-                )
+                ),
+                narrationProgressStore = mediaOverlayNarrationProgressStore
             )
         }
     }
@@ -1709,7 +1720,9 @@ fun SharedMobileEpubReaderScreen(
             ?.takeIf { it.chapterIndex == currentChapterIndex }
             ?.startOffset
             ?.takeIf { it >= 0 }
-        session.start(currentChapterIndex, readerOffset)
+        // The reader moved deliberately, so the visible position is the intent — never the narration
+        // position this chapter was left at.
+        session.start(currentChapterIndex, readerOffset, resumeSavedNarration = false)
     }
 
     /**

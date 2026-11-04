@@ -2055,7 +2055,14 @@ fun EpubReaderHost(
         val narratedChapter = session.chapterIndex ?: return@LaunchedEffect
         if (narratedChapter == currentChapterIndex) return@LaunchedEffect
         Timber.tag("MediaOverlayDiag").d("Reader navigated to $currentChapterIndex; seeking narration")
-        session.start(currentChapterIndex, readerOffsetForChapter(currentChapterIndex))
+        // The reader moved deliberately, so the visible position is the intent — never the narration
+        // position this chapter was left at. That is the difference between following a chapter jump
+        // and resuming a book.
+        session.start(
+            chapterIndex = currentChapterIndex,
+            readerOffset = readerOffsetForChapter(currentChapterIndex),
+            resumeSavedNarration = false
+        )
     }
 
     // The band on the WebView vertical surface, and its follow-scroll. A chapter change scrolls;

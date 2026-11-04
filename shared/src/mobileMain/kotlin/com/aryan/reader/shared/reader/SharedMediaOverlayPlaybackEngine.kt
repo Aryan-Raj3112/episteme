@@ -30,6 +30,19 @@ interface SharedMediaOverlayPlayback {
     var onChapterFinished: ((spineItemIndex: Int) -> Unit)?
 
     /**
+     * Set by the host to be told which clip just started, with the spine item and the index into the
+     * request's playable list.
+     *
+     * This is the durable narration position: the engine is the only place that knows a clip change
+     * happened, and it keeps reporting while the reader's screen is in the background, where page
+     * observation does not run. A host that persists nothing simply leaves it unset.
+     *
+     * Like [onChapterFinished] it is on the interface because the host holds the interface: a hook it
+     * could not see would mean each platform recording narration progress itself.
+     */
+    var onClipEntered: ((spineItemIndex: Int, playbackIndex: Int) -> Unit)?
+
+    /**
      * Loads a chapter and optionally begins playing.
      *
      * Replaces any current session. [SharedMediaOverlayPlaybackRequest.clips] must already be the
@@ -106,12 +119,17 @@ abstract class SharedMediaOverlayPlaybackBase : SharedMediaOverlayPlayback {
      */
     override var onChapterFinished: ((spineItemIndex: Int) -> Unit)? = null
 
+    override var onClipEntered: ((spineItemIndex: Int, playbackIndex: Int) -> Unit)? = null
+
     protected val mutableState = MutableStateFlow(SharedMediaOverlayPlaybackState())
 
     final override val state: StateFlow<SharedMediaOverlayPlaybackState> = mutableState.asStateFlow()
 
     protected var request: SharedMediaOverlayPlaybackRequest? = null
         private set
+
+    /** The clip [onClipEntered] last reported, so a repeated publish is not a second announcement. */
+    private var lastNotifiedClip: Pair<Int, Int>? = null
 
     protected var released: Boolean = false
         private set
@@ -224,6 +242,7 @@ abstract class SharedMediaOverlayPlaybackBase : SharedMediaOverlayPlayback {
             return null
         }
         this.request = request
+        lastNotifiedClip = null
         val startIndex = request.startPlaybackIndex.coerceIn(0, request.clips.lastIndex)
         val first = request.clips[startIndex]
         mutableState.value = SharedMediaOverlayPlaybackState(
@@ -240,6 +259,7 @@ abstract class SharedMediaOverlayPlaybackBase : SharedMediaOverlayPlayback {
             totalDurationMs = request.totalDurationMs,
             error = null
         )
+        notifyClipEntered(startIndex)
         return startIndex
     }
 
@@ -255,6 +275,21 @@ abstract class SharedMediaOverlayPlaybackBase : SharedMediaOverlayPlayback {
                 clipEndMs = clip.clipEndMs
             )
         }
+        notifyClipEntered(clipIndex)
+    }
+
+    /**
+     * Hands the clip that just started to the host.
+     *
+     * Overridable for the same reason [notifyChapterFinished] is: a platform that learns about a clip
+     * inside a player callback may need to leave that callback before anything else runs there.
+     */
+    protected open fun notifyClipEntered(playbackIndex: Int) {
+        val spineItemIndex = mutableState.value.spineItemIndex ?: return
+        val identity = spineItemIndex to playbackIndex
+        if (lastNotifiedClip == identity) return
+        lastNotifiedClip = identity
+        onClipEntered?.invoke(spineItemIndex, playbackIndex)
     }
 
     /**
