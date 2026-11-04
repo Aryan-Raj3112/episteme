@@ -10301,6 +10301,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                         onUndo = {
                             if (undoStack.isNotEmpty()) {
                                 val action = undoStack.removeAt(undoStack.lastIndex)
+                                val annotationsBeforeUndo = allAnnotations
                                 when (action) {
                                     is HistoryAction.Add -> {
                                         val pageIndex = action.pageIndex
@@ -10360,11 +10361,21 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                         redoStack.add(action)
                                     }
                                 }
+                                // Undo is a real edit, so the undone strokes leave
+                                // the sidecar right now, and any the sidecar still
+                                // carries get a tombstone: without one the next
+                                // merge restores them on reopen.
+                                surfaceState.persistInkAnnotationsNow(
+                                    allAnnotations,
+                                    removedPdfAnnotations(annotationsBeforeUndo, allAnnotations),
+                                    "undo",
+                                )
                             }
                         },
                         onRedo = {
                             if (redoStack.isNotEmpty()) {
                                 val action = redoStack.removeAt(redoStack.lastIndex)
+                                val annotationsBeforeRedo = allAnnotations
                                 when (action) {
                                     is HistoryAction.Add -> {
                                         val pageIndex = action.pageIndex
@@ -10426,6 +10437,13 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                         undoStack.add(action)
                                     }
                                 }
+                                // A redo restores strokes, except when it redoes a
+                                // removal: those have to leave the file too.
+                                surfaceState.persistInkAnnotationsNow(
+                                    allAnnotations,
+                                    removedPdfAnnotations(annotationsBeforeRedo, allAnnotations),
+                                    "redo",
+                                )
                             }
                         },
                         onClose = {
