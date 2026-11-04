@@ -104,7 +104,7 @@
     <string name="add_to_shelf">Toevoegen aan %1$s</string>
     <string name="fab_add_count">TOEVOEGEN (%1$d)</string>
     <string name="no_unshelved_books">Er zijn geen boeken die niet op de plank liggen om toe te voegen</string>
-    <string name="all_books_in_shelf">Alle boeken staan ​​al in deze plank</string>
+    <string name="all_books_in_shelf">Alle boeken staan al in deze plank</string>
     <string name="dialog_rename_shelf">Hernoem plank</string>
     <string name="dialog_delete_shelf">Plank verwijderen?</string>
     <string name="dialog_delete_shelf_desc">Weet u zeker dat u de plank \'%1$s\' wilt verwijderen? Alle boeken worden verplaatst naar Niet op een plank.</string>
@@ -112,7 +112,7 @@
     <string name="dialog_delete_shelves">%1$s verwijderen?</string>
     <string name="dialog_delete_shelves_desc">Weet u zeker dat u de %1$d geselecteerde %2$s wilt verwijderen? Alle boeken daarin worden verplaatst naar Niet op een plank.</string>
     <string name="sync_local_folders">Synchroniseer lokale mappen</string>
-    <string name="sync_folders_desc">Verbind lokale mappen om een ​​live bibliotheek te creëren. Episteme bewaakt bestanden en synchroniseert de voortgang.</string>
+    <string name="sync_folders_desc">Verbind lokale mappen om een live bibliotheek te creëren. Episteme bewaakt bestanden en synchroniseert de voortgang.</string>
     <string name="fab_add_folder">Map toevoegen</string>
     <string name="scan_all">Alles scannen</string>
     <string name="scanning">Scannen…</string>
@@ -173,7 +173,7 @@
     <string name="feature_tts_desc">Luister naar je boeken met de ingebouwde TTS</string>
     <string name="feature_dict">Basiswoordenboek</string>
     <string name="feature_dict_desc">Zoek snel losse woorden op</string>
-    <string name="current_plan">Huidig ​​abonnement</string>
+    <string name="current_plan">Huidig abonnement</string>
     <string name="loading_price">Prijs laden…</string>
     <string name="one_time_payment">Eenmalige betaling</string>
     <string name="lifetime_access">Levenslange toegang</string>
@@ -290,7 +290,7 @@
     <string name="tooltip_highlights_off_desc">Verwijder de selecteerbare tekstoverlay van de pagina</string>
     <string name="tooltip_edit_mode_desc">Voeg inkt- of tekstannotaties toe</string>
     <string name="tooltip_edit_mode_exit_desc">Beëindig het bewerken en keer terug naar de normale leesweergave</string>
-    <string name="tooltip_close_search_desc">Sluit het zoeken af ​​en ga terug naar de lezer</string>
+    <string name="tooltip_close_search_desc">Sluit het zoeken af en ga terug naar de lezer</string>
     <string name="tooltip_clear_search_desc">Wis uw huidige zoekopdracht en begin opnieuw</string>
     <string name="tooltip_show_results_desc">Vouw het paneel uit om alle zoekovereenkomsten te zien</string>
     <string name="tooltip_hide_results_desc">Vouw het venster met zoekresultaten samen</string>
@@ -956,7 +956,7 @@
     <string name="ai_error_gemini_required_for_image_summary">Deze samenvatting heeft een Gemini-model nodig omdat de geselecteerde Groq-modellen geen PDF/beeldinvoer ondersteunen.</string>
     <string name="feedback_error_sign_in_required">Om feedback te kunnen gebruiken, moet u ingelogd zijn.</string>
     <string name="feedback_error_sign_in_submit">U moet ingelogd zijn om feedback te kunnen sturen.</string>
-    <string name="feedback_error_ticket_image_limit">Er zijn maximaal 3 afbeeldingen toegestaan ​​voor tickets.</string>
+    <string name="feedback_error_ticket_image_limit">Er zijn maximaal 3 afbeeldingen toegestaan voor tickets.</string>
     <string name="feedback_error_message_image_limit">Maximaal 5 afbeeldingen per bericht toegestaan.</string>
     <string name="feedback_error_images_size_limit">Eén of meer afbeeldingen overschrijden de limiet van 5 MB.</string>
     <string name="feedback_error_create_ticket">Kan ticket niet maken: %1$s</string>
@@ -1054,7 +1054,7 @@
     <string name="tool_reading_mode">Leesmodus</string>
     <string name="tool_page_management">Paginabeheer</string>
     <string name="tool_text_view_reflow">Text View (terugvloeien)</string>
-    <string name="tts_replacements_current_book">Huidig ​​boek</string>
+    <string name="tts_replacements_current_book">Huidig boek</string>
     <string name="tts_replacements_tab_global">Globaal</string>
     <string name="tts_replacements_tab_this_book">Dit boek</string>
     <string name="tts_replacements_enable">Schakel vervangingen in</string>
@@ -1069,7 +1069,7 @@
     <string name="tts_replacements_enable_book_rules_desc">Lokale regels volgen op mondiale regels.</string>
     <string name="tts_replacements_inherited_global_rules">Geërfde mondiale regels</string>
     <string name="tts_replacements_no_global_rules">Geen mondiale regels om te erven.</string>
-    <string name="tts_replacements_allowed_in_book">Toegestaan ​​in dit boek</string>
+    <string name="tts_replacements_allowed_in_book">Toegestaan in dit boek</string>
     <string name="tts_replacements_disabled_for_book">Uitgeschakeld voor dit boek</string>
     <string name="tts_replacements_suggestions">Suggesties</string>
     <string name="tts_replacements_new_replacement">Nieuwe vervanging</string>
@@ -1123,12 +1123,12 @@
     <string name="reader_brightness_custom">Aangepaste helderheid</string>
     <string name="reader_brightness_custom_desc">Van toepassing terwijl een lezerscherm geopend is.</string>
     <string name="reader_brightness_percent">%1$d%%</string>
-    <string name="banner_shelf_created">Boekenplank "%1$s" gemaakt.</string>
-    <string name="banner_smart_shelf_created">Slimme boekenplank "%1$s" gemaakt.</string>
-    <string name="banner_shelf_renamed">Boekenplank hernoemd naar "%1$s".</string>
-    <string name="banner_shelf_deleted">Boekenplank "%1$s" verwijderd.</string>
-    <string name="banner_book_updated">Bijgewerkt "%1$s".</string>
-    <string name="banner_duplicate_files_already_in_library">Deze bestanden staan ​​al in de bibliotheek.</string>
+    <string name="banner_shelf_created">Boekenplank &quot;%1$s&quot; gemaakt.</string>
+    <string name="banner_smart_shelf_created">Slimme boekenplank &quot;%1$s&quot; gemaakt.</string>
+    <string name="banner_shelf_renamed">Boekenplank hernoemd naar &quot;%1$s&quot;.</string>
+    <string name="banner_shelf_deleted">Boekenplank &quot;%1$s&quot; verwijderd.</string>
+    <string name="banner_book_updated">Bijgewerkt &quot;%1$s&quot;.</string>
+    <string name="banner_duplicate_files_already_in_library">Deze bestanden staan al in de bibliotheek.</string>
     <string name="folder_subtitle_folder_book_counts">%1$s - %2$s</string>
     <string name="action_save_annotation">Opslaan</string>
     <string name="action_save_comment">Opmerking opslaan</string>
@@ -1180,7 +1180,7 @@
     <string name="desktop_custom_fonts_desc">Geïmporteerde lettertypen voor de lezer</string>
     <string name="desktop_delete_font">Lettertype verwijderen</string>
     <string name="desktop_delete_font_desc">%1$s verwijderen? Boeken die dit gebruiken, vallen terug op het standaardlettertype.</string>
-    <string name="desktop_delete_shelf_desc">\"%1$s\" verwijderen? Boeken blijven in uw bibliotheek.</string>
+    <string name="desktop_delete_shelf_desc">\&quot;%1$s\&quot; verwijderen? Boeken blijven in uw bibliotheek.</string>
     <string name="desktop_delete_summary">Samenvatting verwijderen</string>
     <string name="desktop_disabled">Uitgeschakeld</string>
     <string name="desktop_drop_files_to_import">Zet bestanden neer om te importeren</string>
@@ -1214,7 +1214,7 @@
     <string name="desktop_more_menu">Meer</string>
     <string name="desktop_no_cached_summaries_book">Er zijn nog geen samenvattingen in de cache voor dit boek.</string>
     <string name="desktop_no_custom_fonts_desc">Importeer TTF-, OTF- of WOFF2-bestanden om ze in boeken te gebruiken.</string>
-    <string name="desktop_no_fonts_matching">Geen lettertypen gevonden die overeenkomen met \"%1$s\"</string>
+    <string name="desktop_no_fonts_matching">Geen lettertypen gevonden die overeenkomen met \&quot;%1$s\&quot;</string>
     <string name="desktop_no_google_account_connected">Nee Google rekening is verbonden.</string>
     <string name="desktop_no_summary_cached_section">Er is geen samenvatting in de cache opgeslagen voor deze sectie.</string>
     <string name="desktop_offline_oss_reader">Offline desktoplezer</string>
@@ -1366,7 +1366,7 @@
     <string name="desktop_selected_annotation_format">Geselecteerd %1$s</string>
     <string name="desktop_show_search_results">Toon zoekresultaten</string>
     <string name="desktop_sign_in_required_generic_feature_desc">Meld u aan met Google om deze functie op het bureaublad te gebruiken.</string>
-    <string name="desktop_sign_in_required_multi_word_dictionary_desc">Meld u aan met Google om een ​​slim woordenboek met meerdere woorden op het bureaublad te gebruiken.</string>
+    <string name="desktop_sign_in_required_multi_word_dictionary_desc">Meld u aan met Google om een slim woordenboek met meerdere woorden op het bureaublad te gebruiken.</string>
     <string name="desktop_sign_in_required_recaps_desc">Meld u aan met Google om overzichten op de desktop te gebruiken.</string>
     <string name="desktop_sign_in_required_summaries_desc">Meld u aan met Google om samenvattingen op het bureaublad te gebruiken.</string>
     <string name="desktop_stopped">Gestopt</string>
@@ -1460,7 +1460,7 @@
     <string name="desktop_no_tags_yet">Nog geen tags</string>
     <string name="desktop_no_supported_files_imported">Er zijn geen ondersteunde bestanden geïmporteerd.</string>
     <string name="desktop_opds_catalog">Catalogus</string>
-    <string name="desktop_opds_delete_catalog_desc">"%1$s" verwijderen? Gestreamde boeken uit deze catalogus worden mogelijk niet meer geopend als de inloggegevens later veranderen.</string>
+    <string name="desktop_opds_delete_catalog_desc">&quot;%1$s&quot; verwijderen? Gestreamde boeken uit deze catalogus worden mogelijk niet meer geopend als de inloggegevens later veranderen.</string>
     <string name="desktop_opds_no_catalogs">Geen catalogi</string>
     <string name="desktop_opds_no_catalogs_desc">Voeg een OPDS toe catalogus om door externe boeken te bladeren.</string>
     <string name="desktop_opds_subtitle">Blader door catalogi, streams en downloads</string>
@@ -1513,6 +1513,7 @@
     <string name="tts_replacements_replace_only_spoken">Vervang alleen wat er wordt gesproken</string>
     <string name="tts_replacements_replace_only_spoken_desc">Lezertekst, hoogtepunten en locaties blijven ongewijzigd.</string>
     <string name="tts_replacements_summary_format">%1$s -&gt; %2$s</string>
+
     <!-- Strings added by the nl language pass (docs/localization-revamp-plan.md §6).
          Register: u; glossary: bibliotheek, boekenplank (unified over plank),
          bladwijzer, instellingen, Cloud TTS (wolk = weather cloud), stem, voorlezen,
@@ -1633,7 +1634,7 @@
     <string name="listen_no_tts_books">Geen ondersteunde boeken gevonden</string>
     <string name="listen_empty">Nog niets te beluisteren</string>
     <string name="listen_empty_desc">Importeer een luisterboek of kies een bibliotheekboek om te beluisteren met tekst-naar-spraak.</string>
-    <string name="listen_no_matches">Geen luisteritems komen overeen met "%1$s"</string>
+    <string name="listen_no_matches">Geen luisteritems komen overeen met &quot;%1$s&quot;</string>
     <string name="listen_badge_audiobook">LUISTERBOEK</string>
     <string name="listen_badge_tts">TTS</string>
     <string name="listen_timer">Timer</string>
@@ -1666,7 +1667,7 @@
     <string name="visual_options_bottom_toolbar">Onderste werkbalk tonen</string>
     <string name="visual_options_bottom_toolbar_desc">Verberg hem om alleen met de bovenste tools te lezen</string>
     <string name="search_chapters_placeholder">Hoofdstukken zoeken</string>
-    <string name="no_chapters_matching">Geen hoofdstukken gevonden voor "%1$s".</string>
+    <string name="no_chapters_matching">Geen hoofdstukken gevonden voor &quot;%1$s&quot;.</string>
     <string name="visual_options_hide_images">Afbeeldingen verbergen</string>
     <string name="visual_options_hide_images_desc">Zet dit aan om te lezen met alle afbeeldingen in het boek verborgen.</string>
     <string name="visual_options_epub_page_spread">Dubbele pagina</string>
@@ -1674,9 +1675,9 @@
     <string name="visual_options_epub_spread_single">Eén pagina</string>
     <string name="visual_options_epub_spread_two">Twee pagina\'s</string>
     <string name="label_spread_gap">Tussenruimte dubbele pagina</string>
-    <string name="banner_tag_deleted">Label "%1$s" verwijderd.</string>
+    <string name="banner_tag_deleted">Label &quot;%1$s&quot; verwijderd.</string>
     <string name="menu_delete_tag">Label verwijderen</string>
-    <string name="dialog_delete_tag_desc">Label "%1$s" verwijderen? Het wordt van elk boek verwijderd.</string>
+    <string name="dialog_delete_tag_desc">Label &quot;%1$s&quot; verwijderen? Het wordt van elk boek verwijderd.</string>
     <string name="chapter_of_chapters">Hoofdstuk %1$d van %2$d</string>
     <string name="chapter_number">Hoofdstuk %1$d</string>
     <string name="external_file_behavior_ask_desc">Vraagt na het sluiten van een extern geopend bestand of het in de bibliotheek blijft of wordt verwijderd.</string>

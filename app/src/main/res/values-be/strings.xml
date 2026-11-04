@@ -1110,7 +1110,7 @@
     <string name="menu_enable_folder_local_sync">Уключыць лакальную сінхранізацыю</string>
     <string name="folder_local_sync_disabled">Лакальная сінхранізацыя адключана</string>
     <string name="dialog_disable_folder_local_sync_title">Адключыць лакальную сінхранізацыю папак?</string>
-    <string name="dialog_disable_folder_local_sync_desc">Episteme спыніць сканаванне гэтай папкі і спыніць запіс JSON сінхранізаваць файлы. Выдаліце ​​%1$s тэчку з гэтай папкі таксама?</string>
+    <string name="dialog_disable_folder_local_sync_desc">Episteme спыніць сканаванне гэтай папкі і спыніць запіс JSON сінхранізаваць файлы. Выдаліце %1$s тэчку з гэтай папкі таксама?</string>
     <string name="action_disable_keep_sync_data">Захоўваць сінхранізацыю дадзеных</string>
     <string name="action_disable_remove_sync_data">Выдаліць дадзеныя сінхранізацыі</string>
     <string name="dialog_delete_fonts">Выдаліць шрыфты?</string>
