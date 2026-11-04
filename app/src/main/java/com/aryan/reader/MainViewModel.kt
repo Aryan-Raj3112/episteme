@@ -268,6 +268,20 @@ private const val CLOUD_METADATA_UPLOAD_DEBOUNCE_MILLIS = 1_500L
  * uploads whenever the local row is newer than the remote one.
  */
 internal const val CLOUD_READING_POSITION_FLUSH_INTERVAL_MILLIS = 2L * 60L * 1_000L
+
+/**
+ * Whether one book's local record should be flushed after its position changed.
+ *
+ * A folder book keeps its record in the `EpistemeSyncData` sidecar beside the
+ * file, which is the only copy a reader without an account has. That makes the
+ * write local bookkeeping, so it must never wait on the cloud sync switch: the
+ * OSS builds cannot even turn that switch on, and gating it there silently
+ * stopped writing anything beside the books. Library books have no local copy
+ * beyond Room, so they still follow the switch.
+ */
+internal fun shouldFlushBookMetadataToCloud(isFolderBook: Boolean, isSyncEnabled: Boolean): Boolean =
+    isFolderBook || isSyncEnabled
+
 private const val LOCAL_FOLDER_INVENTORY_REFRESH_MILLIS = 5L * 60L * 1_000L
 private const val LOCAL_FOLDER_INVENTORY_RETRY_MILLIS = 30L * 1_000L
 private const val LOCAL_FOLDER_INVENTORY_STALE_MILLIS = 60L * 1_000L
@@ -3345,8 +3359,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
      * manifest, so they go through [folderMirrorStore] instead.
      */
     private suspend fun flushBookMetadataToCloud(bookId: String, reason: String) {
-        if (!uiState.value.isSyncEnabled) return
-        val book = bookStore.getFileByBookId(bookId) ?: run {
+        val book = bookStore.getFileByBookId(bookId)
+        val isFolderBook = book?.sourceFolderUri != null
+        if (!shouldFlushBookMetadataToCloud(isFolderBook, uiState.value.isSyncEnabled)) return
+        if (book == null) {
             logCloudSyncTrace { "android.flush.skip reason=missing_local book=$bookId trigger=$reason" }
             cloudSyncEvent(
                 plane = CloudSyncPlaneLibrary,
@@ -3359,7 +3375,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             )
             return
         }
-        val isFolderBook = book.sourceFolderUri != null
         cloudSyncEvent(
             plane = if (isFolderBook) CloudSyncPlaneFolder else CloudSyncPlaneLibrary,
             dir = CloudSyncDirPush,
@@ -4106,7 +4121,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         logCloudSyncTrace { "android.reader.close_upload_skip reason=already_uploading ${it.cloudSyncTraceSummary()}" }
                         return@launch
                     }
-                    if (uiState.value.isSyncEnabled) {
+                    // Folder books flush even with cloud sync off: their
+                    // sidecar is local, and that is the only copy a reader
+                    // without an account has.
+                    if (uiState.value.isSyncEnabled || it.sourceFolderUri != null) {
                         logCloudSyncTrace { "android.reader.close_upload_start ${it.cloudSyncTraceSummary()}" }
                         Timber.d("Book closed, triggering metadata sync for ${it.bookId}")
                         // One entry point for both book kinds: Firestore for

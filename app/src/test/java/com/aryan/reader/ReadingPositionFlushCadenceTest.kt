@@ -69,6 +69,21 @@ class ReadingPositionFlushCadenceTest {
     }
 
     @Test
+    fun `a folder book is flushed even when cloud sync is off`() {
+        // The OSS and offline builds cannot enable cloud sync at all, and a
+        // folder book's sidecar is the only place their bookmarks live. Gating
+        // that write on the cloud switch stopped every sidecar write in 1.0.58.
+        assertTrue(shouldFlushBookMetadataToCloud(isFolderBook = true, isSyncEnabled = false))
+        assertTrue(shouldFlushBookMetadataToCloud(isFolderBook = true, isSyncEnabled = true))
+    }
+
+    @Test
+    fun `a library book still follows the cloud sync switch`() {
+        assertTrue(shouldFlushBookMetadataToCloud(isFolderBook = false, isSyncEnabled = true))
+        assertFalse(shouldFlushBookMetadataToCloud(isFolderBook = false, isSyncEnabled = false))
+    }
+
+    @Test
     fun `the flush interval is long enough to be cheap and short enough to feel fresh`() {
         // Two minutes is the deliberate middle: a page turn no longer costs a
         // Firestore write, but a device that is force-quit still loses at most
