@@ -1,32 +1,43 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
  * The navigation shell around the unified library.
  *
  * [SharedLibraryNavMode.DRAWER] renders exactly the `ModalNavigationDrawer` the mobile
- * library has always used. [SharedLibraryNavMode.RAIL] swaps it for a permanent leading
- * rail, which is only ever selected on an iPhone Duo inner display (see
- * [DuoLayoutPolicy.navMode]).
+ * library has always used. [SharedLibraryNavMode.RAIL] swaps it for a permanent rail on
+ * the display's control edge, which is only ever selected on an iPhone Duo inner display
+ * (see [DuoLayoutPolicy.navMode]).
  *
  * The two modes take their content from the same drawer model, so they cannot drift:
  * destinations, order and labels have a single source of truth.
@@ -38,6 +49,7 @@ fun SharedMobileLibraryShell(
     drawerContent: @Composable () -> Unit,
     railContent: @Composable () -> Unit,
     modifier: Modifier = Modifier,
+    railOnTrailing: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     when (navMode) {
@@ -49,25 +61,33 @@ fun SharedMobileLibraryShell(
             content()
         }
 
+        // On a foldable iPhone the system keeps its Dynamic Island and status bar on the
+        // trailing edge of the display, so the app's rail belongs on that same edge: the
+        // two share one vertical column and the content keeps the whole other side. In the
+        // left half of Split View the platform's column moves to the leading edge, and the
+        // rail follows it.
         SharedLibraryNavMode.RAIL -> Row(modifier.fillMaxSize()) {
-            railContent()
-            Box(Modifier.weight(1f).fillMaxHeight()) {
-                content()
+            if (railOnTrailing) {
+                Box(Modifier.weight(1f).fillMaxHeight()) { content() }
+                railContent()
+            } else {
+                railContent()
+                Box(Modifier.weight(1f).fillMaxHeight()) { content() }
             }
         }
     }
 }
 
 /**
- * The Duo rail's width. Material's `NavigationRail` does not constrain its own width (its
- * items fill whatever they are given), so inside our `Row` it would otherwise consume the
- * whole display and leave the content column nothing.
- */
-private val SharedMobileLibraryRailWidth = 80.dp
-
-/**
- * Permanent leading navigation for the Duo inner display. Reuses the drawer's model and
+ * Permanent navigation rail for the Duo inner display. Reuses the drawer's model and
  * label/icon resolvers; it deliberately introduces no navigation state of its own.
+ *
+ * [width] and [topInset] come from [DuoLayoutPolicy] so the rail covers the platform's
+ * reserved control column and starts below the system status area inside it.
+ *
+ * Items are 48dp tall with no inter-item gap, matching the 48pt controls and tight pitch
+ * of Apple's Duo bar, rather than Material's taller `NavigationRailItem` (which overflowed
+ * the column and left the last row pressed against the display's rounded corner).
  */
 @Composable
 internal fun SharedMobileLibraryRail(
@@ -76,37 +96,85 @@ internal fun SharedMobileLibraryRail(
     appearance: List<MobileUnifiedLibraryDrawerAppearance>,
     onDestinationSelected: (MobileUnifiedLibraryDrawerDestination) -> Unit,
     onAppearanceSelected: (MobileUnifiedLibraryDrawerAppearance) -> Unit,
+    width: Dp,
+    topInset: Dp,
     modifier: Modifier = Modifier,
 ) {
-    NavigationRail(
-        modifier = modifier.width(SharedMobileLibraryRailWidth),
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+    Surface(
+        modifier = modifier.width(width),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
-        // Icon-only: Apple's vertical-bar guidance is that a control presented on the
-        // vertical axis is represented by its symbol, and a 7.6" rail cannot fit labels
-        // like "AI keys and models" without truncating them. The label still reaches
-        // accessibility through the icon's content description.
-        destinations.forEach { destination ->
-            NavigationRailItem(
-                selected = selectedSection == destination.section,
-                onClick = { onDestinationSelected(destination) },
-                icon = {
-                    Icon(destination.icon(), contentDescription = destination.label.readerString())
-                },
-                modifier = Modifier.testTag("UnifiedLibraryRail_${destination.name}"),
+        // The background runs the full height, painting behind the system status area, so
+        // the column reads as one surface. Only the items are pushed down past it, and the
+        // home indicator's inset keeps the last row off the display's bottom corner.
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .navigationBarsPadding(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Spacer(Modifier.height(topInset))
+            destinations.forEach { destination ->
+                SharedMobileRailItem(
+                    icon = destination.icon(),
+                    contentDescription = destination.label.readerString(),
+                    selected = selectedSection == destination.section,
+                    onClick = { onDestinationSelected(destination) },
+                    testTag = "UnifiedLibraryRail_${destination.name}",
+                )
+            }
+            // No weight spacer here: the appearance group sits directly under the divider
+            // so there is no dead band in the middle of the column. The leftover space
+            // falls below the last item, which reads as a bottom margin.
+            HorizontalDivider(Modifier.padding(horizontal = 12.dp, vertical = 12.dp))
+            appearance.forEach { item ->
+                SharedMobileRailItem(
+                    icon = item.icon(),
+                    contentDescription = item.label.readerString(),
+                    selected = false,
+                    onClick = { onAppearanceSelected(item) },
+                    testTag = "UnifiedLibraryRail_${item.name}",
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable
+private fun SharedMobileRailItem(
+    icon: ImageVector,
+    contentDescription: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    testTag: String,
+) {
+    val contentColor = if (selected) {
+        MaterialTheme.colorScheme.onSecondaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+            .testTag(testTag),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (selected) {
+            Box(
+                Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.secondaryContainer)
             )
         }
-        Spacer(Modifier.weight(1f))
-        HorizontalDivider(Modifier.padding(horizontal = 12.dp))
-        appearance.forEach { item ->
-            NavigationRailItem(
-                selected = false,
-                onClick = { onAppearanceSelected(item) },
-                icon = {
-                    Icon(item.icon(), contentDescription = item.label.readerString())
-                },
-                modifier = Modifier.testTag("UnifiedLibraryRail_${item.name}"),
-            )
-        }
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = contentColor,
+            modifier = Modifier.size(24.dp),
+        )
     }
 }

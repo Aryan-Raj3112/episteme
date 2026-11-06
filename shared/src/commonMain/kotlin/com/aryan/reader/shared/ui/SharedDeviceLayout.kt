@@ -32,9 +32,27 @@ data class SharedFoldRegion(
  * This is deliberately platform-neutral (not named for iOS) so the reader can consume it
  * later. Its default value, [None], means "an ordinary single-screen display": every
  * consumer must behave exactly as it did before this type existed when it reads [None].
+ *
+ * Foldable iPhones put an app's navigation on the *side* of the display, sharing one
+ * vertical column with the system's Dynamic Island and status bar. That column is measured
+ * by the platform, so the values below describe it rather than hard-coding a device.
  */
 data class SharedDeviceLayout(
     val fold: SharedFoldRegion = SharedFoldRegion.None,
+    /**
+     * Width of the platform's side control column, as a fraction of the window width
+     * (0 when the display has no side column, e.g. an ordinary phone or the inner display
+     * held upright). This is the strip the system reserves for the Dynamic Island and
+     * status bar.
+     */
+    val controlColumnWidthFraction: Float = 0f,
+    /**
+     * Fraction of the window height, from the top, that the system's status area occupies
+     * inside that column. The app's own controls start below it.
+     */
+    val controlColumnTopFraction: Float = 0f,
+    /** True when the control column is on the trailing (right in LTR) edge. */
+    val controlColumnOnTrailing: Boolean = true,
 ) {
     /**
      * True when this display participates in a fold division — i.e. the iPhone Duo's

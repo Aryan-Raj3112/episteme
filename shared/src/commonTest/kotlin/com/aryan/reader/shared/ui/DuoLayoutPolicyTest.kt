@@ -63,6 +63,30 @@ class DuoLayoutPolicyTest {
     }
 
     @Test
+    fun `non-duo has no rail geometry`() {
+        assertEquals(0.dp, DuoLayoutPolicy.railWidth(SharedDeviceLayout.None, 1000.dp))
+        assertEquals(0.dp, DuoLayoutPolicy.railTopInset(SharedDeviceLayout.None, 800.dp))
+        assertTrue(!DuoLayoutPolicy.railVisible(SharedDeviceLayout.None, 1000.dp))
+    }
+
+    @Test
+    fun `duo rail covers the control column and clears the status area`() {
+        val layout = SharedDeviceLayout(
+            fold = SharedFoldRegion(present = true, active = false),
+            controlColumnWidthFraction = 0.09f,
+            controlColumnTopFraction = 0.16f,
+            controlColumnOnTrailing = false,
+        )
+        // Wider than the 84dp baseline because the platform reserved more.
+        assertEquals(90.dp, DuoLayoutPolicy.railWidth(layout, 1000.dp))
+        // Starts below the system status area, not at the very top.
+        assertEquals(128.dp, DuoLayoutPolicy.railTopInset(layout, 800.dp))
+        // Narrower strip than the baseline: the Apple width still wins.
+        assertEquals(DuoLayoutPolicy.RailWidth, DuoLayoutPolicy.railWidth(layout, 500.dp))
+        assertEquals(false, DuoLayoutPolicy.railOnTrailing(layout))
+    }
+
+    @Test
     fun `duo grid uses a smaller adaptive cell on every width`() {
         // The cell size is width-independent; the column count still follows the width.
         widths.forEach { width ->

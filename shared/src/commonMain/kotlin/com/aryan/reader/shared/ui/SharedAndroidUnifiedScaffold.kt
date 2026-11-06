@@ -6,11 +6,13 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -24,6 +26,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,23 +60,29 @@ fun SharedAndroidUnifiedScaffold(
         topBar = topBar,
         floatingActionButton = if (showFloatingActionButton) {
             {
-                when (section) {
-                    MobileUnifiedLibrarySection.HOME -> FloatingActionButton(onClick = onImport, modifier = Modifier.testTag("UnifiedLibraryImport")) {
-                        Icon(Icons.Default.Add, importDescription)
+                // The library's book grid is inset from the content edge, so on a foldable
+                // iPhone the default 16dp end margin left the button straddling the grid
+                // card's edge. Nudge it in so it sits inside the card on that display only.
+                val fabEndPadding = if (LocalSharedDeviceLayout.current.isDuoInnerDisplay) 12.dp else 0.dp
+                Box(Modifier.padding(end = fabEndPadding)) {
+                    when (section) {
+                        MobileUnifiedLibrarySection.HOME -> FloatingActionButton(onClick = onImport, modifier = Modifier.testTag("UnifiedLibraryImport")) {
+                            Icon(Icons.Default.Add, importDescription)
+                        }
+                        MobileUnifiedLibrarySection.AUDIOBOOKS -> FloatingActionButton(onClick = onAddAudiobook, modifier = Modifier.testTag("UnifiedLibraryAddAudiobook")) {
+                            Icon(Icons.Default.Add, addAudiobookDescription)
+                        }
+                        MobileUnifiedLibrarySection.SHELVES -> if (!showingShelf) {
+                            ExtendedFloatingActionButton(
+                                onClick = onNewShelf,
+                                modifier = Modifier.testTag("UnifiedLibraryNewShelf"),
+                                icon = { Icon(Icons.Default.Add, null) },
+                                text = { Text(newShelfLabel) },
+                            )
+                        }
+                        MobileUnifiedLibrarySection.FOLDERS,
+                        MobileUnifiedLibrarySection.CATALOGS -> Unit
                     }
-                    MobileUnifiedLibrarySection.AUDIOBOOKS -> FloatingActionButton(onClick = onAddAudiobook, modifier = Modifier.testTag("UnifiedLibraryAddAudiobook")) {
-                        Icon(Icons.Default.Add, addAudiobookDescription)
-                    }
-                    MobileUnifiedLibrarySection.SHELVES -> if (!showingShelf) {
-                        ExtendedFloatingActionButton(
-                            onClick = onNewShelf,
-                            modifier = Modifier.testTag("UnifiedLibraryNewShelf"),
-                            icon = { Icon(Icons.Default.Add, null) },
-                            text = { Text(newShelfLabel) },
-                        )
-                    }
-                    MobileUnifiedLibrarySection.FOLDERS,
-                    MobileUnifiedLibrarySection.CATALOGS -> Unit
                 }
             }
         } else {

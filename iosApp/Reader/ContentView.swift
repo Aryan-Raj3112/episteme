@@ -2060,14 +2060,17 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
             onRemoveFolder: onRemoveFolder
         )
         let hostController = ReaderStatusBarHostController(content: composeController)
-        hostController.onDeviceLayoutChange = { foldPresent, foldActive, left, top, width, height in
+        hostController.onDeviceLayoutChange = { foldPresent, foldActive, left, top, width, height, columnWidth, columnTop, columnOnTrailing in
             bridge.updateIosDeviceLayout(
                 foldPresent: foldPresent,
                 foldActive: foldActive,
                 foldLeftFraction: left,
                 foldTopFraction: top,
                 foldWidthFraction: width,
-                foldHeightFraction: height
+                foldHeightFraction: height,
+                controlColumnWidthFraction: columnWidth,
+                controlColumnTopFraction: columnTop,
+                controlColumnOnTrailing: columnOnTrailing
             )
         }
         bridge.setSystemUiHandler { statusHidden, navigationHidden, lightContent, backgroundArgb in
@@ -2099,18 +2102,10 @@ private final class ReaderStatusBarHostController: UIViewController {
     private var readerOrientationMode: Int32 = 0
     private var pencilInteraction: UIPencilInteraction?
 
-    /// Reports iPhone Duo fold geometry to the shared layer. Values are fractions of the
-    /// window bounds so nothing has to be converted between points and dp in Kotlin.
-    var onDeviceLayoutChange: ((_ foldPresent: Bool, _ foldActive: Bool, _ left: Double, _ top: Double, _ width: Double, _ height: Double) -> Void)?
-
-    /// Horizontal constraints for the app's two layouts: edge-to-edge (every ordinary
-    /// device, unchanged) and inside the window's safe area (Duo inner display, where the
-    /// status bar is a vertical strip on the trailing edge and would otherwise cover the
-    /// top bar, cards and FAB). Only leading/trailing move; the app stays edge-to-edge
-    /// vertically.
-    private var boundsHorizontalConstraints: [NSLayoutConstraint] = []
-    private var safeAreaHorizontalConstraints: [NSLayoutConstraint] = []
-    private var usesSafeAreaHorizontalInsets = false
+    /// Reports iPhone Duo fold geometry and the system's side control column to the shared
+    /// layer. Values are fractions of the window so nothing has to be converted between
+    /// points and dp in Kotlin.
+    var onDeviceLayoutChange: ((_ foldPresent: Bool, _ foldActive: Bool, _ left: Double, _ top: Double, _ width: Double, _ height: Double, _ columnWidth: Float, _ columnTop: Float, _ columnOnTrailing: Bool) -> Void)?
 
     init(content: UIViewController) {
         self.contentController = content
@@ -2132,14 +2127,11 @@ private final class ReaderStatusBarHostController: UIViewController {
         // enableEdgeToEdge: screens paint their own backgrounds beneath the
         // transparent system bars instead of the host insetting the content.
         NSLayoutConstraint.activate([
+            contentController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            contentController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             contentController.view.topAnchor.constraint(equalTo: view.topAnchor),
             contentController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
-        boundsHorizontalConstraints = [
-            contentController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            contentController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor)
-        ]
-        NSLayoutConstraint.activate(boundsHorizontalConstraints)
         contentController.didMove(toParent: self)
 
         // UIPencilInteraction is the public UIKit surface for Pencil side
@@ -2171,49 +2163,47 @@ private final class ReaderStatusBarHostController: UIViewController {
     /// flat. Pre-27.1 SDKs and every non-phone idiom report a plain single-screen device.
     private func publishDeviceLayout() {
         guard let emit = onDeviceLayoutChange else { return }
-        let singleScreen = { [self] in
-            applyHorizontalInsetPolicy(usesSafeArea: false)
-            emit(false, false, 0, 0, 0, 0)
-        }
+        let singleScreen = { emit(false, false, 0, 0, 0, 0, 0, 0, true) }
         guard UIDevice.current.userInterfaceIdiom == .phone, #available(iOS 27.1, *) else {
             return singleScreen()
         }
         let fold = view.reservedRegions(kind: .division, options: .includeInactive).first
-        applyHorizontalInsetPolicy(usesSafeArea: fold != nil)
         guard let fold else { return singleScreen() }
-        // Fold rects are reported in the host view's space; convert them into the Compose
-        // window's space so the fractions stay correct even when that window is inset.
-        let contentBounds = contentController.view.bounds
-        guard contentBounds.width > 0, contentBounds.height > 0 else { return singleScreen() }
-        let foldFrame = contentController.view.convert(fold.frame, from: view)
+        let bounds = view.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return singleScreen() }
+
+        // The system's side control column: the Dynamic Island and status bar share the
+        // display's trailing edge with the app's rail, so the app must leave room for the
+        // status area at the top of that column and put its rail on the same edge.
+        //
+        // The safe-area insets describe the column exactly (the trailing inset measured
+        // 84pt on the Duo inner display, which is Apple's vertical-bar width), and a
+        // leading inset means the app is in the left half of Split View and the column has
+        // moved to the leading edge. The status area's *depth* inside the column is not
+        // queryable: `UIStatusBarManager.statusBarFrame` reports a degenerate 951x2 rect
+        // for the side status bar, and the safe area's top inset is 0 because the status
+        // is not at the top. Reserve Apple's published depth instead - a 24pt top margin
+        // plus the 86pt vertical status stack - and fall back to the top inset, which is
+        // what an upright inner display reports when the status bar is horizontal.
+        let window = view.window
+        let windowBounds = window?.bounds ?? bounds
+        let safeArea = window?.safeAreaInsets ?? .zero
+        let sideColumnWidth = max(safeArea.left, safeArea.right)
+        let sideStatusDepth: CGFloat = sideColumnWidth > 0 ? 110 : 0
+        let topReserve = max(safeArea.top, sideStatusDepth)
+        let columnOnTrailing = safeArea.left <= safeArea.right
+
         emit(
             true,
             fold.isActive,
-            Double(foldFrame.minX / contentBounds.width),
-            Double(foldFrame.minY / contentBounds.height),
-            Double(foldFrame.width / contentBounds.width),
-            Double(foldFrame.height / contentBounds.height)
+            Double(fold.frame.minX / bounds.width),
+            Double(fold.frame.minY / bounds.height),
+            Double(fold.frame.width / bounds.width),
+            Double(fold.frame.height / bounds.height),
+            Float(sideColumnWidth / windowBounds.width),
+            Float(topReserve / windowBounds.height),
+            columnOnTrailing
         )
-    }
-
-    private func applyHorizontalInsetPolicy(usesSafeArea: Bool) {
-        guard usesSafeArea != usesSafeAreaHorizontalInsets, let window = view.window else { return }
-        usesSafeAreaHorizontalInsets = usesSafeArea
-        NSLayoutConstraint.deactivate(boundsHorizontalConstraints)
-        NSLayoutConstraint.deactivate(safeAreaHorizontalConstraints)
-        if usesSafeArea {
-            safeAreaHorizontalConstraints = [
-                contentController.view.leadingAnchor.constraint(equalTo: window.safeAreaLayoutGuide.leadingAnchor),
-                contentController.view.trailingAnchor.constraint(equalTo: window.safeAreaLayoutGuide.trailingAnchor)
-            ]
-            NSLayoutConstraint.activate(safeAreaHorizontalConstraints)
-        } else {
-            boundsHorizontalConstraints = [
-                contentController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                contentController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor)
-            ]
-            NSLayoutConstraint.activate(boundsHorizontalConstraints)
-        }
     }
 
     override var prefersStatusBarHidden: Bool { hidesStatusBar }

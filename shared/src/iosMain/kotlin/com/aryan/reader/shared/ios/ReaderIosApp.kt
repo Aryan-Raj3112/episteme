@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -340,6 +341,7 @@ import com.aryan.reader.shared.ui.SharedMobileLibraryTab
 import com.aryan.reader.shared.ui.SharedMobileMainDestination
 import com.aryan.reader.shared.ui.SharedMobileMainScaffold
 import com.aryan.reader.shared.ui.SharedSettingsHub
+import com.aryan.reader.shared.ui.DuoLayoutPolicy
 import com.aryan.reader.shared.ui.LocalSharedDeviceLayout
 import com.aryan.reader.shared.ui.LocalSharedStringResolver
 import com.aryan.reader.shared.ui.SharedStringResolver
@@ -519,6 +521,9 @@ class ReaderIosBridge internal constructor(
         foldTopFraction: Double,
         foldWidthFraction: Double,
         foldHeightFraction: Double,
+        controlColumnWidthFraction: Float,
+        controlColumnTopFraction: Float,
+        controlColumnOnTrailing: Boolean,
     ) {
         iosDeviceLayout = IosDeviceLayoutSnapshot(
             foldPresent = foldPresent,
@@ -527,6 +532,9 @@ class ReaderIosBridge internal constructor(
             foldTopFraction = foldTopFraction,
             foldWidthFraction = foldWidthFraction,
             foldHeightFraction = foldHeightFraction,
+            controlColumnWidthFraction = controlColumnWidthFraction,
+            controlColumnTopFraction = controlColumnTopFraction,
+            controlColumnOnTrailing = controlColumnOnTrailing,
         )
     }
 
@@ -5250,6 +5258,7 @@ private fun ReaderIosApp(
     fun IosAppDrawerContent(
         capabilities: MobileAppDrawerCapabilities,
         closeDrawer: () -> Unit,
+        modifier: Modifier = Modifier,
     ) {
         fun runAction(action: () -> Unit) {
             action()
@@ -5306,6 +5315,7 @@ private fun ReaderIosApp(
             ),
             accountAvatar = { user, modifier -> IosAccountAvatar(user, modifier) },
             drawerCapabilities = capabilities,
+            modifier = modifier,
             // Library sync (CloudKit) is visible; the Drive folder row stays
             // hidden until that backend is ported (IosFeatureGating).
             showSyncControls = IosFeatureGating.SHOW_CLOUD_SYNC,
@@ -8176,10 +8186,23 @@ private fun ReaderIosApp(
                                         drawerState = accountDrawerState,
                                         drawerContent = {
                                             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                                                IosAppDrawerContent(
-                                                    capabilities = iosUnifiedAccountDrawerCapabilities,
-                                                    closeDrawer = { scope.launch { accountDrawerState.close() } },
-                                                )
+                                                // The account sidebar opens from the trailing edge, which
+                                                // on a foldable iPhone is where the system keeps its
+                                                // Dynamic Island and status bar. Inset the sheet past that
+                                                // column so the sidebar's text never sits under the
+                                                // status, exactly as the library rail does. Zero on every
+                                                // other device.
+                                                BoxWithConstraints {
+                                                    val drawerEndInset = DuoLayoutPolicy.railWidth(
+                                                        LocalSharedDeviceLayout.current,
+                                                        maxWidth,
+                                                    )
+                                                    IosAppDrawerContent(
+                                                        capabilities = iosUnifiedAccountDrawerCapabilities,
+                                                        closeDrawer = { scope.launch { accountDrawerState.close() } },
+                                                        modifier = Modifier.padding(end = drawerEndInset),
+                                                    )
+                                                }
                                             }
                                         }
                                     ) {

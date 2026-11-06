@@ -383,8 +383,11 @@ fun SharedMobileUnifiedLibraryScreen(
         val deviceLayout = LocalSharedDeviceLayout.current
         val navMode = DuoLayoutPolicy.navMode(deviceLayout, maxWidth)
         val duoGridCells = DuoLayoutPolicy.gridCells(deviceLayout, maxWidth)
+        val railWidth = DuoLayoutPolicy.railWidth(deviceLayout, maxWidth)
+        val railTopInset = DuoLayoutPolicy.railTopInset(deviceLayout, maxHeight)
         SharedMobileLibraryShell(
             navMode = navMode,
+            railOnTrailing = DuoLayoutPolicy.railOnTrailing(deviceLayout),
             drawerState = unifiedDrawerState,
             drawerContent = {
             ModalDrawerSheet {
@@ -441,6 +444,8 @@ fun SharedMobileUnifiedLibraryScreen(
                     destinations = drawerModel.destinations,
                     selectedSection = section,
                     appearance = drawerModel.appearance,
+                    width = railWidth,
+                    topInset = railTopInset,
                     onDestinationSelected = { destination ->
                         section = destination.section
                         selectedShelfId = null

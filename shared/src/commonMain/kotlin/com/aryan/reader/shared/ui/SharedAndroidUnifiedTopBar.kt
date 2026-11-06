@@ -76,8 +76,24 @@ fun SharedAndroidUnifiedTopBar(
     var searchFocused by remember { mutableStateOf(false) }
     val showContentScopeToggle = onSearchInsideFilesChange != null &&
         searchQuery != null && !showingShelf && (searchFocused || searchQuery.isNotEmpty())
+    // A foldable iPhone has no top status-bar inset while the status bar sits on the side
+    // of the display, so without an explicit margin the bar's content touches the
+    // display's rounded top-left corner. Apple's guidance is to keep the normal layout
+    // margin on the side opposite the controls, and to leave room for the corner. This is
+    // identity on every other device, where the status-bar inset already provides it.
+    val duoInnerDisplay = LocalSharedDeviceLayout.current.isDuoInnerDisplay
+    val hasLeadingControl = showingShelf || onMenu != null
+    val startPadding = if (duoInnerDisplay && !hasLeadingControl) 20.dp else 8.dp
+    val endPadding = if (duoInnerDisplay) 16.dp else 8.dp
+    val topPadding = if (duoInnerDisplay) 16.dp else 0.dp
     Surface(shadowElevation = 1.dp, modifier = modifier.fillMaxWidth()) {
-        Column(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(start = startPadding, end = endPadding)
+                .padding(top = topPadding)
+        ) {
             Row(
                 Modifier.fillMaxWidth().height(64.dp),
                 verticalAlignment = Alignment.CenterVertically,
