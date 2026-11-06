@@ -118,6 +118,87 @@ class DuoLayoutPolicyTest {
     }
 
     @Test
+    fun `standard density keeps the pre-Duo numbers`() {
+        // Pins the byte-identical guarantee: these are the literals the library used
+        // before this work, and every non-Duo host still resolves to them.
+        val density = SharedAndroidHomeDensity.Standard
+        assertEquals(64.dp, density.searchRowHeight)
+        assertEquals(16.dp, density.topBarTopPadding)
+        assertEquals(16.dp, density.continueCardTopGap)
+        assertEquals(178.dp, density.continueCardHeight)
+        assertEquals(94.dp, density.continueCoverWidth)
+        assertEquals(146.dp, density.continueCoverHeight)
+        assertEquals(12.dp, density.filterRowTopGap)
+        assertEquals(16.dp, density.gridCardTopGap)
+        assertEquals(16.dp, density.gridContentTopPadding)
+        assertEquals(DuoLayoutPolicy.DuoBookCellMin, density.bookCellMin)
+    }
+
+    @Test
+    fun `compact density also densifies the grid`() {
+        // Three columns at the standard cell leave the cover taller than the whole grid
+        // area on a 466dp display, so the compact cell has to be smaller.
+        assertEquals(
+            GridCells.Adaptive(SharedAndroidHomeDensity.Compact.bookCellMin),
+            DuoLayoutPolicy.gridCells(duoOuter, 678.dp, SharedAndroidHomeDensity.Compact),
+        )
+        // Without it, the outer display keeps the shared width classes it had before.
+        assertEquals(
+            sharedMobileWidthClassForWidth(678.dp).bookGridCells(),
+            DuoLayoutPolicy.gridCells(duoOuter, 678.dp),
+        )
+    }
+
+    @Test
+    fun `only the cover display held landscape gets the compact chrome`() {
+        // 466dp tall: the one Duo pose with no room for the full continue-reading card.
+        assertTrue(DuoLayoutPolicy.libraryDensity(duoOuter, 466.dp).compact)
+
+        // Every tall Duo pose, including the same cover display held upright.
+        listOf(669.dp, 678.dp, 951.dp).forEach { height ->
+            assertTrue(!DuoLayoutPolicy.libraryDensity(duoOuter, height).compact, "outer height=$height")
+            assertTrue(!DuoLayoutPolicy.libraryDensity(duoInner, height).compact, "inner height=$height")
+        }
+
+        // An ordinary device keeps today's chrome even in a short window. This is the
+        // byte-identical guarantee: the compact density is a Duo capability, not a
+        // general short-screen rule.
+        assertTrue(!DuoLayoutPolicy.libraryDensity(SharedDeviceLayout.None, 466.dp).compact)
+    }
+
+    @Test
+    fun `compact chrome gives the grid back most of the display`() {
+        val standard = SharedAndroidHomeDensity.Standard
+        val compact = SharedAndroidHomeDensity.Compact
+
+        // Spaces only ever shrink.
+        assertTrue(compact.searchRowHeight < standard.searchRowHeight)
+        assertTrue(compact.topBarTopPadding < standard.topBarTopPadding)
+        assertTrue(compact.continueCardTopGap < standard.continueCardTopGap)
+        assertTrue(compact.continueCardHeight < standard.continueCardHeight)
+        assertTrue(compact.filterRowTopGap < standard.filterRowTopGap)
+        assertTrue(compact.gridCardTopGap < standard.gridCardTopGap)
+        assertTrue(compact.gridContentTopPadding < standard.gridContentTopPadding)
+        assertTrue(compact.bookCellMin < standard.bookCellMin)
+
+        // The search field cannot go below its own 56dp minimum without clipping its text.
+        assertTrue(compact.searchRowHeight >= 56.dp)
+
+        // The continue-reading card was the biggest consumer and still gives back the most.
+        val recovered = (standard.continueCardHeight + standard.continueCardTopGap) -
+            (compact.continueCardHeight + compact.continueCardTopGap)
+        assertTrue(recovered >= 100.dp, "recovered=$recovered")
+
+        // The cover must still fit the card's 8dp inner padding, or it would clip.
+        listOf(standard, compact).forEach { density ->
+            assertTrue(
+                density.continueCoverHeight <= density.continueCardHeight - 16.dp,
+                "cover overflows at compact=${density.compact}",
+            )
+        }
+    }
+
+    @Test
     fun `account sidebar follows the status column instead of assuming one`() {
         // Landscape inner: the status lives in a side column, so the sidebar clears it and
         // still runs the full height.
@@ -134,6 +215,17 @@ class DuoLayoutPolicyTest {
             DuoLayoutPolicy.railTopInset(duoInnerPortrait, 951.dp),
             DuoLayoutPolicy.accountSidebarTopInset(duoInnerPortrait, 951.dp),
         )
+
+        // A column on the leading edge is not over the sidebar, which is always mirrored to
+        // the trailing edge: the cover display held landscape, and the left half of Split
+        // View. Reserving a column there would open a gap that clears nothing.
+        val columnOnLeading = SharedDeviceLayout(
+            controlColumnWidthFraction = 0.18f,
+            controlColumnTopFraction = 0.23f,
+            controlColumnOnTrailing = false,
+            isDuoDevice = true,
+        )
+        assertEquals(0.dp, DuoLayoutPolicy.accountSidebarEndInset(columnOnLeading, 678.dp))
 
         // Every other device keeps its plain edge-to-edge drawer on both axes.
         assertEquals(0.dp, DuoLayoutPolicy.accountSidebarEndInset(SharedDeviceLayout.None, 600.dp))

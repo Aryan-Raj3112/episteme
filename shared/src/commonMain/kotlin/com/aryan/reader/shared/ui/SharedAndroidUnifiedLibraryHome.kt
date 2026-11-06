@@ -71,6 +71,8 @@ fun <T> SharedAndroidUnifiedLibraryHome(
     widthClass: SharedAndroidHomeWidthClass = SharedAndroidHomeWidthClass.COMPACT,
     /** Host override (Duo). Null keeps the shared width-class mapping. */
     gridCells: GridCells? = null,
+    /** Host override (Duo). Standard keeps today's spacing on every other device. */
+    density: SharedAndroidHomeDensity = SharedAndroidHomeDensity.Standard,
     /** Rendered above the continue-reading card; empty when multi-tab reading is idle. */
     openTabsContent: @Composable () -> Unit = {},
     /**
@@ -92,9 +94,9 @@ fun <T> SharedAndroidUnifiedLibraryHome(
     }
     Column(modifier.fillMaxSize().padding(horizontal = 20.dp)) {
         openTabsContent()
-        continueReading?.let { continueCard(it, Modifier.padding(top = 16.dp)) }
+        continueReading?.let { continueCard(it, Modifier.padding(top = density.continueCardTopGap)) }
         LazyRow(
-            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = density.filterRowTopGap),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
             contentPadding = PaddingValues(horizontal = 2.dp),
@@ -123,14 +125,14 @@ fun <T> SharedAndroidUnifiedLibraryHome(
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(strings.noBooks, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         } else if (contentSearchActive) {
             Surface(
-                Modifier.weight(1f).padding(top = 16.dp),
+                Modifier.weight(1f).padding(top = density.gridCardTopGap),
                 shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
                 tonalElevation = 1.dp,
             ) {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(12.dp, 12.dp, 12.dp, 96.dp),
+                    contentPadding = PaddingValues(12.dp, density.gridContentTopPadding, 12.dp, 96.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     // Iterate the merged book list, not the content results:
@@ -154,7 +156,7 @@ fun <T> SharedAndroidUnifiedLibraryHome(
             }
         } else {
             Surface(
-                Modifier.weight(1f).padding(top = 16.dp),
+                Modifier.weight(1f).padding(top = density.gridCardTopGap),
                 shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
                 tonalElevation = 1.dp,
@@ -162,14 +164,14 @@ fun <T> SharedAndroidUnifiedLibraryHome(
                 if (useListView) {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(12.dp, 12.dp, 12.dp, 96.dp),
+                        contentPadding = PaddingValues(12.dp, density.gridContentTopPadding, 12.dp, 96.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) { items(books, key = itemKey) { bookListItem(it) } }
                 } else {
                     LazyVerticalGrid(
                         columns = resolvedGridCells,
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(12.dp, 16.dp, 12.dp, 96.dp),
+                        contentPadding = PaddingValues(12.dp, density.gridContentTopPadding, 12.dp, 96.dp),
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) { items(books, key = itemKey) { bookCard(it) } }

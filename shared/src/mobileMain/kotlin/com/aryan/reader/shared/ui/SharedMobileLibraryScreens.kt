@@ -385,9 +385,12 @@ fun SharedMobileUnifiedLibraryScreen(
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val deviceLayout = LocalSharedDeviceLayout.current
         val navMode = DuoLayoutPolicy.navMode(deviceLayout, maxWidth)
-        val duoGridCells = DuoLayoutPolicy.gridCells(deviceLayout, maxWidth)
         val railWidth = DuoLayoutPolicy.railWidth(deviceLayout, maxWidth)
         val railTopInset = DuoLayoutPolicy.railTopInset(deviceLayout, maxHeight)
+        // The cover display held landscape is the one Duo pose too short for the standard
+        // chrome; it tightens the spaces around the content and never the content itself.
+        val homeDensity = DuoLayoutPolicy.libraryDensity(deviceLayout, maxHeight)
+        val duoGridCells = DuoLayoutPolicy.gridCells(deviceLayout, maxWidth, homeDensity)
         SharedMobileLibraryShell(
             navMode = navMode,
             railOnTrailing = DuoLayoutPolicy.railOnTrailing(deviceLayout),
@@ -547,6 +550,7 @@ fun SharedMobileUnifiedLibraryScreen(
                     searchInsideFiles = state.searchInsideFiles,
                     onSearchInsideFilesChange = onSearchInsideFilesChange,
                     searchInsideFilesLabel = readerString("unified_library_search_inside_files", "Search inside files"),
+                    density = homeDensity,
                 )
                 // Upright inner display: Apple keeps horizontal bars there, so the whole
                 // side column is transposed into the top strip, starting at the leading
@@ -699,10 +703,14 @@ fun SharedMobileUnifiedLibraryScreen(
                                             selected = false,
                                             pinned = book.id in state.pinnedLibraryBookIds,
                                             onTogglePinned = { onTogglePinned(book) },
-                                            modifier = coverModifier.size(94.dp, 146.dp),
+                                            modifier = coverModifier.size(
+                                                homeDensity.continueCoverWidth,
+                                                homeDensity.continueCoverHeight,
+                                            ),
                                             compact = true,
                                         )
                                     },
+                                    density = homeDensity,
                                     fileTypeBadge = {
                                         SharedMobileCoverTextBadge(
                                             text = book.type.name,
@@ -738,6 +746,7 @@ fun SharedMobileUnifiedLibraryScreen(
                             },
                             widthClass = sharedMobileWidthClassForWidth(maxWidth),
                             gridCells = duoGridCells,
+                            density = homeDensity,
                             modifier = Modifier.fillMaxSize(),
                             contentSearchActive = contentSearchActive,
                             contentSearchResults = contentSearchResults,
@@ -791,6 +800,7 @@ fun SharedMobileUnifiedLibraryScreen(
                             },
                             widthClass = sharedMobileWidthClassForWidth(maxWidth),
                             gridCells = duoGridCells,
+                            density = homeDensity,
                             modifier = Modifier.fillMaxSize(),
                             childShelves = selectedChildShelves,
                             onChildShelfSelected = { selectedShelfId = it.id },

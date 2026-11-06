@@ -58,6 +58,8 @@ fun <S, B> SharedAndroidUnifiedShelves(
     widthClass: SharedAndroidHomeWidthClass = SharedAndroidHomeWidthClass.COMPACT,
     /** Host override (Duo). Null keeps the shared width-class mapping. */
     gridCells: GridCells? = null,
+    /** Host override (Duo). Standard keeps today's spacing on every other device. */
+    density: SharedAndroidHomeDensity = SharedAndroidHomeDensity.Standard,
     modifier: Modifier = Modifier,
     /** Nested shelves inside the selected shelf (file-system navigation). */
     childShelves: List<S> = emptyList(),
@@ -132,7 +134,7 @@ fun <S, B> SharedAndroidUnifiedShelves(
                 LazyVerticalGrid(
                     columns = gridCells ?: widthClass.bookGridCells(),
                     modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
-                    contentPadding = PaddingValues(top = 16.dp, bottom = 96.dp),
+                    contentPadding = PaddingValues(top = density.gridContentTopPadding, bottom = 96.dp),
                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {

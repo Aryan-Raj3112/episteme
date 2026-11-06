@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 
@@ -47,20 +48,21 @@ fun SharedAndroidUnifiedContinueCard(
     onClick: () -> Unit,
     cover: @Composable (Modifier) -> Unit,
     fileTypeBadge: @Composable () -> Unit,
+    density: SharedAndroidHomeDensity = SharedAndroidHomeDensity.Standard,
     modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(28.dp)
+    val shape = RoundedCornerShape(if (density.compact) 20.dp else 28.dp)
     val isRtl = cardLayoutDirection == LayoutDirection.Rtl
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .height(178.dp)
+            .height(density.continueCardHeight)
             .clip(shape)
             .testTag("UnifiedLibraryContinueReading")
             .combinedClickable(onClick = onClick, onLongClick = {}),
         color = MaterialTheme.colorScheme.inverseSurface,
         contentColor = MaterialTheme.colorScheme.inverseOnSurface,
-        shadowElevation = 5.dp,
+        shadowElevation = if (density.compact) 2.dp else 5.dp,
     ) {
         CompositionLocalProvider(LocalLayoutDirection provides cardLayoutDirection) {
             val backgroundBrush = if (isRtl) {
@@ -78,13 +80,16 @@ fun SharedAndroidUnifiedContinueCard(
             }
             Box(Modifier.background(backgroundBrush)) {
                 Row(
-                    Modifier.fillMaxSize().padding(start = 16.dp, end = 18.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    Modifier.fillMaxSize().padding(
+                        start = if (density.compact) 12.dp else 16.dp,
+                        end = if (density.compact) 12.dp else 18.dp,
+                    ),
+                    horizontalArrangement = Arrangement.spacedBy(if (density.compact) 12.dp else 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box(
                         Modifier
-                            .width(94.dp)
+                            .width(density.continueCoverWidth)
                             .fillMaxHeight()
                             .testTag("UnifiedLibraryContinueReadingCover")
                     ) { cover(Modifier.align(Alignment.CenterStart)) }
@@ -94,78 +99,188 @@ fun SharedAndroidUnifiedContinueCard(
                             .testTag("UnifiedLibraryContinueReadingContent"),
                         horizontalAlignment = Alignment.Start,
                     ) {
-                        Text(
-                            sectionLabel.uppercase(),
-                            modifier = Modifier.fillMaxWidth(),
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Start,
-                        )
-                        Text(
-                            title,
-                            modifier = Modifier.fillMaxWidth(),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Start,
-                        )
-                        Text(
-                            author,
-                            modifier = Modifier.fillMaxWidth(),
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.72f),
-                            textAlign = TextAlign.Start,
-                        )
-                        Row(
-                            Modifier.padding(top = 6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            fileTypeBadge()
-                            sourceLabel?.let {
-                                Text(
-                                    it,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.66f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    textAlign = TextAlign.Start,
-                                )
-                            }
-                        }
-                        Spacer(Modifier.height(10.dp))
-                        Text(
-                            progressLabel,
-                            modifier = Modifier.fillMaxWidth(),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.82f),
-                            textAlign = TextAlign.Start,
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                            LinearProgressIndicator(
-                                progress = { progressPercent.coerceIn(0f, 100f) / 100f },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(6.dp)
-                                    .testTag("UnifiedLibraryContinueReadingProgress")
-                                    .then(
-                                        if (isRtl) {
-                                            Modifier.graphicsLayer { scaleX = -1f }
-                                        } else {
-                                            Modifier
-                                        }
-                                    ),
-                                color = MaterialTheme.colorScheme.inverseOnSurface,
-                                trackColor = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.25f),
+                        if (density.compact) {
+                            CompactContinueContent(
+                                sectionLabel = sectionLabel,
+                                title = title,
+                                progressPercent = progressPercent,
+                                progressLabel = progressLabel,
+                                isRtl = isRtl,
+                                fileTypeBadge = fileTypeBadge,
+                            )
+                        } else {
+                            StandardContinueContent(
+                                sectionLabel = sectionLabel,
+                                title = title,
+                                author = author,
+                                progressPercent = progressPercent,
+                                progressLabel = progressLabel,
+                                sourceLabel = sourceLabel,
+                                isRtl = isRtl,
+                                fileTypeBadge = fileTypeBadge,
                             )
                         }
                     }
                 }
             }
         }
+    }
+}
+
+/**
+ * The full card, sized for a tall display: title, author, format/source and a labelled
+ * progress bar.
+ */
+@Composable
+private fun StandardContinueContent(
+    sectionLabel: String,
+    title: String,
+    author: String,
+    progressPercent: Float,
+    progressLabel: String,
+    sourceLabel: String?,
+    isRtl: Boolean,
+    fileTypeBadge: @Composable () -> Unit,
+) {
+    Text(
+        sectionLabel.uppercase(),
+        modifier = Modifier.fillMaxWidth(),
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.Bold,
+        textAlign = TextAlign.Start,
+    )
+    Text(
+        title,
+        modifier = Modifier.fillMaxWidth(),
+        style = MaterialTheme.typography.titleLarge,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        textAlign = TextAlign.Start,
+    )
+    Text(
+        author,
+        modifier = Modifier.fillMaxWidth(),
+        style = MaterialTheme.typography.bodySmall,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.72f),
+        textAlign = TextAlign.Start,
+    )
+    Row(
+        Modifier.padding(top = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        fileTypeBadge()
+        sourceLabel?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.66f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Start,
+            )
+        }
+    }
+    Spacer(Modifier.height(10.dp))
+    Text(
+        progressLabel,
+        modifier = Modifier.fillMaxWidth(),
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.82f),
+        textAlign = TextAlign.Start,
+    )
+    Spacer(Modifier.height(6.dp))
+    ContinueProgress(
+        progressPercent = progressPercent,
+        isRtl = isRtl,
+        barHeight = 6.dp,
+        modifier = Modifier.fillMaxWidth().testTag("UnifiedLibraryContinueReadingProgress"),
+    )
+}
+
+/**
+ * The same card on a display too short for it. The author and the source move out (both are
+ * repeated by the book's own tile directly below), the format badge and the percentage move
+ * onto the label and progress lines, and only the space changes — the type stays the size
+ * it is everywhere else.
+ */
+@Composable
+private fun CompactContinueContent(
+    sectionLabel: String,
+    title: String,
+    progressPercent: Float,
+    progressLabel: String,
+    isRtl: Boolean,
+    fileTypeBadge: @Composable () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            sectionLabel.uppercase(),
+            modifier = Modifier.weight(1f, fill = false),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Start,
+        )
+        fileTypeBadge()
+    }
+    Text(
+        title,
+        modifier = Modifier.fillMaxWidth(),
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        textAlign = TextAlign.Start,
+    )
+    Spacer(Modifier.height(6.dp))
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ContinueProgress(
+            progressPercent = progressPercent,
+            isRtl = isRtl,
+            barHeight = 4.dp,
+            modifier = Modifier.weight(1f).testTag("UnifiedLibraryContinueReadingProgress"),
+        )
+        Text(
+            progressLabel,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.82f),
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * The progress bar is drawn left-to-right and mirrored for RTL, in both densities, so the
+ * two cards cannot drift apart.
+ */
+@Composable
+private fun ContinueProgress(
+    progressPercent: Float,
+    isRtl: Boolean,
+    barHeight: Dp,
+    modifier: Modifier = Modifier,
+) {
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        LinearProgressIndicator(
+            progress = { progressPercent.coerceIn(0f, 100f) / 100f },
+            modifier = modifier
+                .height(barHeight)
+                .then(if (isRtl) Modifier.graphicsLayer { scaleX = -1f } else Modifier),
+            color = MaterialTheme.colorScheme.inverseOnSurface,
+            trackColor = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.25f),
+        )
     }
 }

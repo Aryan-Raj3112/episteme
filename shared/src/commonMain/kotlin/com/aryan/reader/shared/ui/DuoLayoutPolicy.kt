@@ -4,6 +4,70 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
+/**
+ * Vertical rhythm of the unified library.
+ *
+ * Every field is a *space* around content. Shrinking type or the book cells on a physically
+ * small display makes them harder to read, and the complaint on the cover display was that
+ * the grid had no room left, so this only tightens the chrome that surrounds it.
+ */
+data class SharedAndroidHomeDensity(
+    /** True on a display too short for the full card and gaps. */
+    val compact: Boolean,
+    val searchRowHeight: Dp,
+    /** Top margin for the bar on a Duo display; other devices already get it from the inset. */
+    val topBarTopPadding: Dp,
+    val continueCardTopGap: Dp,
+    val continueCardHeight: Dp,
+    val continueCoverWidth: Dp,
+    val continueCoverHeight: Dp,
+    val filterRowTopGap: Dp,
+    val gridCardTopGap: Dp,
+    val gridContentTopPadding: Dp,
+    /**
+     * Minimum book cell. Compact drops below the Duo baseline so a short display fits four
+     * columns instead of three: at three the cover alone is ~225dp, which is more than the
+     * whole grid area once the chrome is taken out.
+     */
+    val bookCellMin: Dp,
+) {
+    companion object {
+        /** Today's values, and what every non-Duo host and every tall Duo display gets. */
+        val Standard = SharedAndroidHomeDensity(
+            compact = false,
+            searchRowHeight = 64.dp,
+            topBarTopPadding = 16.dp,
+            continueCardTopGap = 16.dp,
+            continueCardHeight = 178.dp,
+            continueCoverWidth = 94.dp,
+            continueCoverHeight = 146.dp,
+            filterRowTopGap = 12.dp,
+            gridCardTopGap = 16.dp,
+            gridContentTopPadding = 16.dp,
+            bookCellMin = DuoLayoutPolicy.DuoBookCellMin,
+        )
+
+        /**
+         * The Duo cover display held landscape. Recovers roughly 150dp for the grid: the
+         * continue-reading card alone was 38% of the display.
+         */
+        val Compact = SharedAndroidHomeDensity(
+            compact = true,
+            // The search field's own minimum height is 56dp; below that it clips.
+            searchRowHeight = 56.dp,
+            topBarTopPadding = 8.dp,
+            continueCardTopGap = 8.dp,
+            continueCardHeight = 72.dp,
+            continueCoverWidth = 36.dp,
+            continueCoverHeight = 56.dp,
+            filterRowTopGap = 6.dp,
+            gridCardTopGap = 10.dp,
+            gridContentTopPadding = 10.dp,
+            bookCellMin = 112.dp,
+        )
+    }
+}
+
 /** How the mobile library exposes its top-level destinations. */
 enum class SharedLibraryNavMode {
     /** Compact/mobile: the destinations live in the existing modal drawer. */
@@ -49,6 +113,17 @@ object DuoLayoutPolicy {
 
     /** Minimum space between the system status area and the rail's first item. */
     val RailTopGap: Dp = 8.dp
+
+    /**
+     * Below this window height a Duo display cannot afford the standard library chrome.
+     *
+     * Measured against the Duo's own displays: the cover display held landscape is 466dp
+     * tall and is the only pose that qualifies; the same cover display upright is 678dp,
+     * the inner display is 669dp in landscape and 951dp upright. Anything in (466, 669)
+     * separates them, and the middle of that gap leaves room for the seated and tent poses
+     * and for Split View.
+     */
+    val ShortDisplayHeight: Dp = 560.dp
 
     /**
      * Cell size on the Duo inner display.
@@ -114,14 +189,34 @@ object DuoLayoutPolicy {
     }
 
     /**
+     * The library's vertical rhythm for this display.
+     *
+     * Height is the honest signal here, not the fold: folding is what *produces* the short
+     * display, and the same cover display upright is tall enough for the standard chrome.
+     * Gating on the fold would shrink a pose that reads fine.
+     */
+    fun libraryDensity(layout: SharedDeviceLayout, availableHeight: Dp): SharedAndroidHomeDensity {
+        if (!layout.isDuoDevice) return SharedAndroidHomeDensity.Standard
+        return if (availableHeight < ShortDisplayHeight) {
+            SharedAndroidHomeDensity.Compact
+        } else {
+            SharedAndroidHomeDensity.Standard
+        }
+    }
+
+    /**
      * Trailing inset for the account sidebar, which opens on the same edge as the system's
-     * status column. A display that has such a column keeps the sidebar clear of it; a
-     * display without one (the upright inner display, whose status runs across the top)
-     * opens the sidebar flush against the edge instead of reserving a column that is not
-     * there. Zero on every other device.
+     * status column. A display whose column shares that edge keeps the sidebar clear of it;
+     * a display with no column on that edge (the upright inner display, whose status runs
+     * across the top, or a column on the leading edge) opens the sidebar flush against the
+     * edge instead of reserving a column that is not there. Zero on every other device.
      */
     fun accountSidebarEndInset(layout: SharedDeviceLayout, availableWidth: Dp): Dp {
-        if (!layout.hasControlColumn) return 0.dp
+        // The sidebar is always mirrored to the trailing edge. Only a trailing control
+        // column is on the same edge as it; when the platform put the column on the leading
+        // edge (the cover display held landscape, the left half of Split View) there is
+        // nothing over the sidebar to clear.
+        if (!layout.hasControlColumn || !layout.controlColumnOnTrailing) return 0.dp
         return railWidth(layout, availableWidth)
     }
 
@@ -140,9 +235,17 @@ object DuoLayoutPolicy {
      *
      * Non-Duo returns exactly what the shared width classes returned before (Fixed on
      * compact, Adaptive above). The Duo inner display uses a capped adaptive cell, so its
-     * column count still follows the available width in every pose.
+     * column count still follows the available width in every pose. A short display gets the
+     * denser compact cell instead, whichever class it would otherwise have landed in.
      */
-    fun gridCells(layout: SharedDeviceLayout, availableWidth: Dp): GridCells {
+    fun gridCells(
+        layout: SharedDeviceLayout,
+        availableWidth: Dp,
+        density: SharedAndroidHomeDensity = SharedAndroidHomeDensity.Standard,
+    ): GridCells {
+        // A display too short for the standard chrome cannot afford a three-column row
+        // either: the cover alone would be taller than the whole grid area.
+        if (density.compact) return GridCells.Adaptive(minSize = density.bookCellMin)
         if (!layout.isDuoInnerDisplay) {
             return sharedMobileWidthClassForWidth(availableWidth).bookGridCells()
         }

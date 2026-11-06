@@ -69,6 +69,7 @@ fun SharedAndroidUnifiedTopBar(
     searchInsideFiles: Boolean = false,
     onSearchInsideFilesChange: ((Boolean) -> Unit)? = null,
     searchInsideFilesLabel: String = "Search inside files",
+    density: SharedAndroidHomeDensity = SharedAndroidHomeDensity.Standard,
     modifier: Modifier = Modifier,
 ) {
     val focusManager = LocalFocusManager.current
@@ -85,7 +86,7 @@ fun SharedAndroidUnifiedTopBar(
     val hasLeadingControl = showingShelf || onMenu != null
     val startPadding = if (duoDisplay && !hasLeadingControl) 20.dp else 8.dp
     val endPadding = if (duoDisplay) 16.dp else 8.dp
-    val topPadding = if (duoDisplay) 16.dp else 0.dp
+    val topPadding = if (duoDisplay) density.topBarTopPadding else 0.dp
     Surface(shadowElevation = 1.dp, modifier = modifier.fillMaxWidth()) {
         Column(
             Modifier
@@ -95,7 +96,7 @@ fun SharedAndroidUnifiedTopBar(
                 .padding(top = topPadding)
         ) {
             Row(
-                Modifier.fillMaxWidth().height(64.dp),
+                Modifier.fillMaxWidth().height(density.searchRowHeight),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
             if (showingShelf) {
