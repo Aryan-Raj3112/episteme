@@ -2,6 +2,7 @@ package com.aryan.reader.shared.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -23,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Surface
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,6 +80,51 @@ fun SharedMobileLibraryShell(
                 Box(Modifier.weight(1f).fillMaxHeight()) { content() }
             }
         }
+
+        // The upright inner display has no side column: its destinations ride in the top
+        // bar instead, so the shell adds nothing around the content.
+        SharedLibraryNavMode.HORIZONTAL -> content()
+    }
+}
+
+/**
+ * The destinations as a row, for the one pose that keeps horizontal bars (the inner display
+ * held upright). Same items, same order and same 48dp targets as the rail, so switching
+ * between poses does not move anything the user has learned. The row starts at the leading
+ * edge and any slack falls at the trailing end, beside the system status indicator.
+ */
+@Composable
+internal fun SharedMobileLibraryHorizontalNav(
+    destinations: List<MobileUnifiedLibraryDrawerDestination>,
+    selectedSection: MobileUnifiedLibrarySection,
+    appearance: List<MobileUnifiedLibraryDrawerAppearance>,
+    onDestinationSelected: (MobileUnifiedLibraryDrawerDestination) -> Unit,
+    onAppearanceSelected: (MobileUnifiedLibraryDrawerAppearance) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        destinations.forEach { destination ->
+            SharedMobileRailItem(
+                icon = destination.icon(),
+                contentDescription = destination.label.readerString(),
+                selected = selectedSection == destination.section,
+                onClick = { onDestinationSelected(destination) },
+                testTag = "UnifiedLibraryRail_${destination.name}",
+            )
+        }
+        VerticalDivider(Modifier.height(24.dp).padding(horizontal = 6.dp))
+        appearance.forEach { item ->
+            SharedMobileRailItem(
+                icon = item.icon(),
+                contentDescription = item.label.readerString(),
+                selected = false,
+                onClick = { onAppearanceSelected(item) },
+                testTag = "UnifiedLibraryRail_${item.name}",
+            )
+        }
     }
 }
 
@@ -103,7 +151,11 @@ internal fun SharedMobileLibraryRail(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        modifier = modifier.width(width),
+        // Fill the height so the column's background reaches the top of the display, behind
+        // the system status. Without it the surface wrapped its content and the strip above
+        // the first item showed the content colour instead, leaving the column looking
+        // detached from the status area.
+        modifier = modifier.width(width).fillMaxHeight(),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         // The background runs the full height, painting behind the system status area, so
@@ -117,6 +169,7 @@ internal fun SharedMobileLibraryRail(
                 .navigationBarsPadding()
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Top,
         ) {
             Spacer(Modifier.height(topInset))
             destinations.forEach { destination ->

@@ -96,6 +96,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.platform.Font
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.ComposeUIViewController
@@ -5260,6 +5261,7 @@ private fun ReaderIosApp(
     fun IosAppDrawerContent(
         capabilities: MobileAppDrawerCapabilities,
         closeDrawer: () -> Unit,
+        topInset: Dp = 0.dp,
         modifier: Modifier = Modifier,
     ) {
         fun runAction(action: () -> Unit) {
@@ -5317,6 +5319,7 @@ private fun ReaderIosApp(
             ),
             accountAvatar = { user, modifier -> IosAccountAvatar(user, modifier) },
             drawerCapabilities = capabilities,
+            topInset = topInset,
             modifier = modifier,
             // Library sync (CloudKit) is visible; the Drive folder row stays
             // hidden until that backend is ported (IosFeatureGating).
@@ -8188,20 +8191,24 @@ private fun ReaderIosApp(
                                         drawerState = accountDrawerState,
                                         drawerContent = {
                                             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                                                // The account sidebar opens from the trailing edge, which
-                                                // on a foldable iPhone is where the system keeps its
-                                                // Dynamic Island and status bar. Inset the sheet past that
-                                                // column so the sidebar's text never sits under the
-                                                // status, exactly as the library rail does. Zero on every
-                                                // other device.
+                                                // The account sidebar opens from the trailing edge. On a
+                                                // Duo display whose status lives in a side column it is
+                                                // inset past that column, exactly as the library rail is.
+                                                // The upright inner display has no side column: its status
+                                                // runs across the top, so there the sidebar is flush with
+                                                // the edge and starts below the top strip that now carries
+                                                // the destinations. Both insets are zero on every other
+                                                // device.
                                                 BoxWithConstraints {
-                                                    val drawerEndInset = DuoLayoutPolicy.railWidth(
-                                                        LocalSharedDeviceLayout.current,
-                                                        maxWidth,
-                                                    )
+                                                    val deviceLayout = LocalSharedDeviceLayout.current
+                                                    val drawerEndInset =
+                                                        DuoLayoutPolicy.accountSidebarEndInset(deviceLayout, maxWidth)
+                                                    val drawerTopInset =
+                                                        DuoLayoutPolicy.accountSidebarTopInset(deviceLayout, maxHeight)
                                                     IosAppDrawerContent(
                                                         capabilities = iosUnifiedAccountDrawerCapabilities,
                                                         closeDrawer = { scope.launch { accountDrawerState.close() } },
+                                                        topInset = drawerTopInset,
                                                         modifier = Modifier.padding(end = drawerEndInset),
                                                     )
                                                 }

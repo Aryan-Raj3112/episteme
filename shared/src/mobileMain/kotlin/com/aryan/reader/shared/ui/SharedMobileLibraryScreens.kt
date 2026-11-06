@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.items
@@ -509,6 +512,7 @@ fun SharedMobileUnifiedLibraryScreen(
                     } else null,
                 )
             } else {
+                Box(Modifier.fillMaxWidth()) {
                 SharedAndroidUnifiedTopBar(
                     title = selectedShelfId?.let { id -> state.shelves.firstOrNull { it.id == id }?.name }
                         ?: when (section) {
@@ -544,6 +548,36 @@ fun SharedMobileUnifiedLibraryScreen(
                     onSearchInsideFilesChange = onSearchInsideFilesChange,
                     searchInsideFilesLabel = readerString("unified_library_search_inside_files", "Search inside files"),
                 )
+                // Upright inner display: Apple keeps horizontal bars there, so the whole
+                // side column is transposed into the top strip, starting at the leading
+                // edge and ending before the system's time and status indicator.
+                if (navMode == SharedLibraryNavMode.HORIZONTAL) {
+                    val statusStripHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+                    Box(
+                        Modifier.fillMaxWidth().height(statusStripHeight),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        SharedMobileLibraryHorizontalNav(
+                            destinations = drawerModel.destinations,
+                            selectedSection = section,
+                            appearance = drawerModel.appearance,
+                            onDestinationSelected = { destination ->
+                                section = destination.section
+                                selectedShelfId = null
+                                onSectionChange(section.persistedValue)
+                            },
+                            onAppearanceSelected = { appearance ->
+                                when (appearance) {
+                                    MobileUnifiedLibraryDrawerAppearance.THEME -> onOpenAppTheme()
+                                    MobileUnifiedLibraryDrawerAppearance.SETTINGS -> onOpenSettings()
+                                    MobileUnifiedLibraryDrawerAppearance.FONTS -> onOpenFonts()
+                                    MobileUnifiedLibraryDrawerAppearance.AI -> onOpenAiSettings()
+                                }
+                            },
+                        )
+                    }
+                }
+                }
             }
         },
         bottomBar = {

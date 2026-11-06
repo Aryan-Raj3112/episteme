@@ -2181,7 +2181,9 @@ private final class ReaderStatusBarHostController: UIViewController {
 
         // The system's side control column: the Dynamic Island and status bar share the
         // display's trailing edge with the app's rail, so the app must leave room for the
-        // status area at the top of that column and put its rail on the same edge.
+        // status area at the top of that column and put its rail on the same edge. In
+        // portrait the status bar runs across the top instead, and only its right-hand
+        // slice sits over the column.
         //
         // The safe-area insets describe the column exactly (the trailing inset measures
         // 84pt on both Duo displays, which is Apple's vertical-bar width), and a leading
@@ -2196,7 +2198,12 @@ private final class ReaderStatusBarHostController: UIViewController {
         let windowBounds = window?.bounds ?? bounds
         let safeArea = window?.safeAreaInsets ?? .zero
         let sideColumnWidth = max(safeArea.left, safeArea.right)
-        let occlusionBottom = occlusions.map { $0.frame.maxY }.max() ?? 0
+        // Only occlusions anchored at the very top belong to the status/island block. The
+        // inner display also reports one lower down (measured y 215-273 in portrait) that
+        // has nothing to do with the top of the column; taking its maxY pushed the rail's
+        // first item a third of the way down the display.
+        let topAnchoredOcclusions = occlusions.filter { $0.frame.minY <= 1 }
+        let occlusionBottom = topAnchoredOcclusions.map { $0.frame.maxY }.max() ?? 0
         let statusDepth: CGFloat = sideColumnWidth > 0 ? 110 : 0
         let topReserve = max(safeArea.top, max(occlusionBottom, statusDepth))
         let columnOnTrailing = safeArea.left <= safeArea.right

@@ -9,8 +9,16 @@ enum class SharedLibraryNavMode {
     /** Compact/mobile: the destinations live in the existing modal drawer. */
     DRAWER,
 
-    /** Duo inner display: the destinations live in a permanent rail on the control edge. */
+    /** Duo inner display in landscape, and the outer display: a permanent rail on the
+     *  control edge. */
     RAIL,
+
+    /**
+     * Duo inner display held upright. That is the one pose Apple keeps *horizontal* bars
+     * for, because there is plenty of vertical space, so the destinations become a row in
+     * the top bar instead of a side column.
+     */
+    HORIZONTAL,
 }
 
 /**
@@ -58,16 +66,27 @@ object DuoLayoutPolicy {
      * down the side of the outer display too, so the outer display is not an exception.
      */
     fun navMode(layout: SharedDeviceLayout, availableWidth: Dp): SharedLibraryNavMode {
-        return if (layout.isDuoDevice && availableWidth >= RailMinWidth) {
+        if (!layout.isDuoDevice || availableWidth < RailMinWidth) {
+            return SharedLibraryNavMode.DRAWER
+        }
+        // A platform-reserved side column means the display has somewhere to put a rail.
+        // The inner display upright has none (its status bar runs across the top), which is
+        // exactly Apple's horizontal-bar pose.
+        return if (layout.hasControlColumn) {
             SharedLibraryNavMode.RAIL
         } else {
-            SharedLibraryNavMode.DRAWER
+            SharedLibraryNavMode.HORIZONTAL
         }
     }
 
     /** True when the rail is drawn — i.e. the layout is [SharedLibraryNavMode.RAIL]. */
     fun railVisible(layout: SharedDeviceLayout, availableWidth: Dp): Boolean {
         return navMode(layout, availableWidth) == SharedLibraryNavMode.RAIL
+    }
+
+    /** True when the destinations sit in a row in the top bar instead of a side rail. */
+    fun horizontalNavVisible(layout: SharedDeviceLayout, availableWidth: Dp): Boolean {
+        return navMode(layout, availableWidth) == SharedLibraryNavMode.HORIZONTAL
     }
 
     /**
@@ -92,6 +111,28 @@ object DuoLayoutPolicy {
      *  left half of Split View). */
     fun railOnTrailing(layout: SharedDeviceLayout): Boolean {
         return layout.controlColumnOnTrailing
+    }
+
+    /**
+     * Trailing inset for the account sidebar, which opens on the same edge as the system's
+     * status column. A display that has such a column keeps the sidebar clear of it; a
+     * display without one (the upright inner display, whose status runs across the top)
+     * opens the sidebar flush against the edge instead of reserving a column that is not
+     * there. Zero on every other device.
+     */
+    fun accountSidebarEndInset(layout: SharedDeviceLayout, availableWidth: Dp): Dp {
+        if (!layout.hasControlColumn) return 0.dp
+        return railWidth(layout, availableWidth)
+    }
+
+    /**
+     * Top inset for the account sidebar. Wherever there is no status column the
+     * destinations ride in a top strip, so the sidebar starts below that strip rather than
+     * covering it. Zero wherever the sidebar already shares the edge with the column.
+     */
+    fun accountSidebarTopInset(layout: SharedDeviceLayout, availableHeight: Dp): Dp {
+        if (layout.hasControlColumn) return 0.dp
+        return railTopInset(layout, availableHeight)
     }
 
     /**

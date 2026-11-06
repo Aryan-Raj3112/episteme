@@ -67,6 +67,13 @@ data class SharedDeviceLayout(
      */
     val isDuoInnerDisplay: Boolean get() = fold.present
 
+    /**
+     * True when the display actually reserves a side column for the status/Dynamic Island.
+     * False on the upright inner display, whose status bar runs across the top instead —
+     * the one pose Apple keeps horizontal bars for.
+     */
+    val hasControlColumn: Boolean get() = controlColumnWidthFraction > 0.001f
+
     companion object {
         val None = SharedDeviceLayout()
     }

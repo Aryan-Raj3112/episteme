@@ -28,6 +28,14 @@ class DuoLayoutPolicyTest {
         isDuoDevice = true,
     )
 
+    /** The Duo inner display held upright: fold present, but no side column. */
+    private val duoInnerPortrait = SharedDeviceLayout(
+        fold = SharedFoldRegion(present = true, active = false, widthFraction = 1f, heightFraction = 0.02f),
+        controlColumnWidthFraction = 0f,
+        controlColumnTopFraction = 0.086f,
+        isDuoDevice = true,
+    )
+
     private val widths = listOf(360.dp, 466.dp, 599.dp, 600.dp, 626.dp, 678.dp, 839.dp, 840.dp, 890.dp, 1280.dp)
 
     @Test
@@ -66,13 +74,22 @@ class DuoLayoutPolicyTest {
     }
 
     @Test
-    fun `both duo displays get the rail, ordinary devices never do`() {
+    fun `duo displays with a side column get the rail, ordinary devices never do`() {
         // Apple's Duo bar runs down the side of the outer display too.
         assertEquals(SharedLibraryNavMode.RAIL, DuoLayoutPolicy.navMode(duoOuter, 466.dp))
         assertEquals(SharedLibraryNavMode.RAIL, DuoLayoutPolicy.navMode(duoInner, 626.dp))
         assertEquals(SharedLibraryNavMode.RAIL, DuoLayoutPolicy.navMode(duoInner, 890.dp))
         // Even a wide ordinary device stays on the drawer.
         assertEquals(SharedLibraryNavMode.DRAWER, DuoLayoutPolicy.navMode(SharedDeviceLayout.None, 1280.dp))
+    }
+
+    @Test
+    fun `upright duo inner display uses the horizontal top bar`() {
+        // Apple keeps horizontal bars in this one pose; there is no side column to hold a
+        // rail, so the destinations belong in the top bar.
+        assertEquals(SharedLibraryNavMode.HORIZONTAL, DuoLayoutPolicy.navMode(duoInnerPortrait, 669.dp))
+        assertTrue(!DuoLayoutPolicy.railVisible(duoInnerPortrait, 669.dp))
+        assertTrue(DuoLayoutPolicy.horizontalNavVisible(duoInnerPortrait, 669.dp))
     }
 
     @Test
@@ -98,6 +115,29 @@ class DuoLayoutPolicyTest {
         // Narrower strip than the baseline: the Apple width still wins.
         assertEquals(DuoLayoutPolicy.RailWidth, DuoLayoutPolicy.railWidth(layout, 500.dp))
         assertEquals(false, DuoLayoutPolicy.railOnTrailing(layout))
+    }
+
+    @Test
+    fun `account sidebar follows the status column instead of assuming one`() {
+        // Landscape inner: the status lives in a side column, so the sidebar clears it and
+        // still runs the full height.
+        assertEquals(
+            DuoLayoutPolicy.railWidth(duoInner, 951.dp),
+            DuoLayoutPolicy.accountSidebarEndInset(duoInner, 951.dp),
+        )
+        assertEquals(0.dp, DuoLayoutPolicy.accountSidebarTopInset(duoInner, 669.dp))
+
+        // Upright inner display: no side column, so the sidebar is flush with the trailing
+        // edge and starts below the top strip that carries the destinations.
+        assertEquals(0.dp, DuoLayoutPolicy.accountSidebarEndInset(duoInnerPortrait, 669.dp))
+        assertEquals(
+            DuoLayoutPolicy.railTopInset(duoInnerPortrait, 951.dp),
+            DuoLayoutPolicy.accountSidebarTopInset(duoInnerPortrait, 951.dp),
+        )
+
+        // Every other device keeps its plain edge-to-edge drawer on both axes.
+        assertEquals(0.dp, DuoLayoutPolicy.accountSidebarEndInset(SharedDeviceLayout.None, 600.dp))
+        assertEquals(0.dp, DuoLayoutPolicy.accountSidebarTopInset(SharedDeviceLayout.None, 800.dp))
     }
 
     @Test
