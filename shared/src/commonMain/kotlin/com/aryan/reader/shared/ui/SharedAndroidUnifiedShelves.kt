@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -55,6 +56,8 @@ fun <S, B> SharedAndroidUnifiedShelves(
     onShelfSelected: (S) -> Unit,
     bookCard: @Composable (B) -> Unit,
     widthClass: SharedAndroidHomeWidthClass = SharedAndroidHomeWidthClass.COMPACT,
+    /** Host override (Duo). Null keeps the shared width-class mapping. */
+    gridCells: GridCells? = null,
     modifier: Modifier = Modifier,
     /** Nested shelves inside the selected shelf (file-system navigation). */
     childShelves: List<S> = emptyList(),
@@ -127,7 +130,7 @@ fun <S, B> SharedAndroidUnifiedShelves(
                 }
             } else {
                 LazyVerticalGrid(
-                    columns = widthClass.bookGridCells(),
+                    columns = gridCells ?: widthClass.bookGridCells(),
                     modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
                     contentPadding = PaddingValues(top = 16.dp, bottom = 96.dp),
                     horizontalArrangement = Arrangement.spacedBy(16.dp),

@@ -2060,6 +2060,16 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
             onRemoveFolder: onRemoveFolder
         )
         let hostController = ReaderStatusBarHostController(content: composeController)
+        hostController.onDeviceLayoutChange = { foldPresent, foldActive, left, top, width, height in
+            bridge.updateIosDeviceLayout(
+                foldPresent: foldPresent,
+                foldActive: foldActive,
+                foldLeftFraction: left,
+                foldTopFraction: top,
+                foldWidthFraction: width,
+                foldHeightFraction: height
+            )
+        }
         bridge.setSystemUiHandler { statusHidden, navigationHidden, lightContent, backgroundArgb in
             DispatchQueue.main.async {
                 isSystemUiHidden = statusHidden.boolValue
@@ -2089,6 +2099,19 @@ private final class ReaderStatusBarHostController: UIViewController {
     private var readerOrientationMode: Int32 = 0
     private var pencilInteraction: UIPencilInteraction?
 
+    /// Reports iPhone Duo fold geometry to the shared layer. Values are fractions of the
+    /// window bounds so nothing has to be converted between points and dp in Kotlin.
+    var onDeviceLayoutChange: ((_ foldPresent: Bool, _ foldActive: Bool, _ left: Double, _ top: Double, _ width: Double, _ height: Double) -> Void)?
+
+    /// Horizontal constraints for the app's two layouts: edge-to-edge (every ordinary
+    /// device, unchanged) and inside the window's safe area (Duo inner display, where the
+    /// status bar is a vertical strip on the trailing edge and would otherwise cover the
+    /// top bar, cards and FAB). Only leading/trailing move; the app stays edge-to-edge
+    /// vertically.
+    private var boundsHorizontalConstraints: [NSLayoutConstraint] = []
+    private var safeAreaHorizontalConstraints: [NSLayoutConstraint] = []
+    private var usesSafeAreaHorizontalInsets = false
+
     init(content: UIViewController) {
         self.contentController = content
         super.init(nibName: nil, bundle: nil)
@@ -2109,11 +2132,14 @@ private final class ReaderStatusBarHostController: UIViewController {
         // enableEdgeToEdge: screens paint their own backgrounds beneath the
         // transparent system bars instead of the host insetting the content.
         NSLayoutConstraint.activate([
-            contentController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            contentController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             contentController.view.topAnchor.constraint(equalTo: view.topAnchor),
             contentController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
+        boundsHorizontalConstraints = [
+            contentController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            contentController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+        ]
+        NSLayoutConstraint.activate(boundsHorizontalConstraints)
         contentController.didMove(toParent: self)
 
         // UIPencilInteraction is the public UIKit surface for Pencil side
@@ -2131,6 +2157,62 @@ private final class ReaderStatusBarHostController: UIViewController {
             guard let self else { return }
             setNeedsStatusBarAppearanceUpdate()
             setNeedsUpdateOfHomeIndicatorAutoHidden()
+        }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        publishDeviceLayout()
+    }
+
+    /// iPhone Duo is the only iPhone whose view exposes a fold *division* reserved region,
+    /// so its presence is a capability signal rather than a size or idiom guess. It is
+    /// queried including inactive regions because it is still present when the device is
+    /// flat. Pre-27.1 SDKs and every non-phone idiom report a plain single-screen device.
+    private func publishDeviceLayout() {
+        guard let emit = onDeviceLayoutChange else { return }
+        let singleScreen = { [self] in
+            applyHorizontalInsetPolicy(usesSafeArea: false)
+            emit(false, false, 0, 0, 0, 0)
+        }
+        guard UIDevice.current.userInterfaceIdiom == .phone, #available(iOS 27.1, *) else {
+            return singleScreen()
+        }
+        let fold = view.reservedRegions(kind: .division, options: .includeInactive).first
+        applyHorizontalInsetPolicy(usesSafeArea: fold != nil)
+        guard let fold else { return singleScreen() }
+        // Fold rects are reported in the host view's space; convert them into the Compose
+        // window's space so the fractions stay correct even when that window is inset.
+        let contentBounds = contentController.view.bounds
+        guard contentBounds.width > 0, contentBounds.height > 0 else { return singleScreen() }
+        let foldFrame = contentController.view.convert(fold.frame, from: view)
+        emit(
+            true,
+            fold.isActive,
+            Double(foldFrame.minX / contentBounds.width),
+            Double(foldFrame.minY / contentBounds.height),
+            Double(foldFrame.width / contentBounds.width),
+            Double(foldFrame.height / contentBounds.height)
+        )
+    }
+
+    private func applyHorizontalInsetPolicy(usesSafeArea: Bool) {
+        guard usesSafeArea != usesSafeAreaHorizontalInsets, let window = view.window else { return }
+        usesSafeAreaHorizontalInsets = usesSafeArea
+        NSLayoutConstraint.deactivate(boundsHorizontalConstraints)
+        NSLayoutConstraint.deactivate(safeAreaHorizontalConstraints)
+        if usesSafeArea {
+            safeAreaHorizontalConstraints = [
+                contentController.view.leadingAnchor.constraint(equalTo: window.safeAreaLayoutGuide.leadingAnchor),
+                contentController.view.trailingAnchor.constraint(equalTo: window.safeAreaLayoutGuide.trailingAnchor)
+            ]
+            NSLayoutConstraint.activate(safeAreaHorizontalConstraints)
+        } else {
+            boundsHorizontalConstraints = [
+                contentController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                contentController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+            ]
+            NSLayoutConstraint.activate(boundsHorizontalConstraints)
         }
     }
 

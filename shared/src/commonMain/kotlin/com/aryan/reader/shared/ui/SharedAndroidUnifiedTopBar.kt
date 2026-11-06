@@ -48,7 +48,11 @@ fun SharedAndroidUnifiedTopBar(
     showingShelf: Boolean,
     drawerDescription: String,
     backToShelvesDescription: String,
-    onMenu: () -> Unit,
+    /**
+     * Opens the navigation drawer. Null when navigation is already visible (the Duo
+     * inner display's permanent rail), in which case no menu button is drawn.
+     */
+    onMenu: (() -> Unit)?,
     onBackFromShelf: () -> Unit,
     onAccount: () -> Unit,
     accountAvatar: @Composable () -> Unit,
@@ -80,7 +84,7 @@ fun SharedAndroidUnifiedTopBar(
             ) {
             if (showingShelf) {
                 IconButton(onClick = onBackFromShelf) { Icon(Icons.AutoMirrored.Filled.ArrowBack, backToShelvesDescription) }
-            } else {
+            } else if (onMenu != null) {
                 IconButton(onClick = onMenu) { Icon(Icons.Default.Menu, drawerDescription) }
             }
             if (searchQuery != null && !showingShelf) {

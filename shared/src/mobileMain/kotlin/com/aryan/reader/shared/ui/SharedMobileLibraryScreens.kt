@@ -153,7 +153,7 @@ import kotlinx.coroutines.isActive
 import kotlin.math.roundToInt
 
 @Composable
-private fun MobileUnifiedLibraryDrawerLabel.readerString(): String = when (this) {
+internal fun MobileUnifiedLibraryDrawerLabel.readerString(): String = when (this) {
     MobileUnifiedLibraryDrawerLabel.HOME -> readerString("unified_library_home", "Home")
     MobileUnifiedLibraryDrawerLabel.AUDIOBOOKS -> readerString("listen_title", "Listen")
     MobileUnifiedLibraryDrawerLabel.SHELVES -> readerString("tab_shelves", "Shelves")
@@ -165,7 +165,7 @@ private fun MobileUnifiedLibraryDrawerLabel.readerString(): String = when (this)
     MobileUnifiedLibraryDrawerLabel.AI -> readerString("ai_settings_title", "AI settings")
 }
 
-private fun MobileUnifiedLibraryDrawerDestination.icon(): ImageVector = when (this) {
+internal fun MobileUnifiedLibraryDrawerDestination.icon(): ImageVector = when (this) {
     MobileUnifiedLibraryDrawerDestination.HOME -> Icons.Default.Home
     MobileUnifiedLibraryDrawerDestination.AUDIOBOOKS -> Icons.AutoMirrored.Filled.VolumeUp
     MobileUnifiedLibraryDrawerDestination.SHELVES -> Icons.AutoMirrored.Filled.LibraryBooks
@@ -173,7 +173,7 @@ private fun MobileUnifiedLibraryDrawerDestination.icon(): ImageVector = when (th
     MobileUnifiedLibraryDrawerDestination.CATALOGS -> Icons.Default.Cloud
 }
 
-private fun MobileUnifiedLibraryDrawerAppearance.icon(): ImageVector = when (this) {
+internal fun MobileUnifiedLibraryDrawerAppearance.icon(): ImageVector = when (this) {
     MobileUnifiedLibraryDrawerAppearance.THEME -> Icons.Default.Palette
     MobileUnifiedLibraryDrawerAppearance.SETTINGS -> Icons.Default.Settings
     MobileUnifiedLibraryDrawerAppearance.FONTS -> Icons.Default.Fonts
@@ -379,9 +379,14 @@ fun SharedMobileUnifiedLibraryScreen(
         }
     }
 
-    ModalNavigationDrawer(
-        drawerState = unifiedDrawerState,
-        drawerContent = {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val deviceLayout = LocalSharedDeviceLayout.current
+        val navMode = DuoLayoutPolicy.navMode(deviceLayout, maxWidth)
+        val duoGridCells = DuoLayoutPolicy.gridCells(deviceLayout, maxWidth)
+        SharedMobileLibraryShell(
+            navMode = navMode,
+            drawerState = unifiedDrawerState,
+            drawerContent = {
             ModalDrawerSheet {
                 Text(
                     readerString("unified_library_drawer_title", "Your library"),
@@ -430,8 +435,28 @@ fun SharedMobileUnifiedLibraryScreen(
                     )
                 }
             }
-        },
-    ) {
+            },
+            railContent = {
+                SharedMobileLibraryRail(
+                    destinations = drawerModel.destinations,
+                    selectedSection = section,
+                    appearance = drawerModel.appearance,
+                    onDestinationSelected = { destination ->
+                        section = destination.section
+                        selectedShelfId = null
+                        onSectionChange(section.persistedValue)
+                    },
+                    onAppearanceSelected = { appearance ->
+                        when (appearance) {
+                            MobileUnifiedLibraryDrawerAppearance.THEME -> onOpenAppTheme()
+                            MobileUnifiedLibraryDrawerAppearance.SETTINGS -> onOpenSettings()
+                            MobileUnifiedLibraryDrawerAppearance.FONTS -> onOpenFonts()
+                            MobileUnifiedLibraryDrawerAppearance.AI -> onOpenAiSettings()
+                        }
+                    },
+                )
+            },
+        ) {
         SharedAndroidUnifiedScaffold(
         section = section,
         showingShelf = selectedShelfId != null,
@@ -491,7 +516,11 @@ fun SharedMobileUnifiedLibraryScreen(
                     showingShelf = selectedShelfId != null,
                     drawerDescription = readerString("unified_library_drawer_title", "Your library"),
                     backToShelvesDescription = readerString("unified_library_back_to_shelves", "All shelves"),
-                    onMenu = { unifiedScope.launch { unifiedDrawerState.open() } },
+                    onMenu = if (navMode == SharedLibraryNavMode.DRAWER) {
+                        { unifiedScope.launch { unifiedDrawerState.open() } }
+                    } else {
+                        null
+                    },
                     onBackFromShelf = {
                         selectedShelfId = selectedShelfId
                             ?.let { id -> state.shelves.firstOrNull { it.id == id } }
@@ -581,6 +610,7 @@ fun SharedMobileUnifiedLibraryScreen(
                                     )
                                 },
                                 widthClass = sharedMobileWidthClassForWidth(maxWidth),
+                                gridCells = duoGridCells,
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
@@ -668,6 +698,7 @@ fun SharedMobileUnifiedLibraryScreen(
                                 )
                             },
                             widthClass = sharedMobileWidthClassForWidth(maxWidth),
+                            gridCells = duoGridCells,
                             modifier = Modifier.fillMaxSize(),
                             contentSearchActive = contentSearchActive,
                             contentSearchResults = contentSearchResults,
@@ -720,6 +751,7 @@ fun SharedMobileUnifiedLibraryScreen(
                                 )
                             },
                             widthClass = sharedMobileWidthClassForWidth(maxWidth),
+                            gridCells = duoGridCells,
                             modifier = Modifier.fillMaxSize(),
                             childShelves = selectedChildShelves,
                             onChildShelfSelected = { selectedShelfId = it.id },
@@ -790,6 +822,7 @@ fun SharedMobileUnifiedLibraryScreen(
         },
         modifier = modifier,
         )
+        }
     }
     if (showLibraryControls) {
         SharedAndroidUnifiedLibraryControlsSheet(

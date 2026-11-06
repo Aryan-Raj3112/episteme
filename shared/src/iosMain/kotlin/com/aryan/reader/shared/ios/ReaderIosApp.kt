@@ -340,6 +340,7 @@ import com.aryan.reader.shared.ui.SharedMobileLibraryTab
 import com.aryan.reader.shared.ui.SharedMobileMainDestination
 import com.aryan.reader.shared.ui.SharedMobileMainScaffold
 import com.aryan.reader.shared.ui.SharedSettingsHub
+import com.aryan.reader.shared.ui.LocalSharedDeviceLayout
 import com.aryan.reader.shared.ui.LocalSharedStringResolver
 import com.aryan.reader.shared.ui.SharedStringResolver
 import com.aryan.reader.shared.ui.formatSharedMobileDateTime
@@ -502,6 +503,32 @@ class ReaderIosBridge internal constructor(
 
     /** Android-parity unified library grid/list toggle, persisted per device. */
     internal var iosUnifiedLibraryListView by mutableStateOf(loadIosUnifiedLibraryListView())
+
+    /**
+     * Fold geometry reported by the iOS host (`ReaderStatusBarHostController`), driving
+     * the Duo-only layout branches. Stays [IosDeviceLayoutSnapshot]'s default on every
+     * other device, which maps to [com.aryan.reader.shared.ui.SharedDeviceLayout.None].
+     */
+    internal var iosDeviceLayout by mutableStateOf(IosDeviceLayoutSnapshot())
+        private set
+
+    fun updateIosDeviceLayout(
+        foldPresent: Boolean,
+        foldActive: Boolean,
+        foldLeftFraction: Double,
+        foldTopFraction: Double,
+        foldWidthFraction: Double,
+        foldHeightFraction: Double,
+    ) {
+        iosDeviceLayout = IosDeviceLayoutSnapshot(
+            foldPresent = foldPresent,
+            foldActive = foldActive,
+            foldLeftFraction = foldLeftFraction,
+            foldTopFraction = foldTopFraction,
+            foldWidthFraction = foldWidthFraction,
+            foldHeightFraction = foldHeightFraction,
+        )
+    }
 
     internal var localStoreKitState by mutableStateOf(IosLocalStoreKitState())
         private set
@@ -6508,6 +6535,7 @@ private fun ReaderIosApp(
         CompositionLocalProvider(
             LocalSharedStringResolver provides stringResolver,
             LocalUsePdfFileNameAsDisplayName provides state.usePdfFileNameAsDisplayName,
+            LocalSharedDeviceLayout provides bridge.iosDeviceLayout.toSharedDeviceLayout(),
         ) {
         Box(Modifier.fillMaxSize()) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {

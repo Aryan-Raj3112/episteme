@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -68,6 +69,8 @@ fun <T> SharedAndroidUnifiedLibraryHome(
     bookCard: @Composable (T) -> Unit,
     bookListItem: @Composable (T) -> Unit,
     widthClass: SharedAndroidHomeWidthClass = SharedAndroidHomeWidthClass.COMPACT,
+    /** Host override (Duo). Null keeps the shared width-class mapping. */
+    gridCells: GridCells? = null,
     /** Rendered above the continue-reading card; empty when multi-tab reading is idle. */
     openTabsContent: @Composable () -> Unit = {},
     /**
@@ -80,7 +83,7 @@ fun <T> SharedAndroidUnifiedLibraryHome(
     contentResultRow: @Composable (T, SharedGlobalSearchBookResult, Boolean, () -> Unit) -> Unit = { _, _, _, _ -> },
     modifier: Modifier = Modifier,
 ) {
-    val gridCells = widthClass.bookGridCells()
+    val resolvedGridCells = gridCells ?: widthClass.bookGridCells()
     // Expansion lives here so the row composable stays stateless and the host
     // only supplies layout.
     val expandedBooks = remember { mutableStateMapOf<String, Boolean>() }
@@ -164,7 +167,7 @@ fun <T> SharedAndroidUnifiedLibraryHome(
                     ) { items(books, key = itemKey) { bookListItem(it) } }
                 } else {
                     LazyVerticalGrid(
-                        columns = gridCells,
+                        columns = resolvedGridCells,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(12.dp, 16.dp, 12.dp, 96.dp),
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -191,6 +194,8 @@ fun <T> SharedAndroidUnifiedLibrarySearch(
     onClose: () -> Unit,
     bookCard: @Composable (T) -> Unit,
     widthClass: SharedAndroidHomeWidthClass = SharedAndroidHomeWidthClass.COMPACT,
+    /** Host override (Duo). Null keeps the shared width-class mapping. */
+    gridCells: GridCells? = null,
     modifier: Modifier = Modifier,
 ) {
     val focusRequester = androidx.compose.runtime.remember { FocusRequester() }
@@ -219,7 +224,7 @@ fun <T> SharedAndroidUnifiedLibrarySearch(
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(noResultsLabel, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         } else {
             LazyVerticalGrid(
-                columns = widthClass.bookGridCells(),
+                columns = gridCells ?: widthClass.bookGridCells(),
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(bottom = 24.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
