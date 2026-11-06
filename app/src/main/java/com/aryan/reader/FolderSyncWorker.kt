@@ -41,6 +41,7 @@ import com.aryan.reader.data.LocalSyncUtils
 import com.aryan.reader.data.FolderBookMetadata
 import com.aryan.reader.data.effectiveReadingPositionModifiedTimestamp
 import com.aryan.reader.data.toSharedFolderBookMetadata
+import com.aryan.reader.shared.keepNonEmptyJson
 import com.aryan.reader.shared.BookItem as SharedBookItem
 import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.EpubBookmark
@@ -54,6 +55,31 @@ import com.aryan.reader.shared.reader.ReaderBookmark
 import java.io.File
 import java.util.concurrent.TimeUnit
 import android.provider.DocumentsContract
+
+/**
+ * Picks the bookmarks/highlights JSON to persist while merging a folder sidecar.
+ *
+ * Empty payloads travel through unaware that they may mean "this device has
+ * nothing to share" rather than "the user cleared everything", so an empty
+ * applied or mapped payload never wins against a non-empty local one
+ * ([keepNonEmptyJson]). [preferMappedOverExplicit] preserves the historical
+ * asymmetry between the two fields: explicit metadata wins for bookmarks, while
+ * a non-empty mapped highlight set wins over explicit metadata.
+ */
+internal fun resolveFolderAnnotationJson(
+    hasAppliedMetadata: Boolean,
+    appliedFieldIsExplicit: Boolean,
+    preferMappedOverExplicit: Boolean,
+    appliedJson: String?,
+    existingJson: String?,
+    mappedJson: String?,
+): String? = when {
+    !hasAppliedMetadata && existingJson != null -> existingJson
+    appliedFieldIsExplicit && !(preferMappedOverExplicit && mappedJson != null) ->
+        keepNonEmptyJson(appliedJson, existingJson)
+    mappedJson != null -> mappedJson
+    else -> keepNonEmptyJson(appliedJson, existingJson)
+}
 
 class FolderSyncWorker(
     private val appContext: Context,
@@ -726,13 +752,37 @@ class FolderSyncWorker(
             }
             val (remoteTs, jsonPayload) = sidecarData
 
+            // Timestamp probes must mirror the names the repositories use or a
+            // long book id is probed at a legacy path that never exists, and
+            // every remote sidecar looks "newer" than local forever.
             val safeSlashBookId = book.bookId.replace("/", "_")
             val localFiles = listOf(
-                File(appContext.filesDir, "annotations/annotation_$safeSlashBookId.json"),
+                File(
+                    appContext.filesDir,
+                    "annotations/" + AndroidBookArtifactPaths.sidecarName(
+                        prefix = "annotation_",
+                        sanitizedId = safeSlashBookId,
+                        stableKey = book.bookId,
+                    ),
+                ),
                 AndroidBookArtifactPaths.richTextFile(appContext.filesDir, book.bookId),
                 File(appContext.filesDir, "page_layouts/layout_$safeSlashBookId.json"),
-                File(appContext.filesDir, "textboxes/textboxes_$safeSlashBookId.json"),
-                File(appContext.filesDir, "pdf_highlights/highlights_$safeSlashBookId.json")
+                File(
+                    appContext.filesDir,
+                    "textboxes/" + AndroidBookArtifactPaths.sidecarName(
+                        prefix = "textboxes_",
+                        sanitizedId = safeSlashBookId,
+                        stableKey = book.bookId,
+                    ),
+                ),
+                File(
+                    appContext.filesDir,
+                    "pdf_highlights/" + AndroidBookArtifactPaths.sidecarName(
+                        prefix = "highlights_",
+                        sanitizedId = safeSlashBookId,
+                        stableKey = book.bookId,
+                    ),
+                )
             )
             val localTs = localFiles.maxOfOrNull { if (it.exists()) it.lastModified() else 0L } ?: 0L
 
@@ -1052,18 +1102,29 @@ class FolderSyncWorker(
             .takeIf { it.isNotEmpty() }
             ?.let(EpubAnnotationSerializer::highlightsToJson)
         val metadataHas = { name: String -> appliedMetadata?.hasExplicitField(name) == true }
-        val bookmarksJson = when {
-            appliedMetadata == null && existing != null -> existing.bookmarksJson
-            metadataHas("bookmarksJson") -> appliedMetadata?.bookmarksJson
-            mappedBookmarksJson != null -> mappedBookmarksJson
-            else -> appliedMetadata?.bookmarksJson ?: existing?.bookmarksJson
-        }
-        val highlightsJson = when {
-            appliedMetadata == null && existing != null -> existing.highlightsJson
-            metadataHas("highlightsJson") && mappedHighlightsJson == null -> appliedMetadata?.highlightsJson
-            mappedHighlightsJson != null -> mappedHighlightsJson
-            else -> appliedMetadata?.highlightsJson ?: existing?.highlightsJson
-        }
+        // An empty/absent bookmarksJson or highlightsJson in an applied v2
+        // sidecar ("this device has nothing to share") must never erase a
+        // non-empty local payload. The v2 writer always emits the keys, even
+        // with a null value, so an explicit-null is indistinguishable from an
+        // empty set and is therefore treated as "keep local". An explicit
+        // delete-all can still be persisted on the writing device; it simply
+        // does not propagate as a clear marker.
+        val bookmarksJson = resolveFolderAnnotationJson(
+            hasAppliedMetadata = appliedMetadata != null,
+            appliedFieldIsExplicit = metadataHas("bookmarksJson"),
+            preferMappedOverExplicit = false,
+            appliedJson = appliedMetadata?.bookmarksJson,
+            existingJson = existing?.bookmarksJson,
+            mappedJson = mappedBookmarksJson,
+        )
+        val highlightsJson = resolveFolderAnnotationJson(
+            hasAppliedMetadata = appliedMetadata != null,
+            appliedFieldIsExplicit = metadataHas("highlightsJson"),
+            preferMappedOverExplicit = true,
+            appliedJson = appliedMetadata?.highlightsJson,
+            existingJson = existing?.highlightsJson,
+            mappedJson = mappedHighlightsJson,
+        )
         val lastChapterIndex = when {
             legacyPosition?.chapterIndex != null -> legacyPosition.chapterIndex
             metadataHas("lastChapterIndex") -> appliedMetadata?.lastChapterIndex

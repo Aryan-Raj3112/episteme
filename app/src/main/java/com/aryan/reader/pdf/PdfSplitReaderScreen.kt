@@ -835,6 +835,15 @@ private fun PdfSplitDocumentPane(
             } == true
         }
     }
+    // The available list is summary-projected and never carries bookmarks;
+    // fetch the full row so the pane's reader opens with its saved bookmarks.
+    var fullRow by remember(document.bookId, document.uriString) {
+        mutableStateOf<RecentFileItem?>(null)
+    }
+    LaunchedEffect(document.bookId, document.uriString) {
+        fullRow = viewModel.getRecentFileSnapshot(document.bookId)
+    }
+    val effectiveBookmarksJson = fullRow?.bookmarksJson ?: item?.bookmarksJson
     val resolvedPdfUri = item?.getUri() ?: document.uriString.toUri()
 
     LaunchedEffect(paneId, document.sessionId, document.bookId, isFocused) {
@@ -882,7 +891,7 @@ private fun PdfSplitDocumentPane(
                     PdfViewerScreen(
                         pdfUri = resolvedPdfUri,
                         initialPage = item.lastPage,
-                        initialBookmarksJson = item.bookmarksJson,
+                        initialBookmarksJson = effectiveBookmarksJson,
                         isProUser = isProUser,
                         // The pane's reader back arrow removes the pane from the
                         // split workspace (the pane header was removed to give
@@ -905,7 +914,7 @@ private fun PdfSplitDocumentPane(
                         pdfUri = resolvedPdfUri,
                         sessionId = document.sessionId,
                         initialPage = item.lastPage,
-                        initialBookmarksJson = item.bookmarksJson,
+                        initialBookmarksJson = effectiveBookmarksJson,
                     ),
                     isPaneFocused = isFocused,
                 )

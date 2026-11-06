@@ -133,6 +133,7 @@ import com.aryan.reader.shared.AndroidShareArtifactManager
 import com.aryan.reader.shared.CloudBookTombstone
 import com.aryan.reader.shared.CloudFolderDeviceBinding
 import com.aryan.reader.shared.compareNatural
+import com.aryan.reader.shared.keepNonEmptyJson
 import com.aryan.reader.shared.CloudFolderConflictResolution
 import com.aryan.reader.shared.CloudFolderConflictUiItem
 import com.aryan.reader.shared.CloudFolderIncomingChoice
@@ -1012,9 +1013,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     initialPageInBook = item.lastPage,
                     initialPageInBookIsExplicit = false,
                     isOpeningFromTtsNotification = false,
-                    initialBookmarksJson = item.bookmarksJson,
+                    // Summary-projected items never carry bookmarks/highlights;
+                    // the backfill below fills them from the full row.
+                    initialBookmarksJson = null,
+                    initialHighlightsJson = null,
                 )
             }
+            backfillReaderSidecarSnapshot(bookId, expectedUriString = it.toString())
 
             viewModelScope.launch {
                 addFileToRecent(
@@ -1031,6 +1036,49 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 it.copy(
                     tabState = tabState.tabState,
                 )
+            }
+        }
+    }
+
+    /**
+     * Full row for [bookId], including the heavy bookmarks/highlights JSON
+     * columns that the summary projection omits. Used by readers and split
+     * panes that were opened from a summary-projected item and need the real
+     * snapshot. Returns null when the book is unknown.
+     */
+    suspend fun getRecentFileSnapshot(bookId: String): RecentFileItem? =
+        runCatching { bookStore.getFileByBookId(bookId) }.getOrNull()
+
+    /**
+     * Patches reader state with the full row's bookmarks/highlights after an
+     * open that only had a summary-projected item (tab switch, split-pane
+     * activation). The summary deliberately omits the heavy JSON columns, so
+     * those opens set `initialBookmarksJson`/`initialHighlightsJson` to null;
+     * this fetches the full row and patches state, and the reader applies
+     * the late snapshot guarded against user edits (#556). No-op when the
+     * requested book is no longer the selected one (another open raced us).
+     *
+     * The fetched values replace the state unconditionally: this state was just
+     * reset to null for the requested book, so a null column ("this book has no
+     * bookmarks/highlights") must clear any value left over from a previously
+     * selected book rather than be masked by it.
+     */
+    private fun backfillReaderSidecarSnapshot(bookId: String, expectedUriString: String? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val full = runCatching { bookStore.getFileByBookId(bookId) }.getOrNull() ?: return@launch
+            _internalState.update { state ->
+                val stillActive = state.selectedBookId == bookId &&
+                    (expectedUriString == null ||
+                        state.selectedPdfUri?.toString() == expectedUriString ||
+                        state.selectedEpubUri?.toString() == expectedUriString)
+                if (!stillActive) {
+                    state
+                } else {
+                    state.copy(
+                        initialBookmarksJson = full.bookmarksJson,
+                        initialHighlightsJson = full.highlightsJson,
+                    )
+                }
             }
         }
     }
@@ -1371,11 +1419,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 selectedEpubBook = null,
                 initialPageInBook = item.lastPage,
                 initialPageInBookIsExplicit = false,
-                initialBookmarksJson = item.bookmarksJson,
+                // Summary-projected items never carry bookmarks/highlights;
+                // the backfill below fills them from the full row.
+                initialBookmarksJson = null,
                 initialHighlightsJson = null,
                 isOpeningFromTtsNotification = false,
             )
         }
+        backfillReaderSidecarSnapshot(item.bookId, expectedUriString = uri.toString())
     }
 
     private fun persistPdfSplitWorkspace(workspace: PdfSplitWorkspaceState) {
@@ -1705,11 +1756,23 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             annotations = currentAnnotations
         )
 
+        // A page operation must remap the persisted bookmarks, not an empty
+        // in-memory snapshot: if the reader handed us nothing (the async
+        // snapshot never landed), fall back to the DB row so page ops cannot
+        // silently drop every bookmark. Deliberate trade-off: if the DB row still
+        // holds a delete-all that has not committed yet, the remap can resurrect
+        // entries; surviving an accidental wipe is the priority here.
+        val persistedBookmarksJson = runCatching {
+            bookStore.getFileByBookId(bookId)?.bookmarksJson
+        }.getOrNull()
+        val remapBookmarksInput =
+            keepNonEmptyJson(currentBookmarksJson, persistedBookmarksJson) ?: currentBookmarksJson
+
         val newBookmarksJson = try {
             remapPdfBookmarksJsonForLayoutChange(
                 currentLayout = currentLayout,
                 updatedLayout = newLayout,
-                currentBookmarksJson = currentBookmarksJson
+                currentBookmarksJson = remapBookmarksInput
             )
         } catch (e: Exception) {
             Timber.e(e, "Error shifting bookmarks")
@@ -1757,11 +1820,23 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             annotations = currentAnnotations
         )
 
+        // A page operation must remap the persisted bookmarks, not an empty
+        // in-memory snapshot: if the reader handed us nothing (the async
+        // snapshot never landed), fall back to the DB row so page ops cannot
+        // silently drop every bookmark. Deliberate trade-off: if the DB row still
+        // holds a delete-all that has not committed yet, the remap can resurrect
+        // entries; surviving an accidental wipe is the priority here.
+        val persistedBookmarksJson = runCatching {
+            bookStore.getFileByBookId(bookId)?.bookmarksJson
+        }.getOrNull()
+        val remapBookmarksInput =
+            keepNonEmptyJson(currentBookmarksJson, persistedBookmarksJson) ?: currentBookmarksJson
+
         val newBookmarksJson = try {
             remapPdfBookmarksJsonForLayoutChange(
                 currentLayout = currentLayout,
                 updatedLayout = newLayout,
-                currentBookmarksJson = currentBookmarksJson
+                currentBookmarksJson = remapBookmarksInput
             )
         } catch (e: Exception) {
             Timber.e(e, "Error shifting bookmarks")
@@ -7530,33 +7605,31 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun saveHighlights(bookId: String, highlightsJson: String) {
         viewModelScope.launch {
-            val currentBookUri = _internalState.value.selectedPdfUri ?: _internalState.value.selectedEpubUri
-            if (currentBookUri != null) {
-                bookStore.getFileByUri(currentBookUri.toString())?.let { item ->
-                    if (annotationJsonEquivalentForNoop(item.highlightsJson, highlightsJson)) {
-                        logCloudSyncTrace {
-                            "android.reader.highlights_save_noop book=${item.bookId} highlights=${highlightsJson.cloudSyncAnnotationSummary()}"
-                        }
-                        return@launch
-                    }
-                    logCloudSyncTrace {
-                        "android.reader.highlights_save book=${item.bookId} highlights=${highlightsJson.cloudSyncAnnotationSummary()}"
-                    }
-                    bookStore.updateHighlights(item.bookId, highlightsJson)
+            // Never attribute a highlight save to whichever book happens to be
+            // selected when the write runs: the caller knows the book the
+            // highlights belong to. The URI fallback only serves callers that
+            // could not supply a book id at all.
+            val stableBookId = bookId.trim()
+            val targetBookId = stableBookId.takeIf { it.isNotBlank() }
+                ?: _internalState.value.let { state ->
+                    (state.selectedPdfUri ?: state.selectedEpubUri)?.toString()
+                        ?.let { uri -> bookStore.getFileByUri(uri)?.bookId }
                 }
-            } else if (bookId.isNotBlank()) {
-                val existing = bookStore.getFileByBookId(bookId)
-                if (annotationJsonEquivalentForNoop(existing?.highlightsJson, highlightsJson)) {
-                    logCloudSyncTrace {
-                        "android.reader.highlights_save_noop book=$bookId highlights=${highlightsJson.cloudSyncAnnotationSummary()}"
-                    }
-                    return@launch
-                }
-                logCloudSyncTrace {
-                    "android.reader.highlights_save book=$bookId highlights=${highlightsJson.cloudSyncAnnotationSummary()}"
-                }
-                bookStore.updateHighlights(bookId, highlightsJson)
+            if (targetBookId == null) {
+                Timber.w("saveHighlights: no book identity for write; dropping")
+                return@launch
             }
+            val existing = bookStore.getFileByBookId(targetBookId)
+            if (annotationJsonEquivalentForNoop(existing?.highlightsJson, highlightsJson)) {
+                logCloudSyncTrace {
+                    "android.reader.highlights_save_noop book=$targetBookId highlights=${highlightsJson.cloudSyncAnnotationSummary()}"
+                }
+                return@launch
+            }
+            logCloudSyncTrace {
+                "android.reader.highlights_save book=$targetBookId highlights=${highlightsJson.cloudSyncAnnotationSummary()}"
+            }
+            bookStore.updateHighlights(targetBookId, highlightsJson)
         }
     }
 
@@ -7568,12 +7641,19 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             Timber.tag("FileSwitch")
                 .d("Starting seamless switch to ${item.bookId}, position: $syncPosition")
 
+            // Callers hand us summary-projected items, which never carry
+            // bookmarks/highlights; pull the full row so the seamlessly
+            // opened reader starts with its saved state.
+            val effectiveItem = runCatching {
+                bookStore.getFileByBookId(item.bookId)
+            }.getOrNull() ?: item
+
             val stateUpdateDeferred = CompletableDeferred<Boolean>()
             pendingSwitchDeferred = stateUpdateDeferred
 
             _internalState.update { it.copy(isLoading = true, errorMessage = null) }
 
-            val uri = item.getUri() ?: run {
+            val uri = effectiveItem.getUri() ?: run {
                 _internalState.update {
                     it.copy(
                         isLoading = false, errorMessage = appContext.getString(R.string.error_file_location_not_found)
@@ -7584,8 +7664,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 return@launch
             }
 
-            val type = item.type
-            val bookId = item.bookId
+            val type = effectiveItem.type
+            val bookId = effectiveItem.bookId
 
             if (type in PDF_VIEWER_FILE_TYPES) {
                 persistReaderSession(bookId, type)
@@ -7600,7 +7680,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         initialPageInBook = syncPosition,
                         initialPageInBookIsExplicit = true,
                         isOpeningFromTtsNotification = false,
-                        initialBookmarksJson = item.bookmarksJson,
+                        initialBookmarksJson = effectiveItem.bookmarksJson,
                     )
                 }
 
@@ -7610,7 +7690,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     uri,
                     type,
                     bookId,
-                    customDisplayName = item.displayName,
+                    customDisplayName = effectiveItem.displayName,
                     isRecent = true,
                     sourceFolderUri = null
                 )
@@ -7622,7 +7702,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             } else if (type in EPUB_READER_FILE_TYPES) {
                 persistReaderSession(bookId, type)
                 try {
-                    val epubBook = restoreEpubReaderBook(type, bookId, item.displayName, uri)
+                    val epubBook = restoreEpubReaderBook(type, bookId, effectiveItem.displayName, uri)
                     _internalState.update { state ->
                         markReaderSessionReady(
                             startReaderSession(state, bookId, type),
@@ -7635,8 +7715,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 chapterIndex = syncPosition, blockIndex = 0, charOffset = 0
                             ),
                             initialCfi = null,
-                            initialBookmarksJson = item.bookmarksJson,
-                            initialHighlightsJson = item.highlightsJson,
+                            initialBookmarksJson = effectiveItem.bookmarksJson,
+                            initialHighlightsJson = effectiveItem.highlightsJson,
                         )
                     }
 
@@ -7647,7 +7727,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         type,
                         bookId,
                         epubBook,
-                        item.displayName,
+                        effectiveItem.displayName,
                         isRecent = true,
                         sourceFolderUri = null
                     )

@@ -109,9 +109,10 @@ class CloudFolderSyncSurfaceTest {
         )
         val prompt = selectCloudFolderIncomingPrompt(roots, setOf("root-b", "root-a", "root-c"))
         assertNotNull(prompt)
-        // Case-insensitive name first ("Alpha" < "alpha" < "Zeta" would tie on
-        // lowercased name; root-a vs root-c tie-breaks on rootId).
-        assertEquals("root-a", prompt.rootId)
+        // compareNatural lowercases while scanning but keeps a trailing
+        // case-sensitive comparison to stay deterministic across platforms, so
+        // "Alpha" sorts before "alpha" and root-c is the lowest name here.
+        assertEquals("root-c", prompt.rootId)
 
         assertNull(selectCloudFolderIncomingPrompt(roots, emptySet()))
         assertNull(

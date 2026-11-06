@@ -28,7 +28,7 @@ class BookmarkPersistencePolicyTest {
     fun `empty snapshot never wipes local bookmarks`() {
         // Tab switch with a stale empty snapshot over good in-memory state.
         assertFalse(
-            shouldApplyBookmarkSnapshot(
+            shouldApplyAnnotationSnapshot(
                 hasLocalEdits = false,
                 localCount = 2,
                 snapshotJson = "[]",
@@ -36,7 +36,7 @@ class BookmarkPersistencePolicyTest {
             )
         )
         assertFalse(
-            shouldApplyBookmarkSnapshot(
+            shouldApplyAnnotationSnapshot(
                 hasLocalEdits = false,
                 localCount = 2,
                 snapshotJson = null,
@@ -49,7 +49,7 @@ class BookmarkPersistencePolicyTest {
     fun `late non-empty snapshot fills fresh state`() {
         // Async open: reader composed with null, DB value arrives later.
         assertTrue(
-            shouldApplyBookmarkSnapshot(
+            shouldApplyAnnotationSnapshot(
                 hasLocalEdits = false,
                 localCount = 0,
                 snapshotJson = """[{"pageIndex":1}]""",
@@ -62,7 +62,7 @@ class BookmarkPersistencePolicyTest {
     fun `local edits win over any snapshot`() {
         // Unsaved toggles and intentional delete-all must survive tab switches.
         assertFalse(
-            shouldApplyBookmarkSnapshot(
+            shouldApplyAnnotationSnapshot(
                 hasLocalEdits = true,
                 localCount = 3,
                 snapshotJson = """[{"pageIndex":1}]""",
@@ -70,7 +70,7 @@ class BookmarkPersistencePolicyTest {
             )
         )
         assertFalse(
-            shouldApplyBookmarkSnapshot(
+            shouldApplyAnnotationSnapshot(
                 hasLocalEdits = true,
                 localCount = 0,
                 snapshotJson = """[{"pageIndex":1}]""",
@@ -82,13 +82,26 @@ class BookmarkPersistencePolicyTest {
     @Test
     fun `non-empty snapshot restores dropped state without edits`() {
         assertTrue(
-            shouldApplyBookmarkSnapshot(
+            shouldApplyAnnotationSnapshot(
                 hasLocalEdits = false,
                 localCount = 0,
                 snapshotJson = """[{"pageIndex":1}]""",
                 snapshotCount = 1,
             )
         )
+    }
+
+    @Test
+    fun `empty save is skipped until local state exists`() {
+        // Fresh reader: nothing loaded, nothing authored. Persisting this empty
+        // set is what wiped highlights/bookmarks on open.
+        assertTrue(shouldSkipEmptyAnnotationSave(hasLocalState = false, localCount = 0))
+        // Once local state exists (loaded or authored), an empty set is a real
+        // delete-all and must persist.
+        assertFalse(shouldSkipEmptyAnnotationSave(hasLocalState = true, localCount = 0))
+        // Non-empty local state is never skipped.
+        assertFalse(shouldSkipEmptyAnnotationSave(hasLocalState = false, localCount = 2))
+        assertFalse(shouldSkipEmptyAnnotationSave(hasLocalState = true, localCount = 2))
     }
 
     @Test

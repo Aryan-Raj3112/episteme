@@ -169,6 +169,8 @@ import com.aryan.reader.shared.spendableDisplayText
 import com.aryan.reader.shared.parseSpendGuardSentinel
 import com.aryan.reader.shared.formatSpendGuardCountdown
 import com.aryan.reader.shared.highlightFillCss
+import com.aryan.reader.shared.shouldApplyAnnotationSnapshot
+import com.aryan.reader.shared.shouldSkipEmptyAnnotationSave
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.TtsWordReplacementsSheet
@@ -505,7 +507,9 @@ fun EpubReaderHost(
         )
     }
 
-    val userHighlights = remember(epubBook.title) {
+    // Keyed on the stable book id, not the title: two books can share a title,
+    // and a title-keyed remember would leak one book's highlights into another.
+    val userHighlights = remember(readerCacheBookId) {
         mutableStateListOf<UserHighlight>().apply {
             if (initialHighlightsJson != null) {
                 addAll(parseHighlightsJson(initialHighlightsJson))
@@ -514,8 +518,45 @@ fun EpubReaderHost(
             }
         }
     }
+    // Authoritative-state flag for this session: true once a non-empty snapshot
+    // loaded or the reader ever held non-empty local highlights. It separates
+    // "the stored snapshot has not arrived / the book has none" from a real
+    // delete-all, so an empty save is not dropped (which resurrects deleted
+    // highlights on reopen) and a late snapshot cannot revert an intentional
+    // clear.
+    var highlightsHaveLocalState by remember(readerCacheBookId) {
+        mutableStateOf(userHighlights.isNotEmpty())
+    }
+
+    // Late snapshot fill: the open and seamless-switch paths load
+    // `initialHighlightsJson` asynchronously, so the first composition may run
+    // against the prefs fallback (usually empty). Apply the real snapshot once
+    // it arrives, but never re-seed after anything touched the list.
+    LaunchedEffect(initialHighlightsJson, readerCacheBookId) {
+        val snapshotJson = initialHighlightsJson ?: return@LaunchedEffect
+        if (highlightsHaveLocalState || userHighlights.isNotEmpty()) return@LaunchedEffect
+        val parsed = parseHighlightsJson(snapshotJson)
+        if (shouldApplyAnnotationSnapshot(
+                hasLocalEdits = false,
+                localCount = userHighlights.size,
+                snapshotJson = snapshotJson,
+                snapshotCount = parsed.size,
+            )
+        ) {
+            userHighlights.addAll(parsed)
+            highlightsHaveLocalState = true
+        }
+    }
 
     LaunchedEffect(userHighlights.size, userHighlights.toList()) {
+        // Any non-empty local state means the stored snapshot is loaded or the
+        // user authored highlights, so an empty set is a real delete-all.
+        if (userHighlights.isNotEmpty()) highlightsHaveLocalState = true
+        // Skip the empty set that exists only because the async snapshot had not
+        // arrived yet; that write is what wiped highlights on open.
+        if (shouldSkipEmptyAnnotationSave(highlightsHaveLocalState, userHighlights.size)) {
+            return@LaunchedEffect
+        }
         val json = highlightsToJson(userHighlights)
         onHighlightsChanged(json)
 
@@ -660,14 +701,14 @@ fun EpubReaderHost(
 
     // Late snapshot fill: openBook loads `initialBookmarksJson` asynchronously,
     // so the first composition may run with null. Fill once the real value
-    // arrives, but never wipe user edits (see shared shouldApplyBookmarkSnapshot).
+    // arrives, but never wipe user edits (see shared shouldApplyAnnotationSnapshot).
     LaunchedEffect(initialBookmarksJson, readerCacheBookId) {
         if (bookmarksDirty) return@LaunchedEffect
         val snapshotJson = initialBookmarksJson ?: return@LaunchedEffect
         if (snapshotJson == lastAppliedBookmarksJson) return@LaunchedEffect
         lastAppliedBookmarksJson = snapshotJson
         val parsed = loadBookmarks(context, epubBook.title, epubBook.chapters, snapshotJson)
-        if (com.aryan.reader.shared.shouldApplyBookmarkSnapshot(
+        if (shouldApplyAnnotationSnapshot(
                 hasLocalEdits = false,
                 localCount = bookmarks.size,
                 snapshotJson = snapshotJson,

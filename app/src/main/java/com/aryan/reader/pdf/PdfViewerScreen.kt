@@ -1126,6 +1126,12 @@ private fun PdfViewerScreenContent(
     val currentPdfUri by rememberUpdatedState(effectivePdfUri)
     val currentVisibleAllAnnotations by rememberUpdatedState(visibleAllAnnotations)
     val currentRichTextController by rememberUpdatedState(richTextController)
+    // The persistence instance (and with it, its mutex and last-saved hashes)
+    // must survive the lifetime of a document: re-creating it on each
+    // recomposition reset the hashes and let concurrent saves interleave.
+    // Keep the callbacks out of the remember keys and delegate to the latest.
+    val currentOnBookmarksChanged by rememberUpdatedState(onBookmarksChanged)
+    val currentOnSavePosition by rememberUpdatedState(onSavePosition)
 
     val diagPaneContext = "pane=${surfaceState.paneBookId ?: "solo"} session=${surfaceState.paneSessionId} " +
         "focused=$isPaneFocused ownsGlobals=$ownsPaneGlobals"
@@ -1148,15 +1154,13 @@ private fun PdfViewerScreenContent(
         annotationRepository,
         textBoxRepository,
         highlightRepository,
-        onBookmarksChanged,
-        onSavePosition
     ) {
         PdfReaderPersistence(
             annotationRepository = annotationRepository,
             textBoxRepository = textBoxRepository,
             highlightRepository = highlightRepository,
-            onBookmarksChanged = onBookmarksChanged,
-            onSavePosition = onSavePosition,
+            onBookmarksChanged = { json -> currentOnBookmarksChanged(json) },
+            onSavePosition = { uri, page, total -> currentOnSavePosition(uri, page, total) },
             onSidecarsCommitted = viewModel::onPdfSidecarsCommitted
         )
     }
@@ -2284,7 +2288,7 @@ private fun PdfViewerScreenContent(
         val snapshotBookmarks = loadPdfBookmarksFromJson(effectiveInitialBookmarksJson)
         if (snapshotBookmarks.isEmpty()) return@LaunchedEffect
         val cachedBookmarks = surfaceState.bookmarkCache[activeId]
-        if (com.aryan.reader.shared.shouldApplyBookmarkSnapshot(
+        if (com.aryan.reader.shared.shouldApplyAnnotationSnapshot(
                 hasLocalEdits = false,
                 localCount = cachedBookmarks?.size ?: bookmarks.size,
                 snapshotJson = effectiveInitialBookmarksJson,
@@ -3587,7 +3591,7 @@ private fun PdfViewerScreenContent(
             val snapshotBookmarks = loadPdfBookmarksFromJson(effectiveInitialBookmarksJson)
             val restored = if (hasLocalBookmarkEdits && cachedBookmarks != null) {
                 cachedBookmarks
-            } else if (com.aryan.reader.shared.shouldApplyBookmarkSnapshot(
+            } else if (com.aryan.reader.shared.shouldApplyAnnotationSnapshot(
                     hasLocalEdits = hasLocalBookmarkEdits,
                     localCount = cachedBookmarks?.size ?: bookmarks.size,
                     snapshotJson = effectiveInitialBookmarksJson,
@@ -7089,7 +7093,7 @@ private class PdfViewerSurfaceState {
     // Per-book bookmark cache: tab switches reuse one composition, so a stale
     // `initialBookmarksJson` snapshot must not wipe good in-memory state (#556).
     // User edits seed the cache and mark the book dirty; snapshot restores only
-    // fill books without local edits (see shared shouldApplyBookmarkSnapshot).
+    // fill books without local edits (see shared shouldApplyAnnotationSnapshot).
     val bookmarkCache: androidx.compose.runtime.snapshots.SnapshotStateMap<String, Set<PdfBookmark>> =
         androidx.compose.runtime.mutableStateMapOf()
     val bookmarkDirtyBookIds: androidx.compose.runtime.snapshots.SnapshotStateSet<String> =

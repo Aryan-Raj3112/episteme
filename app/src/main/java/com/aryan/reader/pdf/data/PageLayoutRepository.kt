@@ -22,6 +22,8 @@ package com.aryan.reader.pdf.data
 import android.content.Context
 import com.aryan.reader.pdf.PDF_BLANK_PAGE_PERSISTENCE_TAG
 import com.aryan.reader.pdf.pdfLayoutDebugSummary
+import com.aryan.reader.data.writeJsonAtomically
+import com.aryan.reader.data.withSidecarIoLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -67,7 +69,10 @@ class PageLayoutRepository(private val context: Context) {
             }
             jsonArray.put(obj)
         }
-        file.writeText(jsonArray.toString())
+        // Atomic write: a torn layout JSON silently falls back to "all PDF
+        // pages" in loadLayout, which shifts every bookmark indexed by display
+        // page.
+        file.writeJsonAtomically(jsonArray.toString())
         Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
             "repo.saveLayout.done bookId=$bookId file=${file.absolutePath} " +
                 "afterExists=${file.exists()} afterBytes=${file.length()} afterMtime=${file.lastModified()} " +
@@ -82,41 +87,47 @@ class PageLayoutRepository(private val context: Context) {
                 "exists=${file.exists()} bytes=${if (file.exists()) file.length() else 0L} " +
                 "mtime=${if (file.exists()) file.lastModified() else 0L}"
         )
-        if (!file.exists()) {
-            val fallback = (0 until totalPdfPages).map { VirtualPage.PdfPage(it) }
-            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).w(
-                "repo.loadLayout.missing bookId=$bookId returningDefault=${fallback.pdfLayoutDebugSummary()}"
-            )
-            return@withContext fallback
-        }
-
-        try {
-            val json = file.readText()
-            val array = JSONArray(json)
-            val list = mutableListOf<VirtualPage>()
-            for (i in 0 until array.length()) {
-                val obj = array.getJSONObject(i)
-                val type = obj.optString("type", "pdf")
-                if (type == "pdf") {
-                    list.add(VirtualPage.PdfPage(obj.getInt("index")))
-                } else {
-                    val w = obj.optInt("w", 595)
-                    val h = obj.optInt("h", 842)
-                    val isManual = obj.optBoolean("manual", false)
-                    list.add(VirtualPage.BlankPage(obj.getString("id"), w, h, isManual))
-                }
+        // Hold the sidecar IO lock: an atomic writer briefly rotates the
+        // destination to .bak before installing the new file, and a read in
+        // that window would look like "no layout file" and fall back to
+        // all-PDF pages, shifting every bookmark indexed by display page.
+        file.withSidecarIoLock {
+            if (!file.exists()) {
+                val fallback = (0 until totalPdfPages).map { VirtualPage.PdfPage(it) }
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).w(
+                    "repo.loadLayout.missing bookId=$bookId returningDefault=${fallback.pdfLayoutDebugSummary()}"
+                )
+                return@withSidecarIoLock fallback
             }
-            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
-                "repo.loadLayout.parsed bookId=$bookId layout=${list.pdfLayoutDebugSummary()}"
-            )
-            list
-        } catch (e: Exception) {
-            val fallback = (0 until totalPdfPages).map { VirtualPage.PdfPage(it) }
-            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).e(
-                e,
-                "repo.loadLayout.failed bookId=$bookId returningDefault=${fallback.pdfLayoutDebugSummary()}"
-            )
-            fallback
+
+            try {
+                val json = file.readText()
+                val array = JSONArray(json)
+                val list = mutableListOf<VirtualPage>()
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    val type = obj.optString("type", "pdf")
+                    if (type == "pdf") {
+                        list.add(VirtualPage.PdfPage(obj.getInt("index")))
+                    } else {
+                        val w = obj.optInt("w", 595)
+                        val h = obj.optInt("h", 842)
+                        val isManual = obj.optBoolean("manual", false)
+                        list.add(VirtualPage.BlankPage(obj.getString("id"), w, h, isManual))
+                    }
+                }
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                    "repo.loadLayout.parsed bookId=$bookId layout=${list.pdfLayoutDebugSummary()}"
+                )
+                list
+            } catch (e: Exception) {
+                val fallback = (0 until totalPdfPages).map { VirtualPage.PdfPage(it) }
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).e(
+                    e,
+                    "repo.loadLayout.failed bookId=$bookId returningDefault=${fallback.pdfLayoutDebugSummary()}"
+                )
+                fallback
+            }
         }
     }
 
@@ -130,41 +141,45 @@ class PageLayoutRepository(private val context: Context) {
         Timber.tag("PdfExportDebug").d("PageLayoutRepo: Looking for layout at ${file.absolutePath}")
         Timber.tag("PdfExportDebug").d("PageLayoutRepo: File exists: ${file.exists()}")
 
-        if (!file.exists()) {
-            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).w("repo.getLayoutOrNull.missing bookId=$bookId")
-            Timber.tag("PdfExportDebug").w("PageLayoutRepo: No layout file for book $bookId")
-            return@withContext null
-        }
-
-        try {
-            val json = file.readText()
-            Timber.tag("PdfExportDebug").v("PageLayoutRepo: Layout JSON: ${json.take(300)}")
-
-            val array = JSONArray(json)
-            val list = mutableListOf<VirtualPage>()
-            for (i in 0 until array.length()) {
-                val obj = array.getJSONObject(i)
-                val type = obj.optString("type", "pdf")
-                if (type == "pdf") {
-                    list.add(VirtualPage.PdfPage(obj.getInt("index")))
-                } else {
-                    val w = obj.optInt("w", 595)
-                    val h = obj.optInt("h", 842)
-                    val isManual = obj.optBoolean("manual", false)
-                    list.add(VirtualPage.BlankPage(obj.getString("id"), w, h, isManual))
-                }
+        // Hold the sidecar IO lock so the writer's backup rotation cannot be
+        // observed as "no layout file" (which returns null and skips export).
+        file.withSidecarIoLock {
+            if (!file.exists()) {
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).w("repo.getLayoutOrNull.missing bookId=$bookId")
+                Timber.tag("PdfExportDebug").w("PageLayoutRepo: No layout file for book $bookId")
+                return@withSidecarIoLock null
             }
-            Timber.tag("PdfExportDebug").i("PageLayoutRepo: Parsed ${list.size} virtual pages (${
-                list.count { it is VirtualPage.PdfPage }
-            } PDF, ${list.count { it is VirtualPage.BlankPage }} blank)")
-            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
-                "repo.getLayoutOrNull.parsed bookId=$bookId layout=${list.pdfLayoutDebugSummary()}"
-            )
-            list
-        } catch (e: Exception) {
-            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).e(e, "repo.getLayoutOrNull.failed bookId=$bookId")
-            Timber.tag("PdfExportDebug").e(e, "PageLayoutRepo: Failed to parse layout")
-            null
+
+            try {
+                val json = file.readText()
+                Timber.tag("PdfExportDebug").v("PageLayoutRepo: Layout JSON: ${json.take(300)}")
+
+                val array = JSONArray(json)
+                val list = mutableListOf<VirtualPage>()
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    val type = obj.optString("type", "pdf")
+                    if (type == "pdf") {
+                        list.add(VirtualPage.PdfPage(obj.getInt("index")))
+                    } else {
+                        val w = obj.optInt("w", 595)
+                        val h = obj.optInt("h", 842)
+                        val isManual = obj.optBoolean("manual", false)
+                        list.add(VirtualPage.BlankPage(obj.getString("id"), w, h, isManual))
+                    }
+                }
+                Timber.tag("PdfExportDebug").i("PageLayoutRepo: Parsed ${list.size} virtual pages (${
+                    list.count { it is VirtualPage.PdfPage }
+                } PDF, ${list.count { it is VirtualPage.BlankPage }} blank)")
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                    "repo.getLayoutOrNull.parsed bookId=$bookId layout=${list.pdfLayoutDebugSummary()}"
+                )
+                list
+            } catch (e: Exception) {
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).e(e, "repo.getLayoutOrNull.failed bookId=$bookId")
+                Timber.tag("PdfExportDebug").e(e, "PageLayoutRepo: Failed to parse layout")
+                null
+            }
         }
     }
 

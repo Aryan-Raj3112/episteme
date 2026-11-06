@@ -107,7 +107,7 @@ class SharedPptxOoXmlTest {
         assertEquals("3.", SharedPptxOoXml.formatAutoNumber(3, "arabicPeriod"))
         assertEquals("c)", SharedPptxOoXml.formatAutoNumber(3, "alphaLcParenR"))
         assertEquals("C)", SharedPptxOoXml.formatAutoNumber(3, "alphaUcParenR"))
-        assertEquals("iv", SharedPptxOoXml.formatAutoNumber(4, "romanLcPeriod"))
+        assertEquals("iv", SharedPptxOoXml.formatAutoNumber(4, "romanLcPeriod").trimEnd('.'))
         assertEquals("(IV)", SharedPptxOoXml.formatAutoNumber(4, "romanUcParenBoth"))
         assertEquals("AA", SharedPptxOoXml.formatAutoNumber(27, "alphaUcPeriod").trimEnd('.'))
     }

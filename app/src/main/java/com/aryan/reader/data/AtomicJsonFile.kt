@@ -86,6 +86,16 @@ private val SIDEAR_WRITE_LOCKS = Array(SIDEAR_WRITE_LOCK_STRIPES) { ReentrantLoc
 
 private const val SIDEAR_WRITE_LOCK_STRIPES = 64
 
+/**
+ * Serializes a sidecar read against the writers above. Readers that arrive
+ * between the backup rotation and the staging install inside
+ * [writeJsonAtomically] would otherwise observe no destination file and
+ * return empty state; that "empty" then gets persisted as a whole-set wipe.
+ * Readers must hold this lock too. The critical section stays a short
+ * metadata check plus the read itself.
+ */
+fun <T> File.withSidecarIoLock(block: () -> T): T = withSidecarWriteLock(block)
+
 /** Writes [write]'s payload into the `$name.new` staging file and returns it. */
 private fun File.stageJson(write: (OutputStream) -> Unit): File {
     parentFile?.mkdirs()

@@ -5,6 +5,7 @@ import android.content.Context
 import com.aryan.reader.data.AndroidBookArtifactPaths
 import com.aryan.reader.logCloudAnnotationSyncTrace
 import com.aryan.reader.data.writeJsonAtomically
+import com.aryan.reader.data.withSidecarIoLock
 import com.aryan.reader.pdf.PdfUserHighlight
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -29,22 +30,24 @@ class PdfHighlightRepository(private val context: Context) {
         withContext(Dispatchers.IO) {
             try {
                 val file = getFileForSync(bookId)
-                if (highlights.isEmpty()) {
-                    if (file.exists()) file.delete()
-                    return@withContext
-                }
-                val json = HighlightSerializer.toJson(highlights)
-                if (file.exists() && file.readText() == json) {
+                file.withSidecarIoLock {
+                    if (highlights.isEmpty()) {
+                        if (file.exists()) file.delete()
+                        return@withSidecarIoLock
+                    }
+                    val json = HighlightSerializer.toJson(highlights)
+                    if (file.exists() && file.readText() == json) {
+                        logCloudAnnotationSyncTrace {
+                            "android.repository.save_highlights_noop book=$bookId count=${highlights.size} " +
+                                "bytes=${file.length()} ts=${file.lastModified()}"
+                        }
+                        return@withSidecarIoLock
+                    }
+                    file.writeJsonAtomically(json)
                     logCloudAnnotationSyncTrace {
-                        "android.repository.save_highlights_noop book=$bookId count=${highlights.size} " +
+                        "android.repository.save_highlights book=$bookId count=${highlights.size} " +
                             "bytes=${file.length()} ts=${file.lastModified()}"
                     }
-                    return@withContext
-                }
-                file.writeJsonAtomically(json)
-                logCloudAnnotationSyncTrace {
-                    "android.repository.save_highlights book=$bookId count=${highlights.size} " +
-                        "bytes=${file.length()} ts=${file.lastModified()}"
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to save local highlights")
@@ -57,10 +60,16 @@ class PdfHighlightRepository(private val context: Context) {
         return withContext(Dispatchers.IO) {
             try {
                 val file = getFileForSync(bookId)
-                if (file.exists()) {
-                    HighlightSerializer.fromJson(file.readText())
-                } else {
-                    emptyList()
+                // Read under the sidecar lock: a reader landing between the
+                // writer's backup rotation and staging install would otherwise
+                // see no destination and return empty state that a later save
+                // persists as a wipe.
+                file.withSidecarIoLock {
+                    if (file.exists()) {
+                        HighlightSerializer.fromJson(file.readText())
+                    } else {
+                        emptyList()
+                    }
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to load local highlights")

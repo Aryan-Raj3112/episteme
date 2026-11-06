@@ -18,6 +18,7 @@ import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.pdf.data.PdfMetaDao
 import com.aryan.reader.pdf.data.PdfTextDao
 import com.aryan.reader.pdf.data.PdfTextDatabase
+import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.tts.TtsController
 import com.aryan.reader.tts.TtsPlaybackManager
 import io.mockk.*
@@ -480,6 +481,65 @@ class MainViewModelTest {
         viewModel.saveBookmarks(bookId = "guarded-book", bookmarksJson = addedJson)
         advanceUntilIdle()
         assertEquals(listOf(addedJson), writes)
+    }
+
+    @Test
+    fun `addPage remaps persisted bookmarks when the reader snapshot is empty`() = runTest(testDispatcher) {
+        // The reader handed us no in-memory bookmarks (the async snapshot never
+        // landed); the page op must fall back to the DB row instead of dropping
+        // every bookmark.
+        val persistedJson = "[{\"pageIndex\":1,\"title\":\"Page 2\",\"totalPages\":3}]"
+        coEvery {
+            anyConstructed<RecentFilesRepository>().getFileByBookId("page-book")
+        } returns RecentFileItem(
+            bookId = "page-book",
+            uriString = "content://books/pages",
+            type = FileType.PDF,
+            displayName = "Pages.pdf",
+            timestamp = 1L,
+            bookmarksJson = persistedJson,
+        )
+
+        val result = viewModel.addPage(
+            bookId = "page-book",
+            currentLayout = listOf(VirtualPage.PdfPage(0), VirtualPage.PdfPage(1), VirtualPage.PdfPage(2)),
+            insertIndex = 1,
+            currentAnnotations = emptyMap(),
+            currentBookmarksJson = "",
+            referenceWidth = 600,
+            referenceHeight = 800,
+            blankPageId = "blank-1",
+            wasManuallyAdded = true,
+        )
+
+        // The page-index-1 bookmark now sits on display page 2.
+        assertTrue(result.bookmarksJson.contains("\"pageIndex\":2"))
+    }
+
+    @Test
+    fun `removePage remaps persisted bookmarks when the reader snapshot is empty`() = runTest(testDispatcher) {
+        val persistedJson = "[{\"pageIndex\":1,\"title\":\"Page 2\",\"totalPages\":3}]"
+        coEvery {
+            anyConstructed<RecentFilesRepository>().getFileByBookId("page-book")
+        } returns RecentFileItem(
+            bookId = "page-book",
+            uriString = "content://books/pages",
+            type = FileType.PDF,
+            displayName = "Pages.pdf",
+            timestamp = 1L,
+            bookmarksJson = persistedJson,
+        )
+
+        val result = viewModel.removePage(
+            bookId = "page-book",
+            currentLayout = listOf(VirtualPage.PdfPage(0), VirtualPage.PdfPage(1), VirtualPage.PdfPage(2)),
+            removeIndex = 0,
+            currentAnnotations = emptyMap(),
+            currentBookmarksJson = "",
+        )
+
+        // Removing display page 0 shifts the page-index-1 bookmark to page 0.
+        assertTrue(result.bookmarksJson.contains("\"pageIndex\":0"))
     }
 
     @Test
