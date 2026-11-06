@@ -1737,6 +1737,8 @@
     <string name="pdf_search_result_position">Result %1$d / %2$d</string>
     <!-- Error shown when the PDF renderer cannot open a document and did not provide a specific error message. -->
     <string name="error_failed_load_pdf">Failed to load PDF.</string>
+    <!-- Shown when Pdfium's native libraries could not be loaded on this install, so no PDF can be rendered until the app is reinstalled. -->
+    <string name="error_pdf_engine_unavailable">PDF support is unavailable on this install. Reinstalling the app restores it.</string>
     <!-- Progress banner while downloading the optional Bubble Zoom AI model. %1$d = percentage complete from 0 to 100. %% is a literal percent sign. Example: "Downloading Bubble Zoom model... 42%". -->
     <string name="msg_downloading_bubble_zoom_model_progress">Downloading Bubble Zoom model… %1$d%%</string>
     <string name="content_desc_exit_slider_navigation">Exit slider navigation</string>

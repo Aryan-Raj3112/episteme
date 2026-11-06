@@ -34,9 +34,65 @@ private const val PDF_PREVIEW_MAX_BYTES = 16L * 1024L * 1024L
 private const val PDF_ENCRYPT_MARKER_TAIL_BYTES = 512 * 1024
 private val PDF_ENCRYPT_MARKER = "/Encrypt".toByteArray(Charsets.US_ASCII)
 
+/**
+ * The process-wide Pdfium core.
+ *
+ * `PdfiumCoreKt`'s constructor loads `libpdfium.so`/`libpdfiumandroid.so`. On an install where
+ * those cannot be resolved from the app's own library directory — a partial App Bundle install
+ * whose ABI split is missing or stale, or a ROM whose linker namespace refuses the platform's
+ * `/system/lib64/libpdfium.so` fallback — the loader fails with `UnsatisfiedLinkError` and the AAR
+ * wraps it in `RuntimeException("Failed to initialize PdfiumCore native libraries")`.
+ *
+ * That failure is permanent for the process, so it is latched here and reported once (the same
+ * shape as [ArchiveSupport] for `libarchive-jni`). Callers that can degrade use [coreOrNull];
+ * [core] keeps throwing the original error for callers that already handle a load failure.
+ */
 object PdfiumCoreProvider {
-    val core: PdfiumCoreKt by lazy {
-        PdfiumCoreKt(Dispatchers.Default)
+    @Volatile
+    private var instance: PdfiumCoreKt? = null
+
+    @Volatile
+    private var unavailableError: Throwable? = null
+
+    /** True once a native library load failure has been observed in this process. */
+    val isUnavailable: Boolean get() = unavailableError != null
+
+    /** The core, or null when its native libraries cannot be loaded on this install. */
+    val coreOrNull: PdfiumCoreKt?
+        get() {
+            instance?.let { return it }
+            synchronized(this) {
+                instance?.let { return it }
+                if (unavailableError != null) return null
+                return try {
+                    PdfiumCoreKt(Dispatchers.Default).also { instance = it }
+                } catch (error: Throwable) {
+                    if (!error.isNativeLibraryLoadFailure()) throw error
+                    unavailableError = error
+                    Timber.e(
+                        error,
+                        "libpdfium unavailable (missing native split or blocked linker namespace); " +
+                            "PDF rendering and PDF text extraction will not work until the app is reinstalled"
+                    )
+                    null
+                }
+            }
+        }
+
+    /**
+     * The core for callers that cannot degrade. Throws the original load failure when [coreOrNull]
+     * is null, so a caller that already catches it keeps its current behaviour.
+     */
+    val core: PdfiumCoreKt
+        get() = coreOrNull ?: throw (unavailableError ?: IllegalStateException("Pdfium core is unavailable"))
+
+    private fun Throwable.isNativeLibraryLoadFailure(): Boolean {
+        var current: Throwable? = this
+        while (current != null) {
+            if (current is LinkageError) return true
+            current = current.cause
+        }
+        return false
     }
 }
 

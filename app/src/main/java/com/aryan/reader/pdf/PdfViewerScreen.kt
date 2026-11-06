@@ -3498,6 +3498,18 @@ private fun PdfViewerScreenContent(
     }
 
     LaunchedEffect(effectivePdfUri, pdfiumCore, documentPassword) {
+        // No core means Pdfium's native libraries failed to load on this install (broken or
+        // partial split APK, or a linker namespace that refuses the platform fallback — see
+        // docs/crashlytics-triage.md#90). Opening a document with it would throw out of
+        // composition, so surface the error the failed open would have produced instead.
+        val documentCore = pdfiumCore
+        if (documentCore == null) {
+            Timber.tag("PdfTabSync").w("UI: Pdfium unavailable, cannot open $effectivePdfUri")
+            isLoadingDocument = false
+            isDocumentReady = false
+            errorMessage = context.getString(R.string.error_pdf_engine_unavailable)
+            return@LaunchedEffect
+        }
         Timber.tag("PdfTabSync").i("UI: LaunchedEffect triggered by URI change: $effectivePdfUri")
         Timber.tag(PDF_RENAME_TRACE_TAG).i(
             "pdfScreen.openEffect.start uri=$effectivePdfUri selectedBookId=$selectedBookIdForPane " +
@@ -3677,7 +3689,7 @@ private fun PdfViewerScreenContent(
                 Timber.tag("PdfTabSync").v("UI: Opening document for $effectivePdfUri")
 
                 val selectedDocumentType = effectiveFileType
-                val doc = DocumentFactory.loadDocument(context, effectivePdfUri, selectedDocumentType, documentPassword, pdfiumCore)
+                val doc = DocumentFactory.loadDocument(context, effectivePdfUri, selectedDocumentType, documentPassword, documentCore)
                 val loadedPasswordProtectedPdf = selectedDocumentType == FileType.PDF &&
                     (documentPassword != null || isPdfLikelyEncryptedForPrint(context, effectivePdfUri))
 
@@ -3994,6 +4006,8 @@ private fun PdfViewerScreenContent(
         if (isBackgroundIndexing && backgroundIndexingProgress > 0f) return@LaunchedEffect
         val selectedDocumentType = effectiveFileType
         if (selectedDocumentType != FileType.PDF && selectedDocumentType != FileType.PPTX) return@LaunchedEffect
+        // Nothing can open without a core, so there is no document to index.
+        val indexingCore = pdfiumCore ?: return@LaunchedEffect
 
         withContext(Dispatchers.IO) {
             val storedLang = pdfTextRepository.getBookLanguage(currentBookId!!)
@@ -4030,7 +4044,7 @@ private fun PdfViewerScreenContent(
                     val openedBgPfd = bgPfd
                     if (openedBgPfd == null) return@withContext
                     bgDoc = PdfiumEngineProvider.withPdfium {
-                        pdfiumCore.newDocument(openedBgPfd, documentPassword)
+                        indexingCore.newDocument(openedBgPfd, documentPassword)
                     }
 
                     for (pageIndex in pagesToIndex) {
@@ -4059,7 +4073,7 @@ private fun PdfViewerScreenContent(
                         uri = effectivePdfUri,
                         type = selectedDocumentType,
                         password = null,
-                        pdfiumCore = pdfiumCore
+                        pdfiumCore = indexingCore
                     )
                     genericDoc = openedGenericDoc
 
@@ -6415,7 +6429,7 @@ private fun PdfViewerDocumentSetup(
     var selectedTextBoxId by rememberSaveable { mutableStateOf<String?>(null) }
     val userHighlights = remember { mutableStateListOf<PdfUserHighlight>() }
     val drawingState = remember { PdfDrawingState() }
-    val pdfiumCore = remember { PdfiumCoreProvider.core }
+    val pdfiumCore = remember { PdfiumCoreProvider.coreOrNull }
     val verticalReaderState = rememberVerticalPdfReaderState()
     var virtualPages by remember { mutableStateOf<List<VirtualPage>>(emptyList()) }
     var loadedPageLayoutBookId by remember { mutableStateOf<String?>(null) }
@@ -7322,7 +7336,8 @@ private class PdfViewerSurfaceState {
     lateinit var annotationSession: PdfViewerMutableValue<SharedPdfAnnotationSessionState>
     lateinit var richTextRepository: PdfRichTextRepository
     lateinit var pfdState: PdfViewerMutableValue<ParcelFileDescriptor?>
-    lateinit var pdfiumCore: io.legere.pdfiumandroid.suspend.PdfiumCoreKt
+    /** Null when Pdfium's native libraries cannot be loaded on this install. */
+    var pdfiumCore: io.legere.pdfiumandroid.suspend.PdfiumCoreKt? = null
     lateinit var loadedPageLayoutBookId: PdfViewerMutableValue<String?>
     lateinit var pageLayoutMutationVersion: PdfViewerMutableValue<Long>
     lateinit var isDocumentReady: PdfViewerMutableValue<Boolean>
