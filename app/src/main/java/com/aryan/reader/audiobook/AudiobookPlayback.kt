@@ -23,6 +23,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionToken
 import androidx.room.withTransaction
+import com.aryan.reader.PlaybackForegroundStartGuard
 import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.logMediaTransport
 import com.aryan.reader.pinPostedPlaybackNotification
@@ -111,6 +112,15 @@ class AudiobookPlaybackService : MediaSessionService(), Player.Listener {
     private var saveJob: Job? = null
     private var sleepTimerJob: Job? = null
     private val diagnosticsCallback = MediaTransportDiagnosticsCallback()
+    private val foregroundStartGuard by lazy {
+        PlaybackForegroundStartGuard(
+            service = this,
+            notificationId = AUDIOBOOK_NOTIFICATION_ID,
+            channelId = AUDIOBOOK_NOTIFICATION_CHANNEL_ID,
+            channelName = getString(com.aryan.reader.R.string.audiobook_notification_channel_name),
+            diagnosticsTag = "AUDIOBOOK_DIAG"
+        )
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -208,7 +218,26 @@ class AudiobookPlaybackService : MediaSessionService(), Player.Listener {
                 sleepTimerJob = null
             }
         }
-        return super.onStartCommand(intent, flags, startId)
+        val result = super.onStartCommand(intent, flags, startId)
+        // A media button is routed here whenever this service was the last to make a sound, which
+        // is exactly the state a dead process or a cleared playlist leaves behind. Media3 only
+        // moves a session to the foreground once it has a playlist, so without this the start ends
+        // in RemoteServiceException(ForegroundServiceDidNotStartInTimeException). The stop/sleep
+        // actions above are sent with startService() and carry no foreground obligation.
+        if (intent?.action !in AUDIOBOOK_CONTROL_ACTIONS) {
+            foregroundStartGuard.onStartCommand(startId, ::canReachForeground)
+        }
+        return result
+    }
+
+    /**
+     * Whether this start can reach the foreground by itself: Media3 is already running the service
+     * there, or the player has a playlist for Media3 to post its notification for. A media button
+     * that finds an empty player — the process died, or the playlist was cleared — cannot.
+     */
+    private fun canReachForeground(): Boolean {
+        if (isPlaybackOngoing()) return true
+        return ::player.isInitialized && player.mediaItemCount > 0
     }
 
     override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -263,6 +292,7 @@ class AudiobookPlaybackService : MediaSessionService(), Player.Listener {
 
     override fun onDestroy() {
         logMediaTransport("audiobook-service-destroyed", "sessionAlive=${session != null}")
+        foregroundStartGuard.release()
         saveJob?.cancel()
         sleepTimerJob?.cancel()
         if (::player.isInitialized) {
@@ -274,6 +304,10 @@ class AudiobookPlaybackService : MediaSessionService(), Player.Listener {
         super.onDestroy()
     }
 }
+
+/** Actions this app sends with `startService()`; they carry no foreground start obligation. */
+private val AUDIOBOOK_CONTROL_ACTIONS =
+    setOf(ACTION_AUDIOBOOK_STOP, ACTION_AUDIOBOOK_SLEEP_TIMER, ACTION_AUDIOBOOK_CANCEL_SLEEP_TIMER)
 
 internal const val AUDIOBOOK_MEDIA_SESSION_ID = "reader-audiobook-playback"
 internal const val ACTION_AUDIOBOOK_STOP = "com.aryan.reader.audiobook.STOP"

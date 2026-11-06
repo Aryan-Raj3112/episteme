@@ -18,6 +18,7 @@ import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
 import com.aryan.reader.MediaButtonRouting
+import com.aryan.reader.PlaybackForegroundStartGuard
 import com.aryan.reader.R
 import com.aryan.reader.logMediaTransport
 import com.aryan.reader.pinPostedPlaybackNotification
@@ -82,6 +83,15 @@ private class MediaOverlayNotificationProvider(
 class MediaOverlayPlaybackService : MediaSessionService(), Player.Listener {
     private var session: MediaSession? = null
     private var player: ExoPlayer? = null
+    private val foregroundStartGuard by lazy {
+        PlaybackForegroundStartGuard(
+            service = this,
+            notificationId = MEDIA_OVERLAY_NOTIFICATION_ID,
+            channelId = MEDIA_OVERLAY_NOTIFICATION_CHANNEL_ID,
+            channelName = getString(R.string.media_overlay_notification_channel_name),
+            diagnosticsTag = MEDIA_OVERLAY_DIAG_TAG
+        )
+    }
 
     /**
      * The book narration is streamed from.
@@ -159,6 +169,22 @@ class MediaOverlayPlaybackService : MediaSessionService(), Player.Listener {
         }
     }
 
+    /**
+     * Narration can be resumed by a media button after this service was re-created empty, and
+     * Media3 only promotes a session to the foreground once it has a playlist, so the start has to
+     * be accounted for here. Same defect, and same answer, as the audiobook service.
+     */
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val result = super.onStartCommand(intent, flags, startId)
+        foregroundStartGuard.onStartCommand(startId, ::canReachForeground)
+        return result
+    }
+
+    private fun canReachForeground(): Boolean {
+        if (isPlaybackOngoing()) return true
+        return (player?.mediaItemCount ?: 0) > 0
+    }
+
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
 
     /**
@@ -200,6 +226,7 @@ class MediaOverlayPlaybackService : MediaSessionService(), Player.Listener {
     }
 
     override fun onDestroy() {
+        foregroundStartGuard.release()
         archive.close()
         player?.removeListener(this)
         player?.release()
