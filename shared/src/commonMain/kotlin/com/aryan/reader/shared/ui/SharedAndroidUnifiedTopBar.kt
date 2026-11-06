@@ -81,11 +81,11 @@ fun SharedAndroidUnifiedTopBar(
     // display's rounded top-left corner. Apple's guidance is to keep the normal layout
     // margin on the side opposite the controls, and to leave room for the corner. This is
     // identity on every other device, where the status-bar inset already provides it.
-    val duoInnerDisplay = LocalSharedDeviceLayout.current.isDuoInnerDisplay
+    val duoDisplay = LocalSharedDeviceLayout.current.isDuoDevice
     val hasLeadingControl = showingShelf || onMenu != null
-    val startPadding = if (duoInnerDisplay && !hasLeadingControl) 20.dp else 8.dp
-    val endPadding = if (duoInnerDisplay) 16.dp else 8.dp
-    val topPadding = if (duoInnerDisplay) 16.dp else 0.dp
+    val startPadding = if (duoDisplay && !hasLeadingControl) 20.dp else 8.dp
+    val endPadding = if (duoDisplay) 16.dp else 8.dp
+    val topPadding = if (duoDisplay) 16.dp else 0.dp
     Surface(shadowElevation = 1.dp, modifier = modifier.fillMaxWidth()) {
         Column(
             Modifier

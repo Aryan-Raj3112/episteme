@@ -7,14 +7,25 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * The Duo gate has to be invisible everywhere except an iPhone Duo inner display. These
- * tests pin that: [SharedDeviceLayout.None] must reproduce the exact pre-Duo layout, and
- * only a real Duo layout may change it.
+ * The Duo gate has to be invisible everywhere except an iPhone Duo display. These tests
+ * pin that: [SharedDeviceLayout.None] must reproduce the exact pre-Duo layout, and only a
+ * real Duo layout may change it.
  */
 class DuoLayoutPolicyTest {
 
-    private val duo = SharedDeviceLayout(
+    /** The Duo inner display: fold division present, wide. */
+    private val duoInner = SharedDeviceLayout(
         fold = SharedFoldRegion(present = true, active = false, leftFraction = 0.49f, widthFraction = 0.02f),
+        controlColumnWidthFraction = 0.088f,
+        controlColumnTopFraction = 0.16f,
+        isDuoDevice = true,
+    )
+
+    /** The Duo outer display: no fold division, camera/island occlusion only, compact. */
+    private val duoOuter = SharedDeviceLayout(
+        controlColumnWidthFraction = 0.18f,
+        controlColumnTopFraction = 0.257f,
+        isDuoDevice = true,
     )
 
     private val widths = listOf(360.dp, 466.dp, 599.dp, 600.dp, 626.dp, 678.dp, 839.dp, 840.dp, 890.dp, 1280.dp)
@@ -22,6 +33,7 @@ class DuoLayoutPolicyTest {
     @Test
     fun `no device layout means a plain single-screen device`() {
         assertTrue(!SharedDeviceLayout.None.isDuoInnerDisplay)
+        assertTrue(!SharedDeviceLayout.None.isDuoDevice)
         assertTrue(!SharedDeviceLayout.None.fold.present)
     }
 
@@ -54,12 +66,13 @@ class DuoLayoutPolicyTest {
     }
 
     @Test
-    fun `duo rail only on the wide inner display`() {
-        // Outer display, portrait (compact) keeps the drawer.
-        assertEquals(SharedLibraryNavMode.DRAWER, DuoLayoutPolicy.navMode(duo, 466.dp))
-        // Inner display, both orientations, gets the rail.
-        assertEquals(SharedLibraryNavMode.RAIL, DuoLayoutPolicy.navMode(duo, 626.dp))
-        assertEquals(SharedLibraryNavMode.RAIL, DuoLayoutPolicy.navMode(duo, 890.dp))
+    fun `both duo displays get the rail, ordinary devices never do`() {
+        // Apple's Duo bar runs down the side of the outer display too.
+        assertEquals(SharedLibraryNavMode.RAIL, DuoLayoutPolicy.navMode(duoOuter, 466.dp))
+        assertEquals(SharedLibraryNavMode.RAIL, DuoLayoutPolicy.navMode(duoInner, 626.dp))
+        assertEquals(SharedLibraryNavMode.RAIL, DuoLayoutPolicy.navMode(duoInner, 890.dp))
+        // Even a wide ordinary device stays on the drawer.
+        assertEquals(SharedLibraryNavMode.DRAWER, DuoLayoutPolicy.navMode(SharedDeviceLayout.None, 1280.dp))
     }
 
     @Test
@@ -76,6 +89,7 @@ class DuoLayoutPolicyTest {
             controlColumnWidthFraction = 0.09f,
             controlColumnTopFraction = 0.16f,
             controlColumnOnTrailing = false,
+            isDuoDevice = true,
         )
         // Wider than the 84dp baseline because the platform reserved more.
         assertEquals(90.dp, DuoLayoutPolicy.railWidth(layout, 1000.dp))
@@ -87,16 +101,28 @@ class DuoLayoutPolicyTest {
     }
 
     @Test
-    fun `duo grid uses a smaller adaptive cell on every width`() {
+    fun `duo inner grid uses a smaller adaptive cell on every width`() {
         // The cell size is width-independent; the column count still follows the width.
         widths.forEach { width ->
             assertEquals(
                 GridCells.Adaptive(DuoLayoutPolicy.DuoBookCellMin),
-                DuoLayoutPolicy.gridCells(duo, width),
+                DuoLayoutPolicy.gridCells(duoInner, width),
                 "width=$width",
             )
         }
         // Smaller than the shared medium band, so the wide inner display gets more covers.
         assertTrue(DuoLayoutPolicy.DuoBookCellMin < SharedMobileMediumBookCellMin)
+    }
+
+    @Test
+    fun `duo outer grid keeps the ordinary width-class mapping`() {
+        // The outer display is phone-width, so the Duo cell cap must not apply there.
+        widths.forEach { width ->
+            assertEquals(
+                sharedMobileWidthClassForWidth(width).bookGridCells(),
+                DuoLayoutPolicy.gridCells(duoOuter, width),
+                "width=$width",
+            )
+        }
     }
 }

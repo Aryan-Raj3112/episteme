@@ -23,13 +23,15 @@ internal data class IosDeviceLayoutSnapshot(
     /** How far down the window the system's status area reaches inside that column. */
     val controlColumnTopFraction: Float = 0f,
     val controlColumnOnTrailing: Boolean = true,
+    /** True on any Duo display, from the platform's fold or occlusion reserved regions. */
+    val isDuoDevice: Boolean = false,
 )
 
 internal fun IosDeviceLayoutSnapshot.toSharedDeviceLayout(): SharedDeviceLayout {
-    if (!foldPresent) return SharedDeviceLayout.None
+    if (!isDuoDevice) return SharedDeviceLayout.None
     return SharedDeviceLayout(
         fold = SharedFoldRegion(
-            present = true,
+            present = foldPresent,
             active = foldActive,
             leftFraction = foldLeftFraction.toFloat(),
             topFraction = foldTopFraction.toFloat(),
@@ -39,5 +41,6 @@ internal fun IosDeviceLayoutSnapshot.toSharedDeviceLayout(): SharedDeviceLayout 
         controlColumnWidthFraction = controlColumnWidthFraction,
         controlColumnTopFraction = controlColumnTopFraction,
         controlColumnOnTrailing = controlColumnOnTrailing,
+        isDuoDevice = true,
     )
 }

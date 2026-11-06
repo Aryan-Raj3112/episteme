@@ -63,7 +63,7 @@ fun SharedAndroidUnifiedScaffold(
                 // The library's book grid is inset from the content edge, so on a foldable
                 // iPhone the default 16dp end margin left the button straddling the grid
                 // card's edge. Nudge it in so it sits inside the card on that display only.
-                val fabEndPadding = if (LocalSharedDeviceLayout.current.isDuoInnerDisplay) 12.dp else 0.dp
+                val fabEndPadding = if (LocalSharedDeviceLayout.current.isDuoDevice) 12.dp else 0.dp
                 Box(Modifier.padding(end = fabEndPadding)) {
                     when (section) {
                         MobileUnifiedLibrarySection.HOME -> FloatingActionButton(onClick = onImport, modifier = Modifier.testTag("UnifiedLibraryImport")) {

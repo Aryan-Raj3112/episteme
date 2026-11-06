@@ -53,12 +53,17 @@ data class SharedDeviceLayout(
     val controlColumnTopFraction: Float = 0f,
     /** True when the control column is on the trailing (right in LTR) edge. */
     val controlColumnOnTrailing: Boolean = true,
+    /**
+     * True on any iPhone Duo display, inner or outer, as reported by the platform's
+     * reserved regions. This is the device capability the rail is gated on: an ordinary
+     * iPhone, iPad, Android device or desktop never sets it.
+     */
+    val isDuoDevice: Boolean = false,
 ) {
     /**
      * True when this display participates in a fold division — i.e. the iPhone Duo's
-     * inner display, flat or partially folded. False on the Duo's outer display and on
-     * every ordinary phone and tablet, which is exactly the set of surfaces that must
-     * keep the pre-Duo layout.
+     * inner display, flat or partially folded. False on the Duo's outer display, which is
+     * narrow enough to keep the ordinary grid mapping.
      */
     val isDuoInnerDisplay: Boolean get() = fold.present
 

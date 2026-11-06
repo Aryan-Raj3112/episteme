@@ -2,6 +2,8 @@ package com.aryan.reader.shared.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -79,8 +81,8 @@ fun SharedMobileLibraryShell(
 }
 
 /**
- * Permanent navigation rail for the Duo inner display. Reuses the drawer's model and
- * label/icon resolvers; it deliberately introduces no navigation state of its own.
+ * Permanent navigation rail for a Duo display. Reuses the drawer's model and label/icon
+ * resolvers; it deliberately introduces no navigation state of its own.
  *
  * [width] and [topInset] come from [DuoLayoutPolicy] so the rail covers the platform's
  * reserved control column and starts below the system status area inside it.
@@ -107,10 +109,13 @@ internal fun SharedMobileLibraryRail(
         // The background runs the full height, painting behind the system status area, so
         // the column reads as one surface. Only the items are pushed down past it, and the
         // home indicator's inset keeps the last row off the display's bottom corner.
+        // Scrollable because the outer display is short and its camera/island reserve is
+        // deep; a shorter display can never clip the last item.
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .navigationBarsPadding(),
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Spacer(Modifier.height(topInset))

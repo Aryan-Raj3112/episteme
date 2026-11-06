@@ -524,6 +524,7 @@ class ReaderIosBridge internal constructor(
         controlColumnWidthFraction: Float,
         controlColumnTopFraction: Float,
         controlColumnOnTrailing: Boolean,
+        isDuoDevice: Boolean,
     ) {
         iosDeviceLayout = IosDeviceLayoutSnapshot(
             foldPresent = foldPresent,
@@ -535,6 +536,7 @@ class ReaderIosBridge internal constructor(
             controlColumnWidthFraction = controlColumnWidthFraction,
             controlColumnTopFraction = controlColumnTopFraction,
             controlColumnOnTrailing = controlColumnOnTrailing,
+            isDuoDevice = isDuoDevice,
         )
     }
 

@@ -2060,7 +2060,7 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
             onRemoveFolder: onRemoveFolder
         )
         let hostController = ReaderStatusBarHostController(content: composeController)
-        hostController.onDeviceLayoutChange = { foldPresent, foldActive, left, top, width, height, columnWidth, columnTop, columnOnTrailing in
+        hostController.onDeviceLayoutChange = { foldPresent, foldActive, left, top, width, height, columnWidth, columnTop, columnOnTrailing, isDuoDevice in
             bridge.updateIosDeviceLayout(
                 foldPresent: foldPresent,
                 foldActive: foldActive,
@@ -2070,7 +2070,8 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
                 foldHeightFraction: height,
                 controlColumnWidthFraction: columnWidth,
                 controlColumnTopFraction: columnTop,
-                controlColumnOnTrailing: columnOnTrailing
+                controlColumnOnTrailing: columnOnTrailing,
+                isDuoDevice: isDuoDevice
             )
         }
         bridge.setSystemUiHandler { statusHidden, navigationHidden, lightContent, backgroundArgb in
@@ -2105,7 +2106,7 @@ private final class ReaderStatusBarHostController: UIViewController {
     /// Reports iPhone Duo fold geometry and the system's side control column to the shared
     /// layer. Values are fractions of the window so nothing has to be converted between
     /// points and dp in Kotlin.
-    var onDeviceLayoutChange: ((_ foldPresent: Bool, _ foldActive: Bool, _ left: Double, _ top: Double, _ width: Double, _ height: Double, _ columnWidth: Float, _ columnTop: Float, _ columnOnTrailing: Bool) -> Void)?
+    var onDeviceLayoutChange: ((_ foldPresent: Bool, _ foldActive: Bool, _ left: Double, _ top: Double, _ width: Double, _ height: Double, _ columnWidth: Float, _ columnTop: Float, _ columnOnTrailing: Bool, _ isDuoDevice: Bool) -> Void)?
 
     init(content: UIViewController) {
         self.contentController = content
@@ -2163,46 +2164,54 @@ private final class ReaderStatusBarHostController: UIViewController {
     /// flat. Pre-27.1 SDKs and every non-phone idiom report a plain single-screen device.
     private func publishDeviceLayout() {
         guard let emit = onDeviceLayoutChange else { return }
-        let singleScreen = { emit(false, false, 0, 0, 0, 0, 0, 0, true) }
+        let singleScreen = { emit(false, false, 0, 0, 0, 0, 0, 0, true, false) }
         guard UIDevice.current.userInterfaceIdiom == .phone, #available(iOS 27.1, *) else {
             return singleScreen()
         }
-        let fold = view.reservedRegions(kind: .division, options: .includeInactive).first
-        guard let fold else { return singleScreen() }
         let bounds = view.bounds
         guard bounds.width > 0, bounds.height > 0 else { return singleScreen() }
+
+        // Duo is the only iPhone that reports reserved regions: a fold *division* on the
+        // inner display, and the camera / Dynamic Island *occlusion* on the outer display.
+        // Either one means this is a Duo display, which is the capability the rail is
+        // gated on. No other iPhone reports either, so this cannot false-positive.
+        let fold = view.reservedRegions(kind: .division, options: .includeInactive).first
+        let occlusions = view.reservedRegions(kind: .occlusion, options: .includeInactive)
+        guard fold != nil || !occlusions.isEmpty else { return singleScreen() }
 
         // The system's side control column: the Dynamic Island and status bar share the
         // display's trailing edge with the app's rail, so the app must leave room for the
         // status area at the top of that column and put its rail on the same edge.
         //
-        // The safe-area insets describe the column exactly (the trailing inset measured
-        // 84pt on the Duo inner display, which is Apple's vertical-bar width), and a
-        // leading inset means the app is in the left half of Split View and the column has
-        // moved to the leading edge. The status area's *depth* inside the column is not
-        // queryable: `UIStatusBarManager.statusBarFrame` reports a degenerate 951x2 rect
-        // for the side status bar, and the safe area's top inset is 0 because the status
-        // is not at the top. Reserve Apple's published depth instead - a 24pt top margin
-        // plus the 86pt vertical status stack - and fall back to the top inset, which is
-        // what an upright inner display reports when the status bar is horizontal.
+        // The safe-area insets describe the column exactly (the trailing inset measures
+        // 84pt on both Duo displays, which is Apple's vertical-bar width), and a leading
+        // inset means the app is in the left half of Split View and the column has moved
+        // to the leading edge. The status area's *depth* is not queryable: the side status
+        // bar's `statusBarFrame` is a degenerate rect and the safe area's top inset is 0
+        // because the status is not at the top. Reserve the platform's own occlusion (the
+        // camera + island block on the outer display, measured 174pt deep) and Apple's
+        // published status depth (24 + 86pt) on the inner display, where the camera is
+        // hidden and reports nothing.
         let window = view.window
         let windowBounds = window?.bounds ?? bounds
         let safeArea = window?.safeAreaInsets ?? .zero
         let sideColumnWidth = max(safeArea.left, safeArea.right)
-        let sideStatusDepth: CGFloat = sideColumnWidth > 0 ? 110 : 0
-        let topReserve = max(safeArea.top, sideStatusDepth)
+        let occlusionBottom = occlusions.map { $0.frame.maxY }.max() ?? 0
+        let statusDepth: CGFloat = sideColumnWidth > 0 ? 110 : 0
+        let topReserve = max(safeArea.top, max(occlusionBottom, statusDepth))
         let columnOnTrailing = safeArea.left <= safeArea.right
 
         emit(
-            true,
-            fold.isActive,
-            Double(fold.frame.minX / bounds.width),
-            Double(fold.frame.minY / bounds.height),
-            Double(fold.frame.width / bounds.width),
-            Double(fold.frame.height / bounds.height),
+            fold != nil,
+            fold?.isActive ?? false,
+            Double((fold?.frame.minX ?? 0) / bounds.width),
+            Double((fold?.frame.minY ?? 0) / bounds.height),
+            Double((fold?.frame.width ?? 0) / bounds.width),
+            Double((fold?.frame.height ?? 0) / bounds.height),
             Float(sideColumnWidth / windowBounds.width),
             Float(topReserve / windowBounds.height),
-            columnOnTrailing
+            columnOnTrailing,
+            true
         )
     }
 

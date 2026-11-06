@@ -23,8 +23,11 @@ enum class SharedLibraryNavMode {
  */
 object DuoLayoutPolicy {
 
-    /** Below this available width even a Duo inner display stays with the drawer. */
-    val RailMinWidth: Dp = 600.dp
+    /**
+     * Safety floor only: every Duo display is far wider than this, so a Duo always gets
+     * the rail. It exists so a hypothetical narrow foldable would keep the drawer.
+     */
+    val RailMinWidth: Dp = 360.dp
 
     /**
      * Base rail width.
@@ -50,9 +53,12 @@ object DuoLayoutPolicy {
      */
     val DuoBookCellMin: Dp = 130.dp
 
-    /** DRAWER everywhere except the Duo inner display when it is wide enough for a rail. */
+    /**
+     * DRAWER on every ordinary device; the rail on both Duo displays. Apple's Duo bar runs
+     * down the side of the outer display too, so the outer display is not an exception.
+     */
     fun navMode(layout: SharedDeviceLayout, availableWidth: Dp): SharedLibraryNavMode {
-        return if (layout.isDuoInnerDisplay && availableWidth >= RailMinWidth) {
+        return if (layout.isDuoDevice && availableWidth >= RailMinWidth) {
             SharedLibraryNavMode.RAIL
         } else {
             SharedLibraryNavMode.DRAWER
@@ -69,7 +75,7 @@ object DuoLayoutPolicy {
      * if that is wider, so app content can never end up underneath the system status.
      */
     fun railWidth(layout: SharedDeviceLayout, availableWidth: Dp): Dp {
-        if (!layout.isDuoInnerDisplay) return 0.dp
+        if (!layout.isDuoDevice) return 0.dp
         return maxOf(RailWidth, availableWidth * layout.controlColumnWidthFraction)
     }
 
@@ -78,7 +84,7 @@ object DuoLayoutPolicy {
      * status area instead of under it.
      */
     fun railTopInset(layout: SharedDeviceLayout, availableHeight: Dp): Dp {
-        if (!layout.isDuoInnerDisplay) return 0.dp
+        if (!layout.isDuoDevice) return 0.dp
         return maxOf(RailTopGap, availableHeight * layout.controlColumnTopFraction)
     }
 
