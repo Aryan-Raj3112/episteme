@@ -43,6 +43,14 @@ jobs:
               source /etc/profile.d/bsenv.sh
               cd /home/vagrant/build/com.aryan.reader.oss
 
+              # The F-Droid buildserver image ships no C compiler either, and cargo
+              # compiles every proc-macro/build script (proc-macro2, serde, quote, …)
+              # for the build host, where rustc links through `cc`.
+              if ! command -v cc >/dev/null 2>&1; then
+                apt-get update
+                apt-get install -y --no-install-recommends gcc libc6-dev
+              fi
+
               # The F-Droid buildserver image ships no Rust toolchain, but the APK
               # build compiles rust/office-oxide-bridge with cargo (:app:buildOfficeOxide*).
               # rustup follows rust/office-oxide-bridge/rust-toolchain.toml, so the
