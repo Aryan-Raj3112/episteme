@@ -7,6 +7,8 @@ channel = "1.99.0"
 targets = [
   "aarch64-linux-android",      # Android, arm64-v8a
   "armv7-linux-androideabi",    # Android, armeabi-v7a
+  "x86_64-linux-android",       # Android emulator, x86_64
+  "i686-linux-android",         # Android emulator, x86 (debug only)
   "aarch64-apple-ios",          # iOS device
   "aarch64-apple-ios-sim",      # iOS simulator
   "aarch64-apple-darwin",       # desktop, Apple silicon
